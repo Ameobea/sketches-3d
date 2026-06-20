@@ -16,6 +16,9 @@
     clearLocalChanges,
     toggleAxisHelpers,
     toggleLightHelpers,
+    toggleGizmoGhosts,
+    showGizmoGhosts,
+    gizmosExist,
     toggleMaterialEditorOpen,
     toggleEnvironmentSettingsOpen,
     cameraProjection,
@@ -38,6 +41,9 @@
     clearLocalChanges: () => void;
     toggleAxisHelpers: () => void;
     toggleLightHelpers: () => void;
+    toggleGizmoGhosts: () => void;
+    showGizmoGhosts: boolean;
+    gizmosExist: boolean;
     toggleMaterialEditorOpen: () => void;
     toggleEnvironmentSettingsOpen: () => void;
     cameraProjection: 'perspective' | 'orthographic';
@@ -97,6 +103,9 @@
         <button onclick={clearLocalChanges}>clear local changes</button>
         <button onclick={toggleAxisHelpers}>toggle axis helpers</button>
         <button onclick={toggleLightHelpers}>toggle light helpers</button>
+        {#if gizmosExist}
+          <button onclick={toggleGizmoGhosts}>gizmo ghosts: {showGizmoGhosts ? 'on' : 'off'}</button>
+        {/if}
         <button onclick={toggleProjection}>
           camera: {cameraProjection === 'orthographic' ? 'orthographic' : 'perspective'} (O)
         </button>

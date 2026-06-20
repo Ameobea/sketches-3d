@@ -48,12 +48,14 @@
   } from './persistence';
   import { compileTree, buildGizmoValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
-  import { buildParentMap, computeMeshCounts, findParentId } from './treeOps';
+  import { buildParentMap, computeMeshCounts, findParentId, getNodeAncestorChain } from './treeOps';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import NodeInspector from './NodeInspector.svelte';
   import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
   import type { GizmoTargetRef } from 'src/viz/gizmos/gizmoTypes';
-  import { scanGizmoHandleIds } from 'src/geoscript/gizmoScan';
+  import { scanGizmoHandleIds, scanGizmoHandleOrder } from 'src/geoscript/gizmoScan';
+  import { GizmoGhosts, type GhostSpec } from 'src/viz/gizmos/gizmoGhosts';
+  import { gizmoColorForIndex } from 'src/viz/gizmos/gizmoPalette';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
@@ -63,7 +65,7 @@
     buildWorldMatrixCache,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
-  import { decomposeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
+  import { decomposeTransform3, composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
   import type { MatEntry, RenderedObject, RenderedGizmo } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
@@ -262,6 +264,11 @@
   let dragStartHandle: GizmoValue | null = null;
   /** Gizmos reported by the last successful run; feeds handle arming + GC. */
   let lastGizmos: RenderedGizmo[] = [];
+  /** Whether the last run produced any gizmos anywhere — gates the ghost-toggle menu item. */
+  let hasAnyGizmos = $state(false);
+  let showGizmoGhosts = $state(localStorage.getItem('geoscript-gizmo-ghosts') !== 'false');
+  let ghosts: GizmoGhosts | null = null;
+  let ghostTick: (() => void) | null = null;
   /** Inline-readout subscribers + armed-state pusher, wired once the editor's gizmo extensions install. */
   // Editor push channels, wired once the gizmo extensions install (null until then).
   let dispatchArmed: ((handleId: string | null) => void) | null = null;
@@ -307,7 +314,8 @@
             // to drag end — per-tick re-runs aren't smooth enough to be worth it.
             treeState.setHandle(nodeId, handleId, value);
             isDirty = true;
-            dispatchValuePatch?.(handleId, storedReadout(value)); // single-handle, no full rebuild
+            // single-handle, no full rebuild
+            dispatchValuePatch?.(handleId, storedReadout(value, axesForHandle(nodeId, handleId)));
           },
           onDragEnd: ref => {
             if (ref.kind === 'handle') {
@@ -344,15 +352,31 @@
             kind === 'transform' && reported?.value.length === 16
               ? decomposeTransform3(new THREE.Matrix4().fromArray(reported.value))
               : undefined,
+          axes: reported?.axes ?? [true, true, true],
         };
       });
       const tickGizmo = () => g.update();
       viz.registerBeforeRenderCb(tickGizmo);
+
+      const gh = new GizmoGhosts(viz.overlayScene, {
+        camera: viz.camera,
+        canvas: viz.renderer.domElement,
+        isDraggingGizmo: () => g.dragging(),
+      });
+      const tickGhosts = () => gh.update();
+      viz.registerBeforeRenderCb(tickGhosts);
+
       const disposer = installRaycastSelect({
         canvas: viz.renderer.domElement,
         camera: viz.camera,
         getCandidates: () =>
           renderedObjects.filter(o => o instanceof THREE.Mesh && !!o.userData.sourceNodeId),
+        interceptClick: raycaster => {
+          const hit = gh.pickGhost(raycaster);
+          if (!hit) return false;
+          gizmoEditorHooks.arm(hit.handleId, hit.kind);
+          return true;
+        },
         onSelect: (id, instancePath) => {
           if (id === null) {
             // Background click: deselect to root and unarm the gizmo entirely.
@@ -380,13 +404,18 @@
       });
       if (cancelled) {
         viz.unregisterBeforeRenderCb(tickGizmo);
+        viz.unregisterBeforeRenderCb(tickGhosts);
         disposer();
+        gh.dispose();
         g.dispose();
         return;
       }
       gizmo = g;
+      ghosts = gh;
+      ghostTick = tickGhosts;
       raycastDisposer = disposer;
       gizmoTick = tickGizmo;
+      rebuildGhosts();
     })();
     return () => {
       cancelled = true;
@@ -394,6 +423,10 @@
       raycastDisposer = null;
       if (gizmoTick) viz.unregisterBeforeRenderCb(gizmoTick);
       gizmoTick = null;
+      if (ghostTick) viz.unregisterBeforeRenderCb(ghostTick);
+      ghostTick = null;
+      ghosts?.dispose();
+      ghosts = null;
       gizmo?.dispose();
       gizmo = null;
     };
@@ -440,15 +473,33 @@
     dispatchArmed?.(armedHandle);
   });
 
+  // Rebuild ghosts on discrete changes only (selection / arm / setting / each run); the
+  // deep tree reads inside happen untracked so a drag's transform churn doesn't re-fire this.
+  $effect(() => {
+    void treeState.state.selectedId;
+    void armedRef;
+    void showGizmoGhosts;
+    void lastRunTree;
+    untrack(rebuildGhosts);
+  });
+
+  // gizmo2d/gizmo1d store a full vec3 but expose only their active axes; project so the
+  // inline readout shows the right component count.
+  const projectAxes = (value: number[], axes: [boolean, boolean, boolean]): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < 3; i += 1) if (axes[i]) out.push(value[i] ?? 0);
+    return out;
+  };
+
   const channelReadout = (gz: RenderedGizmo): GizmoReadout =>
     gz.kind === 'transform'
       ? { kind: 'transform', transform: { pos: gz.origin, rot: [0, 0, 0], scale: [1, 1, 1] } }
-      : { kind: 'vec3', vec3: [gz.value[0], gz.value[1], gz.value[2]] };
+      : { kind: 'vec3', values: projectAxes(gz.value, gz.axes) };
 
-  const storedReadout = (v: GizmoValue): GizmoReadout =>
+  const storedReadout = (v: GizmoValue, axes: [boolean, boolean, boolean]): GizmoReadout =>
     v.kind === 'transform'
       ? { kind: 'transform', transform: v.value as GizmoReadout['transform'] }
-      : { kind: 'vec3', vec3: v.value as [number, number, number] };
+      : { kind: 'vec3', values: projectAxes(v.value as number[], axes) };
 
   // Per-node readout map: last run's reported values, overridden by the locally-stored
   // (live-edited) handle value so a drag updates the inline readout before re-eval.
@@ -456,13 +507,79 @@
     const map = new Map<string, GizmoReadout>();
     const node = nodeId ? treeState.state.tree.nodes[nodeId] : null;
     if (!node) return map;
-    for (const gz of lastGizmos) if (gz.sourceModule === node.name) map.set(gz.handleId, channelReadout(gz));
-    if (node.handles) for (const [id, v] of Object.entries(node.handles)) map.set(id, storedReadout(v));
+    const axesByHandle = new Map<string, [boolean, boolean, boolean]>();
+    for (const gz of lastGizmos) {
+      if (gz.sourceModule !== node.name) continue;
+      axesByHandle.set(gz.handleId, gz.axes);
+      map.set(gz.handleId, channelReadout(gz));
+    }
+    if (node.handles) {
+      for (const [id, v] of Object.entries(node.handles)) {
+        map.set(id, storedReadout(v, axesByHandle.get(id) ?? [true, true, true]));
+      }
+    }
     return map;
   };
 
   const publishGizmoReadouts = () => {
     dispatchValues?.(buildGizmoReadouts(treeState.state.selectedId));
+  };
+
+  const axesForHandle = (nodeId: string, handleId: string): [boolean, boolean, boolean] => {
+    const node = treeState.state.tree.nodes[nodeId];
+    const gz = node ? lastGizmos.find(g => g.sourceModule === node.name && g.handleId === handleId) : null;
+    return gz?.axes ?? [true, true, true];
+  };
+
+  // World matrix of a node's representative (instance-0) copy, root → node inclusive — same
+  // anchor `HandleTarget` uses, so a ghost sits exactly where its armed gizmo would.
+  const _ghostWorld = new THREE.Matrix4();
+  const _ghostScratch = new THREE.Matrix4();
+  const nodeWorldMatrix = (nodeId: string): THREE.Matrix4 => {
+    _ghostWorld.identity();
+    const chain = getNodeAncestorChain(treeState.state.tree, nodeId);
+    if (!chain) return _ghostWorld;
+    for (let i = chain.length - 1; i >= 0; i -= 1) {
+      _ghostWorld.multiply(composeTransform3(_ghostScratch, chain[i].instances[0]));
+    }
+    return _ghostWorld;
+  };
+
+  const _ghostPos = new THREE.Vector3();
+  // Ghosts only for the selected node's gizmos, at their live-gizmo positions. The armed
+  // handle's own ghost is hidden (the real gizmo draws there instead).
+  const rebuildGhosts = () => {
+    if (!ghosts) return;
+    const sel = treeState.state.selectedId;
+    const node = sel && sel !== GLOBALS_SELECTION_ID ? treeState.state.tree.nodes[sel] : null;
+    if (userData?.renderMode || !node) {
+      ghosts.setGhosts([]);
+      return;
+    }
+    const order = scanGizmoHandleOrder(node.source);
+    const armedHandle = armedRef?.kind === 'handle' && armedRef.nodeId === sel ? armedRef.name : null;
+    const world = nodeWorldMatrix(sel!);
+    const specs: GhostSpec[] = [];
+    for (const gz of lastGizmos) {
+      if (gz.sourceModule !== node.name || gz.handleId === armedHandle) continue;
+      if (!(gz.ghost ?? showGizmoGhosts)) continue;
+      // transform handles report a 16-float matrix; its translation is `origin`.
+      const lp =
+        gz.kind === 'transform'
+          ? gz.origin
+          : gz.absolute
+            ? gz.value
+            : [gz.origin[0] + gz.value[0], gz.origin[1] + gz.value[1], gz.origin[2] + gz.value[2]];
+      _ghostPos.set(lp[0], lp[1], lp[2]).applyMatrix4(world);
+      const ix = order.indexOf(gz.handleId);
+      specs.push({
+        handleId: gz.handleId,
+        kind: gz.kind,
+        color: gizmoColorForIndex(ix >= 0 ? ix : specs.length),
+        position: [_ghostPos.x, _ghostPos.y, _ghostPos.z],
+      });
+    }
+    ghosts.setGhosts(specs);
   };
 
   const gizmoEditorHooks: GizmoEditorHooks = {
@@ -735,7 +852,11 @@
     lastSwappedSelection = untrack(() => treeState.state.selectedId);
 
     import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
-      editor.setAnalysisExtensions(buildAnalysisExtensions(() => !preludeEjected));
+      // Expose the `_globals` node as ambient scope so its helpers/constants resolve in other
+      // nodes; '' while editing `_globals` itself so it's analyzed directly.
+      const getAmbientSource = () =>
+        treeState.state.selectedId === GLOBALS_SELECTION_ID ? '' : treeState.state.tree.globalsSource;
+      editor.setAnalysisExtensions(buildAnalysisExtensions(() => !preludeEjected, getAmbientSource));
     });
 
     import('../../../geoscript/gizmoExtensions').then(
@@ -1200,6 +1321,7 @@
       meshCounts = computeMeshCounts(tree, directCounts);
 
       lastGizmos = result.gizmos;
+      hasAnyGizmos = result.gizmos.length > 0;
       publishGizmoReadouts();
       // GC orphaned handles: keep ids the channel reported this run (covers dynamic names
       // the static scan can't see), plus the static handle ids in each node's source
@@ -1335,13 +1457,38 @@
     });
   };
 
+  // Tree mode: the prelude is render-only (default lights), and renders fired in `_globals`
+  // (ambient scope) are dropped — so it has to land in a real scene-eval'd node. The root is
+  // that node; dump it there and focus it so it's clear where the code went.
+  const ejectPreludeIntoRoot = async () => {
+    const prelude = await repl.getPrelude();
+    const rootId = treeState.state.tree.rootId;
+    const cur = treeState.state.tree.nodes[rootId]?.source ?? '';
+    const newSource = prelude + '\n//-- end prelude\n\n' + cur;
+    treeState.setSource(rootId, newSource);
+    treeState.setSelected(rootId);
+    if (editorView) {
+      // Force the swap even if the root was already selected (the doc-swap effect no-ops then).
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: newSource },
+        selection: { anchor: 0 },
+      });
+      resetEditorHistory?.();
+      lastSwappedSelection = rootId;
+    }
+  };
+
   const togglePreludeEjected = async () => {
     if (!editorView) {
       return;
     }
 
     if (!preludeEjected) {
-      await ejectPrelude(editorView);
+      if (Object.keys(treeState.state.tree.nodes).length > 1) {
+        await ejectPreludeIntoRoot();
+      } else {
+        await ejectPrelude(editorView);
+      }
     }
     preludeEjected = !preludeEjected;
 
@@ -1443,6 +1590,10 @@
   const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
   const wrappedToggleLightHelpers = () => {
     lightHelpers = toggleLightHelpers(viz, renderedObjects, lightHelpers);
+  };
+  const toggleGizmoGhosts = () => {
+    showGizmoGhosts = !showGizmoGhosts;
+    localStorage['geoscript-gizmo-ghosts'] = showGizmoGhosts ? 'true' : 'false';
   };
 
   onMount(() => {
@@ -1596,6 +1747,9 @@
       recordingState={$recordingState}
       toggleAxisHelpers={wrappedToggleAxesHelpers}
       toggleLightHelpers={wrappedToggleLightHelpers}
+      {toggleGizmoGhosts}
+      {showGizmoGhosts}
+      gizmosExist={hasAnyGizmos}
       {cameraProjection}
       toggleProjection={handleToggleProjection}
       {isDirty}
@@ -1725,6 +1879,9 @@
             recordingState={$recordingState}
             toggleAxisHelpers={wrappedToggleAxesHelpers}
             toggleLightHelpers={wrappedToggleLightHelpers}
+            {toggleGizmoGhosts}
+            {showGizmoGhosts}
+            gizmosExist={hasAnyGizmos}
             {cameraProjection}
             toggleProjection={handleToggleProjection}
             {isDirty}

@@ -4,7 +4,7 @@ use geoscript::{
     fn_defs::{fn_sigs, FnDef},
     FUNCTION_ALIASES,
   },
-  parse_program_maybe_with_prelude, EvalCtx,
+  parse_program_maybe_with_prelude_and_ambient, EvalCtx,
 };
 use nanoserde::SerJson;
 
@@ -131,10 +131,15 @@ impl AnalysisCtx {
     None
   }
 
-  /// Parse source code and run full analysis, returning diagnostics.
-  pub fn analyze(&self, src: &str, include_prelude: bool) -> AnalysisResult {
-    let parse_result =
-      parse_program_maybe_with_prelude(&self.eval_ctx, src.to_owned(), include_prelude);
+  /// Parse source code and run full analysis, returning diagnostics. `ambient_src` is an
+  /// extra always-in-scope preamble (the Geotoy `_globals` node); pass `""` when there is none.
+  pub fn analyze(&self, src: &str, include_prelude: bool, ambient_src: &str) -> AnalysisResult {
+    let parse_result = parse_program_maybe_with_prelude_and_ambient(
+      &self.eval_ctx,
+      src.to_owned(),
+      include_prelude,
+      ambient_src,
+    );
 
     match parse_result {
       Err(err) => {
@@ -164,8 +169,9 @@ impl AnalysisCtx {
     target_line: u32,
     target_col: u32,
     include_prelude: bool,
+    ambient_src: &str,
   ) -> Option<HoverInfo> {
-    hover::hover(self, src, target_line, target_col, include_prelude)
+    hover::hover(self, src, target_line, target_col, include_prelude, ambient_src)
   }
 
   /// Get completions at a given source location.
@@ -175,8 +181,9 @@ impl AnalysisCtx {
     target_line: u32,
     target_col: u32,
     include_prelude: bool,
+    ambient_src: &str,
   ) -> Vec<CompletionItem> {
-    completions::completions(self, src, target_line, target_col, include_prelude)
+    completions::completions(self, src, target_line, target_col, include_prelude, ambient_src)
   }
 
   /// Get the definition location for the symbol at the given position.
@@ -186,8 +193,9 @@ impl AnalysisCtx {
     target_line: u32,
     target_col: u32,
     include_prelude: bool,
+    ambient_src: &str,
   ) -> Option<DefinitionLocation> {
-    goto::goto_definition(self, src, target_line, target_col, include_prelude)
+    goto::goto_definition(self, src, target_line, target_col, include_prelude, ambient_src)
   }
 }
 
@@ -197,7 +205,7 @@ mod tests {
 
   fn analyze(src: &str) -> AnalysisResult {
     let ctx = AnalysisCtx::new();
-    ctx.analyze(src, false)
+    ctx.analyze(src, false, "")
   }
 
   #[test]
@@ -219,6 +227,49 @@ mod tests {
         .iter()
         .any(|d| d.message.contains("Undefined variable `x`")),
       "Expected undefined variable diagnostic for `x`, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_ambient_globals_are_in_scope() {
+    let ctx = AnalysisCtx::new();
+    // Without ambient, the `_globals` helper reads as undefined...
+    assert!(ctx
+      .analyze("y = helper(1)", false, "")
+      .diagnostics
+      .iter()
+      .any(|d| d.message.contains("Undefined variable `helper`")));
+    // ...but with the `_globals` source supplied as ambient, it resolves cleanly.
+    let with_globals = ctx.analyze("y = helper(1)", false, "helper = |x| x + 1");
+    assert!(
+      with_globals.diagnostics.is_empty(),
+      "expected no diagnostics with ambient globals, got: {:?}",
+      with_globals.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_ambient_does_not_shift_user_diagnostic_lines() {
+    let ctx = AnalysisCtx::new();
+    // A two-line ambient block must not offset the reported line of a user-source error.
+    let result = ctx.analyze("y = boom", false, "a = 1\nb = 2");
+    let diag = result
+      .diagnostics
+      .iter()
+      .find(|d| d.message.contains("Undefined variable `boom`"))
+      .expect("expected undefined diagnostic for `boom`");
+    assert_eq!(diag.start_line, 1, "got: {diag:?}");
+  }
+
+  #[test]
+  fn test_ambient_region_diagnostics_suppressed() {
+    let ctx = AnalysisCtx::new();
+    // An error inside the ambient block itself isn't surfaced (we're editing another node).
+    let result = ctx.analyze("y = 1", false, "a = nonexistent");
+    assert!(
+      result.diagnostics.is_empty(),
+      "ambient-region diagnostics should be suppressed, got: {:?}",
       result.diagnostics
     );
   }
@@ -302,7 +353,7 @@ y = x
   fn test_hover_builtin() {
     let ctx = AnalysisCtx::new();
     let src = "m = box()";
-    let hover = ctx.hover(src, 1, 5, false);
+    let hover = ctx.hover(src, 1, 5, false, "");
     assert!(hover.is_some(), "Expected hover info for `box`");
     let hover = hover.unwrap();
     assert!(
@@ -316,7 +367,7 @@ y = x
   fn test_goto_definition() {
     let ctx = AnalysisCtx::new();
     let src = "x = 10\ny = x + 1";
-    let def = ctx.goto_definition(src, 2, 5, false);
+    let def = ctx.goto_definition(src, 2, 5, false, "");
     assert!(def.is_some(), "Expected definition location for `x`");
     let def = def.unwrap();
     assert_eq!(def.start_line, 1, "Expected definition on line 1");
@@ -375,7 +426,7 @@ y = x
     let ctx = AnalysisCtx::new();
     // "m = box(size=2)" — hover on "size" at col 9
     let src = "m = box(size=2)";
-    let hover = ctx.hover(src, 1, 9, false);
+    let hover = ctx.hover(src, 1, 9, false, "");
     assert!(hover.is_some(), "Expected hover info for kwarg `size`");
     let hover = hover.unwrap();
     assert!(
@@ -390,7 +441,7 @@ y = x
     let ctx = AnalysisCtx::new();
 
     // Hover on `m` definition — should show inferred type from box() → Mesh
-    let hover = ctx.hover("m = box()", 1, 1, false).unwrap();
+    let hover = ctx.hover("m = box()", 1, 1, false, "").unwrap();
     assert!(
       hover.content.contains("mesh"),
       "Expected type 'mesh' in hover for box() result, got: {}",
@@ -398,7 +449,7 @@ y = x
     );
 
     // Hover on literal assignment — should show Int
-    let hover = ctx.hover("x = 42", 1, 1, false).unwrap();
+    let hover = ctx.hover("x = 42", 1, 1, false, "").unwrap();
     assert!(
       hover.content.contains("int"),
       "Expected type 'int' in hover, got: {}",
@@ -406,7 +457,7 @@ y = x
     );
 
     // Hover on reference to a typed variable
-    let hover = ctx.hover("m = box()\nn = m", 2, 5, false).unwrap();
+    let hover = ctx.hover("m = box()\nn = m", 2, 5, false, "").unwrap();
     assert!(
       hover.content.contains("mesh"),
       "Expected type 'mesh' in hover for reference to m, got: {}",
@@ -414,7 +465,7 @@ y = x
     );
 
     // Variable assigned from chain — type propagates
-    let hover = ctx.hover("v = vec3(1, 0, 0)", 1, 1, false).unwrap();
+    let hover = ctx.hover("v = vec3(1, 0, 0)", 1, 1, false, "").unwrap();
     assert!(
       hover.content.contains("vec3"),
       "Expected type 'vec3' in hover, got: {}",
@@ -427,7 +478,7 @@ y = x
     let ctx = AnalysisCtx::new();
     // cursor inside box() call — should get kwarg suggestions
     let src = "m = box()";
-    let completions = ctx.completions(src, 1, 9, false);
+    let completions = ctx.completions(src, 1, 9, false, "");
     let kwarg_labels: Vec<&str> = completions
       .iter()
       .filter(|c| c.kind == "property")
@@ -450,7 +501,7 @@ y = x
       "s = 0..3 -> |i| box()\nm = fold(box(), union, s)",
       "s = 0..3 -> |i| box()\nm = s | fold(box(), union)",
     ] {
-      let hover = ctx.hover(src, 2, 1, false).expect("hover for `m`");
+      let hover = ctx.hover(src, 2, 1, false, "").expect("hover for `m`");
       assert!(
         hover.content.contains("mesh"),
         "expected `mesh` result for `{src}`, got: {}",
@@ -459,7 +510,7 @@ y = x
     }
 
     // A bare `reduce(union)` is a partial application, not a Mesh.
-    let hover = ctx.hover("m = reduce(union)", 1, 1, false).expect("hover for `m`");
+    let hover = ctx.hover("m = reduce(union)", 1, 1, false, "").expect("hover for `m`");
     assert!(
       !hover.content.contains("mesh"),
       "expected partial application (not `mesh`) for `reduce(union)`, got: {}",
@@ -468,7 +519,7 @@ y = x
 
     // A shadowing local `reduce` must not be treated as the builtin.
     let hover = ctx
-      .hover("reduce = |f, s| 1\nm = reduce(union, s)", 2, 1, false)
+      .hover("reduce = |f, s| 1\nm = reduce(union, s)", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       !hover.content.contains("mesh"),
@@ -482,7 +533,7 @@ y = x
     let ctx = AnalysisCtx::new();
     // rhs is a non-callable Mesh, so `|` is a boolean union → Mesh.
     let hover = ctx
-      .hover("a = box()\nb = box()\nc = a | b", 3, 1, false)
+      .hover("a = box()\nb = box()\nc = a | b", 3, 1, false, "")
       .expect("hover for `c`");
     assert!(
       hover.content.contains("mesh"),
@@ -504,7 +555,7 @@ y = x
     let ctx = AnalysisCtx::new();
     // `m = box() | scale(2)` — pipeline should produce Mesh
     let hover = ctx
-      .hover("m = box() | scale(2)", 1, 1, false)
+      .hover("m = box() | scale(2)", 1, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),
@@ -523,6 +574,7 @@ y = x
         1,
         1,
         false,
+        "",
       )
       .expect("hover for `m`");
     assert!(
@@ -542,6 +594,7 @@ y = x
         2,
         1,
         false,
+        "",
       )
       .expect("hover for `w`");
     assert!(
@@ -551,7 +604,7 @@ y = x
     );
 
     let hover = ctx
-      .hover("nums = 0..10\ns = nums -> |x| x", 2, 1, false)
+      .hover("nums = 0..10\ns = nums -> |x| x", 2, 1, false, "")
       .expect("hover for `s`");
     assert!(
       hover.content.contains("seq"),
@@ -588,7 +641,7 @@ out = (walls)
   #[test]
   fn test_hover_binop_int_addition() {
     let ctx = AnalysisCtx::new();
-    let hover = ctx.hover("x = 1 + 2", 1, 1, false).expect("hover for `x`");
+    let hover = ctx.hover("x = 1 + 2", 1, 1, false, "").expect("hover for `x`");
     assert!(
       hover.content.contains("int"),
       "expected `int` type for int+int, got: {}",
@@ -600,7 +653,7 @@ out = (walls)
   fn test_hover_binop_vec3_addition() {
     let ctx = AnalysisCtx::new();
     let hover = ctx
-      .hover("v = vec3(1, 0, 0) + vec3(0, 1, 0)", 1, 1, false)
+      .hover("v = vec3(1, 0, 0) + vec3(0, 1, 0)", 1, 1, false, "")
       .expect("hover for `v`");
     assert!(
       hover.content.contains("vec3"),
@@ -614,7 +667,7 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // `v.x` on a vec3 → float
     let hover = ctx
-      .hover("v = vec3(1, 0, 0)\nx = v.x", 2, 1, false)
+      .hover("v = vec3(1, 0, 0)\nx = v.x", 2, 1, false, "")
       .expect("hover for `x`");
     assert!(
       hover.content.contains("float"),
@@ -624,7 +677,7 @@ out = (walls)
 
     // `v.xy` → vec2
     let hover = ctx
-      .hover("v = vec3(1, 0, 0)\nxy = v.xy", 2, 1, false)
+      .hover("v = vec3(1, 0, 0)\nxy = v.xy", 2, 1, false, "")
       .expect("hover for `xy`");
     assert!(
       hover.content.contains("vec2"),
@@ -694,7 +747,7 @@ out = (walls)
     // `f = translate(vec3(1, 0, 0))` — translate needs more args, so f is a partial app.
     // Hover on `f` should describe the partial application and remaining params.
     let hover = ctx
-      .hover("f = translate(vec3(1, 0, 0))", 1, 1, false)
+      .hover("f = translate(vec3(1, 0, 0))", 1, 1, false, "")
       .expect("hover for `f`");
     assert!(
       hover.content.contains("partial application"),
@@ -719,7 +772,7 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // f = translate(vec3); m = f(box())  — calling the PAF should yield Mesh
     let hover = ctx
-      .hover("f = translate(vec3(1, 0, 0))\nm = f(box())", 2, 1, false)
+      .hover("f = translate(vec3(1, 0, 0))\nm = f(box())", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),
@@ -733,7 +786,7 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // f = translate(vec3); m = box() | f  — piping into the PAF should yield Mesh
     let hover = ctx
-      .hover("f = translate(vec3(1, 0, 0))\nm = box() | f", 2, 1, false)
+      .hover("f = translate(vec3(1, 0, 0))\nm = box() | f", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),
@@ -767,6 +820,7 @@ out = (walls)
         2,
         1,
         false,
+        "",
       )
       .expect("hover for `m`");
     assert!(
@@ -783,7 +837,7 @@ out = (walls)
     // Output should include the per-argument descriptions ("Width along the X axis" etc.) and
     // should NOT include an "Overload N:" header since only the matched sig is rendered.
     let hover = ctx
-      .hover("m = box(1, 1, 1)", 1, 5, false)
+      .hover("m = box(1, 1, 1)", 1, 5, false, "")
       .expect("hover for `box` call");
     assert!(
       hover.content.contains("Width along the X axis"),
@@ -802,7 +856,7 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // No matched sig (undefined ident → Unknown arg type) — fall back to the all-overloads view.
     let hover = ctx
-      .hover("m = box(unknown_var)", 1, 5, false)
+      .hover("m = box(unknown_var)", 1, 5, false, "")
       .expect("hover for `box` call");
     // The fallback all-overloads view does NOT include the "Arguments:" header that the
     // focused renderer produces.
@@ -867,7 +921,7 @@ my_fn = |x: int|: int {
     let ctx = AnalysisCtx::new();
     // Calling a user closure should produce hover info showing its return type.
     let hover = ctx
-      .hover("f = |x: int|: int { x + 1 }\nm = f(3)", 2, 1, false)
+      .hover("f = |x: int|: int { x + 1 }\nm = f(3)", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("int"),
@@ -880,7 +934,7 @@ my_fn = |x: int|: int {
   fn test_pipeline_typed_closure_resolves_to_return_type() {
     let ctx = AnalysisCtx::new();
     let hover = ctx
-      .hover("f = |x: int|: int { x + 1 }\nm = 3 | f", 2, 1, false)
+      .hover("f = |x: int|: int { x + 1 }\nm = 3 | f", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("int"),
@@ -893,7 +947,7 @@ my_fn = |x: int|: int {
   fn test_hover_closure_var_shows_callable_signature() {
     let ctx = AnalysisCtx::new();
     let hover = ctx
-      .hover("f = |x: int|: int { x + 1 }", 1, 1, false)
+      .hover("f = |x: int|: int { x + 1 }", 1, 1, false, "")
       .expect("hover for `f`");
     assert!(
       hover.content.contains("fn(") && hover.content.contains("→"),
@@ -912,7 +966,7 @@ my_fn = |x: int|: int {
     let ctx = AnalysisCtx::new();
     // No explicit return type annotation — inferred from the body's tail expression.
     let hover = ctx
-      .hover("f = |x: int| x + 1\nm = f(3)", 2, 1, false)
+      .hover("f = |x: int| x + 1\nm = f(3)", 2, 1, false, "")
       .expect("hover for `m`");
     assert!(
       hover.content.contains("int"),
@@ -926,7 +980,7 @@ my_fn = |x: int|: int {
     let ctx = AnalysisCtx::new();
     // A block's type is the type of its final expression statement.
     let hover = ctx
-      .hover("x = { a = 10\n a + 1 }", 1, 1, false)
+      .hover("x = { a = 10\n a + 1 }", 1, 1, false, "")
       .expect("hover for `x`");
     assert!(
       hover.content.contains("int"),
@@ -940,7 +994,7 @@ my_fn = |x: int|: int {
     let ctx = AnalysisCtx::new();
     // if-else branches with different types → Union
     let hover = ctx
-      .hover(r#"x = if true { 1 } else { "s" }"#, 1, 1, false)
+      .hover(r#"x = if true { 1 } else { "s" }"#, 1, 1, false, "")
       .expect("hover for `x`");
     // display_str for union joins variant names with ` | `
     assert!(
@@ -970,7 +1024,7 @@ my_fn = |x: int|: int {
     let ctx = AnalysisCtx::new();
     // `-x` where x is int → int
     let hover = ctx
-      .hover("x = 5\ny = -x", 2, 1, false)
+      .hover("x = 5\ny = -x", 2, 1, false, "")
       .expect("hover for `y`");
     assert!(
       hover.content.contains("int"),

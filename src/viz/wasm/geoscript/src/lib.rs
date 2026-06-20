@@ -433,7 +433,11 @@ impl Callable {
             | "randi"
             | "assert"
             | "set_rng_seed"
+            | "set_sharp_angle_threshold"
+            | "set_curve_angle_threshold"
             | "gizmo"
+            | "gizmo2d"
+            | "gizmo1d"
             | "gizmo_transform"
             | "transform_gizmo"
         )
@@ -1549,6 +1553,10 @@ pub struct RenderedGizmo {
   /// vec3 `absolute=` kwarg (transform handles are always absolute). Lets the host
   /// resolve delta-vs-absolute without re-parsing source.
   pub absolute: bool,
+  /// Per-axis drag mask; `gizmo2d`/`gizmo1d` restrict the live gizmo to a subset.
+  pub axes: [bool; 3],
+  /// Per-gizmo ghost-render override; `None` defers to the host's global setting.
+  pub ghost: Option<bool>,
 }
 
 type RenderedGizmos = AppendOnlyBuffer<RenderedGizmo>;
@@ -1799,7 +1807,14 @@ impl SourceMap {
       Some(triple) => triple,
       None => return (0, 0),
     };
-    (line.saturating_sub(prelude), col)
+    // Locations inside the prepended prelude/ambient region collapse to the (0, 0) sentinel
+    // so diagnostics there are dropped (callers guard on `line == 0 && col == 0`).
+    let adjusted = line.saturating_sub(prelude);
+    if adjusted == 0 {
+      (0, 0)
+    } else {
+      (adjusted, col)
+    }
   }
 }
 
@@ -1865,6 +1880,8 @@ pub struct EvalCtx {
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
+  /// Default `curve_angle_degrees` for discretizing continuous path features when the kwarg is omitted.
+  pub default_curve_angle_degrees: RefCell<f32>,
   pub const_eval_cache: RefCell<ConstEvalCache>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
   scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
@@ -1939,6 +1956,7 @@ impl Default for EvalCtx {
       textures: FxHashSet::default(),
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
+      default_curve_angle_degrees: RefCell::new(1.0),
       const_eval_cache: RefCell::new(ConstEvalCache::default()),
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
@@ -3198,6 +3216,13 @@ impl EvalCtx {
     id
   }
 
+  /// A `curve_angle_degrees` arg: the explicit value if given, else the runtime default
+  /// (`set_curve_angle_threshold`, seeded by the prelude).
+  pub fn resolve_curve_angle_degrees(&self, v: &Value) -> f32 {
+    v.as_float()
+      .unwrap_or_else(|| *self.default_curve_angle_degrees.borrow())
+  }
+
   /// Content hash of the injected value a module would see for `handle_id`, used to
   /// validate gizmo-read cache entries. A missing value hashes to a stable sentinel
   /// (the call fell back to its source default, which `source_hash` already covers).
@@ -3729,15 +3754,39 @@ pub fn parse_program_maybe_with_prelude(
   src: String,
   include_prelude: bool,
 ) -> Result<Program, ErrorStack> {
-  let src = if include_prelude {
-    let prelude_line_count = PRELUDE.lines().count();
-    ctx.source_map.borrow_mut().prelude_line_count = prelude_line_count as u32 + 1; // one extra for the newline
-    format!("{PRELUDE}\n{src}")
-  } else {
-    ctx.source_map.borrow_mut().prelude_line_count = 0;
+  parse_program_maybe_with_prelude_and_ambient(ctx, src, include_prelude, "")
+}
+
+/// Like `parse_program_maybe_with_prelude`, but also prepends an `ambient_src` block (e.g. a
+/// Geotoy `_globals` node) after the prelude so its definitions are in scope. The combined
+/// prepended-line count is folded into `prelude_line_count`, so locations in the prelude/ambient
+/// regions collapse to line 0 (and diagnostics there are dropped) while user-source lines map back.
+pub fn parse_program_maybe_with_prelude_and_ambient(
+  ctx: &EvalCtx,
+  src: String,
+  include_prelude: bool,
+  ambient_src: &str,
+) -> Result<Program, ErrorStack> {
+  let mut prefix = String::new();
+  if include_prelude {
+    prefix.push_str(PRELUDE);
+    prefix.push('\n');
+  }
+  if !ambient_src.is_empty() {
+    prefix.push_str(ambient_src);
+    prefix.push('\n');
+  }
+  // The user source begins right after the prefix's last newline, so the prefix's newline
+  // count is exactly the line offset (robust whether or not each block ends in a newline).
+  let offset = prefix.matches('\n').count() as u32;
+  ctx.source_map.borrow_mut().prelude_line_count = offset;
+  let full = if prefix.is_empty() {
     src
+  } else {
+    prefix.push_str(&src);
+    prefix
   };
-  parse_program_src(ctx, &src)
+  parse_program_src(ctx, &full)
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
@@ -6352,6 +6401,114 @@ fn test_gizmo_transform_returns_injected_mat4_and_applies() {
     panic!("expected mat4");
   };
   assert_eq!(m[(0, 3)], 7.);
+}
+
+#[test]
+fn test_gizmo2d_projects_to_vec2_and_records_mask() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("node".to_string(), "export p = gizmo2d(\"g\")".to_string());
+  inject_gizmo(&ctx, "node", "g", Value::Vec3(Vec3::new(1., 2., 3.)));
+
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  // Default axes XZ → the vec2 is (x, z), dropping y.
+  let Value::Vec2(v) = ctx.get_global("result").unwrap() else {
+    panic!("expected vec2");
+  };
+  assert_eq!(v, Vec2::new(1., 3.));
+
+  let gizmos = ctx.rendered_gizmos.inner.borrow();
+  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [true, false, true]);
+}
+
+#[test]
+fn test_gizmo1d_projects_to_num_with_y_default() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("node".to_string(), "export p = gizmo1d(\"g\")".to_string());
+  inject_gizmo(&ctx, "node", "g", Value::Vec3(Vec3::new(1., 2., 3.)));
+
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert_eq!(ctx.get_global("result").unwrap().as_float().unwrap(), 2.);
+  let gizmos = ctx.rendered_gizmos.inner.borrow();
+  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [false, true, false]);
+}
+
+/// `axes=` override + the `giz2d` alias both resolve to the same masked, projected result.
+#[test]
+fn test_gizmo2d_axes_override_via_alias() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("node".to_string(), "export p = giz2d(\"g\", axes=\"xy\")".to_string());
+  inject_gizmo(&ctx, "node", "g", Value::Vec3(Vec3::new(1., 2., 3.)));
+
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  let Value::Vec2(v) = ctx.get_global("result").unwrap() else {
+    panic!("expected vec2");
+  };
+  assert_eq!(v, Vec2::new(1., 2.));
+  let gizmos = ctx.rendered_gizmos.inner.borrow();
+  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [true, true, false]);
+}
+
+#[test]
+fn test_gizmo_ghost_kwarg_passthrough() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export a = gizmo(\"on\", ghost=true)\nexport b = gizmo(\"off\", ghost=false)\nexport c = gizmo(\"def\")"
+      .to_string(),
+  );
+  parse_and_eval_program_with_ctx(
+    "import { a, b, c } from \"node\"\nra = a\nrb = b\nrc = c".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  let gizmos = ctx.rendered_gizmos.inner.borrow();
+  let ghost = |id: &str| gizmos.iter().find(|g| g.handle_id == id).unwrap().ghost;
+  assert_eq!(ghost("on"), Some(true));
+  assert_eq!(ghost("off"), Some(false));
+  assert_eq!(ghost("def"), None);
+}
+
+#[test]
+fn test_set_curve_angle_threshold_sets_default_and_explicit_overrides() {
+  let ctx = EvalCtx::default();
+  assert_eq!(ctx.resolve_curve_angle_degrees(&Value::Nil), 1.0);
+
+  parse_and_eval_program_with_ctx("set_curve_angle_threshold(12)".to_string(), &ctx, false).unwrap();
+  assert_eq!(*ctx.default_curve_angle_degrees.borrow(), 12.0);
+  // Omitted (nil) follows the runtime default; an explicit value overrides it.
+  assert_eq!(ctx.resolve_curve_angle_degrees(&Value::Nil), 12.0);
+  assert_eq!(ctx.resolve_curve_angle_degrees(&Value::Float(3.0)), 3.0);
+}
+
+#[test]
+fn test_set_curve_angle_threshold_rejects_nonpositive() {
+  let ctx = EvalCtx::default();
+  assert!(parse_and_eval_program_with_ctx("set_curve_angle_threshold(0)".to_string(), &ctx, false).is_err());
 }
 
 #[test]

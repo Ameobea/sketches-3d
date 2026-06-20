@@ -15,26 +15,39 @@ const methods = {
   init: async () => {
     await ensureInit();
   },
-  analyze: async (src: string, includePrelude: boolean): Promise<string> => {
+  analyze: async (src: string, includePrelude: boolean, ambientSrc: string): Promise<string> => {
     await ensureInit();
-    return Analysis.analysis_analyze(ctxPtr!, src, includePrelude);
+    return Analysis.analysis_analyze(ctxPtr!, src, includePrelude, ambientSrc);
   },
-  hover: async (src: string, line: number, col: number, includePrelude: boolean): Promise<string> => {
+  hover: async (
+    src: string,
+    line: number,
+    col: number,
+    includePrelude: boolean,
+    ambientSrc: string
+  ): Promise<string> => {
     await ensureInit();
-    return Analysis.analysis_hover(ctxPtr!, src, line, col, includePrelude);
+    return Analysis.analysis_hover(ctxPtr!, src, line, col, includePrelude, ambientSrc);
   },
-  completions: async (src: string, line: number, col: number, includePrelude: boolean): Promise<string> => {
+  completions: async (
+    src: string,
+    line: number,
+    col: number,
+    includePrelude: boolean,
+    ambientSrc: string
+  ): Promise<string> => {
     await ensureInit();
-    return Analysis.analysis_completions(ctxPtr!, src, line, col, includePrelude);
+    return Analysis.analysis_completions(ctxPtr!, src, line, col, includePrelude, ambientSrc);
   },
   gotoDefinition: async (
     src: string,
     line: number,
     col: number,
-    includePrelude: boolean
+    includePrelude: boolean,
+    ambientSrc: string
   ): Promise<string> => {
     await ensureInit();
-    return Analysis.analysis_goto_definition(ctxPtr!, src, line, col, includePrelude);
+    return Analysis.analysis_goto_definition(ctxPtr!, src, line, col, includePrelude, ambientSrc);
   },
 };
 

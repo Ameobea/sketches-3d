@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { scanGizmoHandleIds, scanSource } from './gizmoScan';
+import { scanGizmoHandleIds, scanGizmoHandleOrder, scanSource } from './gizmoScan';
 
 test('named call: handleId from the string literal, vec3 kind, name range recorded', () => {
   const src = 'pos = gizmo("cut1")';
@@ -57,4 +57,41 @@ test('matches by callee name even when shadowed (runtime channel is authoritativ
 test('scanGizmoHandleIds returns static ids only, excluding dynamic ones', () => {
   const ids = scanGizmoHandleIds('a = gizmo("keep")\nb = gizmo(dynVar)\nc = gizmo()');
   assert.deepEqual([...ids].sort(), ['@0', 'keep']);
+});
+
+test('arity reflects the gizmo variant (3 / 2 / 1)', () => {
+  assert.equal(scanSource('a = gizmo("v")')[0].arity, 3);
+  assert.equal(scanSource('a = gizmo2d("v")')[0].arity, 2);
+  assert.equal(scanSource('a = gizmo1d("v")')[0].arity, 1);
+  assert.equal(scanSource('a = gizmo_transform("v")')[0].arity, 3);
+});
+
+test('short aliases are recognized with matching kind/arity', () => {
+  assert.deepEqual(
+    [
+      scanSource('a = giz("v")')[0],
+      scanSource('a = giz2d("v")')[0],
+      scanSource('a = giz1d("v")')[0],
+      scanSource('a = giz_tfn("v")')[0],
+    ].map(s => [s.kind, s.arity]),
+    [
+      ['vec3', 3],
+      ['vec3', 2],
+      ['vec3', 1],
+      ['transform', 3],
+    ]
+  );
+});
+
+test('unnamed @N ids are shared across the whole gizmo family in source order', () => {
+  const sites = scanSource('a = gizmo()\nb = gizmo2d()\nc = gizmo1d()');
+  assert.deepEqual(
+    sites.map(s => s.handleId),
+    ['@0', '@1', '@2']
+  );
+});
+
+test('scanGizmoHandleOrder lists static handles in document order (drives colors)', () => {
+  const order = scanGizmoHandleOrder('a = gizmo("x")\nb = gizmo(dynVar)\nc = gizmo2d("y")\nd = gizmo1d()');
+  assert.deepEqual(order, ['x', 'y', '@0']);
 });

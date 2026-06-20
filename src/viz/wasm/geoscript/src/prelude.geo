@@ -14,5 +14,3 @@ dir_light(
 )
   | trans(-20, 50, 0)
   | render;
-
-set_sharp_angle_threshold(45.8366)

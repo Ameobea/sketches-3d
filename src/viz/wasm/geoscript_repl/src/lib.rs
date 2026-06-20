@@ -248,6 +248,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   geoscript::reset_async_dep_bits();
 
   *ctx.geo_ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
+  *ctx.geo_ctx.default_curve_angle_degrees.borrow_mut() = 1.0;
 
   // TODO: drop `MeshHandle`s no longer referenced by either the const-eval
   // cache or the module-exports cache.
@@ -622,6 +623,8 @@ struct RenderedGizmoWire {
   origin: Vec<f32>,
   value: Vec<f32>,
   absolute: bool,
+  axes: Vec<bool>,
+  ghost: Option<bool>,
 }
 
 #[wasm_bindgen]
@@ -652,6 +655,8 @@ pub fn geoscript_repl_get_rendered_gizmo(ctx: *const GeoscriptReplCtx, gizmo_ix:
     origin: vec![g.resolved_origin.x, g.resolved_origin.y, g.resolved_origin.z],
     value,
     absolute: g.absolute,
+    axes: g.axes.to_vec(),
+    ghost: g.ghost,
   }
   .serialize_json()
 }

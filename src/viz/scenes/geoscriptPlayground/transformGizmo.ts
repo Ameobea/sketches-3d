@@ -110,6 +110,7 @@ export class TransformGizmo {
       // fresh without rebuilding — restoring the equal-ref dedupe the instance path has.
       if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
       this.attachedRef = ref;
+      this.gizmo.setAxisMask(resolve(ref.nodeId, ref.name)?.axes ?? [true, true, true]);
       this.gizmo.setTarget(
         new HandleTarget(ref.nodeId, ref.name, () => resolve(ref.nodeId, ref.name), this.getTree, {
           onChange: (_phase, nodeId, handleId, value) =>
@@ -133,6 +134,7 @@ export class TransformGizmo {
 
     if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
     this.attachedRef = ref;
+    this.gizmo.setAxisMask([true, true, true]);
     this.gizmo.setTarget(
       new InstanceTarget(ref.nodeId, ref.instanceId, this.getTree, {
         onChange: (_phase, nodeId, instanceId, transform) =>

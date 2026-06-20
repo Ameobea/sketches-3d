@@ -1,5 +1,5 @@
 use fxhash::FxHashSet;
-use geoscript::{builtins::fn_defs::fn_sigs, parse_program_maybe_with_prelude};
+use geoscript::{builtins::fn_defs::fn_sigs, parse_program_maybe_with_prelude_and_ambient};
 
 use crate::{
   analysis::Analysis, format::format_signature_oneliner, source_scan, AnalysisCtx, CompletionItem,
@@ -12,9 +12,14 @@ pub(crate) fn completions(
   target_line: u32,
   target_col: u32,
   include_prelude: bool,
+  ambient_src: &str,
 ) -> Vec<CompletionItem> {
-  let parse_result =
-    parse_program_maybe_with_prelude(&ctx.eval_ctx, src.to_owned(), include_prelude);
+  let parse_result = parse_program_maybe_with_prelude_and_ambient(
+    &ctx.eval_ctx,
+    src.to_owned(),
+    include_prelude,
+    ambient_src,
+  );
 
   let mut items = Vec::new();
 

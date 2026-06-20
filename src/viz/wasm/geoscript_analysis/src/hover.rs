@@ -1,4 +1,4 @@
-use geoscript::{parse_program_maybe_with_prelude, ty::AbstractType, ArgType};
+use geoscript::{parse_program_maybe_with_prelude_and_ambient, ty::AbstractType, ArgType};
 
 use crate::{
   analysis::Analysis,
@@ -12,9 +12,14 @@ pub(crate) fn hover(
   target_line: u32,
   target_col: u32,
   include_prelude: bool,
+  ambient_src: &str,
 ) -> Option<HoverInfo> {
-  let parse_result =
-    parse_program_maybe_with_prelude(&ctx.eval_ctx, src.to_owned(), include_prelude);
+  let parse_result = parse_program_maybe_with_prelude_and_ambient(
+    &ctx.eval_ctx,
+    src.to_owned(),
+    include_prelude,
+    ambient_src,
+  );
 
   let program = parse_result.ok()?;
   let analysis = Analysis::build(&ctx.eval_ctx, &program);

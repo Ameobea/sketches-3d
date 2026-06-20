@@ -1867,6 +1867,25 @@ fn | call | print
   optimize_ast(&ctx, &mut ast).unwrap();
 }
 
+/// Side-effectful setters must survive const folding: their effect must run at eval time so it
+/// takes hold during tree-mode module evaluation, not be baked away at fold time (then lost to
+/// the per-run `reset`). Regressing `is_side_effectful` would silently fold these to `nil`.
+#[test]
+fn test_threshold_setters_not_const_folded() {
+  let ctx = EvalCtx::default();
+  for code in ["set_curve_angle_threshold(7)", "set_sharp_angle_threshold(30)"] {
+    let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+    optimize_ast(&ctx, &mut ast).unwrap();
+    let TopLevelStatement::Statement(Statement::Expr(expr)) = &ast.statements[0] else {
+      panic!("expected an expression statement for `{code}`, got: {:?}", ast.statements[0]);
+    };
+    assert!(
+      matches!(expr, Expr::Call { .. }),
+      "`{code}` must not be const-folded, got: {expr:?}"
+    );
+  }
+}
+
 #[test]
 fn test_builtin_alias_ident_optimizes_to_callable() {
   let ctx = EvalCtx::default();

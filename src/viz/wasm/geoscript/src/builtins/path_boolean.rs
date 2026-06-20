@@ -348,7 +348,7 @@ pub fn path_boolean_impl(
 
       let fill_rule_val = arg_refs[2].resolve(args, kwargs);
 
-      let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `{fn_name}`; expected > 0, found: {curve_angle_degrees}"
@@ -699,7 +699,7 @@ pub fn path_intersects_impl(
       let fill_rule_enum = FillRule::parse(arg_refs[2].resolve(args, kwargs), "path_intersects")?;
       let fill_rule = fill_rule_enum.to_clipper2_u32();
 
-      let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap() as f64;
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `path_intersects`; expected > 0, found: \

@@ -69,6 +69,10 @@ export interface RenderedGizmo {
   value: number[];
   /** vec3 `absolute=` (transform always true); host resolves delta-vs-absolute mode from this. */
   absolute: boolean;
+  /** Per-axis drag mask; `gizmo2d`/`gizmo1d` restrict the live gizmo to a subset. */
+  axes: [boolean, boolean, boolean];
+  /** Per-gizmo ghost override: `null` defers to the global setting; else forces on/off. */
+  ghost: boolean | null;
 }
 
 export type RenderedObject =

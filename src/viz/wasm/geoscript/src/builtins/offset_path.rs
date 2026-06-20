@@ -253,7 +253,7 @@ pub fn offset_path_impl(
       let join_angle_threshold = arg_refs[13].resolve(args, kwargs).as_float().unwrap() as f64;
       let chebyshev_spacing = arg_refs[14].resolve(args, kwargs).as_bool().unwrap();
       let simplify_epsilon = arg_refs[15].resolve(args, kwargs).as_float().unwrap() as f64;
-      let curve_angle_degrees = arg_refs[16].resolve(args, kwargs).as_float().unwrap() as f64;
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[16].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `offset_path`; expected > 0, found: \

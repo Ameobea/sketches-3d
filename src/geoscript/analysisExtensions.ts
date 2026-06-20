@@ -30,12 +30,17 @@ const posToLc = (doc: Text, pos: number): [line: number, col: number] => {
 };
 
 type GetIncludePrelude = () => boolean;
+/** Extra always-in-scope source (the Geotoy `_globals` node); `''` when none / editing it. */
+type GetAmbientSource = () => string;
 
 // ---------------------------------------------------------------------------
 // Semantic linter — reports undefined variables, wrong arg counts, etc.
 // ---------------------------------------------------------------------------
 
-const buildSemanticLinter = (getIncludePrelude: GetIncludePrelude): Extension =>
+const buildSemanticLinter = (
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource
+): Extension =>
   linter(
     async view => {
       let client: AnalysisClient;
@@ -46,7 +51,7 @@ const buildSemanticLinter = (getIncludePrelude: GetIncludePrelude): Extension =>
       }
 
       const src = view.state.doc.toString();
-      const result = await client.analyze(src, getIncludePrelude());
+      const result = await client.analyze(src, getIncludePrelude(), getAmbientSource());
 
       const diagnostics: Diagnostic[] = [];
       for (const d of result.diagnostics) {
@@ -82,7 +87,10 @@ const renderHoverContent = (content: string): string =>
     })
     .join('<br>');
 
-const buildHoverExtension = (getIncludePrelude: GetIncludePrelude): Extension =>
+const buildHoverExtension = (
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource
+): Extension =>
   hoverTooltip(async (view, pos) => {
     let client: AnalysisClient;
     try {
@@ -93,7 +101,7 @@ const buildHoverExtension = (getIncludePrelude: GetIncludePrelude): Extension =>
 
     const src = view.state.doc.toString();
     const [line, col] = posToLc(view.state.doc, pos);
-    const info = await client.hover(src, line, col, getIncludePrelude());
+    const info = await client.hover(src, line, col, getIncludePrelude(), getAmbientSource());
     if (!info) return null;
 
     const from = lcToPos(view.state.doc, info.start_line, info.start_col);
@@ -117,7 +125,7 @@ const buildHoverExtension = (getIncludePrelude: GetIncludePrelude): Extension =>
 // ---------------------------------------------------------------------------
 
 const buildCompletionSource =
-  (getIncludePrelude: GetIncludePrelude) =>
+  (getIncludePrelude: GetIncludePrelude, getAmbientSource: GetAmbientSource) =>
   async (context: CompletionContext): Promise<CompletionResult | null> => {
     const word = context.matchBefore(/\w*/);
     if (!context.explicit && (!word || word.text.length < 1)) return null;
@@ -131,7 +139,7 @@ const buildCompletionSource =
 
     const src = context.state.doc.toString();
     const [line, col] = posToLc(context.state.doc, context.pos);
-    const items = await client.completions(src, line, col, getIncludePrelude());
+    const items = await client.completions(src, line, col, getIncludePrelude(), getAmbientSource());
 
     return {
       from: word ? word.from : context.pos,
@@ -145,9 +153,12 @@ const buildCompletionSource =
     };
   };
 
-const buildCompletionExtension = (getIncludePrelude: GetIncludePrelude): Extension =>
+const buildCompletionExtension = (
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource
+): Extension =>
   autocompletion({
-    override: [buildCompletionSource(getIncludePrelude)],
+    override: [buildCompletionSource(getIncludePrelude, getAmbientSource)],
     activateOnTyping: true,
   });
 
@@ -155,18 +166,25 @@ const buildCompletionExtension = (getIncludePrelude: GetIncludePrelude): Extensi
 // Go-to-definition (F12 / Ctrl-click style)
 // ---------------------------------------------------------------------------
 
-const buildGoToDefinitionKeymap = (getIncludePrelude: GetIncludePrelude): Extension =>
+const buildGoToDefinitionKeymap = (
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource
+): Extension =>
   keymap.of([
     {
       key: 'F12',
       run: view => {
-        goToDefinition(view, getIncludePrelude);
+        goToDefinition(view, getIncludePrelude, getAmbientSource);
         return true;
       },
     },
   ]);
 
-const goToDefinition = async (view: EditorView, getIncludePrelude: GetIncludePrelude) => {
+const goToDefinition = async (
+  view: EditorView,
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource
+) => {
   let client: AnalysisClient;
   try {
     client = await getClient();
@@ -178,7 +196,7 @@ const goToDefinition = async (view: EditorView, getIncludePrelude: GetIncludePre
   const src = view.state.doc.toString();
   const [line, col] = posToLc(view.state.doc, pos);
 
-  const def = await client.gotoDefinition(src, line, col, getIncludePrelude());
+  const def = await client.gotoDefinition(src, line, col, getIncludePrelude(), getAmbientSource());
   if (!def) return;
 
   const targetPos = lcToPos(view.state.doc, def.start_line, def.start_col);
@@ -242,10 +260,13 @@ const hoverTheme = EditorView.baseTheme({
 // Public API — builds all analysis extensions as a single array
 // ---------------------------------------------------------------------------
 
-export const buildAnalysisExtensions = (getIncludePrelude: GetIncludePrelude): Extension[] => [
-  buildSemanticLinter(getIncludePrelude),
-  buildHoverExtension(getIncludePrelude),
-  buildCompletionExtension(getIncludePrelude),
-  buildGoToDefinitionKeymap(getIncludePrelude),
+export const buildAnalysisExtensions = (
+  getIncludePrelude: GetIncludePrelude,
+  getAmbientSource: GetAmbientSource = () => ''
+): Extension[] => [
+  buildSemanticLinter(getIncludePrelude, getAmbientSource),
+  buildHoverExtension(getIncludePrelude, getAmbientSource),
+  buildCompletionExtension(getIncludePrelude, getAmbientSource),
+  buildGoToDefinitionKeymap(getIncludePrelude, getAmbientSource),
   hoverTheme,
 ];

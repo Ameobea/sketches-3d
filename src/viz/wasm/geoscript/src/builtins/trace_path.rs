@@ -2608,7 +2608,7 @@ pub fn discretize_path_impl(
     ))
   })?;
 
-  let curve_angle_degrees = arg_refs[1].resolve(args, kwargs).as_float().unwrap() as f64;
+  let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[1].resolve(args, kwargs)) as f64;
   if curve_angle_degrees <= 0.0 {
     return Err(ErrorStack::new(format!(
       "Invalid curve_angle_degrees for `discretize_path`; expected > 0, found: \

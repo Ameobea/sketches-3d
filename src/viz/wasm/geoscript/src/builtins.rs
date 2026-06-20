@@ -105,6 +105,10 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "path_render" => "render_path",
   "skewer" => "subdivide_by_line",
   "transform_gizmo" => "gizmo_transform",
+  "giz" => "gizmo",
+  "giz_tfn" => "gizmo_transform",
+  "giz2d" => "gizmo2d",
+  "giz1d" => "gizmo1d",
 };
 
 #[derive(ConstParamTy, PartialEq, Eq, Clone, Copy)]
@@ -1231,6 +1235,23 @@ fn set_sharp_angle_threshold_impl(
   }
 }
 
+fn set_curve_angle_threshold_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let angle_degrees = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  if angle_degrees <= 0.0 {
+    return Err(ErrorStack::new(format!(
+      "Invalid angle_degrees for `set_curve_angle_threshold`; expected > 0, found: {angle_degrees}"
+    )));
+  }
+  ctx.default_curve_angle_degrees.replace(angle_degrees);
+  Ok(Value::Nil)
+}
+
 fn mesh_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -1966,7 +1987,7 @@ fn fan_fill_impl(
         Value::Vec2(v) => Some(Vec3::new(v.x, 0., v.y)),
         _ => None,
       };
-      let curve_angle_degrees = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[4].resolve(args, kwargs));
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `fan_fill`; expected > 0, found: {curve_angle_degrees}"
@@ -2033,7 +2054,7 @@ fn tessellate_path_impl(
     0 => {
       let path_val = arg_refs[0].resolve(args, kwargs);
       let flipped = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
-      let curve_angle_degrees = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[2].resolve(args, kwargs));
       let sample_count_val = arg_refs[3].resolve(args, kwargs);
       let sample_count: Option<usize> = match sample_count_val {
         Value::Nil => None,
@@ -2469,7 +2490,7 @@ fn extrude_path_impl(
       let path_val = arg_refs[0].resolve(args, kwargs);
       let up = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       let flipped = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
-      let curve_angle_degrees = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs));
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `extrude_path`; expected > 0, found: \
@@ -4269,6 +4290,35 @@ fn injected_gizmo_value(ctx: &EvalCtx, module: &Option<String>, handle_id: &str)
     .cloned()
 }
 
+/// Parse an axis-letter string (`"x"`, `"xz"`, …) into a per-axis mask. Returns `None`
+/// on any non-`xyz` char so the caller can fall back to its default.
+fn parse_axis_mask(s: &str) -> Option<[bool; 3]> {
+  let mut mask = [false; 3];
+  for c in s.chars() {
+    match c {
+      'x' | 'X' => mask[0] = true,
+      'y' | 'Y' => mask[1] = true,
+      'z' | 'Z' => mask[2] = true,
+      _ => return None,
+    }
+  }
+  Some(mask)
+}
+
+/// Ascending indices of the active axes in a mask (e.g. `[t,f,t]` → `[0, 2]`).
+fn axis_indices(mask: &[bool; 3]) -> Vec<usize> {
+  (0..3).filter(|&i| mask[i]).collect()
+}
+
+/// `nil` ⇒ defer to the host's global ghost setting; otherwise an explicit override.
+fn resolve_ghost_flag(v: &Value) -> Option<bool> {
+  if v.is_nil() {
+    None
+  } else {
+    v.as_bool()
+  }
+}
+
 fn gizmo_impl(
   ctx: &EvalCtx,
   _def_ix: usize,
@@ -4284,6 +4334,7 @@ fn gizmo_impl(
     .unwrap_or_else(Vec3::zeros);
   let absolute = arg_refs[2].resolve(args, kwargs).as_bool().unwrap_or(false);
   let default = arg_refs[3].resolve(args, kwargs).as_vec3().copied();
+  let ghost = resolve_ghost_flag(arg_refs[4].resolve(args, kwargs));
 
   let handle_id = resolve_gizmo_handle_id(ctx, name_val);
   let module = ctx.current_module.borrow().clone();
@@ -4302,8 +4353,86 @@ fn gizmo_impl(
     resolved_origin: origin,
     current_value: Value::Vec3(value),
     absolute,
+    axes: [true, true, true],
+    ghost,
   });
   Ok(Value::Vec3(value))
+}
+
+/// Shared body for `gizmo2d`/`gizmo1d`: stored internally as a `vec3` (reusing the full
+/// gizmo machinery) but drag-restricted to `mask` and projected to the active axes on return.
+fn gizmo_nd_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  mask: [bool; 3],
+) -> Vec3 {
+  let name_val = arg_refs[0].resolve(args, kwargs);
+  let origin = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_vec3()
+    .copied()
+    .unwrap_or_else(Vec3::zeros);
+  let absolute = arg_refs[2].resolve(args, kwargs).as_bool().unwrap_or(false);
+  let ghost = resolve_ghost_flag(arg_refs[5].resolve(args, kwargs));
+
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let module = ctx.current_module.borrow().clone();
+
+  let value = match injected_gizmo_value(ctx, &module, &handle_id) {
+    Some(Value::Vec3(v)) => v,
+    _ => if absolute { origin } else { Vec3::zeros() },
+  };
+
+  record_gizmo_read(ctx, &handle_id);
+  ctx.rendered_gizmos.push(crate::RenderedGizmo {
+    source_module: module,
+    handle_id,
+    kind: crate::GizmoKind::Vec3,
+    resolved_origin: origin,
+    current_value: Value::Vec3(value),
+    absolute,
+    axes: mask,
+    ghost,
+  });
+  value
+}
+
+fn gizmo2d_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let mask = arg_refs[4]
+    .resolve(args, kwargs)
+    .as_str()
+    .and_then(parse_axis_mask)
+    .filter(|m| m.iter().filter(|b| **b).count() == 2)
+    .unwrap_or([true, false, true]);
+  let a = axis_indices(&mask);
+  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask);
+  Ok(Value::Vec2(Vec2::new(value[a[0]], value[a[1]])))
+}
+
+fn gizmo1d_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let mask = arg_refs[4]
+    .resolve(args, kwargs)
+    .as_str()
+    .and_then(parse_axis_mask)
+    .filter(|m| m.iter().filter(|b| **b).count() == 1)
+    .unwrap_or([false, true, false]);
+  let a = axis_indices(&mask);
+  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask);
+  Ok(Value::Float(value[a[0]]))
 }
 
 fn gizmo_transform_impl(
@@ -4315,6 +4444,7 @@ fn gizmo_transform_impl(
 ) -> Result<Value, ErrorStack> {
   let name_val = arg_refs[0].resolve(args, kwargs);
   let default = arg_refs[1].resolve(args, kwargs).as_mat4().copied();
+  let ghost = resolve_ghost_flag(arg_refs[2].resolve(args, kwargs));
 
   let handle_id = resolve_gizmo_handle_id(ctx, name_val);
   let module = ctx.current_module.borrow().clone();
@@ -4334,6 +4464,8 @@ fn gizmo_transform_impl(
     resolved_origin: origin,
     current_value: Value::Mat4(Rc::clone(&mat)),
     absolute: true,
+    axes: [true, true, true],
+    ghost,
   });
   Ok(Value::Mat4(mat))
 }
@@ -8055,6 +8187,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "gizmo" => builtin_fn!(gizmo, |def_ix, arg_refs, args, kwargs, ctx| {
     gizmo_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "gizmo2d" => builtin_fn!(gizmo2d, |def_ix, arg_refs, args, kwargs, ctx| {
+    gizmo2d_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "gizmo1d" => builtin_fn!(gizmo1d, |def_ix, arg_refs, args, kwargs, ctx| {
+    gizmo1d_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "gizmo_transform" => builtin_fn!(gizmo_transform, |def_ix, arg_refs, args, kwargs, ctx| {
     gizmo_transform_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -8354,6 +8492,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "set_sharp_angle_threshold" => builtin_fn!(set_sharp_angle_threshold, |def_ix, arg_refs, args, kwargs, ctx| {
     set_sharp_angle_threshold_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "set_curve_angle_threshold" => builtin_fn!(set_curve_angle_threshold, |def_ix, arg_refs, args, kwargs, ctx| {
+    set_curve_angle_threshold_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
 };
 

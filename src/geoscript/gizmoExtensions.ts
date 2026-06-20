@@ -9,11 +9,13 @@ import {
 import { type Extension, StateEffect, StateField, Transaction } from '@codemirror/state';
 
 import { evalMathExpr } from 'src/viz/util/mathExpr';
+import { gizmoColorForIndex, desaturatedCss } from 'src/viz/gizmos/gizmoPalette';
 import { scanGizmoSites, type GizmoSite } from './gizmoScan';
 
 export interface GizmoReadout {
   kind: 'vec3' | 'transform';
-  vec3?: [number, number, number];
+  /** Active-axis components: 3 for `gizmo`, 2 for `gizmo2d`, 1 for `gizmo1d`. */
+  values?: number[];
   transform?: {
     pos: [number, number, number];
     rot: [number, number, number];
@@ -58,8 +60,8 @@ const editNum = (n: number): string => `${parseFloat(n.toFixed(8))}`;
 
 const readoutText = (r: GizmoReadout | undefined): string => {
   if (!r) return '⟨–⟩';
-  const v = r.kind === 'transform' ? (r.transform?.pos ?? [0, 0, 0]) : (r.vec3 ?? [0, 0, 0]);
-  return `⟨${num(v[0])}, ${num(v[1])}, ${num(v[2])}⟩`;
+  const v = r.kind === 'transform' ? (r.transform?.pos ?? [0, 0, 0]) : (r.values ?? [0, 0, 0]);
+  return `⟨${v.map(num).join(', ')}⟩`;
 };
 
 export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
@@ -78,12 +80,18 @@ export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
     constructor(
       readonly handleId: string,
       readonly kind: 'vec3' | 'transform',
-      readonly armed: boolean
+      readonly armed: boolean,
+      readonly color: string
     ) {
       super();
     }
     eq(o: ChipWidget) {
-      return o.handleId === this.handleId && o.kind === this.kind && o.armed === this.armed;
+      return (
+        o.handleId === this.handleId &&
+        o.kind === this.kind &&
+        o.armed === this.armed &&
+        o.color === this.color
+      );
     }
     toDOM() {
       const wrap = document.createElement('span');
@@ -92,6 +100,8 @@ export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
 
       const chip = document.createElement('span');
       chip.className = 'cm-gizmo-chip' + (this.armed ? ' cm-gizmo-chip-armed' : '');
+      chip.style.setProperty('--giz-color', this.color);
+      chip.style.color = this.armed ? this.color : desaturatedCss(this.color, 0.55);
       chip.textContent = this.kind === 'transform' ? '✥' : '⬩';
       chip.title = `${this.armed ? 'disarm' : 'arm'} gizmo "${this.handleId}"`;
       chip.addEventListener('mousedown', e => e.preventDefault());
@@ -124,19 +134,24 @@ export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
   class ReadoutWidget extends WidgetType {
     constructor(
       readonly handleId: string,
-      readonly kind: 'vec3' | 'transform'
+      readonly kind: 'vec3' | 'transform',
+      readonly arity: 1 | 2 | 3
     ) {
       super();
     }
     eq(o: ReadoutWidget) {
-      return o.handleId === this.handleId && o.kind === this.kind;
+      return o.handleId === this.handleId && o.kind === this.kind && o.arity === this.arity;
+    }
+    // Inline editing maps inputs straight to a vec3, so only full 3-axis handles qualify.
+    private get editable() {
+      return this.kind === 'vec3' && this.arity === 3;
     }
     toDOM(view: EditorView) {
       const el = document.createElement('span');
       el.className = 'cm-gizmo-readout';
       el.dataset.gizmoId = this.handleId;
       el.textContent = readoutText(view.state.field(valuesField).get(this.handleId));
-      if (this.kind === 'vec3') {
+      if (this.editable) {
         el.classList.add('cm-gizmo-readout-editable');
         el.title = 'click to edit';
         el.addEventListener('click', () => this.beginEdit(el, view));
@@ -145,7 +160,7 @@ export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
     }
     private beginEdit(el: HTMLElement, view: EditorView) {
       if (el.classList.contains('cm-gizmo-readout-editing')) return;
-      const cur = view.state.field(valuesField).get(this.handleId)?.vec3 ?? [0, 0, 0];
+      const cur = view.state.field(valuesField).get(this.handleId)?.values ?? [0, 0, 0];
       el.classList.add('cm-gizmo-readout-editing');
       el.textContent = '';
 
@@ -196,19 +211,29 @@ export const buildGizmoExtensions = (hooks: GizmoEditorHooks): Extension[] => {
 
   const buildDeco = (sites: GizmoSite[], armed: string | null): DecorationSet => {
     const ranges = [];
+    let colorIx = 0;
     for (const s of sites) {
       if (s.dynamic) continue;
+      const color = gizmoColorForIndex(colorIx);
+      colorIx += 1;
       ranges.push(
         Decoration.widget({
-          widget: new ChipWidget(s.handleId, s.kind, armed === s.handleId),
+          widget: new ChipWidget(s.handleId, s.kind, armed === s.handleId, color),
           side: -1,
         }).range(s.callFrom)
       );
       if (armed === s.handleId) {
-        ranges.push(Decoration.mark({ class: 'cm-gizmo-armed' }).range(s.callFrom, s.callTo));
+        ranges.push(
+          Decoration.mark({
+            attributes: { style: `background-color: ${desaturatedCss(color, 0, 0.18)}` },
+          }).range(s.callFrom, s.callTo)
+        );
       }
       ranges.push(
-        Decoration.widget({ widget: new ReadoutWidget(s.handleId, s.kind), side: 1 }).range(s.callTo)
+        Decoration.widget({
+          widget: new ReadoutWidget(s.handleId, s.kind, s.arity),
+          side: 1,
+        }).range(s.callTo)
       );
     }
     return Decoration.set(ranges, true);
@@ -253,15 +278,11 @@ const gizmoTheme = EditorView.baseTheme({
   '.cm-gizmo-chip-wrap': { whiteSpace: 'nowrap' },
   '.cm-gizmo-chip': {
     cursor: 'pointer',
-    color: '#83a598',
     padding: '0 2px',
     userSelect: 'none',
   },
-  '.cm-gizmo-chip:hover': { color: '#8ec07c' },
-  '.cm-gizmo-chip-armed': {
-    color: '#fabd2f',
-    fontWeight: 'bold',
-  },
+  '.cm-gizmo-chip:hover': { color: 'var(--giz-color)' },
+  '.cm-gizmo-chip-armed': { fontWeight: 'bold' },
   '.cm-gizmo-reset': {
     cursor: 'pointer',
     color: '#b45706ff',
@@ -270,9 +291,6 @@ const gizmoTheme = EditorView.baseTheme({
     userSelect: 'none',
   },
   '.cm-gizmo-reset:hover': { color: '#fe8019' },
-  '.cm-gizmo-armed': {
-    backgroundColor: 'rgba(250, 189, 47, 0.18)',
-  },
   '.cm-gizmo-readout': {
     color: '#928374',
     fontSize: '0.85em',

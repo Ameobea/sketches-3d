@@ -9,6 +9,8 @@ export interface RaycastSelectOpts {
   onSelect: (id: string | null, instancePath?: number[]) => void;
   /** Suppresses selection when a drag (e.g. gizmo) is in progress. */
   isDraggingGizmo: () => boolean;
+  /** Runs first with the positioned raycaster; return true to consume the click (e.g. gizmo ghost). */
+  interceptClick?: (raycaster: THREE.Raycaster) => boolean;
 }
 
 export const installRaycastSelect = (opts: RaycastSelectOpts): (() => void) =>
@@ -17,6 +19,7 @@ export const installRaycastSelect = (opts: RaycastSelectOpts): (() => void) =>
     camera: opts.camera,
     shouldIgnore: opts.isDraggingGizmo,
     onClick: ({ raycaster }) => {
+      if (opts.interceptClick?.(raycaster)) return;
       const hits = raycaster.intersectObjects(opts.getCandidates(), false);
       for (const hit of hits) {
         const id = hit.object.userData?.sourceNodeId as string | undefined;

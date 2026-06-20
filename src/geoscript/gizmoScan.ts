@@ -8,6 +8,8 @@ export interface GizmoSite {
   /** Stable key, scoped to the node. Empty for `dynamic` sites. */
   handleId: string;
   kind: 'vec3' | 'transform';
+  /** Component count of the value: 3 (`gizmo`), 2 (`gizmo2d`), 1 (`gizmo1d`); 3 for transforms. */
+  arity: 1 | 2 | 3;
   /** Runtime-computed name (non-literal first arg) — no static arm/readout widget. */
   dynamic: boolean;
   callFrom: number;
@@ -18,7 +20,17 @@ export interface GizmoSite {
   nameRange: [number, number] | null;
 }
 
-const GIZMO_CALLEES = new Set(['gizmo', 'gizmo_transform', 'transform_gizmo']);
+const GIZMO_CALLEES: Record<string, { kind: 'vec3' | 'transform'; arity: 1 | 2 | 3 }> = {
+  gizmo: { kind: 'vec3', arity: 3 },
+  giz: { kind: 'vec3', arity: 3 },
+  gizmo2d: { kind: 'vec3', arity: 2 },
+  giz2d: { kind: 'vec3', arity: 2 },
+  gizmo1d: { kind: 'vec3', arity: 1 },
+  giz1d: { kind: 'vec3', arity: 1 },
+  gizmo_transform: { kind: 'transform', arity: 3 },
+  transform_gizmo: { kind: 'transform', arity: 3 },
+  giz_tfn: { kind: 'transform', arity: 3 },
+};
 
 const unquote = (raw: string): string =>
   raw.length < 2 ? raw : raw.slice(1, -1).replace(/\\(["'\\])/g, '$1');
@@ -54,9 +66,10 @@ const scanTree = (tree: Tree, read: Read): GizmoSite[] => {
       const callee = node.firstChild;
       if (callee?.name !== 'Identifier') return;
       const name = read(callee.from, callee.to);
-      if (!GIZMO_CALLEES.has(name)) return;
+      const def = GIZMO_CALLEES[name];
+      if (!def) return;
 
-      const kind = name === 'gizmo' ? 'vec3' : 'transform';
+      const { kind, arity } = def;
       const nameVal = resolveNameValue(node, read);
 
       let handleId = '';
@@ -72,7 +85,16 @@ const scanTree = (tree: Tree, read: Read): GizmoSite[] => {
       }
 
       const nameInsertPos = node.getChild('TightLParen')?.to ?? node.from;
-      sites.push({ handleId, kind, dynamic, callFrom: node.from, callTo: node.to, nameInsertPos, nameRange });
+      sites.push({
+        handleId,
+        kind,
+        arity,
+        dynamic,
+        callFrom: node.from,
+        callTo: node.to,
+        nameInsertPos,
+        nameRange,
+      });
     },
   });
   return sites;
@@ -92,3 +114,9 @@ export const scanGizmoHandleIds = (source: string): Set<string> => {
   for (const s of scanSource(source)) if (!s.dynamic) out.add(s.handleId);
   return out;
 };
+
+/** Ordered static handle ids (document order); the index drives a handle's categorical color. */
+export const scanGizmoHandleOrder = (source: string): string[] =>
+  scanSource(source)
+    .filter(s => !s.dynamic)
+    .map(s => s.handleId);

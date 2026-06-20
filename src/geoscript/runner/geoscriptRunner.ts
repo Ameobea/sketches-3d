@@ -143,6 +143,7 @@ export const runGeoscript = async ({
         renderMode,
         modules,
         ambientSources,
+        gizmoValues,
       });
     }
     return {
@@ -323,6 +324,8 @@ export const runGeoscript = async ({
       origin: g.origin,
       value: g.value,
       absolute: g.absolute,
+      axes: g.axes,
+      ghost: g.ghost,
     });
   }
 

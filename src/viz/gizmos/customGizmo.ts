@@ -77,6 +77,8 @@ export class CustomGizmo extends THREE.Object3D {
   private target: GizmoTarget | null = null;
   private mode: GizmoMode = 'translate';
   private space: GizmoSpace = 'local';
+  /** Restricts which translate handles are shown/pickable (for `gizmo2d`/`gizmo1d`). */
+  private axisMask: [boolean, boolean, boolean] = [true, true, true];
 
   /** One root per mode; only the active mode's root is visible. */
   private translateRoot = new THREE.Group();
@@ -446,14 +448,37 @@ export class CustomGizmo extends THREE.Object3D {
     );
   }
 
+  /** Only translate handles respect the mask; rotate/scale (transform handles) ignore it. */
+  private passesMask(h: Handle): boolean {
+    if (h.mode !== 'translate') return true;
+    if (h.id.kind === 'translate-axis') return this.axisMask[this.axisIndex(h.id.axis)];
+    if (h.id.kind === 'translate-plane') return h.id.axes.every(a => this.axisMask[this.axisIndex(a)]);
+    return true;
+  }
+
   private applyModeVisibility() {
     this.translateRoot.visible = this.mode === 'translate';
     this.rotateRoot.visible = this.mode === 'rotate';
     this.scaleRoot.visible = this.mode === 'scale';
+    for (const h of this.handles) {
+      if (h.mode === 'translate') h.visual.visible = this.passesMask(h);
+    }
   }
 
   private rebuildActivePickers() {
-    this.activePickers = this.handles.filter(h => h.mode === this.mode).map(h => h.picker);
+    this.activePickers = this.handles
+      .filter(h => h.mode === this.mode && this.passesMask(h))
+      .map(h => h.picker);
+  }
+
+  setAxisMask(mask: [boolean, boolean, boolean]) {
+    if (mask[0] === this.axisMask[0] && mask[1] === this.axisMask[1] && mask[2] === this.axisMask[2]) {
+      return;
+    }
+    this.axisMask = mask;
+    this.applyModeVisibility();
+    this.rebuildActivePickers();
+    this.clearHover();
   }
 
   private clearHover() {

@@ -407,3 +407,47 @@ export const AXIS_COLORS = {
   y: 0x66dd66,
   z: 0x5588ff,
 } as const;
+
+// Gizmo ghost ------------------------------------------------------------------
+// Desaturated, faint marker for a gizmo's resting place; `uHover` (0..1) ramps it
+// to full saturation + opacity to signal it's clickable.
+
+const GHOST_FRAG = /* glsl */ `
+precision highp float;
+
+uniform vec3 uColor;
+uniform float uHover;
+
+varying vec3 vNormalView;
+varying vec3 vViewPos;
+
+void main() {
+  vec3 N = normalize(vNormalView);
+  vec3 V = normalize(vViewPos);
+  float ndv = abs(dot(N, V));
+  float shade = mix(0.55, 1.0, ndv);
+
+  float luma = dot(uColor, vec3(0.299, 0.587, 0.114));
+  vec3 desat = mix(vec3(luma), uColor, mix(0.3, 1.0, uHover));
+  vec3 col = desat * shade;
+  float alpha = mix(0.24, 0.68, uHover);
+
+  gl_FragColor = vec4(col * alpha, alpha);
+}
+`;
+
+export const buildGhostMaterial = (color: THREE.ColorRepresentation): THREE.ShaderMaterial =>
+  new THREE.ShaderMaterial({
+    name: 'GizmoGhost',
+    vertexShader: AXIS_VERT,
+    fragmentShader: GHOST_FRAG,
+    uniforms: {
+      uColor: { value: new THREE.Color(color) },
+      uHover: { value: 0 },
+    },
+    transparent: true,
+    premultipliedAlpha: true,
+    depthTest: false,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });

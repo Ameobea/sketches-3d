@@ -48,15 +48,21 @@ export class AnalysisClient {
     this.initPromise = this.proxy.init();
   }
 
-  async analyze(src: string, includePrelude: boolean): Promise<AnalysisResult> {
+  async analyze(src: string, includePrelude: boolean, ambientSrc: string): Promise<AnalysisResult> {
     await this.initPromise;
-    const json = await this.proxy.analyze(src, includePrelude);
+    const json = await this.proxy.analyze(src, includePrelude, ambientSrc);
     return JSON.parse(json);
   }
 
-  async hover(src: string, line: number, col: number, includePrelude: boolean): Promise<HoverInfo | null> {
+  async hover(
+    src: string,
+    line: number,
+    col: number,
+    includePrelude: boolean,
+    ambientSrc: string
+  ): Promise<HoverInfo | null> {
     await this.initPromise;
-    const json = await this.proxy.hover(src, line, col, includePrelude);
+    const json = await this.proxy.hover(src, line, col, includePrelude, ambientSrc);
     return json ? JSON.parse(json) : null;
   }
 
@@ -64,10 +70,11 @@ export class AnalysisClient {
     src: string,
     line: number,
     col: number,
-    includePrelude: boolean
+    includePrelude: boolean,
+    ambientSrc: string
   ): Promise<CompletionItem[]> {
     await this.initPromise;
-    const json = await this.proxy.completions(src, line, col, includePrelude);
+    const json = await this.proxy.completions(src, line, col, includePrelude, ambientSrc);
     return JSON.parse(json);
   }
 
@@ -75,10 +82,11 @@ export class AnalysisClient {
     src: string,
     line: number,
     col: number,
-    includePrelude: boolean
+    includePrelude: boolean,
+    ambientSrc: string
   ): Promise<DefinitionLocation | null> {
     await this.initPromise;
-    const json = await this.proxy.gotoDefinition(src, line, col, includePrelude);
+    const json = await this.proxy.gotoDefinition(src, line, col, includePrelude, ambientSrc);
     return json ? JSON.parse(json) : null;
   }
 

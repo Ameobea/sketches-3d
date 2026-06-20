@@ -13,6 +13,8 @@ interface RawRenderedGizmo {
   origin: [number, number, number];
   value: number[];
   absolute: boolean;
+  axes: [boolean, boolean, boolean];
+  ghost: boolean | null;
 }
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';

@@ -34,9 +34,14 @@ pub fn analysis_free(ctx: *mut AnalysisCtx) {
 
 /// Run diagnostics analysis on source code.  Returns JSON-serialized `AnalysisResult`.
 #[wasm_bindgen]
-pub fn analysis_analyze(ctx: *const AnalysisCtx, src: &str, include_prelude: bool) -> String {
+pub fn analysis_analyze(
+  ctx: *const AnalysisCtx,
+  src: &str,
+  include_prelude: bool,
+  ambient_src: &str,
+) -> String {
   let ctx = unsafe { &*ctx };
-  let result = ctx.analyze(src, include_prelude);
+  let result = ctx.analyze(src, include_prelude, ambient_src);
   nanoserde::SerJson::serialize_json(&result)
 }
 
@@ -48,9 +53,10 @@ pub fn analysis_hover(
   line: u32,
   col: u32,
   include_prelude: bool,
+  ambient_src: &str,
 ) -> String {
   let ctx = unsafe { &*ctx };
-  match ctx.hover(src, line, col, include_prelude) {
+  match ctx.hover(src, line, col, include_prelude, ambient_src) {
     Some(info) => nanoserde::SerJson::serialize_json(&info),
     None => String::new(),
   }
@@ -64,9 +70,10 @@ pub fn analysis_completions(
   line: u32,
   col: u32,
   include_prelude: bool,
+  ambient_src: &str,
 ) -> String {
   let ctx = unsafe { &*ctx };
-  let items = ctx.completions(src, line, col, include_prelude);
+  let items = ctx.completions(src, line, col, include_prelude, ambient_src);
   nanoserde::SerJson::serialize_json(&items)
 }
 
@@ -94,9 +101,10 @@ pub fn analysis_goto_definition(
   line: u32,
   col: u32,
   include_prelude: bool,
+  ambient_src: &str,
 ) -> String {
   let ctx = unsafe { &*ctx };
-  match ctx.goto_definition(src, line, col, include_prelude) {
+  match ctx.goto_definition(src, line, col, include_prelude, ambient_src) {
     Some(loc) => nanoserde::SerJson::serialize_json(&loc),
     None => String::new(),
   }

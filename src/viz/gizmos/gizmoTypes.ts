@@ -64,6 +64,8 @@ export interface HandleContext {
   origin: [number, number, number];
   /** For `transform` handles: the runtime-reported transform (full pos/rot/scale). */
   transform?: Transform3;
+  /** Translate-axis restriction for `gizmo2d`/`gizmo1d`; defaults to all axes. */
+  axes?: [boolean, boolean, boolean];
 }
 
 export const gizmoTargetRefsEqual = (a: GizmoTargetRef | null, b: GizmoTargetRef | null): boolean => {

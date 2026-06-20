@@ -3700,9 +3700,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef { name: "origin", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::zeros())), description: "Node-local anchor where the handle is drawn in the viewport." },
           ArgDef { name: "absolute", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Bool(false)), description: "If true the returned value is the handle position itself; otherwise it's the drag offset from `origin` (zero until dragged)." },
           ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value to return when no value has been stored for this handle." },
+          ArgDef { name: "ghost", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Nil), description: "Override ghost rendering for this handle: `nil` follows the global Geotoy setting; `true`/`false` force it on/off." },
         ],
         description: "A viewport-draggable `vec3` handle. Interactive only inside the Geotoy editor; everywhere else (level loader, tests) it returns the stored baked value, or the `default`/zero when unset.",
         return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "gizmo2d" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Stable handle id, scoped to the node. Omit for a positional `@N` id." },
+          ArgDef { name: "origin", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::zeros())), description: "Node-local anchor where the handle is drawn in the viewport." },
+          ArgDef { name: "absolute", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Bool(false)), description: "If true the returned value is the handle position itself; otherwise it's the drag offset from `origin` (zero until dragged)." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value to return when no value has been stored for this handle." },
+          ArgDef { name: "axes", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Which two axes are draggable, e.g. \"xz\" (default), \"xy\", \"yz\". The returned `vec2` maps to these axes in order." },
+          ArgDef { name: "ghost", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Nil), description: "Override ghost rendering for this handle: `nil` follows the global Geotoy setting; `true`/`false` force it on/off." },
+        ],
+        description: "A viewport-draggable `vec2` handle restricted to two axes (default XZ, the ground plane). Like `gizmo` but the live gizmo only exposes the two chosen axes.",
+        return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "gizmo1d" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Stable handle id, scoped to the node. Omit for a positional `@N` id." },
+          ArgDef { name: "origin", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::zeros())), description: "Node-local anchor where the handle is drawn in the viewport." },
+          ArgDef { name: "absolute", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Bool(false)), description: "If true the returned value is the handle position itself; otherwise it's the drag offset from `origin` (zero until dragged)." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value to return when no value has been stored for this handle." },
+          ArgDef { name: "axis", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Which axis is draggable: \"x\", \"y\" (default), or \"z\"." },
+          ArgDef { name: "ghost", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Nil), description: "Override ghost rendering for this handle: `nil` follows the global Geotoy setting; `true`/`false` force it on/off." },
+        ],
+        description: "A viewport-draggable `num` handle restricted to a single axis (default Y). Like `gizmo` but the live gizmo only exposes one axis.",
+        return_type: &[ArgType::Float],
       },
     ],
   },
@@ -3714,6 +3751,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         arg_defs: &[
           ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Stable handle id, scoped to the node. Omit for a positional `@N` id." },
           ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Optional(|| Value::Nil), description: "Transform to return when no value has been stored for this handle." },
+          ArgDef { name: "ghost", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Nil), description: "Override ghost rendering for this handle: `nil` follows the global Geotoy setting; `true`/`false` force it on/off." },
         ],
         description: "A viewport-draggable `mat4` transform handle (absolute). Consume it with `apply_mat4`. Returns the stored baked transform, or the `default`/identity when unset.",
         return_type: &[ArgType::Mat4],
@@ -6582,7 +6620,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves in a `PathSampler` input.  Ignored for black-box callables."
           },
           ArgDef {
@@ -7249,7 +7287,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when adaptively discretizing curves.  Currently honored by traced-path samplers (`trace_path`, `trace_svg_path`); other `PathSampler` inputs (`lerp_path`, `catmull_rom`) and black-box callables fall back to uniform `sample_count` sampling."
           },
           ArgDef {
@@ -7289,7 +7327,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing trace_path curves."
           },
           ArgDef {
@@ -8695,6 +8733,25 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       }
     ]
   },
+  "set_curve_angle_threshold" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Maximum angular deviation per segment, in degrees; smaller is finer."
+          }
+        ],
+        description: "Sets the default `curve_angle_degrees` used when discretizing continuous path features (Clipper2/CGAL boundaries, `tessellate_path`, `extrude_path`, etc.) and the kwarg is omitted.  Builtins that take an explicit `curve_angle_degrees` override this per-call.",
+        return_type: &[ArgType::Nil],
+      }
+    ]
+  },
   "trace_svg_path" => FnDef {
     module: "path",
     examples: &[], // TODO
@@ -8877,7 +8934,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9153,7 +9210,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9214,7 +9271,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9275,7 +9332,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9329,7 +9386,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9390,7 +9447,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
@@ -9484,7 +9541,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             name: "curve_angle_degrees",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Optional(|| Value::Float(1.0)),
+            default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Max turning angle (degrees) per segment when discretizing curves."
           },
           ArgDef {
