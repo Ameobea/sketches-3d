@@ -1,6 +1,4 @@
-use std::{
-  f32::consts::PI, fmt::Debug, hash::Hash, marker::PhantomData, mem::MaybeUninit, num::NonZeroU32,
-};
+use std::{f32::consts::PI, fmt::Debug, hash::Hash, marker::PhantomData, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
@@ -11,7 +9,7 @@ use parry3d::{
   math::Point,
   shape::{TriMesh, TriMeshBuilderError},
 };
-use slotmap::{new_key_type, Key, SlotMap};
+use slotmap::{new_key_type, Key, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
 
 use crate::{
@@ -36,27 +34,19 @@ new_key_type! {
   pub struct EdgeKey;
 }
 
-#[allow(dead_code)]
-#[derive(Clone, Debug)]
-pub struct VtxPadding(MaybeUninit<[u8; 4]>);
-
-impl Default for VtxPadding {
-  fn default() -> Self {
-    VtxPadding(MaybeUninit::uninit())
-  }
-}
-
 #[derive(Clone, Debug, Default)]
-// #[repr(align(128))]
 pub struct Vertex {
   pub position: Vec3,
-  /// Normal of the vertex used for shading/lighting.
-  pub shading_normal: Option<Vec3>,
-  /// Normal of the vertex used for displacement mapping.
-  pub displacement_normal: Option<Vec3>,
-  // 9 is the max size of the inline buffer we can set while keeping `Vertex` size under 128 bytes
   pub edges: SmallVec<[EdgeKey; 9]>,
-  pub _padding: VtxPadding,
+}
+
+impl Vertex {
+  pub fn new(position: Vec3) -> Self {
+    Vertex {
+      position,
+      edges: SmallVec::new(),
+    }
+  }
 }
 
 #[derive(Clone, Debug)]
@@ -214,7 +204,6 @@ pub struct Edge {
   pub vertices: [VertexKey; 2],
   pub faces: SmallVec<[FaceKey; 2]>,
   pub sharp: bool,
-  pub displacement_normal: Option<Vec3>,
 }
 
 impl Edge {
@@ -251,6 +240,49 @@ pub struct LinkedMesh<FaceData = ()> {
   pub faces: SlotMap<FaceKey, Face<FaceData>>,
   pub edges: SlotMap<EdgeKey, Edge>,
   pub transform: Option<Mat4>,
+  /// Per-vertex normal used for shading/lighting. Sparse: absence = no normal.
+  pub shading_normals: SecondaryMap<VertexKey, Vec3>,
+  /// Per-vertex normal used for displacement mapping.
+  pub displacement_normals: SecondaryMap<VertexKey, Vec3>,
+  /// Per-edge normal used for displacement mapping.
+  pub edge_displacement_normals: SecondaryMap<EdgeKey, Vec3>,
+}
+
+impl<FaceData> LinkedMesh<FaceData> {
+  pub fn shading_normal(&self, key: VertexKey) -> Option<Vec3> {
+    self.shading_normals.get(key).copied()
+  }
+
+  pub fn displacement_normal(&self, key: VertexKey) -> Option<Vec3> {
+    self.displacement_normals.get(key).copied()
+  }
+
+  pub fn edge_displacement_normal(&self, key: EdgeKey) -> Option<Vec3> {
+    self.edge_displacement_normals.get(key).copied()
+  }
+
+  pub fn set_shading_normal(&mut self, key: VertexKey, normal: Option<Vec3>) {
+    set_channel(&mut self.shading_normals, key, normal);
+  }
+
+  pub fn set_displacement_normal(&mut self, key: VertexKey, normal: Option<Vec3>) {
+    set_channel(&mut self.displacement_normals, key, normal);
+  }
+
+  pub fn set_edge_displacement_normal(&mut self, key: EdgeKey, normal: Option<Vec3>) {
+    set_channel(&mut self.edge_displacement_normals, key, normal);
+  }
+}
+
+fn set_channel<K: Key>(channel: &mut SecondaryMap<K, Vec3>, key: K, value: Option<Vec3>) {
+  match value {
+    Some(v) => {
+      channel.insert(key, v);
+    }
+    None => {
+      channel.remove(key);
+    }
+  }
 }
 
 impl<T> Debug for LinkedMesh<T> {
@@ -618,6 +650,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       faces: SlotMap::with_capacity_and_key(face_count),
       edges: SlotMap::with_key(),
       transform,
+      shading_normals: SecondaryMap::new(),
+      displacement_normals: SecondaryMap::new(),
+      edge_displacement_normals: SecondaryMap::new(),
     }
   }
 
@@ -646,14 +681,19 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       );
     }
 
-    let vertices: SlotMap<VertexKey, Vertex> =
-      build_slotmap_from_iter(vertices.iter().enumerate().map(|(i, &vtx_pos)| Vertex {
-        position: vtx_pos,
-        shading_normal: normals.map(|normals| normals[i]),
-        displacement_normal: None,
-        edges: SmallVec::new(),
-        _padding: Default::default(),
-      }));
+    let vertices: SlotMap<VertexKey, Vertex> = build_slotmap_from_iter(
+      vertices.iter().map(|&vtx_pos| Vertex::new(vtx_pos)),
+    );
+
+    // `build_slotmap_from_iter` assigns dense keys `{ ix: i + 1, version: 1 }`.
+    let shading_normals = match normals {
+      Some(normals) => normals
+        .iter()
+        .enumerate()
+        .map(|(i, &n)| (vkey(i as u32 + 1, 1), n))
+        .collect(),
+      None => SecondaryMap::new(),
+    };
 
     let temp_faces: LocalSlotMap<FaceKey, Face<()>> = LocalSlotMap {
       slots: Vec::new(),
@@ -666,6 +706,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       faces: unsafe { std::mem::transmute(temp_faces) },
       edges: SlotMap::with_key(),
       transform,
+      shading_normals,
+      displacement_normals: SecondaryMap::new(),
+      edge_displacement_normals: SecondaryMap::new(),
     };
 
     mesh.faces = build_slotmap_from_iter_with_key(
@@ -720,27 +763,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
 
       let [a_key, b_key, c_key] = [
-        mesh.vertices.insert(Vertex {
-          position: tri.a,
-          shading_normal: None,
-          displacement_normal: None,
-          edges: SmallVec::new(),
-          _padding: Default::default(),
-        }),
-        mesh.vertices.insert(Vertex {
-          position: tri.b,
-          shading_normal: None,
-          displacement_normal: None,
-          edges: SmallVec::new(),
-          _padding: Default::default(),
-        }),
-        mesh.vertices.insert(Vertex {
-          position: tri.c,
-          shading_normal: None,
-          displacement_normal: None,
-          edges: SmallVec::new(),
-          _padding: Default::default(),
-        }),
+        mesh.vertices.insert(Vertex::new(tri.a)),
+        mesh.vertices.insert(Vertex::new(tri.b)),
+        mesh.vertices.insert(Vertex::new(tri.c)),
       ];
 
       mesh.add_face::<true>([a_key, b_key, c_key], Default::default());
@@ -1201,7 +1226,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             } else {
               edge.vertices[0]
             };
-            edge_displacement_normals[0] = edge.displacement_normal;
+            edge_displacement_normals[0] = self.edge_displacement_normals.get(edge_key).copied();
             edge_sharpness[0] = edge.sharp;
           } else {
             edge_indices_to_alter[1] = edge_ix;
@@ -1211,7 +1236,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             } else {
               edge.vertices[0]
             };
-            edge_displacement_normals[1] = edge.displacement_normal;
+            edge_displacement_normals[1] = self.edge_displacement_normals.get(edge_key).copied();
             edge_sharpness[1] = edge.sharp;
             break;
           }
@@ -1239,17 +1264,18 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           swap_retain_sv(&mut vtx.edges, |&mut e| e != old_edge_key);
         }
         self.edges.remove(old_edge_key);
+        self.edge_displacement_normals.remove(old_edge_key);
       }
     }
 
     let new_edge_key_0 = self.get_or_create_edge::<false>([new_vtx_key, pair_vtx_keys[0]]);
     let new_edge_key_1 = self.get_or_create_edge::<false>([new_vtx_key, pair_vtx_keys[1]]);
     self.edges[new_edge_key_0].faces.push(face_key);
-    self.edges[new_edge_key_0].displacement_normal = edge_displacement_normals[0];
     self.edges[new_edge_key_0].sharp = edge_sharpness[0];
+    self.set_edge_displacement_normal(new_edge_key_0, edge_displacement_normals[0]);
     self.edges[new_edge_key_1].faces.push(face_key);
-    self.edges[new_edge_key_1].displacement_normal = edge_displacement_normals[1];
     self.edges[new_edge_key_1].sharp = edge_sharpness[1];
+    self.set_edge_displacement_normal(new_edge_key_1, edge_displacement_normals[1]);
 
     let face = &mut self.faces[face_key];
 
@@ -1523,8 +1549,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   pub fn compute_edge_displacement_normals(&mut self) {
-    for edge in self.edges.values_mut() {
-      let edge_displacement_normal = edge
+    let edge_keys: Vec<EdgeKey> = self.edges.keys().collect();
+    for edge_key in edge_keys {
+      let edge_displacement_normal = self.edges[edge_key]
         .faces
         .iter()
         .map(|&face_key| {
@@ -1533,7 +1560,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         })
         .sum::<Vec3>()
         .normalize();
-      edge.displacement_normal = Some(edge_displacement_normal);
+      self.edge_displacement_normals.insert(edge_key, edge_displacement_normal);
     }
   }
 
@@ -1754,8 +1781,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         }
       }
       let computed_normal = vtx_normal_acc.get();
-      let vtx = &mut self.vertices[vtx_key];
-      vtx.shading_normal = computed_normal;
+      self.set_shading_normal(vtx_key, computed_normal);
       return computed_normal;
     }
 
@@ -1777,8 +1803,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       if all_faces_visited || !made_progress {
         // All faces from this fan can retain the same vertex, and we can assign
         // it the computed normal directly
-        let vtx = &mut self.vertices[vtx_key];
-        vtx.shading_normal = computed_fan_normal.or_else(|| vtx_normal_acc.get());
+        self.set_shading_normal(vtx_key, computed_fan_normal.or_else(|| vtx_normal_acc.get()));
 
         break;
       }
@@ -1798,7 +1823,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
     }
 
-    if cfg!(debug_assertions) && self.vertices[vtx_key].shading_normal.is_none() {
+    if cfg!(debug_assertions) && self.shading_normal(vtx_key).is_none() {
       panic!("Vertex {vtx_key:?} has no shading normal after walking smooth fans",);
     }
 
@@ -1852,7 +1877,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     for vtx_key in all_vtx_keys {
       let displacement_normal = self.compute_displacement_normal(vtx_key);
-      self.vertices[vtx_key].displacement_normal = displacement_normal;
+      self.set_displacement_normal(vtx_key, displacement_normal);
     }
   }
 
@@ -1881,8 +1906,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let mut smooth_fans = Vec::new();
     for vtx_key in all_vtx_keys {
       let computed_normal = self.separate_and_compute_normals_for_vertex(&mut smooth_fans, vtx_key);
-      let vtx = &mut self.vertices[vtx_key];
-      vtx.displacement_normal = computed_normal;
+      self.set_displacement_normal(vtx_key, computed_normal);
     }
 
     // We have to wait until we've walked all the fans for the mesh before splitting
@@ -1896,17 +1920,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     {
       // We have to create a new vertex for the faces that are part of the
       // smooth fan so that it can have a distinct normal
-      let (position, displacement_normal) = {
-        let vtx = &self.vertices[old_key];
-        (vtx.position, vtx.displacement_normal)
-      };
-      let new_vtx_key = self.vertices.insert(Vertex {
-        position,
-        shading_normal: Some(normal),
-        displacement_normal,
-        edges: SmallVec::new(),
-        _padding: Default::default(),
-      });
+      let position = self.vertices[old_key].position;
+      let displacement_normal = self.displacement_normal(old_key);
+      let new_vtx_key = self.vertices.insert(Vertex::new(position));
+      self.set_shading_normal(new_vtx_key, Some(normal));
+      self.set_displacement_normal(new_vtx_key, displacement_normal);
 
       for face_key in face_keys {
         self.replace_vertex_in_face(face_key, old_key, new_vtx_key);
@@ -1933,8 +1951,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
 
       for &vtx_key in &face.vertices {
-        let vtx = &self.vertices[vtx_key];
-        builder.add_vtx(vtx_key, vtx)
+        builder.add_vtx(
+          vtx_key,
+          self.vertices[vtx_key].position,
+          self.shading_normal(vtx_key),
+          self.displacement_normal(vtx_key),
+        );
       }
     }
 
@@ -1962,8 +1984,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       });
 
       for &vtx_key in &face.vertices {
-        let vtx = &self.vertices[vtx_key];
-        builder.add_vtx(vtx_key, vtx)
+        builder.add_vtx(
+          vtx_key,
+          self.vertices[vtx_key].position,
+          self.shading_normal(vtx_key),
+          self.displacement_normal(vtx_key),
+        );
       }
     }
 
@@ -1986,11 +2012,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           .faces
           .values()
           .flat_map(|face| {
-            face.vertices.map(|vtx_key| {
-              self.vertices[vtx_key]
-                .displacement_normal
-                .unwrap_or_else(Vec3::zeros)
-            })
+            face
+              .vertices
+              .map(|vtx_key| self.displacement_normal(vtx_key).unwrap_or_else(Vec3::zeros))
           })
           .collect(),
       ),
@@ -2020,28 +2044,28 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let split_pos = split_pos.get(v0_key);
     let vm_position = v0.position.lerp(&v1.position, split_pos);
 
-    let edge_displacement_normal = edge.displacement_normal;
+    let edge_displacement_normal = self.edge_displacement_normals.get(edge_key_to_split).copied();
     let faces_to_split = edge.faces.clone();
 
-    let shading_normal = {
-      let v0 = &self.vertices[edge_id_to_split[0]];
-      let v1 = &self.vertices[edge_id_to_split[1]];
-      v0.shading_normal
-        .zip(v1.shading_normal)
-        .map(|(n0, n1)| n0.lerp(&n1, split_pos).normalize())
-    };
+    let shading_normal = self
+      .shading_normals
+      .get(edge_id_to_split[0])
+      .copied()
+      .zip(self.shading_normals.get(edge_id_to_split[1]).copied())
+      .map(|(n0, n1)| n0.lerp(&n1, split_pos).normalize());
 
     let displacement_normal = match displacement_normal_method {
       DisplacementNormalMethod::Interpolate => {
-        let v0 = &self.vertices[edge_id_to_split[0]];
-        let v1 = &self.vertices[edge_id_to_split[1]];
-        match v0.displacement_normal.zip(v1.displacement_normal) {
+        match self
+          .displacement_normals
+          .get(edge_id_to_split[0])
+          .copied()
+          .zip(self.displacement_normals.get(edge_id_to_split[1]).copied())
+        {
           Some((n0, n1)) => {
             let merged_normal = n0.lerp(&n1, split_pos).normalize();
             if merged_normal.x.is_nan() || merged_normal.y.is_nan() || merged_normal.z.is_nan() {
               panic!("Merged normal is NaN; n0={n0:?}; n1={n1:?}; merged_normal={merged_normal:?}");
-              // Some(Vec3::new(random(), random(), random()).normalize())
-              // None
             } else {
               Some(merged_normal)
             }
@@ -2049,25 +2073,14 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           None => None,
         }
       }
-      DisplacementNormalMethod::EdgeNormal => {
-        // We set the displacement normal of the new vertex to be the same as the edge's
-        // displacement normal.
-        //
-        // The other option here is average the displacement normals of the two vertices of the edge
-        // being split.  However, this will cause the normals of other unrelated faces to be
-        // averaged into this new vertex.  That leads to a sort of inflation effect where the
-        // straight edges will become curved and "blown out".
-        edge_displacement_normal
-      }
+      // The new vertex inherits the edge's displacement normal directly. Averaging the two endpoint
+      // vertices instead pulls in unrelated faces' normals, inflating straight edges into curves.
+      DisplacementNormalMethod::EdgeNormal => edge_displacement_normal,
     };
 
-    let middle_vertex_key = self.vertices.insert(Vertex {
-      position: vm_position,
-      displacement_normal,
-      shading_normal,
-      edges: SmallVec::new(),
-      _padding: Default::default(),
-    });
+    let middle_vertex_key = self.vertices.insert(Vertex::new(vm_position));
+    self.set_shading_normal(middle_vertex_key, shading_normal);
+    self.set_displacement_normal(middle_vertex_key, displacement_normal);
 
     // Split each adjacent face
     for old_face_key in faces_to_split {
@@ -2084,9 +2097,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
       let vertex_keys = [v0_key, v1_key, v2_key, middle_vertex_key];
       let edge_displacement_normals = [
-        self.edges[old_face.edges[0]].displacement_normal,
-        self.edges[old_face.edges[1]].displacement_normal,
-        self.edges[old_face.edges[2]].displacement_normal,
+        self.edge_displacement_normals.get(old_face.edges[0]).copied(),
+        self.edge_displacement_normals.get(old_face.edges[1]).copied(),
+        self.edge_displacement_normals.get(old_face.edges[2]).copied(),
         Some(old_face_normal),
       ];
       let edge_sharpnesses = [
@@ -2118,9 +2131,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let edge_keys = &self.faces[face_key].edges;
         for edge_ix in 0..3 {
           let edge_key = edge_keys[edge_ix];
-          let edge = &mut self.edges[edge_key];
-          edge.displacement_normal = edge_displacement_normals[order[edge_ix]];
-          edge.sharp = edge_sharpnesses[order[edge_ix]];
+          self.edges[edge_key].sharp = edge_sharpnesses[order[edge_ix]];
+          set_channel(
+            &mut self.edge_displacement_normals,
+            edge_key,
+            edge_displacement_normals[order[edge_ix]],
+          );
         }
         face_key
       };
@@ -2203,7 +2219,6 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           vertices,
           faces: SmallVec::new(),
           sharp: false,
-          displacement_normal: None,
         };
         let edge_key = if DENSE {
           slotmap_insert_dense(&mut self.edges, new_edge)
@@ -2361,9 +2376,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
 
       for vtx_key in uniq_vtx_keys {
-        let vtx = &mut self.vertices[vtx_key];
-        vtx.shading_normal = vtx.shading_normal.map(|n| -n);
-        vtx.displacement_normal = vtx.displacement_normal.map(|n| -n);
+        if let Some(n) = self.shading_normals.get_mut(vtx_key) {
+          *n = -*n;
+        }
+        if let Some(n) = self.displacement_normals.get_mut(vtx_key) {
+          *n = -*n;
+        }
       }
     }
   }
@@ -2475,26 +2493,18 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               key
             } else {
               let t = dists[i] / (dists[i] - dists[j]);
-              let v_i = &self.vertices[vi_key];
-              let v_j = &self.vertices[vj_key];
-              let new_v_pos = v_i.position.lerp(&v_j.position, t);
+              let new_v_pos = self.vertices[vi_key].position.lerp(&self.vertices[vj_key].position, t);
 
-              let shading_normal = match (v_i.shading_normal, v_j.shading_normal) {
-                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+              let lerp_normalize = |ch: &SecondaryMap<VertexKey, Vec3>| match (ch.get(vi_key), ch.get(vj_key)) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(n1, t).normalize()),
                 _ => None,
               };
-              let displacement_normal = match (v_i.displacement_normal, v_j.displacement_normal) {
-                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                _ => None,
-              };
+              let shading_normal = lerp_normalize(&self.shading_normals);
+              let displacement_normal = lerp_normalize(&self.displacement_normals);
 
-              let key = self.vertices.insert(Vertex {
-                position: new_v_pos,
-                shading_normal,
-                displacement_normal,
-                edges: SmallVec::new(),
-                _padding: Default::default(),
-              });
+              let key = self.vertices.insert(Vertex::new(new_v_pos));
+              self.set_shading_normal(key, shading_normal);
+              self.set_displacement_normal(key, displacement_normal);
               created_vertices.insert(edge_key, key);
               key
             };
@@ -2595,8 +2605,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let [va, vb, vc] = face.vertices;
     let [alpha, beta, gamma] = bary;
     let outer_edge_data: [(Option<Vec3>, bool); 3] = std::array::from_fn(|i| {
-      let e = &self.edges[face.edges[i]];
-      (e.displacement_normal, e.sharp)
+      let edge_key = face.edges[i];
+      (
+        self.edge_displacement_normals.get(edge_key).copied(),
+        self.edges[edge_key].sharp,
+      )
     });
 
     let lerp3 = |na: Vec3, nb: Vec3, nc: Vec3| {
@@ -2604,38 +2617,34 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         .try_normalize(0.)
         .unwrap_or(face_normal)
     };
-    let blend = |get: fn(&Vertex) -> Option<Vec3>| {
-      get(&self.vertices[va])
-        .zip(get(&self.vertices[vb]))
-        .zip(get(&self.vertices[vc]))
+    let blend = |ch: &SecondaryMap<VertexKey, Vec3>| {
+      ch.get(va)
+        .copied()
+        .zip(ch.get(vb).copied())
+        .zip(ch.get(vc).copied())
         .map(|((na, nb), nc)| lerp3(na, nb, nc))
     };
-    let shading_normal = blend(|v| v.shading_normal);
-    let displacement_normal = blend(|v| v.displacement_normal);
+    let shading_normal = blend(&self.shading_normals);
+    let displacement_normal = blend(&self.displacement_normals);
 
-    let m_key = self.vertices.insert(Vertex {
-      position: point,
-      shading_normal,
-      displacement_normal,
-      edges: SmallVec::new(),
-      _padding: Default::default(),
-    });
+    let m_key = self.vertices.insert(Vertex::new(point));
+    self.set_shading_normal(m_key, shading_normal);
+    self.set_displacement_normal(m_key, displacement_normal);
 
     self.remove_face(face_key);
 
     for (i, (v0, v1)) in [(va, vb), (vb, vc), (vc, va)].into_iter().enumerate() {
       let new_face_key = self.add_face::<false>([v0, v1, m_key], Default::default());
       let new_face_edges = self.faces[new_face_key].edges;
-      let outer = &mut self.edges[new_face_edges[0]];
+      let outer_key = new_face_edges[0];
       let (outer_n, outer_sharp) = outer_edge_data[i];
-      if outer.displacement_normal.is_none() {
-        outer.displacement_normal = outer_n;
+      if !self.edge_displacement_normals.contains_key(outer_key) {
+        set_channel(&mut self.edge_displacement_normals, outer_key, outer_n);
       }
-      outer.sharp |= outer_sharp;
+      self.edges[outer_key].sharp |= outer_sharp;
       for &edge_key in &[new_face_edges[1], new_face_edges[2]] {
-        let edge = &mut self.edges[edge_key];
-        if edge.displacement_normal.is_none() {
-          edge.displacement_normal = Some(face_normal);
+        if !self.edge_displacement_normals.contains_key(edge_key) {
+          self.edge_displacement_normals.insert(edge_key, face_normal);
         }
       }
     }
@@ -3189,9 +3198,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       face.vertices.swap(0, 2);
     }
 
-    for vtx in self.vertices.values_mut() {
-      vtx.shading_normal = vtx.shading_normal.map(|n| -n);
-      vtx.displacement_normal = vtx.displacement_normal.map(|n| -n);
+    for n in self.shading_normals.values_mut() {
+      *n = -*n;
+    }
+    for n in self.displacement_normals.values_mut() {
+      *n = -*n;
     }
   }
 
@@ -3368,13 +3379,7 @@ impl<T: Default> From<TriMesh> for LinkedMesh<T> {
       LinkedMesh::new(trimesh.vertices().len(), trimesh.indices().len(), None);
     let mut vtx_keys = Vec::with_capacity(trimesh.vertices().len());
     for vtx in trimesh.vertices() {
-      let vtx_key = mesh.vertices.insert(Vertex {
-        position: Vec3::new(vtx.x, vtx.y, vtx.z),
-        shading_normal: None,
-        displacement_normal: None,
-        edges: SmallVec::new(),
-        _padding: Default::default(),
-      });
+      let vtx_key = mesh.vertices.insert(Vertex::new(Vec3::new(vtx.x, vtx.y, vtx.z)));
       vtx_keys.push(vtx_key);
     }
 

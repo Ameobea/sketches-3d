@@ -66,21 +66,23 @@ fn displace_mesh(mesh: &mut LinkedMesh, method: DisplacementMethod) {
     DisplacementMethod::None => {}
     DisplacementMethod::Noise => {
       let noise = noise::Fbm::new().set_octaves(4);
-      for (_vtx_key, vtx) in &mut mesh.vertices {
-        let pos = vtx.position * 0.2;
+      let vtx_keys: Vec<_> = mesh.vertices.keys().collect();
+      for vtx_key in vtx_keys {
+        let pos = mesh.vertices[vtx_key].position * 0.2;
         let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
-        let displacement_normal = vtx
-          .displacement_normal
+        let displacement_normal = mesh
+          .displacement_normal(vtx_key)
           .expect("Expected displacement normal to be set by now");
-        vtx.position += displacement_normal * noise * 1.8;
+        mesh.vertices[vtx_key].position += displacement_normal * noise * 1.8;
       }
     }
     DisplacementMethod::Constant => {
-      for (_vtx_key, vtx) in &mut mesh.vertices {
-        let displacement_normal = vtx
-          .displacement_normal
+      let vtx_keys: Vec<_> = mesh.vertices.keys().collect();
+      for vtx_key in vtx_keys {
+        let displacement_normal = mesh
+          .displacement_normal(vtx_key)
           .expect("Expected displacement normal to be set by now");
-        vtx.position += displacement_normal * 0.3;
+        mesh.vertices[vtx_key].position += displacement_normal * 0.3;
       }
     }
   }

@@ -18,7 +18,6 @@ use parry3d::{
   },
 };
 use slotmap::Key;
-use smallvec::SmallVec;
 
 use crate::{
   linked_mesh::{self, DisplacementNormalMethod, Edge, EdgeSplitPos, FaceKey, Vec3, VertexKey},
@@ -368,22 +367,20 @@ impl Plane {
               // The face we're splitting is the only one that uses this edge, we can just
               // add the new vertex to the mesh
               let position = vi.position.lerp(&vj.position, t);
-              let shading_normal = match (vi.shading_normal, vj.shading_normal) {
+              let shading_normal = match (mesh.shading_normal(vi_key), mesh.shading_normal(vj_key)) {
                 (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
                 _ => None,
               };
-              let displacement_normal = match (vi.displacement_normal, vj.displacement_normal) {
-                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                _ => None,
-              };
+              let displacement_normal =
+                match (mesh.displacement_normal(vi_key), mesh.displacement_normal(vj_key)) {
+                  (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                  _ => None,
+                };
 
-              mesh.vertices.insert(linked_mesh::Vertex {
-                position,
-                shading_normal,
-                displacement_normal,
-                edges: SmallVec::new(),
-                _padding: Default::default(),
-              })
+              let key = mesh.vertices.insert(linked_mesh::Vertex::new(position));
+              mesh.set_shading_normal(key, shading_normal);
+              mesh.set_displacement_normal(key, displacement_normal);
+              key
             };
 
             f.push(middle_vtx_key);
@@ -1455,13 +1452,9 @@ impl CSG {
   fn merge_other(mesh: &mut LinkedMesh<FaceData>, other: LinkedMesh<FaceData>) -> Vec<Polygon> {
     let mut our_vtx_key_by_other_vtx_key = FxHashMap::default();
     for (vtx_key, vtx) in other.vertices.iter() {
-      let new_key = mesh.vertices.insert(linked_mesh::Vertex {
-        position: vtx.position,
-        shading_normal: vtx.shading_normal,
-        displacement_normal: vtx.displacement_normal,
-        edges: SmallVec::new(),
-        _padding: Default::default(),
-      });
+      let new_key = mesh.vertices.insert(linked_mesh::Vertex::new(vtx.position));
+      mesh.set_shading_normal(new_key, other.shading_normal(vtx_key));
+      mesh.set_displacement_normal(new_key, other.displacement_normal(vtx_key));
       our_vtx_key_by_other_vtx_key.insert(vtx_key, new_key);
     }
     other
@@ -1873,10 +1866,7 @@ impl CSG {
           center[1] + radius * vtx[1] as f32,
           center[2] + radius * vtx[2] as f32,
         );
-        let vtx_key = mesh.vertices.insert(linked_mesh::Vertex {
-          position: pos,
-          ..Default::default()
-        });
+        let vtx_key = mesh.vertices.insert(linked_mesh::Vertex::new(pos));
         polygon_vertices[vtx_ix] = vtx_key;
       }
 

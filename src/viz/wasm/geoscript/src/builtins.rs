@@ -3,7 +3,6 @@ use noise::RangeFunction;
 use paste::paste;
 #[cfg(target_arch = "wasm32")]
 use rand_pcg::Pcg32;
-use smallvec::SmallVec;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
@@ -225,13 +224,10 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
             let transformed_pos =
               lhs.transform.try_inverse().unwrap() * rhs.transform * old_vtx.position.push(1.);
 
-            combined.vertices.insert(Vertex {
-              position: transformed_pos.xyz(),
-              displacement_normal: old_vtx.displacement_normal,
-              shading_normal: old_vtx.shading_normal,
-              edges: SmallVec::new(),
-              _padding: Default::default(),
-            })
+            let new_key = combined.vertices.insert(Vertex::new(transformed_pos.xyz()));
+            combined.set_shading_normal(new_key, rhs.mesh.shading_normal(old_vtx_key));
+            combined.set_displacement_normal(new_key, rhs.mesh.displacement_normal(old_vtx_key));
+            new_key
           })
         });
         combined.add_face::<false>(new_vtx_keys, ());
@@ -722,8 +718,8 @@ pub(crate) fn warp_impl(
 
       let mut needs_displacement_normals_computed = false;
       let mut new_mesh = (*mesh.mesh).clone();
-      if let Some(v) = new_mesh.vertices.values().next() {
-        if v.displacement_normal.is_none() {
+      if let Some(first_key) = new_mesh.vertices.keys().next() {
+        if new_mesh.displacement_normal(first_key).is_none() {
           needs_displacement_normals_computed = true
         }
       }
@@ -731,14 +727,14 @@ pub(crate) fn warp_impl(
         new_mesh.compute_vertex_displacement_normals();
       }
 
-      for vtx in new_mesh.vertices.values_mut() {
+      let vtx_keys: Vec<_> = new_mesh.vertices.keys().collect();
+      for vtx_key in vtx_keys {
+        let position = new_mesh.vertices[vtx_key].position;
+        let displacement_normal = new_mesh.displacement_normal(vtx_key).unwrap_or(Vec3::zeros());
         let warped_pos = ctx
           .invoke_callable(
             warp_fn,
-            &[
-              Value::Vec3(vtx.position),
-              Value::Vec3(vtx.displacement_normal.unwrap_or(Vec3::zeros())),
-            ],
+            &[Value::Vec3(position), Value::Vec3(displacement_normal)],
             EMPTY_KWARGS,
           )
           .map_err(|err| err.wrap("error calling warp cb"))?;
@@ -747,7 +743,7 @@ pub(crate) fn warp_impl(
             "warp callback must return Vec3, got: {warped_pos:?}",
           ))
         })?;
-        vtx.position = *warped_pos;
+        new_mesh.vertices[vtx_key].position = *warped_pos;
       }
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -3910,13 +3906,7 @@ fn connected_components_impl(
 
           let mut map_vtx = |sub_mesh: &mut LinkedMesh<()>, vkey: VertexKey| {
             *sub_vkey_by_old_vkey.entry(vkey).or_insert_with(|| {
-              sub_mesh.vertices.insert(Vertex {
-                position: mesh.vertices[vkey].position,
-                shading_normal: None,
-                displacement_normal: None,
-                edges: SmallVec::new(),
-                _padding: Default::default(),
-              })
+              sub_mesh.vertices.insert(Vertex::new(mesh.vertices[vkey].position))
             })
           };
 
@@ -6872,13 +6862,10 @@ fn join_meshes(
           // transform from rhs local space -> world space -> lhs local space
           let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
 
-          combined.vertices.insert(Vertex {
-            position: transformed_pos.xyz(),
-            displacement_normal: old_vtx.displacement_normal,
-            shading_normal: old_vtx.shading_normal,
-            edges: SmallVec::new(),
-            _padding: Default::default(),
-          })
+          let new_key = combined.vertices.insert(Vertex::new(transformed_pos.xyz()));
+          combined.set_shading_normal(new_key, rhs.mesh.shading_normal(old_vtx_key));
+          combined.set_displacement_normal(new_key, rhs.mesh.displacement_normal(old_vtx_key));
+          new_key
         })
       });
       combined.add_face::<false>(new_vtx_keys, ());

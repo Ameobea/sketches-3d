@@ -5,7 +5,6 @@ use mesh::{
   linked_mesh::{FaceKey, Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
-use smallvec::SmallVec;
 
 use crate::ErrorStack;
 
@@ -37,13 +36,7 @@ fn extrude_with_offsets(
         Entry::Vacant(v) => {
           let pos = mesh.vertices[vtx_key].position;
           let offset = offsets[&vtx_key];
-          let new_vtx_key = mesh.vertices.insert(Vertex {
-            position: pos + offset,
-            shading_normal: None,
-            displacement_normal: None,
-            edges: SmallVec::new(),
-            _padding: Default::default(),
-          });
+          let new_vtx_key = mesh.vertices.insert(Vertex::new(pos + offset));
           v.insert(new_vtx_key);
           new_vtx_key
         }

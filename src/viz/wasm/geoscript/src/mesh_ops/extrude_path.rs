@@ -2,7 +2,6 @@ use mesh::{
   linked_mesh::{Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
-use smallvec::SmallVec;
 
 use crate::ErrorStack;
 
@@ -16,13 +15,7 @@ pub fn extrude_path(
   let mut mesh = LinkedMesh::new(0, 0, None);
 
   let push_vtx = |mesh: &mut LinkedMesh<()>, pos: Vec3| -> VertexKey {
-    mesh.vertices.insert(Vertex {
-      position: pos,
-      shading_normal: None,
-      displacement_normal: None,
-      edges: SmallVec::new(),
-      _padding: Default::default(),
-    })
+    mesh.vertices.insert(Vertex::new(pos))
   };
 
   for (subpath_ix, (points, is_closed)) in subpaths.into_iter().enumerate() {

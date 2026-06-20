@@ -401,8 +401,9 @@ fn round_to_nearest_multiple(value: f32, multiple: f32) -> f32 {
 }
 
 fn displace_mesh(noise: &Fbm<f32>, mesh: &mut LinkedMesh) {
-  for (_vtx_key, vtx) in &mut mesh.vertices {
-    let Some(displacement_normal) = vtx.displacement_normal else {
+  let vtx_keys: Vec<_> = mesh.vertices.keys().collect();
+  for vtx_key in vtx_keys {
+    let Some(displacement_normal) = mesh.displacement_normal(vtx_key) else {
       continue;
     };
     if displacement_normal.x.is_nan()
@@ -414,12 +415,12 @@ fn displace_mesh(noise: &Fbm<f32>, mesh: &mut LinkedMesh) {
     }
 
     let pos_scale = 0.027;
-    let pos = vtx.position * pos_scale;
+    let pos = mesh.vertices[vtx_key].position * pos_scale;
     let noise = noise.get([pos.x, pos.y, pos.z]); //.abs();
     let mut noise_scale = 1.36;
     // tone down distortion near the bottoms of the pillars
-    noise_scale -= (1. - smoothstep(-20., 20., vtx.position.y)) * 1.;
-    vtx.position += Vector3::repeat(noise * noise_scale);
+    noise_scale -= (1. - smoothstep(-20., 20., mesh.vertices[vtx_key].position.y)) * 1.;
+    mesh.vertices[vtx_key].position += Vector3::repeat(noise * noise_scale);
   }
 }
 

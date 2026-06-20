@@ -2,7 +2,6 @@ use mesh::{
   linked_mesh::{Vec3, Vertex, VertexKey},
   LinkedMesh,
 };
-use smallvec::SmallVec;
 
 use crate::{ErrorStack, Value};
 
@@ -28,13 +27,7 @@ pub fn stitch_contours<'a>(
   ) -> Result<Option<VertexKey>, ErrorStack> {
     match seq.next() {
       // TODO: if the position is exactly the same as the previous vertex, re-use prev vtx key
-      Some(Ok(Value::Vec3(v3))) => Ok(Some(mesh.vertices.insert(Vertex {
-        position: v3,
-        shading_normal: None,
-        displacement_normal: None,
-        edges: SmallVec::new(),
-        _padding: Default::default(),
-      }))),
+      Some(Ok(Value::Vec3(v3))) => Ok(Some(mesh.vertices.insert(Vertex::new(v3)))),
       Some(Ok(other)) => Err(ErrorStack::new(format!(
         "Invalid value produced in seq for contour ix={seq_ix}; expected Vec3, found: {other:?}",
       ))),
@@ -49,13 +42,7 @@ pub fn stitch_contours<'a>(
       .map(|v| mesh.vertices[*v].position)
       .sum::<Vec3>()
       / contour_verts.len() as f32;
-    let center_vtx = mesh.vertices.insert(Vertex {
-      position: center,
-      shading_normal: None,
-      displacement_normal: None,
-      edges: SmallVec::new(),
-      _padding: Default::default(),
-    });
+    let center_vtx = mesh.vertices.insert(Vertex::new(center));
 
     for (ix0, ix1) in contour_verts
       .iter()

@@ -1,5 +1,5 @@
 use fxhash::{FxBuildHasher, FxHashMap};
-use linked_mesh::{Mat4, Vec3, Vertex, VertexKey};
+use linked_mesh::{Mat4, Vec3, VertexKey};
 use nalgebra::Vector3;
 
 pub mod linked_mesh;
@@ -168,25 +168,21 @@ impl OwnedIndexedMeshBuilder {
     )
   }
 
-  pub fn add_vtx(&mut self, vtx_key: VertexKey, vtx: &Vertex) {
+  pub fn add_vtx(
+    &mut self,
+    vtx_key: VertexKey,
+    position: Vec3,
+    shading_normal: Option<Vec3>,
+    displacement_normal: Option<Vec3>,
+  ) {
     let vert_ix = *self.seen_vtx_keys.entry(vtx_key).or_insert_with(|| {
       let ix = self.cur_vert_ix;
-      self.mesh.vertices.extend(vtx.position.iter());
+      self.mesh.vertices.extend(position.iter());
       if let Some(shading_normals) = self.mesh.shading_normals.as_mut() {
-        if let Some(shading_normal) = vtx.shading_normal {
-          shading_normals.extend(shading_normal.iter());
-        } else {
-          // panic!("Vertex {vert_key:?} has no shading normal");
-          shading_normals.extend(Vec3::zeros().iter());
-        }
+        shading_normals.extend(shading_normal.unwrap_or_else(Vec3::zeros).iter());
       }
       if let Some(displacement_normals) = self.mesh.displacement_normals.as_mut() {
-        if let Some(displacement_normal) = vtx.displacement_normal {
-          displacement_normals.extend(displacement_normal.iter());
-        } else {
-          // panic!("Vertex {vert_key:?} has no displacement normal");
-          displacement_normals.extend(Vec3::zeros().iter());
-        }
+        displacement_normals.extend(displacement_normal.unwrap_or_else(Vec3::zeros).iter());
       }
       self.cur_vert_ix += 1;
       ix
