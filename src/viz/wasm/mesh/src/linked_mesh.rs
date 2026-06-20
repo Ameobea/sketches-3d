@@ -318,6 +318,26 @@ impl<FaceData> LinkedMesh<FaceData> {
     }
     key
   }
+
+  /// Clones `src` into a fresh vertex inheriting its position, normals, and passive channels, then
+  /// repoints `faces` onto the clone. Introduces a UV/material seam at a shared vertex *without*
+  /// recomputing or creasing the smooth normal — the caller typically then overrides a channel
+  /// (e.g. the UV `V` of a closed-profile wrap) on the returned clone. `faces` must reference `src`.
+  pub fn split_off_faces(&mut self, src: VertexKey, faces: &[FaceKey]) -> VertexKey
+  where
+    FaceData: Default,
+  {
+    let position = self.vertices[src].position;
+    let clone = self.add_vertex_cloned_from(src, position);
+    let shading_normal = self.shading_normal(src);
+    self.set_shading_normal(clone, shading_normal);
+    let displacement_normal = self.displacement_normal(src);
+    self.set_displacement_normal(clone, displacement_normal);
+    for &face_key in faces {
+      self.replace_vertex_in_face(face_key, src, clone);
+    }
+    clone
+  }
 }
 
 fn set_channel<K: Key>(channel: &mut SecondaryMap<K, Vec3>, key: K, value: Option<Vec3>) {
@@ -1128,6 +1148,16 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  /// Whether two vertices agree on every passive channel (uv, tangent, …). Used to keep
+  /// merge-by-distance from collapsing an intentional UV/attribute seam at coincident verts.
+  fn vertex_channels_match(&self, a: VertexKey, b: VertexKey) -> bool {
+    self.vertex_channels.values().all(|ch| match (ch.get(a), ch.get(b)) {
+      (Some(x), Some(y)) => x.iter().zip(&y).all(|(p, q)| (p - q).abs() < 1e-6),
+      (None, None) => true,
+      _ => false,
+    })
+  }
+
   // TODO: The spatial bucketing used here could maybe be replaced with the `rstar` crate
   // https://docs.rs/rstar/latest/rstar/
   pub fn merge_vertices_by_distance_cb(
@@ -1268,7 +1298,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
                 }
 
                 let o_vtx = &self.vertices[o_vtx_key];
-                if distance(vtx.position, o_vtx.position) < max_distance {
+                // Don't weld a UV/attribute seam: coincident verts that disagree on a passive
+                // channel (uv, tangent, …) are an intentional split and must stay distinct.
+                if distance(vtx.position, o_vtx.position) < max_distance
+                  && self.vertex_channels_match(vtx_key, o_vtx_key)
+                {
                   vertices_to_merge.push(o_vtx_key);
                   bucket.swap_remove(i);
                 } else {

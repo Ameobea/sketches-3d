@@ -2,9 +2,9 @@ use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
 use bitvec::prelude::*;
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{Arity, Channel, FlipXform, Interp, Vec3},
+  linked_mesh::{Arity, Channel, FaceKey, FlipXform, Interp, Vec3, VertexKey},
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -522,6 +522,79 @@ fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents
   mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
 }
 
+/// Duplicate a boundary ring `[ring_start, ring_start+count)` into cap-owned verts carrying
+/// planar profile-space UVs (`offset` projected onto the cap `PlaneFrame`) + an in-plane tangent
+/// (`u_axis`). Keeps the tube body's arc-length UV / spine tangent intact on the shared ring and
+/// gives the cap edge a sharp normal (cap verts touch only cap faces). Returns the first dup index.
+fn dup_cap_ring(
+  verts: &mut Vec<Vec3>,
+  uvs: &mut Vec<[f32; 2]>,
+  tangents: &mut Vec<Vec3>,
+  ring_start: usize,
+  count: usize,
+  frame: &super::tessellate_polygon::PlaneFrame,
+  cap_uv_scale: Vec2,
+) -> usize {
+  let cap_start = verts.len();
+  for k in 0..count {
+    let p = verts[ring_start + k];
+    let d = p - frame.center;
+    verts.push(p);
+    uvs.push([
+      d.dot(&frame.u_axis) * cap_uv_scale.x,
+      d.dot(&frame.v_axis) * cap_uv_scale.y,
+    ]);
+    tangents.push(frame.u_axis);
+  }
+  cap_start
+}
+
+/// Post-normal closed-profile seam split: every ring wraps `last → first` (`v` runs `[0,1)`), so the
+/// wrap quad bridges `V≈(n-1)/n` back to the `V=0` seam vertex and crushes the texture across it. For
+/// each full ring we clone the seam vertex (inheriting the already-computed smooth normal, so no
+/// crease) onto a `V=1` copy and repoint just the wrap faces — those incident to the seam vertex that
+/// also touch a last-column vertex. Runs after `attach_sweep_attributes` so the `uv` channel exists.
+fn split_profile_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (usize, usize)>) {
+  let rings: Vec<(usize, usize)> = rings.filter(|&(_, count)| count >= 3).collect();
+  let last_col: FxHashSet<VertexKey> = rings
+    .iter()
+    .map(|&(start, count)| vkey((start + count - 1) as u32 + 1, 1))
+    .collect();
+  for &(start, _) in &rings {
+    let seam_key = vkey(start as u32 + 1, 1);
+    let mut wrap_faces: Vec<FaceKey> = Vec::new();
+    for &edge_key in &mesh.vertices[seam_key].edges {
+      for &face_key in &mesh.edges[edge_key].faces {
+        if mesh.faces[face_key].vertices.iter().any(|v| last_col.contains(v))
+          && !wrap_faces.contains(&face_key)
+        {
+          wrap_faces.push(face_key);
+        }
+      }
+    }
+    if wrap_faces.is_empty() {
+      continue;
+    }
+    let clone = mesh.split_off_faces(seam_key, &wrap_faces);
+    if let Some(uv_ch) = mesh.vertex_channels.get_mut("uv") {
+      if let Some(mut uv) = uv_ch.get(seam_key) {
+        uv[1] = 1.;
+        uv_ch.set(clone, uv);
+      }
+    }
+  }
+}
+
+/// Finalize a `split_seams` mesh: compute shading normals with the seam still SHARED (so it stays
+/// smooth), then split the profile seam — each clone inherits its source's smooth normal, so the
+/// seam reads seamless. The populated shading normals also signal the render pipeline
+/// (geoscript_repl) to skip its merge-by-distance + auto-smooth recompute, which would otherwise
+/// weld the coincident seam/cap duplicates back together and re-crease the seam.
+fn finalize_split_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (usize, usize)>) {
+  mesh.separate_vertices_and_compute_normals();
+  split_profile_seams(mesh, rings);
+}
+
 pub fn rail_sweep(
   spine_points: &[Vec3],
   ring_resolution: usize,
@@ -533,6 +606,7 @@ pub fn rail_sweep(
   profile_guides: Option<&[f32]>,
   profile_interval_weights: Option<&[f32]>,
   spine_u_values: Option<&[f32]>,
+  split_seams: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if ring_resolution < 3 {
     return Err(ErrorStack::new(
@@ -677,21 +751,37 @@ pub fn rail_sweep(
 
   if capped && !closed {
     for (ring_ix, reverse_winding) in [(0usize, false), (ring_infos.len() - 1, true)] {
-      let ring_info = &ring_infos[ring_ix];
-      if ring_info.count != ring_resolution {
+      let (ring_start, count, cap_frame) = {
+        let ri = &ring_infos[ring_ix];
+        (ri.start, ri.count, ri.cap_frame.clone())
+      };
+      if count != ring_resolution {
         continue;
       }
+      let frame =
+        cap_frame.expect("cap_frame should always be set for end rings when capping is enabled");
 
-      let ring_slice = &verts[ring_info.start..(ring_info.start + ring_resolution)];
-      let frame = ring_info
-        .cap_frame
-        .as_ref()
-        .expect("cap_frame should always be set for end rings when capping is enabled");
+      // `split_seams` duplicates the boundary ring so the cap carries planar UVs/tangents (at the
+      // cost of watertight topology); otherwise the cap reuses the shared ring verts (2-manifold).
+      let cap_base = if split_seams {
+        dup_cap_ring(
+          &mut verts,
+          &mut uvs,
+          &mut tangents,
+          ring_start,
+          count,
+          &frame,
+          Vec2::new(1., 1.),
+        )
+      } else {
+        ring_start
+      };
+      let ring_slice = &verts[cap_base..(cap_base + ring_resolution)];
       let cap_indices = super::tessellate_polygon::tessellate_ring_cap_with_frame(
         ring_slice,
-        ring_info.start,
+        cap_base,
         reverse_winding,
-        frame,
+        &frame,
       )?;
       indices.extend(cap_indices);
     }
@@ -699,6 +789,9 @@ pub fn rail_sweep(
 
   let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
   attach_sweep_attributes(&mut mesh, &uvs, &tangents);
+  if split_seams {
+    finalize_split_seams(&mut mesh, ring_infos.iter().map(|r| (r.start, r.count)));
+  }
   Ok(mesh)
 }
 
@@ -714,6 +807,8 @@ fn rail_sweep_dynamic(
   fku_stitching: bool,
   spine_u_values: Option<&[f32]>,
   adaptive_profile_sampling: bool,
+  split_seams: bool,
+  cap_uv_scale: Vec2,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   let frames = calculate_spine_frames(spine_points, frame_mode)?;
   let u_denom = (frames.len() - 1) as f32;
@@ -922,21 +1017,35 @@ fn rail_sweep_dynamic(
 
   if capped && !closed && sampled_rings.len() >= 2 {
     for (ring_ix, reverse_winding) in [(0usize, false), (sampled_rings.len() - 1, true)] {
-      let ring_info = &sampled_rings[ring_ix];
-      if ring_info.count < 3 {
+      let (ring_start, count, cap_frame) = {
+        let ri = &sampled_rings[ring_ix];
+        (ri.start, ri.count, ri.cap_frame.clone())
+      };
+      if count < 3 {
         continue;
       }
+      let frame =
+        cap_frame.expect("cap_frame should always be set for end rings when capping is enabled");
 
-      let ring_slice = &verts[ring_info.start..(ring_info.start + ring_info.count)];
-      let frame = ring_info
-        .cap_frame
-        .as_ref()
-        .expect("cap_frame should always be set for end rings when capping is enabled");
+      let cap_base = if split_seams {
+        dup_cap_ring(
+          &mut verts,
+          &mut uvs,
+          &mut tangents,
+          ring_start,
+          count,
+          &frame,
+          cap_uv_scale,
+        )
+      } else {
+        ring_start
+      };
+      let ring_slice = &verts[cap_base..(cap_base + count)];
       let cap_indices = super::tessellate_polygon::tessellate_ring_cap_with_frame(
         ring_slice,
-        ring_info.start,
+        cap_base,
         reverse_winding,
-        frame,
+        &frame,
       )?;
       indices.extend(cap_indices);
     }
@@ -967,6 +1076,9 @@ fn rail_sweep_dynamic(
   }
 
   attach_sweep_attributes(&mut mesh, &uvs, &tangents);
+  if split_seams {
+    finalize_split_seams(&mut mesh, sampled_rings.iter().map(|r| (r.start, r.count)));
+  }
   Ok(mesh)
 }
 
@@ -1484,6 +1596,8 @@ pub(crate) fn rail_sweep_impl(
       let fku_stitching = arg_refs[10].resolve(args, kwargs).as_bool().unwrap();
       let spine_sampling_scheme_val = arg_refs[11].resolve(args, kwargs);
       let adaptive_profile_sampling = arg_refs[12].resolve(args, kwargs).as_bool().unwrap();
+      let split_seams = arg_refs[13].resolve(args, kwargs).as_bool().unwrap();
+      let cap_uv_scale = *arg_refs[14].resolve(args, kwargs).as_vec2().unwrap();
 
       let use_adaptive_spine = is_adaptive_spine_scheme(&spine_sampling_scheme_val);
       let explicit_passthrough = is_passthrough_spine_scheme(&spine_sampling_scheme_val);
@@ -1825,6 +1939,8 @@ pub(crate) fn rail_sweep_impl(
         fku_stitching,
         Some(&spine_t_values),
         adaptive_profile_sampling,
+        split_seams,
+        cap_uv_scale,
       )?;
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -1871,6 +1987,7 @@ mod tests {
       None,
       None,
       None,
+      false,
     )
     .unwrap();
 
@@ -1904,6 +2021,7 @@ mod tests {
       None,
       None,
       None,
+      true,
     )
     .unwrap();
 
@@ -1913,10 +2031,13 @@ mod tests {
     let ChannelStore::Vec3(tan) = &mesh.vertex_channels["tangent"].store else {
       panic!("tangent channel missing or wrong arity");
     };
-    assert_eq!(uv.len(), 12, "3 rings x 4 verts");
-    assert_eq!(tan.len(), 12);
+    // 3 rings x 4 verts, plus one V=1 seam clone per ring from the closed-profile seam split.
+    assert_eq!(uv.len(), 15, "3 rings x 4 verts + 3 seam clones");
+    assert_eq!(tan.len(), 15);
+    let seam_clones = uv.values().filter(|uv| (uv[1] - 1.).abs() < 1e-5).count();
+    assert_eq!(seam_clones, 3, "one V=1 seam clone per ring");
 
-    // V = profile parameter; ring vertex 0 sits at the first profile sample.
+    // V = profile parameter; ring vertex 0 (the seam vertex) keeps V=0 (its clone carries V=1).
     let samples = build_topology_samples(res, None, None, false);
     for (ring_ix, expected_u) in [0f32, 1., 2.].iter().enumerate() {
       let v0 = vkey((ring_ix * res) as u32 + 1, 1);
@@ -1930,6 +2051,49 @@ mod tests {
       let dir = Vec3::new(t[0], t[1], t[2]);
       assert!((dir - Vec3::new(0., 0., 1.)).norm() < 1e-5, "tangent not +Z: {dir:?}");
     }
+  }
+
+  #[test]
+  fn split_seams_gives_caps_planar_uvs() {
+    use mesh::linked_mesh::ChannelStore;
+
+    // Capped circular tube (radius 1.5). Cap planar UVs = profile coords, so they reach negative
+    // U; the swept tube body's U = arc length is always >= 0. The presence of negative-U verts is
+    // therefore a direct signal that the cap duplication ran.
+    let build = |split_seams: bool| {
+      let spine = vec![Vec3::new(0., 0., 0.), Vec3::new(0., 0., 1.)];
+      let mesh = rail_sweep(
+        &spine,
+        24,
+        FrameMode::Rmf,
+        false,
+        true,
+        |_, _| Ok(0.),
+        |_, v_norm, _, _, _| {
+          let a = v_norm * std::f32::consts::TAU;
+          Ok(Vec2::new(a.cos() * 1.5, a.sin() * 1.5))
+        },
+        None,
+        None,
+        None,
+        split_seams,
+      )
+      .unwrap();
+      let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
+        panic!("uv channel missing");
+      };
+      let min_u = uv.values().map(|uv| uv[0]).fold(f32::INFINITY, f32::min);
+      // split_seams finalizes its own normals so the render pipeline leaves the mesh alone.
+      let normals_complete = mesh.shading_normals.len() == mesh.vertices.len();
+      (min_u, normals_complete)
+    };
+
+    let (min_u_plain, normals_plain) = build(false);
+    let (min_u_split, normals_split) = build(true);
+    assert!(min_u_plain >= -1e-6, "without split_seams caps reuse tube UV (U = arc length >= 0)");
+    assert!(!normals_plain, "without split_seams normals are left to the render pipeline");
+    assert!(min_u_split < -1.0, "with split_seams caps carry planar profile-coord UVs (reach -1.5)");
+    assert!(normals_split, "with split_seams every vertex carries a finalized shading normal");
   }
 
   #[test]
@@ -1958,6 +2122,7 @@ mod tests {
       None,
       None,
       None,
+      false,
     )
     .unwrap();
 
@@ -2255,6 +2420,7 @@ mod tests {
       None,
       None,
       Some(&custom_u_values),
+      false,
     )
     .unwrap();
 
@@ -2318,6 +2484,7 @@ mod tests {
       None,
       None,
       None,
+      false,
     )
     .unwrap();
 
@@ -2428,6 +2595,8 @@ mod tests {
       true,
       None,
       false,
+      false,
+      Vec2::new(1., 1.),
     )
     .unwrap();
 
@@ -2558,6 +2727,8 @@ mod tests {
       true,
       None,
       false,
+      false,
+      Vec2::new(1., 1.),
     )
     .unwrap();
 

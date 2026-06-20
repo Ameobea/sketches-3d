@@ -6310,6 +6310,20 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "When true (default), uses curvature-aware adaptive sampling for profile rings. Concentrates vertices in high-curvature regions of the profile curve, often achieving equivalent visual quality with significantly fewer vertices. Only applies when using `dynamic_profile`. Can be overridden per-ring by returning `{ sampler: ..., adaptive: true/false }` from the dynamic_profile callable. Set to false to use uniform sampling."
           },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, splits vertices at the profile UV seam (so textures wrap seamlessly, V: 0→1) and duplicates cap rings (so caps get planar UVs + an in-plane tangent + a sharp cap edge). Because this duplicates coincident vertices, the result is NO LONGER watertight 2-manifold — intended for final render meshes, not as input to CSG/boolean ops. Default false: shared vertices and watertight topology, at the cost of one smeared seam column and caps that inherit the body's swept UV/tangent."
+          },
+          ArgDef {
+            name: "cap_uv_scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
+            description: "Per-axis multiplier baked into the planar cap UVs when `split_seams` is set (the cap UV is the profile cross-section in world units). Lets the caps have a texture density independent of the swept body — e.g. set it to undo an anisotropic material `uvScale` so the cap reads isotropically instead of stretched. Default (1, 1) = raw world-unit profile coordinates. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
+          },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
         return_type: &[ArgType::Mesh],

@@ -20,12 +20,12 @@
     "arch_deck": {
       "type": "geoscript",
       "file": "geo/arch_deck.geo",
-      "_meta": { "runtimeMs": 34.4, "count": 5, "codeHash": "df68592a", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 38.7, "count": 5, "codeHash": "df68592a", "asyncDeps": [ "cgal" ] }
     },
     "swept_tube": {
       "type": "geoscript",
       "file": "geo/swept_tube.geo",
-      "_meta": { "runtimeMs": 65.6, "count": 5, "codeHash": "966c27f8", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 97.2, "count": 5, "codeHash": "ab337134", "asyncDeps": [ "cgal" ] }
     },
     "plat": {
       "type": "geoscript",

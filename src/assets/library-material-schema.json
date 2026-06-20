@@ -353,6 +353,9 @@
                     "applyReliefNormal": {
                       "type": "boolean"
                     },
+                    "tangentSpace": {
+                      "type": "boolean"
+                    },
                     "selfShadow": {
                       "type": "object",
                       "properties": {

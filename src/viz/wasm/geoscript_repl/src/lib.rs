@@ -70,18 +70,25 @@ impl GeoscriptReplCtx {
       let mesh_handle = rendered.mesh;
       let mut mesh = (*mesh_handle.mesh).clone();
 
-      let merged_count = mesh.merge_vertices_by_distance(0.0001);
-      if merged_count > 0 {
-        ::log::info!("Merged {merged_count} vertices in mesh");
+      // A mesh that already carries a complete set of shading normals authored its own topology +
+      // attribute seams (e.g. `rail_sweep` with `split_seams`: cap/seam vertex splits whose UVs the
+      // merge + auto-smooth recompute below would destroy). Leave those finalized meshes untouched.
+      let normals_finalized =
+        !mesh.shading_normals.is_empty() && mesh.shading_normals.len() == mesh.vertices.len();
+      if !normals_finalized {
+        let merged_count = mesh.merge_vertices_by_distance(0.0001);
+        if merged_count > 0 {
+          ::log::info!("Merged {merged_count} vertices in mesh");
+        }
+        mesh.mark_edge_sharpness(
+          self
+            .geo_ctx
+            .sharp_angle_threshold_degrees
+            .borrow()
+            .to_radians(),
+        );
+        mesh.separate_vertices_and_compute_normals();
       }
-      mesh.mark_edge_sharpness(
-        self
-          .geo_ctx
-          .sharp_angle_threshold_degrees
-          .borrow()
-          .to_radians(),
-      );
-      mesh.separate_vertices_and_compute_normals();
 
       let mut owned_mesh = mesh.to_raw_indexed(true, false, false);
       owned_mesh.transform = Some(mesh_handle.transform);

@@ -107,7 +107,7 @@
           "id": "raised_tiles_test_pad",
           "asset": "plat",
           "material": "__ASSETS__/materials/procedural/raised_tiles",
-          "position": [83.25, 3.0326, -16.7677],
+          "position": [81.5433, 3.0326, -16.7677],
           "rotation": [0, 0, 0],
           "scale": [1, 22.7476, 0.9814]
         },

@@ -765,7 +765,9 @@ export const buildCustomShaderArgs = (
     ? 'triplanar'
     : useGeneratedUVs
       ? 'generated'
-      : 'baseline';
+      : pom?.tangentSpace
+        ? 'tangent'
+        : 'baseline';
 
   if (randomizeUVOffset) {
     uniforms.uvOffsetSeed = { value: 0 };
@@ -913,6 +915,18 @@ export const buildCustomShaderArgs = (
     if (normalShader) {
       throw new Error('`pom` cannot be combined with `normalShader`; both fully define `normal`');
     }
+    if (pom.tangentSpace) {
+      if (useTriplanarMapping || useGeneratedUVs) {
+        throw new Error(
+          '`pom.tangentSpace` marches in the mesh tangent frame and requires the mesh UVs (no `useTriplanarMapping` / `useGeneratedUVs`)'
+        );
+      }
+      if (normalMap) {
+        throw new Error(
+          '`pom.tangentSpace` does not yet support a normal map (tangent-space normal mapping under tangent POM is future work)'
+        );
+      }
+    }
   }
   const pomSteps = pom?.steps ?? 24;
   const pomBounded = !!pom?.boundedSilhouette;
@@ -973,7 +987,9 @@ export const buildCustomShaderArgs = (
   const triplanarNormalSym = pom ? '_pomNormalW' : 'vTriplanarNormal';
 
   const pomGen = !!pom && pomTexturing === 'generated';
-  const mapUvSym = pomGen ? '_pomGenUv' : 'vMapUv';
+  const pomTangent = !!pom && pomTexturing === 'tangent';
+  // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
+  const mapUvSym = pomGen || pomTangent ? '_pomGenUv' : 'vMapUv';
 
   const usesSceneCtx = !!(
     colorShader ||
@@ -1314,6 +1330,7 @@ ${randomizeUVOffset ? hashSeedToVec2GLSL : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 ${useTriplanarMapping && randomizeUVOffset ? hashSeedToVec3GLSL : ''}
+${pomTangent ? '#ifndef USE_TANGENT\nattribute vec4 tangent;\n#endif\nvarying vec3 vWorldTangent;' : ''}
 
 // Keep gl_Position bit-identical to the depth-prepass material's regardless of which optional
 // features (USE_TANGENT, etc.) are compiled in, so the prepass depth-test match holds.
@@ -1370,6 +1387,17 @@ void main() {
     worldNormalMine = instanceMatrix * worldNormalMine;
   #endif
   vWorldNormal = normalize((modelMatrix * worldNormalMine).xyz);
+
+  ${
+    pomTangent
+      ? /* glsl */ `
+  vec4 worldTangentMine = vec4(tangent.xyz, 0.);
+  #ifdef USE_INSTANCING
+    worldTangentMine = instanceMatrix * worldTangentMine;
+  #endif
+  vWorldTangent = normalize((modelMatrix * worldTangentMine).xyz);`
+      : ''
+  }
 
   ${(() => {
     if (!useTriplanarMapping) return '';
@@ -1566,6 +1594,7 @@ ${needNormalMapMean ? 'uniform vec4 normalMapMeanColor;' : ''}
 ${needClearcoatNormalMapMean ? 'uniform vec4 clearcoatNormalMapMeanColor;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
+${pomTangent ? 'varying vec3 vWorldTangent;' : ''}
 
 ${normalShader ? 'uniform mat3 normalMatrix;' : ''}
 // ${usePackedDiffuseNormalGBA ? 'uniform vec2 normalScale;' : ''}
@@ -1609,6 +1638,50 @@ ${
     : ''
 }
 ${pomGen ? GeneratedUVsFragment : ''}
+${
+  pomTangent
+    ? /* glsl */ `
+// World-space gradients of vUv.x / vUv.y, measured once per fragment from screen-space
+// derivatives (filled by pomComputeUvGradients() in main(), before the march). They encode each
+// UV axis's direction AND its true per-world-unit rate — including the profile V axis, whose rate
+// (param-per-world-unit) a fixed uvTransform scale gets wrong, making V-keyed relief over-parallax
+// and shear with view angle.
+vec3 _pomGradU;
+vec3 _pomGradV;
+
+// Cotangent solve (Mikkelsen): the world-space gradient of a UV channel f is
+// (cross(dpdy,N)*dFdx(f) + cross(N,dpdx)*dFdy(f)) / det. Call from uniform control flow only.
+void pomComputeUvGradients() {
+  vec3 dpdx = dFdx(vWorldPos);
+  vec3 dpdy = dFdy(vWorldPos);
+  vec2 duvdx = dFdx(vUv);
+  vec2 duvdy = dFdy(vUv);
+  vec3 n = normalize(vWorldNormal);
+  vec3 r1 = cross(dpdy, n);
+  vec3 r2 = cross(n, dpdx);
+  float det = dot(dpdx, r1);
+  float idet = abs(det) > 1e-12 ? 1. / det : 0.;
+  _pomGradU = (r1 * duvdx.x + r2 * duvdy.x) * idet;
+  _pomGradV = (r1 * duvdx.y + r2 * duvdy.y) * idet;
+}
+
+// Recover the mesh UV at a marched world point by projecting its in-plane offset onto the measured
+// UV gradients (which are ⊥ N, so the depth component drops out). At the base surface this is vUv.
+vec2 pomMeshUv(vec3 p) {
+  vec3 off = p - vWorldPos;
+  return vUv + vec2(dot(off, _pomGradU), dot(off, _pomGradV));
+}
+
+// World units per unit of vUv.x / vUv.y — the inverse of the measured UV gradient lengths. Lets a
+// material snippet convert UV-space deltas to world units so isotropic patterns (round pits, hex
+// grids, …) stay round regardless of the swept profile's V parameterization. Tangent-space POM only.
+vec2 pomUvWorldScale() {
+  float lu = length(_pomGradU);
+  float lv = length(_pomGradV);
+  return vec2(lu > 1e-9 ? 1. / lu : 0., lv > 1e-9 ? 1. / lv : 0.);
+}`
+    : ''
+}
 
 ${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
 
@@ -1704,6 +1777,7 @@ void main() {
       : ''
   }
 
+  ${pomTangent ? 'pomComputeUvGradients();' : ''}
   ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );

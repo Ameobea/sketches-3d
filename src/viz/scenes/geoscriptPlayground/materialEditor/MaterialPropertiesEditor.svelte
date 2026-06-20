@@ -181,7 +181,7 @@
     </FormField>
     <FormField
       label="texture mapping"
-      help="Controls how textures are mapped to the mesh's surface.  Triplanar mapping works great for many uses, but generating UVs can be useful for exporting to other tools where native triplanar mapping is not available."
+      help="Controls how textures are mapped to the mesh's surface.  Triplanar mapping works great for many uses.  'mesh uv' samples the mesh's own UV attribute (e.g. analytic UVs emitted by rail_sweep) with no reprojection — required for tangent-space POM.  'uv' generates UVs via boundary-first flattening, useful for exporting to tools without triplanar support."
     >
       <div class="toggle-group">
         <button
@@ -189,6 +189,17 @@
           onclick={() => (material.textureMapping = { type: 'triplanar' })}
         >
           triplanar
+        </button>
+        <button
+          class:selected={material.textureMapping?.type === 'mesh_uv'}
+          onclick={() => {
+            if (material.textureMapping?.type !== 'mesh_uv') {
+              material.textureMapping = { type: 'mesh_uv' };
+              rerun(false);
+            }
+          }}
+        >
+          mesh uv
         </button>
         <button
           class:selected={material.textureMapping?.type === 'uv'}
@@ -332,6 +343,18 @@
                   bind:value={material.pom.steps}
                   style="width: 80px"
                 />
+              </FormField>
+              <FormField
+                label="tangent-space march"
+                help="Marches in the mesh's tangent frame so relief follows the analytic UVs (rail_sweep arc-length U / profile V) along swept or curved meshes. Requires 'mesh uv' texture mapping and a tangent attribute; no normal map yet."
+              >
+                <input type="checkbox" bind:checked={material.pom.tangentSpace} />
+              </FormField>
+              <FormField
+                label="apply relief normal"
+                help="Applies the carved relief's per-pixel normal to the shading normal so inset walls catch direct light even without a normal map."
+              >
+                <input type="checkbox" bind:checked={material.pom.applyReliefNormal} />
               </FormField>
               <FormField
                 label="bounded silhouette"

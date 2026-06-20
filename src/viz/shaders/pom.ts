@@ -14,7 +14,7 @@ export const buildPomUniformDecls = (
     pomSelfShadow ? 'uniform vec3 pomShadowLightDir; // world-space direction toward the light' : '',
   ].join('\n');
 
-export type PomTexturing = 'triplanar' | 'generated' | 'baseline';
+export type PomTexturing = 'triplanar' | 'generated' | 'baseline' | 'tangent';
 
 // Emits `getPomHeight()` + `samplePomHeightMap()`. The marcher sums both, so a
 // no-op (returning 0) is emitted for whichever source the material omits.
@@ -51,6 +51,12 @@ float samplePomHeightMap(vec3 p, vec3 _N) {
   if (_pomTriW.z > 0.01) h += textureLod(pomHeightMap, sp.xy * _phUvScale, 0.0).r * _pomTriW.z;
   return 1. - h;
 }`;
+    }
+    if (pomTexturing === 'tangent') {
+      // Mesh-UV march: each marched point projects into the surface tangent frame
+      // (`pomMeshUv`, emitted by customShader) so the height field follows the swept UV.
+      return /* glsl */ `
+float samplePomHeightMap(vec3 p, vec3 _N) { return 1. - textureLod(pomHeightMap, pomMeshUv(p), 0.0).r; }`;
     }
     return /* glsl */ `
 float samplePomHeightMap(vec3 p, vec3 N) {
@@ -376,6 +382,9 @@ export const buildPomMainBlock = (
         // perturbed normal causes dominant-axis flips at bevels near a 45°
         // boundary, producing UV seams. Tradeoff: stretching on steep walls.
         return `vec2 _pomGenUv = ( uvTransform * vec3( generateUV(_pomHit, vWorldNormal), 1.0 ) ).xy;`;
+      case 'tangent':
+        // Project the displaced hit into the mesh tangent frame (see `pomMeshUv`).
+        return `vec2 _pomGenUv = pomMeshUv(_pomHit);`;
       case 'baseline':
         // Reuse the interpolated pre-POM UV; texture warps with parallax.
         return '';

@@ -333,6 +333,21 @@ export interface CustomShaderOptions {
      */
     applyReliefNormal?: boolean;
     /**
+     * Marches the height field in the mesh's tangent frame instead of the world grid,
+     * so procedural relief follows the surface's analytic UVs (e.g. `rail_sweep` arc-length
+     * U / profile V) along a swept or curved mesh. Each marched point recovers its mesh UV via
+     * `pomMeshUv(pos)` (available to `pomHeightShader` and the color/light-attenuation slots,
+     * which also receive that displaced `pos`). The UV→world mapping is measured per fragment
+     * from screen-space derivatives, so it's exact on both axes regardless of the profile's V
+     * parameterization. `pomUvWorldScale()` exposes world-units-per-UV-unit (per axis) so
+     * snippets can build world-isotropic patterns (round pits, hex grids) that don't stretch.
+     *
+     * Requires the mesh to carry a `tangent` attribute (emitted by `rail_sweep`) and mesh-UV
+     * texturing — i.e. neither `useTriplanarMapping` nor `useGeneratedUVs`. Does not yet
+     * support a `normalMap` (tangent-space normal mapping under tangent POM is future work).
+     */
+    tangentSpace?: boolean;
+    /**
      * Opt-in relief self-shadowing: marches the height field from the displaced
      * hit toward an explicit light direction and darkens the direct lighting
      * where the relief occludes it. Independent of the scene's lights — the

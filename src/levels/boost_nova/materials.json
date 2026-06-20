@@ -247,7 +247,16 @@
       },
       "options": {
         "useTriplanarMapping": false,
-        "useGeneratedUVs": false
+        "useGeneratedUVs": false,
+        "pom": {
+          "depth": 0.2,
+          "steps": 12,
+          "tangentSpace": true,
+          "applyReliefNormal": true,
+          "refinement": "binary",
+          "refinementSteps": 6,
+          "boundedSilhouette": true
+        }
       },
       "shaders": {
         "commonShader": {
@@ -258,6 +267,9 @@
         },
         "lightAttenuationShader": {
           "file": "deckGrate.attenuation.glsl"
+        },
+        "pomHeightShader": {
+          "file": "deckGrate.height.glsl"
         }
       }
     },
@@ -272,7 +284,6 @@
         "normalMap": "shiny_patchwork_stone_normal"
       },
       "options": {
-        "randomizeUVOffset": true,
         "useTriplanarMapping": false,
         "useGeneratedUVs": false
       }

@@ -363,6 +363,7 @@ export const ShaderOptionsJsonSchema = z.object({
       lodFadeRange: z.number().optional(),
       boundedSilhouette: z.boolean().optional(),
       applyReliefNormal: z.boolean().optional(),
+      tangentSpace: z.boolean().optional(),
       selfShadow: z
         .object({
           lightDir: z.tuple([z.number(), z.number(), z.number()]),
