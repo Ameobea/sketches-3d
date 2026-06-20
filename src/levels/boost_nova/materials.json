@@ -237,6 +237,46 @@
         }
       }
     },
+    "deck_grate": {
+      "type": "customShader",
+      "props": {
+        "color": "#5d5e60",
+        "roughness": 0.55,
+        "metalness": 0.1,
+        "uvScale": [1, 1]
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "deckGrate.common.glsl"
+        },
+        "colorShader": {
+          "file": "deckGrate.color.glsl"
+        },
+        "lightAttenuationShader": {
+          "file": "deckGrate.attenuation.glsl"
+        }
+      }
+    },
+    "tube_texture": {
+      "type": "customShader",
+      "props": {
+        "color": "#aaaaaa",
+        "roughness": 0.3,
+        "metalness": 0.1,
+        "uvScale": [0.1, 1],
+        "map": "shiny_patchwork_stone_diffuse",
+        "normalMap": "shiny_patchwork_stone_normal"
+      },
+      "options": {
+        "randomizeUVOffset": true,
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false
+      }
+    },
     "palm_leaf": {
       "type": "customShader",
       "props": {

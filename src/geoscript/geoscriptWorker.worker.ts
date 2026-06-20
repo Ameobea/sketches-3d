@@ -192,13 +192,15 @@ const methods = {
     const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, meshIx);
     const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, meshIx);
     const normals = Geoscript.geoscript_repl_get_rendered_mesh_normals(ctxPtr, meshIx);
+    const uvs = Geoscript.geoscript_repl_get_rendered_mesh_uvs(ctxPtr, meshIx);
+    const tangents = Geoscript.geoscript_repl_get_rendered_mesh_tangents(ctxPtr, meshIx);
     const material = Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, meshIx);
     const sourceModule = Geoscript.geoscript_repl_get_rendered_mesh_source_module(ctxPtr, meshIx);
     const meshId = Geoscript.geoscript_repl_get_rendered_mesh_id(ctxPtr, meshIx);
 
     return Comlink.transfer(
-      { verts, indices, normals, transform, material, sourceModule, meshId },
-      filterNils([verts.buffer, indices.buffer, normals?.buffer])
+      { verts, indices, normals, uvs, tangents, transform, material, sourceModule, meshId },
+      filterNils([verts.buffer, indices.buffer, normals?.buffer, uvs?.buffer, tangents?.buffer])
     );
   },
   getRenderedPathCount: (ctxPtr: number) => {

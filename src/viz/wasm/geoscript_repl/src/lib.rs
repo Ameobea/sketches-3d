@@ -458,6 +458,24 @@ pub fn geoscript_repl_get_rendered_mesh_normals(
 }
 
 #[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_uvs(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> Option<Vec<f32>> {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh.uv.clone()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_tangents(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+) -> Option<Vec<f32>> {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh.tangent.clone()
+}
+
+#[wasm_bindgen]
 pub fn geoscript_repl_get_rendered_mesh_source_module(
   ctx: *const GeoscriptReplCtx,
   mesh_ix: usize,

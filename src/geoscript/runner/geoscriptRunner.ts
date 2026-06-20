@@ -169,6 +169,8 @@ export const runGeoscript = async ({
       verts: initialVerts,
       indices: initialIndices,
       normals,
+      uvs: meshUvs,
+      tangents: meshTangents,
       material: materialName,
       sourceModule,
       meshId,
@@ -176,7 +178,9 @@ export const runGeoscript = async ({
 
     let verts = initialVerts;
     let indices = initialIndices;
-    let uvs: Float32Array | null = null;
+    let uvs: Float32Array | null = meshUvs ?? null;
+    let tangents: Float32Array | null = meshTangents ?? null;
+    let didBffUnwrap = false;
     const matLookup = materials[materialName] ?? {
       def: null,
       mat: { resolved: FallbackMat, promise: Promise.resolve(FallbackMat) },
@@ -210,6 +214,8 @@ export const runGeoscript = async ({
         uvs = unwrappedUVs;
         verts = unwrappedVerts;
         indices = unwrappedIndices;
+        tangents = null; // re-mesh invalidates the emitted tangents
+        didBffUnwrap = true; // re-mesh invalidates the emitted normals → recompute below
       } catch (unwrapErr) {
         const errorMessage = `Error unwrapping UVs: ${unwrapErr}`;
         return {
@@ -230,6 +236,15 @@ export const runGeoscript = async ({
 
     if (uvs) {
       geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    }
+    if (tangents) {
+      // Named `tangent` so three auto-enables USE_TANGENT for normal-mapped materials → analytic
+      // tangent-space normal maps along the sweep. Safe now that the color + depth-prepass shaders
+      // pin `invariant gl_Position` (so depth still bit-matches) and the shader guards the
+      // degenerate-tangent caps.
+      geometry.setAttribute('tangent', new THREE.BufferAttribute(tangents, 4));
+    }
+    if (didBffUnwrap) {
       geometry.computeVertexNormals();
     } else if (normals) {
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));

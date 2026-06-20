@@ -121,6 +121,10 @@ pub struct OwnedIndexedMesh {
   pub vertices: Vec<f32>,
   pub shading_normals: Option<Vec<f32>>,
   pub displacement_normals: Option<Vec<f32>>,
+  /// 2 floats/vertex when present (analytic UVs from `rail_sweep` etc.).
+  pub uv: Option<Vec<f32>>,
+  /// 4 floats/vertex when present: xyz tangent + w handedness (glTF convention).
+  pub tangent: Option<Vec<f32>>,
   pub indices: Vec<usize>,
   pub transform: Option<nalgebra::Matrix4<f32>>,
 }
@@ -137,6 +141,8 @@ impl OwnedIndexedMeshBuilder {
     face_count: usize,
     include_displacement_normals: bool,
     include_shading_normals: bool,
+    include_uv: bool,
+    include_tangent: bool,
   ) -> Self {
     OwnedIndexedMeshBuilder {
       cur_vert_ix: 0,
@@ -153,18 +159,35 @@ impl OwnedIndexedMeshBuilder {
         } else {
           None
         },
+        uv: if include_uv {
+          Some(Vec::with_capacity(vtx_count * 2))
+        } else {
+          None
+        },
+        tangent: if include_tangent {
+          Some(Vec::with_capacity(vtx_count * 4))
+        } else {
+          None
+        },
         indices: Vec::with_capacity(face_count * 3),
         transform: None,
       },
     }
   }
 
-  pub fn new(include_displacement_normals: bool, include_shading_normals: bool) -> Self {
+  pub fn new(
+    include_displacement_normals: bool,
+    include_shading_normals: bool,
+    include_uv: bool,
+    include_tangent: bool,
+  ) -> Self {
     OwnedIndexedMeshBuilder::with_capacity(
       0,
       0,
       include_displacement_normals,
       include_shading_normals,
+      include_uv,
+      include_tangent,
     )
   }
 
@@ -174,6 +197,8 @@ impl OwnedIndexedMeshBuilder {
     position: Vec3,
     shading_normal: Option<Vec3>,
     displacement_normal: Option<Vec3>,
+    uv: Option<[f32; 2]>,
+    tangent: Option<[f32; 4]>,
   ) {
     let vert_ix = *self.seen_vtx_keys.entry(vtx_key).or_insert_with(|| {
       let ix = self.cur_vert_ix;
@@ -183,6 +208,12 @@ impl OwnedIndexedMeshBuilder {
       }
       if let Some(displacement_normals) = self.mesh.displacement_normals.as_mut() {
         displacement_normals.extend(displacement_normal.unwrap_or_else(Vec3::zeros).iter());
+      }
+      if let Some(uv_buf) = self.mesh.uv.as_mut() {
+        uv_buf.extend(uv.unwrap_or([0., 0.]).iter());
+      }
+      if let Some(tangent_buf) = self.mesh.tangent.as_mut() {
+        tangent_buf.extend(tangent.unwrap_or([0., 0., 0., 1.]).iter());
       }
       self.cur_vert_ix += 1;
       ix

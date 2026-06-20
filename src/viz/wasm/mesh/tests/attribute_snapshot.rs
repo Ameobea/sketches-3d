@@ -10,7 +10,9 @@
 
 use std::fmt::Write as _;
 
-use mesh::linked_mesh::{LinkedMesh, Plane, Vec3};
+use mesh::linked_mesh::{
+  Arity, Channel, ChannelStore, FlipXform, Interp, LinkedMesh, Plane, Vec3, VertexKey,
+};
 use mesh::OwnedIndexedMesh;
 
 const SNAPSHOT_PATH: &str =
@@ -197,4 +199,121 @@ fn box_corners_split_into_axis_aligned_face_normals() {
     counts[ax] += 1;
   }
   assert_eq!(counts, [4; 6], "each face normal should appear 4×");
+}
+
+/// `remove_vertex` / `remove_edge` must sweep the attribute channels too, otherwise stale entries
+/// accumulate as the mesh is edited. This is invisible to the export snapshot (stale entries are
+/// version-checked and never read), so it needs a direct assertion.
+#[test]
+fn removal_clears_channel_entries() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  m.compute_edge_displacement_normals();
+  m.compute_vertex_displacement_normals();
+
+  let vtx_key = m.vertices.keys().next().unwrap();
+  let edge_key = m.edges.keys().next().unwrap();
+  assert!(m.displacement_normals.get(vtx_key).is_some());
+  assert!(m.edge_displacement_normals.get(edge_key).is_some());
+  let (verts_before, edges_before) = (m.displacement_normals.len(), m.edge_displacement_normals.len());
+
+  m.remove_vertex(vtx_key);
+  m.remove_edge(edge_key);
+
+  assert!(m.displacement_normals.get(vtx_key).is_none(), "vertex channel entry not cleared");
+  assert!(m.edge_displacement_normals.get(edge_key).is_none(), "edge channel entry not cleared");
+  assert_eq!(m.displacement_normals.len(), verts_before - 1);
+  assert_eq!(m.edge_displacement_normals.len(), edges_before - 1);
+}
+
+fn uv(m: &LinkedMesh<()>, k: VertexKey) -> Option<[f32; 2]> {
+  match &m.vertex_channels["uv"].store {
+    ChannelStore::Vec2(map) => map.get(k).copied(),
+    _ => unreachable!(),
+  }
+}
+
+fn set_uv(m: &mut LinkedMesh<()>, k: VertexKey, v: [f32; 2]) {
+  match &mut m.vertex_channels.get_mut("uv").unwrap().store {
+    ChannelStore::Vec2(map) => {
+      map.insert(k, v);
+    }
+    _ => unreachable!(),
+  }
+}
+
+fn tangent(m: &LinkedMesh<()>, k: VertexKey) -> Option<[f32; 3]> {
+  match &m.vertex_channels["tangent"].store {
+    ChannelStore::Vec3(map) => map.get(k).copied(),
+    _ => unreachable!(),
+  }
+}
+
+fn set_tangent(m: &mut LinkedMesh<()>, k: VertexKey, v: [f32; 3]) {
+  match &mut m.vertex_channels.get_mut("tangent").unwrap().store {
+    ChannelStore::Vec3(map) => {
+      map.insert(k, v);
+    }
+    _ => unreachable!(),
+  }
+}
+
+/// Exercises the generic passive-channel registry through its public propagation surface:
+/// interpolated/cloned construction, surface flip (per-channel FlipXform), and removal sweep.
+#[test]
+fn passive_channels_propagate_and_flip() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  m.vertex_channels
+    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity));
+  m.vertex_channels.insert(
+    "tangent".into(),
+    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate),
+  );
+
+  let keys: Vec<VertexKey> = m.vertices.keys().collect();
+  for (i, &k) in keys.iter().enumerate() {
+    set_uv(&mut m, k, [i as f32, 0.]);
+    set_tangent(&mut m, k, [1., 0., 0.]);
+  }
+  let (a, b) = (keys[0], keys[1]);
+
+  // interpolate: midpoint of vertices 0 ([0,0]) and 1 ([1,0]) → [0.5,0]; tangents renormalize.
+  let mid = m.add_vertex_interpolated(&[(a, 0.5), (b, 0.5)], Vec3::zeros());
+  assert_eq!(uv(&m, mid), Some([0.5, 0.]));
+  assert_eq!(tangent(&m, mid), Some([1., 0., 0.]));
+
+  // clone: duplicate inherits the source's channel values verbatim.
+  let cloned = m.add_vertex_cloned_from(a, Vec3::zeros());
+  assert_eq!(uv(&m, cloned), uv(&m, a));
+  assert_eq!(tangent(&m, cloned), tangent(&m, a));
+
+  // flip: Negate channel (tangent) flips, Identity channel (uv) is untouched.
+  let uv_a = uv(&m, a);
+  m.flip_normals();
+  assert_eq!(uv(&m, a), uv_a, "uv (Identity) must survive flip unchanged");
+  assert_eq!(tangent(&m, a), Some([-1., 0., 0.]), "tangent (Negate) must flip");
+
+  // removal sweeps the registry too.
+  m.remove_vertex(a);
+  assert!(uv(&m, a).is_none() && tangent(&m, a).is_none());
+}
+
+/// End-to-end wiring check: the seam-split inside `separate_vertices_and_compute_normals` must
+/// route through the cloning constructor, so every split duplicate carries the channel value.
+#[test]
+fn separate_vertices_clones_passive_channels_onto_split_duplicates() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  m.vertex_channels
+    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity));
+  for k in m.vertices.keys().collect::<Vec<_>>() {
+    set_uv(&mut m, k, [7., 9.]);
+  }
+
+  m.mark_edge_sharpness(0.8);
+  m.separate_vertices_and_compute_normals();
+
+  // all-sharp box: 8 corners each split into 3 → 24 verts, every one carrying the cloned uv.
+  assert_eq!(m.vertices.len(), 24);
+  for k in m.vertices.keys() {
+    assert_eq!(uv(&m, k), Some([7., 9.]), "split duplicate missing cloned uv");
+  }
 }

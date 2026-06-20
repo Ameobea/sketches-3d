@@ -11,6 +11,9 @@ export interface RGBColor {
 
 export type TextureMapping =
   | { type: 'triplanar' }
+  // Sample the mesh's own `uv` attribute (e.g. analytic UVs emitted by `rail_sweep`), no
+  // reprojection or unwrap. `uvScale` sets tiling frequency via the material's uvTransform.
+  | { type: 'mesh_uv'; tileBreaking?: { patchScale: number } }
   | {
       type: 'uv';
       numCones: number;

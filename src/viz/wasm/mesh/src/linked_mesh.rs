@@ -246,6 +246,11 @@ pub struct LinkedMesh<FaceData = ()> {
   pub displacement_normals: SecondaryMap<VertexKey, Vec3>,
   /// Per-edge normal used for displacement mapping.
   pub edge_displacement_normals: SecondaryMap<EdgeKey, Vec3>,
+  /// Generic passive per-vertex attribute channels (uv, tangent, color, user-defined), keyed by
+  /// channel name.
+  pub vertex_channels: FxHashMap<String, Channel<VertexKey>>,
+  /// Generic passive per-edge attribute channels.
+  pub edge_channels: FxHashMap<String, Channel<EdgeKey>>,
 }
 
 impl<FaceData> LinkedMesh<FaceData> {
@@ -272,6 +277,47 @@ impl<FaceData> LinkedMesh<FaceData> {
   pub fn set_edge_displacement_normal(&mut self, key: EdgeKey, normal: Option<Vec3>) {
     set_channel(&mut self.edge_displacement_normals, key, normal);
   }
+
+  /// Removes a vertex along with any per-vertex channel data keyed to it. All vertex removals
+  /// should go through here so the attribute channels don't accumulate stale entries as the mesh
+  /// is edited.
+  pub fn remove_vertex(&mut self, key: VertexKey) -> Option<Vertex> {
+    self.shading_normals.remove(key);
+    self.displacement_normals.remove(key);
+    for ch in self.vertex_channels.values_mut() {
+      ch.store.remove(key);
+    }
+    self.vertices.remove(key)
+  }
+
+  /// Removes an edge along with any per-edge channel data keyed to it.
+  pub fn remove_edge(&mut self, key: EdgeKey) -> Option<Edge> {
+    self.edge_displacement_normals.remove(key);
+    for ch in self.edge_channels.values_mut() {
+      ch.store.remove(key);
+    }
+    self.edges.remove(key)
+  }
+
+  /// Inserts a fresh vertex, cloning every passive channel value from `src` (the seam-duplicate
+  /// case). Named normals are the caller's responsibility — they're recomputed/assigned bespoke.
+  pub fn add_vertex_cloned_from(&mut self, src: VertexKey, position: Vec3) -> VertexKey {
+    let key = self.vertices.insert(Vertex::new(position));
+    for ch in self.vertex_channels.values_mut() {
+      ch.store.clone_slot(key, src);
+    }
+    key
+  }
+
+  /// Inserts a fresh vertex, blending every passive channel from the weighted `srcs` per the
+  /// channel's interp rule (the split/cut case). Named normals stay the caller's responsibility.
+  pub fn add_vertex_interpolated(&mut self, srcs: &[(VertexKey, f32)], position: Vec3) -> VertexKey {
+    let key = self.vertices.insert(Vertex::new(position));
+    for ch in self.vertex_channels.values_mut() {
+      ch.store.interp_slot(key, srcs, ch.interp);
+    }
+    key
+  }
 }
 
 fn set_channel<K: Key>(channel: &mut SecondaryMap<K, Vec3>, key: K, value: Option<Vec3>) {
@@ -282,6 +328,187 @@ fn set_channel<K: Key>(channel: &mut SecondaryMap<K, Vec3>, key: K, value: Optio
     None => {
       channel.remove(key);
     }
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Arity {
+  Scalar,
+  Vec2,
+  Vec3,
+  Vec4,
+}
+
+/// How a passive channel's value at a newly-created vertex/edge is derived from its sources.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Interp {
+  /// Weighted average of the sources (uv, color, …).
+  Lerp,
+  /// Weighted average, then renormalized — for unit-length data like tangents.
+  LerpNormalize,
+}
+
+/// How a passive channel transforms when the surface is flipped/inverted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlipXform {
+  Identity,
+  Negate,
+}
+
+/// Tight per-arity SoA storage for one passive attribute channel.
+#[derive(Clone, Debug)]
+pub enum ChannelStore<K: Key> {
+  Scalar(SecondaryMap<K, f32>),
+  Vec2(SecondaryMap<K, [f32; 2]>),
+  Vec3(SecondaryMap<K, [f32; 3]>),
+  Vec4(SecondaryMap<K, [f32; 4]>),
+}
+
+impl<K: Key> ChannelStore<K> {
+  pub fn new(arity: Arity) -> Self {
+    match arity {
+      Arity::Scalar => ChannelStore::Scalar(SecondaryMap::new()),
+      Arity::Vec2 => ChannelStore::Vec2(SecondaryMap::new()),
+      Arity::Vec3 => ChannelStore::Vec3(SecondaryMap::new()),
+      Arity::Vec4 => ChannelStore::Vec4(SecondaryMap::new()),
+    }
+  }
+
+  pub fn arity(&self) -> usize {
+    match self {
+      ChannelStore::Scalar(_) => 1,
+      ChannelStore::Vec2(_) => 2,
+      ChannelStore::Vec3(_) => 3,
+      ChannelStore::Vec4(_) => 4,
+    }
+  }
+
+  /// Reads a slot as a fixed-width float vector (unused lanes zeroed) so the propagation math can
+  /// stay arity-agnostic; `set` writes back only the lanes this arity actually stores.
+  fn get(&self, key: K) -> Option<[f32; 4]> {
+    match self {
+      ChannelStore::Scalar(m) => m.get(key).map(|&v| [v, 0., 0., 0.]),
+      ChannelStore::Vec2(m) => m.get(key).map(|&[a, b]| [a, b, 0., 0.]),
+      ChannelStore::Vec3(m) => m.get(key).map(|&[a, b, c]| [a, b, c, 0.]),
+      ChannelStore::Vec4(m) => m.get(key).copied(),
+    }
+  }
+
+  fn set(&mut self, key: K, v: [f32; 4]) {
+    match self {
+      ChannelStore::Scalar(m) => {
+        m.insert(key, v[0]);
+      }
+      ChannelStore::Vec2(m) => {
+        m.insert(key, [v[0], v[1]]);
+      }
+      ChannelStore::Vec3(m) => {
+        m.insert(key, [v[0], v[1], v[2]]);
+      }
+      ChannelStore::Vec4(m) => {
+        m.insert(key, v);
+      }
+    }
+  }
+
+  fn remove(&mut self, key: K) {
+    match self {
+      ChannelStore::Scalar(m) => {
+        m.remove(key);
+      }
+      ChannelStore::Vec2(m) => {
+        m.remove(key);
+      }
+      ChannelStore::Vec3(m) => {
+        m.remove(key);
+      }
+      ChannelStore::Vec4(m) => {
+        m.remove(key);
+      }
+    }
+  }
+
+  fn clone_slot(&mut self, dst: K, src: K) {
+    if let Some(v) = self.get(src) {
+      self.set(dst, v);
+    }
+  }
+
+  /// All-or-nothing weighted blend (matches the named-normal `zip` semantics): writes `dst` only
+  /// if every source has a value.
+  fn interp_slot(&mut self, dst: K, srcs: &[(K, f32)], interp: Interp) {
+    let arity = self.arity();
+    let mut acc = [0f32; 4];
+    for &(key, weight) in srcs {
+      let Some(v) = self.get(key) else {
+        return;
+      };
+      for i in 0..4 {
+        acc[i] += v[i] * weight;
+      }
+    }
+    if interp == Interp::LerpNormalize && arity >= 2 {
+      let norm = (0..arity).map(|i| acc[i] * acc[i]).sum::<f32>().sqrt();
+      if norm > 1e-12 {
+        for x in acc.iter_mut().take(arity) {
+          *x /= norm;
+        }
+      }
+    }
+    self.set(dst, acc);
+  }
+
+  fn flip_slot(&mut self, key: K, flip: FlipXform) {
+    if flip == FlipXform::Negate {
+      if let Some(mut v) = self.get(key) {
+        for x in &mut v {
+          *x = -*x;
+        }
+        self.set(key, v);
+      }
+    }
+  }
+
+  fn flip_all(&mut self, flip: FlipXform) {
+    if flip != FlipXform::Negate {
+      return;
+    }
+    match self {
+      ChannelStore::Scalar(m) => m.values_mut().for_each(|v| *v = -*v),
+      ChannelStore::Vec2(m) => m.values_mut().for_each(|v| v.iter_mut().for_each(|x| *x = -*x)),
+      ChannelStore::Vec3(m) => m.values_mut().for_each(|v| v.iter_mut().for_each(|x| *x = -*x)),
+      ChannelStore::Vec4(m) => m.values_mut().for_each(|v| v.iter_mut().for_each(|x| *x = -*x)),
+    }
+  }
+}
+
+/// A passive (non-normal) attribute channel: arity-tagged SoA storage plus the rules for how it
+/// propagates through vertex/edge creation and surface flips.
+#[derive(Clone, Debug)]
+pub struct Channel<K: Key> {
+  pub interp: Interp,
+  pub flip: FlipXform,
+  pub store: ChannelStore<K>,
+}
+
+impl<K: Key> Channel<K> {
+  pub fn new(arity: Arity, interp: Interp, flip: FlipXform) -> Self {
+    Channel {
+      interp,
+      flip,
+      store: ChannelStore::new(arity),
+    }
+  }
+
+  /// Writes `value` for `key`; lanes above this channel's arity are ignored, so callers pass
+  /// `[x, y, 0., 0.]` for a `Vec2` channel, etc.
+  pub fn set(&mut self, key: K, value: [f32; 4]) {
+    self.store.set(key, value);
+  }
+
+  /// Reads `key` as a fixed-width vector; lanes above this channel's arity are zero.
+  pub fn get(&self, key: K) -> Option<[f32; 4]> {
+    self.store.get(key)
   }
 }
 
@@ -653,6 +880,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       shading_normals: SecondaryMap::new(),
       displacement_normals: SecondaryMap::new(),
       edge_displacement_normals: SecondaryMap::new(),
+      vertex_channels: FxHashMap::default(),
+      edge_channels: FxHashMap::default(),
     }
   }
 
@@ -709,6 +938,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       shading_normals,
       displacement_normals: SecondaryMap::new(),
       edge_displacement_normals: SecondaryMap::new(),
+      vertex_channels: FxHashMap::default(),
+      edge_channels: FxHashMap::default(),
     };
 
     mesh.faces = build_slotmap_from_iter_with_key(
@@ -776,7 +1007,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
   /// Removes `v1` and updates all references to it to point to `v0` instead.
   pub fn merge_vertices(&mut self, v0_key: VertexKey, v1_key: VertexKey) {
-    let removed_vtx = self.vertices.remove(v1_key).unwrap_or_else(|| {
+    let removed_vtx = self.remove_vertex(v1_key).unwrap_or_else(|| {
       panic!(
         "Tried to merge vertex that doesn't exist; key={v1_key:?}. Was referenced by removed \
          vertex with key={v0_key:?}",
@@ -845,7 +1076,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       }
 
       if let Some(edge_key_to_merge_into) = edge_key_to_merge_into {
-        let dropped_edge = self.edges.remove(edge_key).unwrap();
+        let dropped_edge = self.remove_edge(edge_key).unwrap();
         let merged_into_edge = &mut self.edges[edge_key_to_merge_into];
 
         for &face_key in &dropped_edge.faces {
@@ -1263,8 +1494,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           let vtx = &mut self.vertices[vtx_key];
           swap_retain_sv(&mut vtx.edges, |&mut e| e != old_edge_key);
         }
-        self.edges.remove(old_edge_key);
-        self.edge_displacement_normals.remove(old_edge_key);
+        self.remove_edge(old_edge_key);
       }
     }
 
@@ -1922,7 +2152,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       // smooth fan so that it can have a distinct normal
       let position = self.vertices[old_key].position;
       let displacement_normal = self.displacement_normal(old_key);
-      let new_vtx_key = self.vertices.insert(Vertex::new(position));
+      let new_vtx_key = self.add_vertex_cloned_from(old_key, position);
       self.set_shading_normal(new_vtx_key, Some(normal));
       self.set_displacement_normal(new_vtx_key, displacement_normal);
 
@@ -1938,11 +2168,15 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     include_displacement_normals: bool,
     include_degenerate_faces: bool,
   ) -> OwnedIndexedMesh {
+    let uv_channel = self.vertex_channels.get("uv");
+    let tangent_channel = self.vertex_channels.get("tangent");
     let mut builder = OwnedIndexedMeshBuilder::with_capacity(
       self.vertices.len(),
       self.faces.len(),
       include_displacement_normals,
       include_shading_normals,
+      uv_channel.is_some(),
+      tangent_channel.is_some(),
     );
 
     for face in self.faces.values() {
@@ -1956,6 +2190,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           self.vertices[vtx_key].position,
           self.shading_normal(vtx_key),
           self.displacement_normal(vtx_key),
+          uv_channel.and_then(|ch| ch.get(vtx_key)).map(|v| [v[0], v[1]]),
+          tangent_channel.and_then(|ch| ch.get(vtx_key)).map(|v| [v[0], v[1], v[2], 1.]),
         );
       }
     }
@@ -1971,6 +2207,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     include_displacement_normals: bool,
     partition_fn: impl Fn(&Face<FaceData>) -> T,
   ) -> Vec<OwnedIndexedMesh> {
+    let uv_channel = self.vertex_channels.get("uv");
+    let tangent_channel = self.vertex_channels.get("tangent");
     let mut out_meshes = FxHashMap::default();
 
     for face in self.faces.values() {
@@ -1980,7 +2218,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
       let out_key = partition_fn(face);
       let builder = out_meshes.entry(out_key).or_insert_with(|| {
-        OwnedIndexedMeshBuilder::new(include_displacement_normals, include_shading_normals)
+        OwnedIndexedMeshBuilder::new(
+          include_displacement_normals,
+          include_shading_normals,
+          uv_channel.is_some(),
+          tangent_channel.is_some(),
+        )
       });
 
       for &vtx_key in &face.vertices {
@@ -1989,6 +2232,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           self.vertices[vtx_key].position,
           self.shading_normal(vtx_key),
           self.displacement_normal(vtx_key),
+          uv_channel.and_then(|ch| ch.get(vtx_key)).map(|v| [v[0], v[1]]),
+          tangent_channel.and_then(|ch| ch.get(vtx_key)).map(|v| [v[0], v[1], v[2], 1.]),
         );
       }
     }
@@ -2078,7 +2323,13 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       DisplacementNormalMethod::EdgeNormal => edge_displacement_normal,
     };
 
-    let middle_vertex_key = self.vertices.insert(Vertex::new(vm_position));
+    let middle_vertex_key = self.add_vertex_interpolated(
+      &[
+        (edge_id_to_split[0], 1. - split_pos),
+        (edge_id_to_split[1], split_pos),
+      ],
+      vm_position,
+    );
     self.set_shading_normal(middle_vertex_key, shading_normal);
     self.set_displacement_normal(middle_vertex_key, displacement_normal);
 
@@ -2145,7 +2396,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       face_split_cb(&*self, old_face_key, old_face_data, new_face_keys);
     }
 
-    assert!(self.edges.remove(edge_key_to_split).is_none());
+    assert!(self.remove_edge(edge_key_to_split).is_none());
 
     middle_vertex_key
   }
@@ -2280,7 +2531,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       });
       swap_retain_sv(&mut edge.faces, |&mut f| f != face_key);
       if edge.faces.is_empty() {
-        let edge = self.edges.remove(edge_key).unwrap();
+        let edge = self.remove_edge(edge_key).unwrap();
         for vert_key in edge.vertices {
           let vert = &mut self.vertices[vert_key];
           swap_retain_sv(&mut vert.edges, |&mut e| e != edge_key);
@@ -2381,6 +2632,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         }
         if let Some(n) = self.displacement_normals.get_mut(vtx_key) {
           *n = -*n;
+        }
+        for ch in self.vertex_channels.values_mut() {
+          ch.store.flip_slot(vtx_key, ch.flip);
         }
       }
     }
@@ -2502,7 +2756,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
               let shading_normal = lerp_normalize(&self.shading_normals);
               let displacement_normal = lerp_normalize(&self.displacement_normals);
 
-              let key = self.vertices.insert(Vertex::new(new_v_pos));
+              let key = self.add_vertex_interpolated(&[(vi_key, 1. - t), (vj_key, t)], new_v_pos);
               self.set_shading_normal(key, shading_normal);
               self.set_displacement_normal(key, displacement_normal);
               created_vertices.insert(edge_key, key);
@@ -2627,7 +2881,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     let shading_normal = blend(&self.shading_normals);
     let displacement_normal = blend(&self.displacement_normals);
 
-    let m_key = self.vertices.insert(Vertex::new(point));
+    let m_key = self.add_vertex_interpolated(&[(va, alpha), (vb, beta), (vc, gamma)], point);
     self.set_shading_normal(m_key, shading_normal);
     self.set_displacement_normal(m_key, displacement_normal);
 
@@ -3203,6 +3457,9 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
     for n in self.displacement_normals.values_mut() {
       *n = -*n;
+    }
+    for ch in self.vertex_channels.values_mut() {
+      ch.store.flip_all(ch.flip);
     }
   }
 

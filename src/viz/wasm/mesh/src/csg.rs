@@ -1144,7 +1144,7 @@ impl Node {
     }
     for vtx_key in interior_vtx_keys {
       assert!(
-        mesh.vertices.remove(vtx_key).unwrap().edges.is_empty(),
+        mesh.remove_vertex(vtx_key).unwrap().edges.is_empty(),
         "Interior vertex has edges"
       );
     }

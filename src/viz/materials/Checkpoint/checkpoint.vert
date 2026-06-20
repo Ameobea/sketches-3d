@@ -9,6 +9,10 @@
 out vec3 vWorldPos;
 out vec3 vWorldNormal;
 
+// Lockstep with the depth-prepass materials (see header note): pin gl_Position invariant so the
+// clip-space transform stays bit-exact across programs.
+invariant gl_Position;
+
 void main() {
   __DEPTH_EXACT_VERTEX_BODY__
 

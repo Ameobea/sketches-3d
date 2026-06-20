@@ -17,6 +17,16 @@
       "code": "export mesh = cylinder(radius=1, height=1, radial_segments=64)",
       "_meta": { "runtimeMs": 0.6, "count": 5, "codeHash": "53940ed0" }
     },
+    "arch_deck": {
+      "type": "geoscript",
+      "file": "geo/arch_deck.geo",
+      "_meta": { "runtimeMs": 34.4, "count": 5, "codeHash": "df68592a", "asyncDeps": [ "cgal" ] }
+    },
+    "swept_tube": {
+      "type": "geoscript",
+      "file": "geo/swept_tube.geo",
+      "_meta": { "runtimeMs": 65.6, "count": 5, "codeHash": "966c27f8", "asyncDeps": [ "cgal" ] }
+    },
     "plat": {
       "type": "geoscript",
       "code": "export mesh = box(20, 0.5, 20)",
@@ -71,7 +81,7 @@
     "skyColor": "#99caf2",
     "horizonColor": "#dbd5b6",
     "groundColor": "#585e48",
-    "intensity": 0.8,
+    "intensity": 0.6,
     "setBackground": false
   },
   "lights": [

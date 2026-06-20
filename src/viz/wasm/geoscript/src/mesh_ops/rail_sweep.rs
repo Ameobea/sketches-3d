@@ -3,7 +3,11 @@ use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 use bitvec::prelude::*;
 
 use fxhash::FxHashMap;
-use mesh::{linked_mesh::Vec3, slotmap_utils::vkey, LinkedMesh};
+use mesh::{
+  linked_mesh::{Arity, Channel, FlipXform, Interp, Vec3},
+  slotmap_utils::vkey,
+  LinkedMesh,
+};
 use nalgebra::Matrix4;
 
 use crate::{
@@ -207,8 +211,10 @@ struct DynamicProfileData {
 
 struct RingContext {
   center: Vec3,
+  tangent: Vec3,
   normal: Vec3,
   binormal: Vec3,
+  u_arclen: f32,
   profile_data: DynamicProfileData,
   cap_frame: Option<super::tessellate_polygon::PlaneFrame>,
   collapsed: bool,
@@ -501,6 +507,21 @@ fn ring_is_collapsed_dynamic(ctx: &EvalCtx, ring: &RingContext) -> Result<bool, 
   Ok(true)
 }
 
+/// Attaches the analytic `uv` (U = cumulative spine arc length, V = profile parameter ∈ [0,1)) and
+/// `tangent` (spine direction) vertex channels to a freshly-built sweep mesh, indexed by the dense
+/// `vkey(i + 1, 1)` layout `from_indexed_vertices` produces.
+fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents: &[Vec3]) {
+  let mut uv_ch = Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity);
+  let mut tan_ch = Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate);
+  for (i, (uv, tan)) in uvs.iter().zip(tangents).enumerate() {
+    let key = vkey(i as u32 + 1, 1);
+    uv_ch.set(key, [uv[0], uv[1], 0., 0.]);
+    tan_ch.set(key, [tan.x, tan.y, tan.z, 0.]);
+  }
+  mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
+  mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+}
+
 pub fn rail_sweep(
   spine_points: &[Vec3],
   ring_resolution: usize,
@@ -535,11 +556,20 @@ pub fn rail_sweep(
   );
   let ring_resolution = v_samples.len();
   let mut verts: Vec<Vec3> = Vec::with_capacity(spine_points.len() * ring_resolution + 2);
+  let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(spine_points.len() * ring_resolution + 2);
+  let mut tangents: Vec<Vec3> = Vec::with_capacity(spine_points.len() * ring_resolution + 2);
   let mut ring_infos: Vec<RingInfo> = Vec::with_capacity(spine_points.len());
 
   let u_denom = (frames.len() - 1) as f32;
+  let mut u_arclen = 0f32;
+  let mut prev_center: Option<Vec3> = None;
 
   for (u_ix, frame) in frames.iter().enumerate() {
+    if let Some(pc) = prev_center {
+      u_arclen += (frame.center - pc).norm();
+    }
+    prev_center = Some(frame.center);
+
     let u_norm = match spine_u_values {
       Some(values) => values[u_ix],
       None => {
@@ -580,6 +610,8 @@ pub fn rail_sweep(
     if vertices_are_collapsed(&ring) {
       let start = verts.len();
       verts.push(compute_centroid(&ring));
+      uvs.push([u_arclen, 0.]);
+      tangents.push(frame.tangent);
       ring_infos.push(RingInfo {
         start,
         count: 1,
@@ -591,6 +623,10 @@ pub fn rail_sweep(
     } else {
       let start = verts.len();
       verts.extend(ring);
+      for &v_norm in &v_samples {
+        uvs.push([u_arclen, v_norm]);
+        tangents.push(frame.tangent);
+      }
       ring_infos.push(RingInfo {
         start,
         count: ring_resolution,
@@ -661,9 +697,9 @@ pub fn rail_sweep(
     }
   }
 
-  Ok(LinkedMesh::from_indexed_vertices(
-    &verts, &indices, None, None,
-  ))
+  let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+  attach_sweep_attributes(&mut mesh, &uvs, &tangents);
+  Ok(mesh)
 }
 
 fn rail_sweep_dynamic(
@@ -683,7 +719,14 @@ fn rail_sweep_dynamic(
   let u_denom = (frames.len() - 1) as f32;
 
   let mut ring_contexts: Vec<RingContext> = Vec::with_capacity(frames.len());
+  let mut u_arclen = 0f32;
+  let mut prev_center: Option<Vec3> = None;
   for (u_ix, frame) in frames.iter().enumerate() {
+    if let Some(pc) = prev_center {
+      u_arclen += (frame.center - pc).norm();
+    }
+    prev_center = Some(frame.center);
+
     let u = match spine_u_values {
       Some(values) => values[u_ix],
       None => {
@@ -725,8 +768,10 @@ fn rail_sweep_dynamic(
 
     let mut ring = RingContext {
       center: frame.center,
+      tangent: frame.tangent,
       normal,
       binormal,
+      u_arclen,
       profile_data,
       cap_frame,
       collapsed: false,
@@ -736,6 +781,8 @@ fn rail_sweep_dynamic(
   }
 
   let mut verts: Vec<Vec3> = Vec::new();
+  let mut uvs: Vec<[f32; 2]> = Vec::new();
+  let mut tangents: Vec<Vec3> = Vec::new();
   let mut indices: Vec<u32> = Vec::new();
 
   let sampled_rings: Vec<_> = ring_contexts
@@ -745,6 +792,8 @@ fn rail_sweep_dynamic(
       let (count, t_values, critical_mask) = if ring.collapsed {
         let apex = sample_profile_at(ctx, &ring, 0.0, 0)?;
         verts.push(apex);
+        uvs.push([ring.u_arclen, 0.]);
+        tangents.push(ring.tangent);
         (1, None, None)
       } else {
         let use_adaptive = ring
@@ -801,6 +850,8 @@ fn rail_sweep_dynamic(
         let t_vals = samples.clone();
         for (v_ix, v) in samples.iter().enumerate() {
           verts.push(sample_profile_at(ctx, &ring, *v, v_ix as i64)?);
+          uvs.push([ring.u_arclen, *v]);
+          tangents.push(ring.tangent);
         }
         (verts.len() - start, Some(t_vals), crit_mask)
       };
@@ -915,6 +966,7 @@ fn rail_sweep_dynamic(
     }
   }
 
+  attach_sweep_attributes(&mut mesh, &uvs, &tangents);
   Ok(mesh)
 }
 
@@ -1824,6 +1876,60 @@ mod tests {
 
     assert_eq!(mesh.vertices.len(), 8);
     assert_eq!(mesh.faces.len(), 8);
+  }
+
+  #[test]
+  fn rail_sweep_emits_uv_and_tangent_channels() {
+    use mesh::linked_mesh::ChannelStore;
+    use mesh::slotmap_utils::vkey;
+
+    // Straight spine along +Z with unit segments → ring U = cumulative arc length 0, 1, 2.
+    let spine = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., 0., 1.),
+      Vec3::new(0., 0., 2.),
+    ];
+    let res = 4;
+    let mesh = rail_sweep(
+      &spine,
+      res,
+      FrameMode::Rmf,
+      false,
+      false,
+      |_, _| Ok(0.),
+      |_, v_norm, _, _, _| {
+        let angle = v_norm * std::f32::consts::TAU;
+        Ok(Vec2::new(angle.cos(), angle.sin()))
+      },
+      None,
+      None,
+      None,
+    )
+    .unwrap();
+
+    let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
+      panic!("uv channel missing or wrong arity");
+    };
+    let ChannelStore::Vec3(tan) = &mesh.vertex_channels["tangent"].store else {
+      panic!("tangent channel missing or wrong arity");
+    };
+    assert_eq!(uv.len(), 12, "3 rings x 4 verts");
+    assert_eq!(tan.len(), 12);
+
+    // V = profile parameter; ring vertex 0 sits at the first profile sample.
+    let samples = build_topology_samples(res, None, None, false);
+    for (ring_ix, expected_u) in [0f32, 1., 2.].iter().enumerate() {
+      let v0 = vkey((ring_ix * res) as u32 + 1, 1);
+      let [u, v] = uv[v0];
+      assert!((u - expected_u).abs() < 1e-5, "ring {ring_ix} U: {u} vs {expected_u}");
+      assert!((v - samples[0]).abs() < 1e-5, "ring {ring_ix} V: {v} vs {}", samples[0]);
+    }
+
+    // Tangent tracks the spine direction (+Z) for every vertex.
+    for t in tan.values() {
+      let dir = Vec3::new(t[0], t[1], t[2]);
+      assert!((dir - Vec3::new(0., 0., 1.)).norm() < 1e-5, "tangent not +Z: {dir:?}");
+    }
   }
 
   #[test]

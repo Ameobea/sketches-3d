@@ -514,6 +514,9 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
     vertexShader: /* glsl */ `
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
+      // Pin gl_Position invariant so it bit-matches the color material's depth regardless of which
+      // optional features (e.g. USE_TANGENT) restructure that shader's vertex stage.
+      invariant gl_Position;
       void main() {
         // Shared snippet declares localPos / localNormal / mvPos and writes gl_Position
         // in a form bit-exact with Three.js's project_vertex chunk, so fragments drawn
@@ -546,6 +549,7 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
 export const buildPlainDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
     vertexShader: /* glsl */ `
+      invariant gl_Position;
       void main() {
         ${depthExactVertexBody}
       }
@@ -1311,6 +1315,10 @@ ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 ${useTriplanarMapping && randomizeUVOffset ? hashSeedToVec3GLSL : ''}
 
+// Keep gl_Position bit-identical to the depth-prepass material's regardless of which optional
+// features (USE_TANGENT, etc.) are compiled in, so the prepass depth-test match holds.
+invariant gl_Position;
+
 void main() {
   #include <color_vertex>
   #include <morphcolor_vertex>
@@ -1712,6 +1720,14 @@ void main() {
 	#include <metalnessmap_fragment>
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
+  ${
+    normalMap && !pom
+      ? /* glsl */ `
+  // Degenerate tangent frame (swept-mesh caps: analytic tangent ∥ normal → NaN bitangent) → keep
+  // the geometric normal so a NaN can't poison lighting + screen-space post-processing.
+  normal = dot(normal, normal) > 0.5 ? normal : nonPerturbedNormal;`
+      : ''
+  }
   ${pom ? buildPomNormalApply(pomTexturing, !!normalMap, !!pom.applyReliefNormal) : ''}
 
 	#include <clearcoat_normal_fragment_begin>
