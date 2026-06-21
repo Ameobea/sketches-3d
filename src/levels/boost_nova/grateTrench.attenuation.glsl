@@ -1,7 +1,7 @@
 // The gaps read as holes into a dark void: strong AO + direct kill at full
 // carve. The slat tops and rails stay fully lit.
 vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec2 uv = gtProjectUV(pos, vWorldNormal);
+  vec2 uv = domProject(pos, domAxis(vWorldNormal));
   float dv = abs(gtTrenchOffset(uv));
   float aa = max(ctx.aaFootprint, 1e-4);
   if (dv >= GT_END_OUT + aa) {

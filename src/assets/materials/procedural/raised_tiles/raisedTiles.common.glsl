@@ -100,6 +100,15 @@ float rtTileCarve(vec2 cellId) {
   return rtPlateauCarve(rtTileHeight01(cellId));
 }
 
+// grid tier: cache the per-tile carve (a `hash`, the dominant per-sample cost) once per cell;
+// the engine threads it into the march. RT_CELL must equal pom.cellPitch (engine owns decomposition).
+struct RtCell {
+  float carve;
+};
+RtCell gridComputeCell(vec2 cellId) {
+  return RtCell(rtTileCarve(cellId));
+}
+
 // Step wall: from this tile's plateau (b ≥ WALL_W) down/up to the midpoint of the
 // two tiles at the shared edge (b = 0). Symmetric, so both tiles meet flush there.
 float rtWallCarve(float b, float cThis, float cNb) {

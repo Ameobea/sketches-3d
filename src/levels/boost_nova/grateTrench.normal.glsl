@@ -3,7 +3,8 @@
 // UV. Outward normal = normalize(N + tangential(depth·∇carve)). Mirrors
 // grateTrench.height.glsl — keep in sync.
 vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
-  vec2 uv = gtProjectUV(pos, N);
+  int axis = domAxis(N);
+  vec2 uv = domProject(pos, axis);
   float vOff = gtTrenchOffset(uv);
   float dv = abs(vOff);
   if (dv >= GT_END_OUT) {
@@ -25,17 +26,6 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec2 vDir = GT_ALONG_X ? vec2(0., 1.) : vec2(1., 0.);
   vec2 gradUV = GT_CARVE * (endMask * dGap * uDir + gap * dEnd * vDir);
   gradUV *= reliefAAFade(aa, GT_WALL);
-
-  vec3 na = abs(N);
-  vec3 gradW;
-  if (na.y >= na.x && na.y >= na.z) {
-    gradW = vec3(gradUV.x, 0., gradUV.y);
-  } else if (na.x >= na.z) {
-    gradW = vec3(0., gradUV.y, gradUV.x);
-  } else {
-    gradW = vec3(gradUV.x, gradUV.y, 0.);
-  }
-
-  vec3 gw = depth * gradW;
+  vec3 gw = depth * domUnproject(gradUV, axis);
   return normalize(N + (gw - dot(gw, N) * N));
 }

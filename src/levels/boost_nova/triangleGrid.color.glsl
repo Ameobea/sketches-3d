@@ -3,7 +3,7 @@
 // distance also separates carved wall from floor. Footprint-AA'd bands (aaStep)
 // that dissolve toward the fill color at distance so the grid stops aliasing.
 vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  float ed = triEdgeDist(triProjectUV(pos, vWorldNormal));
+  float ed = triEdgeDist(domProject(pos, domAxis(vWorldNormal)));
   float aa = max(ctx.aaFootprint, 1e-4);
 
   // TRI_WALL_BAND_PAD insets the wall color band so POM hit imprecision can't bleed it past the band.

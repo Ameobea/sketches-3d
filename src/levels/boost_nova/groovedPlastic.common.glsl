@@ -58,6 +58,15 @@ bool gpSlotsAlongX(vec2 cellId) {
   return mod(cellId.x + cellId.y, 2.) < 0.5;
 }
 
+// grid tier: the one per-cell datum is the slot orientation; the engine caches this across
+// the march. GP_CELL must equal pom.cellPitch in materials.json (engine owns the decomposition).
+struct GpCell {
+  bool alongX;
+};
+GpCell gridComputeCell(vec2 cellId) {
+  return GpCell(gpSlotsAlongX(cellId));
+}
+
 // Signed offset to the nearest slot centerline. Slot k of GP_SLOTS sits at
 // cell-local (k + 0.5)*GP_PITCH - GP_SQ, so all slots land strictly inside the
 // square with a half-pitch margin at both sides.

@@ -28,6 +28,14 @@ vec2 gridCellLocal(vec2 uv, float pitch) {
   return (fract(uv / pitch) - 0.5) * pitch;
 }
 
+// Per-fragment frame the engine hands every grid-tier slot. cellLocal/cellId come from the
+// lattice decomposition (engine-owned, cached across the march); t = curTimeSeconds.
+struct GridCtx {
+  vec2 cellLocal;
+  vec2 cellId;
+  float t;
+};
+
 // smoothstep paired with its derivative d/dx, so a profile's height and normal share one
 // definition instead of hand-transcribing the 6t(1-t) slope. .x = value, .y = slope.
 vec2 smoothstepVS(float e0, float e1, float x) {

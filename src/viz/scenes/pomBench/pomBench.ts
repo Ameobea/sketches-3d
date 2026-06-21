@@ -21,6 +21,7 @@ import { buildMaterial } from 'src/viz/levelDef/buildMaterial';
 import type { MaterialDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
 import boostNovaMaterials from 'src/levels/boost_nova/materials.json';
+import raisedTilesAsset from 'src/assets/materials/procedural/raised_tiles/raised_tiles.json';
 
 const RT_W = 1280;
 const RT_H = 720;
@@ -30,13 +31,18 @@ const GPU_SAMPLES = 90;
 const SLOPE_REPEATS = 14;
 const SLOPE_KS = [1, 2, 4, 8];
 
-/** boost_nova materials worth a baseline, with their ladder classification. */
+/** Materials worth a baseline, with their ladder classification. The three raised_tiles rows
+ *  are an ablation of the same material: field (re-project+re-hash per sample) → projectedField
+ *  (projection hoisted) → grid (projection hoisted + per-cell hash cached). */
 const BENCH_MATERIALS: { name: string; cls: string }[] = [
-  { name: 'grooved_plastic', cls: 'L2 sextic / safeStep' },
-  { name: 'panel_seams', cls: 'L2 chamfer / Tier-A?' },
+  { name: 'grooved_plastic', cls: 'L2 grid (parity)' },
+  { name: 'panel_seams', cls: 'L2 projectedField' },
   { name: 'superellipse_tiles', cls: 'L2 ~analytic' },
   { name: 'grate_trench', cls: 'L2 1D / Tier-A' },
   { name: 'triangle_grid', cls: 'L1 tri-lattice' },
+  { name: 'raised_tiles_field', cls: 'L2 hash · field' },
+  { name: 'raised_tiles_proj', cls: 'L2 hash · projField' },
+  { name: 'raised_tiles', cls: 'L2 hash · grid' },
 ];
 
 interface Preset {
@@ -64,15 +70,44 @@ const PRESETS: Record<'headOn' | 'grazing', Preset> = {
   },
 };
 
-const glslModules = import.meta.glob('/src/levels/boost_nova/*.glsl', {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-}) as Record<string, string>;
+const glslModules = import.meta.glob(
+  ['/src/levels/boost_nova/*.glsl', '/src/assets/materials/procedural/raised_tiles/*.glsl'],
+  { query: '?raw', import: 'default', eager: true }
+) as Record<string, string>;
 const glslByName: Record<string, string> = {};
 for (const [path, src] of Object.entries(glslModules)) {
   glslByName[path.split('/').pop()!] = src;
 }
+
+// raised_tiles ships at the `grid` tier; these reconstruct its pre-cache height for the in-bench
+// ablation. `field` re-projects + re-hashes per sample; `projectedField` hoists the projection
+// only; `grid` (the file) also caches the per-cell hash. All three are output-identical.
+const RT_FIELD_HEIGHT = /* glsl */ `float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {
+  vec2 cellId, cl, edgeDir;
+  float b = rtCellField(rtProjectUV(pos, normal), cellId, cl, edgeDir);
+  float cThis = rtTileCarve(cellId);
+  if (b >= RT_WALL_W) { return cThis; }
+  return rtWallCarve(b, cThis, rtTileCarve(cellId + edgeDir));
+}`;
+const RT_PROJ_HEIGHT = /* glsl */ `float gridHeight(vec2 uv, float curTimeSeconds) {
+  vec2 cellId, cl, edgeDir;
+  float b = rtCellField(uv, cellId, cl, edgeDir);
+  float cThis = rtTileCarve(cellId);
+  if (b >= RT_WALL_W) { return cThis; }
+  return rtWallCarve(b, cThis, rtTileCarve(cellId + edgeDir));
+}`;
+
+const RT_VARIANTS = new Set(['raised_tiles', 'raised_tiles_field', 'raised_tiles_proj']);
+const getRawDef = (name: string): unknown => {
+  if (RT_VARIANTS.has(name)) {
+    return (raisedTilesAsset as { material: unknown }).material;
+  }
+  const raw = (boostNovaMaterials.materials as Record<string, unknown>)[name];
+  if (!raw) {
+    throw new Error(`pomBench: material "${name}" not in boost_nova/materials.json`);
+  }
+  return raw;
+};
 
 /**
  * Inline `{ file }` shader refs to GLSL strings (the server does this in prod),
@@ -80,11 +115,7 @@ for (const [path, src] of Object.entries(glslModules)) {
  * cost rather than the LOD/silhouette systems.
  */
 const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material => {
-  const raw = (boostNovaMaterials.materials as Record<string, unknown>)[name];
-  if (!raw) {
-    throw new Error(`pomBench: material "${name}" not in boost_nova/materials.json`);
-  }
-  const def = structuredClone(raw) as any;
+  const def = structuredClone(getRawDef(name)) as any;
   // materials.json stores colors as "#rrggbb" strings, normally numericized by the
   // level loader's Zod transform; we import the JSON raw, so convert here.
   for (const key of ['color', 'sheenColor']) {
@@ -109,6 +140,18 @@ const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material
   pom.boundedSilhouette = false;
   if (debugSamples) {
     pom.debug = 'evals';
+  }
+  // raised_tiles ablation twins: drop back to the pre-cache height variants.
+  if (name === 'raised_tiles_field') {
+    pom.tier = 'field';
+    delete pom.cellPitch;
+    delete pom.cellType;
+    shaders.pomHeightShader = RT_FIELD_HEIGHT;
+  } else if (name === 'raised_tiles_proj') {
+    pom.tier = 'projectedField';
+    delete pom.cellPitch;
+    delete pom.cellType;
+    shaders.pomHeightShader = RT_PROJ_HEIGHT;
   }
   def.options.pom = pom;
   return buildMaterial(def as MaterialDef, new Map());

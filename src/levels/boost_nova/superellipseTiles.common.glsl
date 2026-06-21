@@ -20,17 +20,6 @@ const vec3 SE_FLOOR_COLOR = vec3(0.045, 0.042, 0.038);
 const float SE_AO_FLOOR     = 0.6;
 const float SE_DIRECT_FLOOR = 0.75; // mild: the gaps still catch direct sun
 
-// Dominant-axis projection into 2D (Y→xz, X→zy, Z→xy), matching the other POM materials.
-vec2 seProjectUV(vec3 pos, vec3 axisNormal) {
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-}
-
 vec2 seCellLocal(vec2 uv) {
   return (fract(uv / SE_CELL) - 0.5) * SE_CELL;
 }
@@ -77,15 +66,29 @@ vec2 seRamp(float u, float r) {
   return vec2(1. - w * w / (4. * r), w / (2. * r));
 }
 
+// One per-fragment evaluation of the cell field, shared by the hit-time slots (height marches
+// separately). dir/s are meaningful only in the bevel band — the union of the color-padded and
+// unpadded normal bands — so the flats early-out before reading them.
+struct SeHit { float f; float s; vec2 dir; };
+SeHit gridComputeHit(vec2 uv) {
+  vec2 cl = seCellLocal(uv);
+  float f = seRadius(cl);
+  vec2 dir = vec2(0.);
+  float s = 0.;
+  if (f > SE_R - SE_RND * SE_BEV - SE_COL_PAD && f - SE_R < (1. + SE_RND) * SE_BEV) {
+    s = seOutlineDist(cl, f, dir);
+  }
+  return SeHit(f, s, dir);
+}
+
 // Visual carve for the color/attenuation slots: the profile shifted SE_COL_PAD
 // inward. Early-out bounds stay exact because |∇f| ≤ 1.
-float seVisCarve(vec2 cl, float f) {
-  if (f <= SE_R - SE_RND * SE_BEV - SE_COL_PAD) {
+float seVisCarveHit(SeHit h) {
+  if (h.f <= SE_R - SE_RND * SE_BEV - SE_COL_PAD) {
     return 0.;
   }
-  if (f - SE_R >= (1. + SE_RND) * SE_BEV - SE_COL_PAD) {
+  if (h.f - SE_R >= (1. + SE_RND) * SE_BEV - SE_COL_PAD) {
     return 1.;
   }
-  vec2 dir;
-  return seRamp((seOutlineDist(cl, f, dir) + SE_COL_PAD) / SE_BEV, SE_RND).x;
+  return seRamp((h.s + SE_COL_PAD) / SE_BEV, SE_RND).x;
 }

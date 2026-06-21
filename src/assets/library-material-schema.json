@@ -335,7 +335,17 @@
                     },
                     "tier": {
                       "type": "string",
-                      "enum": ["field", "projectedField"]
+                      "enum": ["field", "projectedField", "grid"]
+                    },
+                    "cellPitch": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "cellType": {
+                      "type": "string"
+                    },
+                    "hitType": {
+                      "type": "string"
                     },
                     "steps": {
                       "type": "integer",

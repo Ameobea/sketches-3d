@@ -357,7 +357,10 @@ export const ShaderOptionsJsonSchema = z.object({
   pom: z
     .object({
       depth: z.number(),
-      tier: z.enum(['field', 'projectedField']).optional(),
+      tier: z.enum(['field', 'projectedField', 'grid']).optional(),
+      cellPitch: z.number().positive().optional(),
+      cellType: z.string().optional(),
+      hitType: z.string().optional(),
       steps: z.number().int().min(1),
       jitter: z.boolean().optional(),
       lodFadeStart: z.number().optional(),

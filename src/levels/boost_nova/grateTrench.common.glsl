@@ -22,17 +22,6 @@ const vec3 GT_VOID_COLOR = vec3(0.006, 0.007, 0.008); // reads as a hole, darker
 const float GT_AO_VOID     = 0.45;
 const float GT_DIRECT_VOID = 0.3;
 
-// Dominant-axis projection into 2D (Y→xz, X→zy, Z→xy), matching the other POM materials.
-vec2 gtProjectUV(vec3 pos, vec3 axisNormal) {
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-}
-
 // Signed offset to the nearest trench centerline (across-axis).
 float gtTrenchOffset(vec2 uv) {
   float v = GT_ALONG_X ? uv.y : uv.x;

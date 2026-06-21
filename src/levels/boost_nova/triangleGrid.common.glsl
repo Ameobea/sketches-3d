@@ -40,17 +40,6 @@ const float TRI_AO_WALL       = 0.55; // brightness at the wall/floor crease
 const float TRI_AO_WALL_RANGE = 0.5;
 const float TRI_AO_CORNER     = 0.45; // smooth-min radius for corner darkening / rounding
 
-// Dominant-axis projection into 2D, matching the masonry POM materials (Y→xz, X→zy, Z→xy).
-vec2 triProjectUV(vec3 pos, vec3 axisNormal) {
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-}
-
 // Distance to the nearest tiling edge: min over the 3 line families (spaced by
 // triangle height H), each a centered sawtooth. 0 on an edge → inradius H/3 at the incenter.
 float triEdgeDist(vec2 uv) {
@@ -101,7 +90,7 @@ float triPitShadowFromEdges(vec3 d, vec3 sgns, float cd, vec3 worldN) {
   if (dot(worldN, TRI_SHADOW_LIGHT_DIR) <= 0.0) {
     return 0.0;
   }
-  vec2 Lraw = triProjectUV(TRI_SHADOW_LIGHT_DIR, worldN);
+  vec2 Lraw = domProject(TRI_SHADOW_LIGHT_DIR, domAxis(worldN));
   float Llen = length(Lraw);
   if (Llen < 1e-4) {
     return 0.0; // light straight overhead

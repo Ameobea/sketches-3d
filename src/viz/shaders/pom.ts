@@ -75,6 +75,11 @@ export const buildPomDefs = (opts: {
   // `projectedField` tier: emit `pomMarchProjected`, which hoists the dominant-axis
   // projection out of the march loop. The material supplies `gridHeight(vec2 uv, float t)`.
   pomProjected: boolean;
+  // `grid` tier: emit `pomMarchGrid`, which additionally owns the square-lattice cell
+  // decomposition and caches the material's `cellType` struct across the march. The material
+  // supplies `struct <cellType>`, `gridComputeCell(vec2)`, and `gridHeight(GridCtx, <cellType>)`.
+  pomGrid: boolean;
+  cellType: string;
   lodFadeStart: number;
   lodFadeEnd: number;
   pomRefinement: PomRefinement;
@@ -96,6 +101,8 @@ export const buildPomDefs = (opts: {
     pomSteps,
     pomBounded,
     pomProjected,
+    pomGrid,
+    cellType,
     lodFadeStart,
     lodFadeEnd,
     pomRefinement,
@@ -385,6 +392,222 @@ vec3 pomMarchProjected(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
   }
   return ro + rd * sPrev;
 }
+${
+  pomBounded
+    ? /* glsl */ `
+// Back-face-bounded projected marcher (cf. pomMarchBounded): projection hoisted, no cell cache.
+vec3 pomMarchProjectedBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRayLen, out bool carved) {
+  carved = false;
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float dStep = marchLen / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
+
+  float sPrev = 0.0;
+  float hPrev = 0.0;
+  float dPrev = 0.0;
+  for (int i = 1; i <= POM_STEPS; i++) {
+    float sRaw = dStep * (float(i) - jit);
+    float s = min(sRaw, maxRayLen);
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfUv(uv0 + duv * s, depth, t);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitProjected(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (sRaw >= maxRayLen) {
+      carved = true;
+      return ro + rd * s;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+  }
+#ifdef POM_JITTER
+  if (maxRayLen <= marchLen) {
+    float s = maxRayLen;
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfUv(uv0 + duv * s, depth, t);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitProjected(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    carved = true;
+    return ro + rd * s;
+  }
+#endif
+  return ro + rd * sPrev;
+}
+`
+    : ''
+}
+`
+    : ''
+}
+${
+  pomGrid
+    ? /* glsl */ `
+// grid (L2) carved depth; the per-cell struct is computed once per cell and threaded in (cf. _pomSurf).
+float _pomSurfGrid(GridCtx ctx, ${cellType} cell, float depth) {
+#ifdef POM_DEBUG_COUNTERS
+  _pomSampleCount++;
+#endif
+  return clamp(gridHeight(ctx, cell), 0., 0.8) * depth;
+}
+
+// s-space mirror of _pomRefineHit for the grid marcher. Recomputes the cell at each bisection
+// midpoint (a step can straddle a cell boundary), matching the black-box path. Keep in sync.
+float _pomRefineHitGrid(vec2 uv0, vec2 duv, float NdotVraw, float depth, float t,
+                        float sPrev, float hPrev, float dPrev,
+                        float s, float surfH, float rayDepth) {
+#ifdef POM_REFINE_BINARY
+  float overshoot = rayDepth - surfH;
+  float prevGap   = hPrev - dPrev;
+  float span      = overshoot + prevGap;
+  float w = span > 1e-6 ? overshoot / span : 0.0;
+  if (prevGap <= 1e-6) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;
+#endif
+    return mix(s, sPrev, w);
+  }
+#ifdef POM_REFINE_SKIP
+  if (overshoot <= POM_REFINE_SKIP * (depth / float(POM_STEPS))) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;
+#endif
+    return mix(s, sPrev, w);
+  }
+#endif
+#ifdef POM_DEBUG_COUNTERS
+  _pomRefineState = 2;
+#endif
+  float lo = sPrev;
+  float hi = s;
+  for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+    float mid = 0.5 * (lo + hi);
+    vec2 uv = uv0 + duv * mid;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float midSurf = _pomSurfGrid(ctx, gridComputeCell(cellId), depth);
+    if (mid * NdotVraw >= midSurf) hi = mid; else lo = mid;
+  }
+  return hi;
+#else
+  float a = surfH - rayDepth;
+  float b = hPrev - dPrev;
+  float w = clamp(a / (a - b), 0.0, 1.0);
+  return mix(s, sPrev, w);
+#endif
+}
+
+// Same kernel as pomMarchProjected, plus engine-owned cell decomposition: a one-cell cache
+// recomputes \`gridComputeCell\` only when the marched sample crosses into a new cell (so a
+// head-on ray that stays in one cell pays a single cell eval for the whole march).
+vec3 pomMarchGrid(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float dStep = (depth / NdotV) / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
+
+  vec2 cachedId = floor(uv0 / GRID_PITCH);
+  ${cellType} cell = gridComputeCell(cachedId);
+
+  float sPrev = 0.0;
+  float hPrev = 0.0;
+  float dPrev = 0.0;
+  for (int i = 1; i <= POM_STEPS; i++) {
+    float s = dStep * (float(i) - jit);
+    vec2 uv = uv0 + duv * s;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    if (any(notEqual(cellId, cachedId))) {
+      cell = gridComputeCell(cellId);
+      cachedId = cellId;
+    }
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfGrid(ctx, cell, depth);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitGrid(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+  }
+  return ro + rd * sPrev;
+}
+${
+  pomBounded
+    ? /* glsl */ `
+// Back-face-bounded grid marcher (cf. pomMarchBounded), with the engine-owned cell cache.
+vec3 pomMarchGridBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRayLen, out bool carved) {
+  carved = false;
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float dStep = marchLen / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
+
+  vec2 cachedId = floor(uv0 / GRID_PITCH);
+  ${cellType} cell = gridComputeCell(cachedId);
+
+  float sPrev = 0.0;
+  float hPrev = 0.0;
+  float dPrev = 0.0;
+  for (int i = 1; i <= POM_STEPS; i++) {
+    float sRaw = dStep * (float(i) - jit);
+    float s = min(sRaw, maxRayLen);
+    vec2 uv = uv0 + duv * s;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    if (any(notEqual(cellId, cachedId))) {
+      cell = gridComputeCell(cellId);
+      cachedId = cellId;
+    }
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfGrid(ctx, cell, depth);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitGrid(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (sRaw >= maxRayLen) {
+      carved = true;
+      return ro + rd * s;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+  }
+#ifdef POM_JITTER
+  if (maxRayLen <= marchLen) {
+    float s = maxRayLen;
+    vec2 uv = uv0 + duv * s;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    if (any(notEqual(cellId, cachedId))) {
+      cell = gridComputeCell(cellId);
+      cachedId = cellId;
+    }
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfGrid(ctx, cell, depth);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitGrid(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    carved = true;
+    return ro + rd * s;
+  }
+#endif
+  return ro + rd * sPrev;
+}
+`
+    : ''
+}
 `
     : ''
 }
@@ -457,10 +680,14 @@ float pomSelfShadow(vec3 hit, vec3 ro, vec3 N, vec3 L, float depth, float t) {
 export const buildPomMainBlock = (
   pomBounded: boolean,
   pomProjected: boolean,
+  pomGrid: boolean,
   pomTexturing: PomTexturing,
   normalEps: number | undefined,
   pomSelfShadow: { strength: number } | null,
-  hasHeightMap: boolean
+  hasHeightMap: boolean,
+  // `hitType` tier: a statement evaluating the shared at-hit cell field into `_pomHitData`. Runs
+  // once on the final `_pomHit` (the else covers the LOD-faded path where the march is skipped).
+  hitFramePrep: string | null
 ): string => {
   const tail = (() => {
     switch (pomTexturing) {
@@ -512,14 +739,17 @@ export const buildPomMainBlock = (
       }
       float _pomMaxLen = _pomNoBound ? 1e9 : _pomChord;
       bool _pomCarved = false;
-      _pomHit = pomMarchBounded(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
+      _pomHit = ${pomGrid ? 'pomMarchGridBounded' : pomProjected ? 'pomMarchProjectedBounded' : 'pomMarchBounded'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
       if (_pomCarved) {
         discard;
       }`
-          : pomProjected
-            ? /* glsl */ `_pomHit = pomMarchProjected(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
-            : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+          : pomGrid
+            ? /* glsl */ `_pomHit = pomMarchGrid(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+            : pomProjected
+              ? /* glsl */ `_pomHit = pomMarchProjected(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+              : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
+      ${hitFramePrep ?? ''}
       // Skip the analytic-normal taps once the LOD fade is negligible (<=2%):
       // saves the _pomSurf evals on distant fragments.
       if (_pomFade > 0.02) {
@@ -539,7 +769,7 @@ export const buildPomMainBlock = (
           ? /* glsl */ `_pomShadowVis = 1.0 - pomSelfShadow(_pomHit, vWorldPos, normalize(vWorldNormal), normalize(pomShadowLightDir), _pomD, curTimeSeconds) * ${pomSelfShadow.strength.toFixed(4)} * _pomFade;`
           : ''
       }
-    }
+    }${hitFramePrep ? ` else { ${hitFramePrep} }` : ''}
   }
   ${tail}
   `;

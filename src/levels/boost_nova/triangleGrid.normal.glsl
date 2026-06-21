@@ -5,7 +5,8 @@
 // through smoothstep'(x)=6t(1-t)/w, then lift to world via the dominant axis.
 // Mirrors triangleGrid.height.glsl — keep in sync.
 vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
-  vec2 uv = triProjectUV(pos, N);
+  int axis = domAxis(N);
+  vec2 uv = domProject(pos, axis);
   vec2 gradDir;
   float ed = triEdgeDistGrad(uv, gradDir);
 
@@ -17,16 +18,6 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
 
   vec2 gradUV = dCarved * gradDir;
   gradUV *= reliefAAFade(aa, TRI_WALL_WIDTH);
-  vec3 a = abs(N);
-  vec3 gradW;
-  if (a.y >= a.x && a.y >= a.z) {
-    gradW = vec3(gradUV.x, 0., gradUV.y);
-  } else if (a.x >= a.z) {
-    gradW = vec3(0., gradUV.y, gradUV.x);
-  } else {
-    gradW = vec3(gradUV.x, gradUV.y, 0.);
-  }
-
-  vec3 g = depth * gradW;
+  vec3 g = depth * domUnproject(gradUV, axis);
   return normalize(N + (g - dot(g, N) * N));
 }

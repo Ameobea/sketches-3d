@@ -308,10 +308,31 @@ export interface CustomShaderOptions {
      * - `'projectedField'`: the engine owns the dominant-axis projection and hoists
      *   it out of the march loop. `shaders.pomHeightShader` must define
      *   `float gridHeight(vec2 uv, float t)` instead of `getPomHeight`. Procedural-only
-     *   (no `pomHeightMap`), baseline texturing only (no triplanar/generated/tangent UVs),
-     *   no `boundedSilhouette`. Slots reach the same projection via `domProject`/`domAxis`.
+     *   (no `pomHeightMap`), baseline texturing only (no triplanar/generated/tangent UVs).
+     *   Slots reach the same projection via `domProject`/`domAxis`.
+     * - `'grid'`: as `projectedField`, plus the engine owns the square-lattice cell
+     *   decomposition and caches a material-declared per-cell struct across the march
+     *   (one `gridComputeCell` per cell — for head-on, one for the whole ray). Requires
+     *   `cellPitch` + `cellType`; `shaders.commonShader` must declare `struct <cellType> {…}`
+     *   and `<cellType> gridComputeCell(vec2 cellId)`, and `shaders.pomHeightShader` must
+     *   define `float gridHeight(GridCtx ctx, <cellType> cell)`.
      */
-    tier?: 'field' | 'projectedField';
+    tier?: 'field' | 'projectedField' | 'grid';
+    /** `tier: 'grid'`: square-lattice pitch in world units. Must equal the cell size the
+     *  material's `gridComputeCell`/`gridHeight` assume. */
+    cellPitch?: number;
+    /** `tier: 'grid'`: name of the GLSL struct the material declares for cached per-cell data
+     *  (e.g. `'GpCell'`); spliced into the engine's specialized marcher. */
+    cellType?: string;
+    /**
+     * `tier: 'projectedField'`/`'grid'`: name of a GLSL struct holding the cell field evaluated
+     * ONCE at the hit and shared by every hit-time slot (color/attenuation/normal/roughness),
+     * so an expensive closed-form field isn't recomputed per slot. The material declares
+     * `struct <hitType> {…}` + `<hitType> gridComputeHit(vec2 uv)` (projectedField) and writes
+     * its slots as `gridColor`/`gridAttenuation`/`gridNormal`/`gridRoughness` taking the struct;
+     * the engine generates the `getFragColor`/… shims. Incompatible with the antialias-* slots.
+     */
+    hitType?: string;
     /** Linear search step count. Default 24. */
     steps?: number;
     /**

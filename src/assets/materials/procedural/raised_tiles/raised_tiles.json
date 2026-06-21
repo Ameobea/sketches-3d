@@ -11,6 +11,9 @@
       "useTriplanarMapping": false,
       "useGeneratedUVs": false,
       "pom": {
+        "tier": "grid",
+        "cellPitch": 1,
+        "cellType": "RtCell",
         "depth": 0.38,
         "steps": 16,
         "lodFadeStart": 16,

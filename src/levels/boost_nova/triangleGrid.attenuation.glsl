@@ -3,7 +3,7 @@
 // real light incl. specular — unlike the color shader, which only reaches albedo.
 vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   vec3 sgns;
-  vec3 d = triEdgeDist3(triProjectUV(pos, vWorldNormal), sgns);
+  vec3 d = triEdgeDist3(domProject(pos, domAxis(vWorldNormal)), sgns);
   float ed = min(d.x, min(d.y, d.z));
   float aa = max(ctx.aaFootprint, 1e-4);
 

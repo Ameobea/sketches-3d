@@ -928,22 +928,43 @@ export const buildCustomShaderArgs = (
         );
       }
     }
-    if ((pom.tier ?? 'field') === 'projectedField') {
+    const pomTier = pom.tier ?? 'field';
+    if (pomTier === 'projectedField' || pomTier === 'grid') {
       if (!pomHeightShader) {
         throw new Error(
-          '`pom.tier: "projectedField"` requires `shaders.pomHeightShader` defining `float gridHeight(vec2 uv, float t)`'
+          `\`pom.tier: "${pomTier}"\` requires \`shaders.pomHeightShader\` defining \`gridHeight\``
         );
       }
       if (pomHeightMap) {
-        throw new Error('`pom.tier: "projectedField"` is procedural-only; drop `props.pomHeightMap`');
+        throw new Error(`\`pom.tier: "${pomTier}"\` is procedural-only; drop \`props.pomHeightMap\``);
       }
       if (pomTexturing !== 'baseline') {
         throw new Error(
-          '`pom.tier: "projectedField"` owns its own world-grid projection; remove `useTriplanarMapping` / `useGeneratedUVs` / `pom.tangentSpace`'
+          `\`pom.tier: "${pomTier}"\` owns its own world-grid projection; remove \`useTriplanarMapping\` / \`useGeneratedUVs\` / \`pom.tangentSpace\``
         );
       }
-      if (pom.boundedSilhouette) {
-        throw new Error('`pom.tier: "projectedField"` does not yet support `boundedSilhouette`');
+    }
+    if (pomTier === 'grid') {
+      if (!commonShader) {
+        throw new Error(
+          '`pom.tier: "grid"` requires `shaders.commonShader` declaring `struct <cellType> {…}` and `<cellType> gridComputeCell(vec2 cellId)`'
+        );
+      }
+      if (typeof pom.cellPitch !== 'number') {
+        throw new Error('`pom.tier: "grid"` requires `pom.cellPitch` (square-lattice pitch, world units)');
+      }
+      if (!pom.cellType) {
+        throw new Error('`pom.tier: "grid"` requires `pom.cellType` (the per-cell struct type name)');
+      }
+    }
+    if (pom.hitType) {
+      if (pomTier !== 'projectedField') {
+        throw new Error('`pom.hitType` is currently supported only on `pom.tier: "projectedField"`');
+      }
+      if (antialiasColorShader || antialiasRoughnessShader) {
+        throw new Error(
+          '`pom.hitType` evaluates the cell field once at the hit and shares it across slots; it is incompatible with `antialiasColorShader`/`antialiasRoughnessShader` (which oversample at multiple positions)'
+        );
       }
     }
   }
@@ -1008,6 +1029,11 @@ export const buildCustomShaderArgs = (
   const pomGen = !!pom && pomTexturing === 'generated';
   const pomTangent = !!pom && pomTexturing === 'tangent';
   const pomProjected = !!pom && (pom.tier ?? 'field') === 'projectedField';
+  const pomGrid = !!pom && pom.tier === 'grid';
+  const cellPitch = pom?.cellPitch ?? 1;
+  const cellType = pom?.cellType ?? 'GridCell';
+  const hitType = pom?.hitType;
+  const pomHitFrame = !!hitType && (pomProjected || pomGrid);
   // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
   const mapUvSym = pomGen || pomTangent ? '_pomGenUv' : 'vMapUv';
 
@@ -1041,6 +1067,8 @@ export const buildCustomShaderArgs = (
       pomSteps,
       pomBounded,
       pomProjected,
+      pomGrid,
+      cellType,
       lodFadeStart,
       lodFadeEnd,
       pomRefinement,
@@ -1705,7 +1733,8 @@ vec2 pomUvWorldScale() {
 }
 
 ${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
-${pomProjected ? proceduralMaterialGridCode : ''}
+${pomProjected || pomGrid ? proceduralMaterialGridCode : ''}
+${pomGrid ? `#define GRID_PITCH ${cellPitch.toFixed(6)}` : ''}
 
 ${buildCustomUniformDecls(false)}
 
@@ -1724,8 +1753,14 @@ ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
 ${pomProjected ? 'float getPomHeight(vec3 p, vec3 N, float t) { return gridHeight(domProject(p, domAxis(N)), t); }' : ''}
+${pomGrid ? `float getPomHeight(vec3 p, vec3 N, float t) { vec2 uv = domProject(p, domAxis(N)); vec2 cid = floor(uv / GRID_PITCH); return gridHeight(GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cid, t), gridComputeCell(cid)); }` : ''}
 ${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
 ${pom && pomNormalShader ? pomNormalShader : ''}
+${pomHitFrame ? `${hitType} _pomHitData; // one cell-field eval at the hit, shared by every slot below` : ''}
+${pomHitFrame && colorShader ? 'vec4 getFragColor(vec3 baseColor, vec3 p, vec3 n, float t, SceneCtx ctx) { return gridColor(_pomHitData, baseColor, ctx); }' : ''}
+${pomHitFrame && lightAttenuationShader ? 'vec2 getLightAttenuation(vec3 p, vec3 n, float t, SceneCtx ctx) { return gridAttenuation(_pomHitData, ctx); }' : ''}
+${pomHitFrame && roughnessShader ? 'float getCustomRoughness(vec3 p, vec3 n, float baseRoughness, float t, SceneCtx ctx) { return gridRoughness(_pomHitData, baseRoughness, ctx); }' : ''}
+${pomHitFrame && pomNormalShader ? 'vec3 getPomNormal(vec3 p, vec3 N, float depth, float t, float aa) { return gridNormal(_pomHitData, N, depth, aa); }' : ''}
 ${buildPomDefsFragment()}
 
 void main() {
@@ -1801,7 +1836,7 @@ void main() {
   }
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
-  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
