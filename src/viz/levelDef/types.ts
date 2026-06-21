@@ -357,6 +357,7 @@ export const ShaderOptionsJsonSchema = z.object({
   pom: z
     .object({
       depth: z.number(),
+      tier: z.enum(['field', 'projectedField']).optional(),
       steps: z.number().int().min(1),
       jitter: z.boolean().optional(),
       lodFadeStart: z.number().optional(),
@@ -377,7 +378,7 @@ export const ShaderOptionsJsonSchema = z.object({
       refineSkipThreshold: z.number().min(0).optional(),
       normalEps: z.number().positive().optional(),
       debug: z
-        .enum(['heightmap', 'depth', 'normal', 'normalDelta', 'axis', 'hit', 'samples', 'skip'])
+        .enum(['heightmap', 'depth', 'normal', 'normalDelta', 'axis', 'hit', 'samples', 'evals', 'skip'])
         .optional(),
     })
     .optional(),

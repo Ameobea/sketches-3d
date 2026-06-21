@@ -21,28 +21,22 @@ const float PS_HAIR_TINT   = 0.5;  // …and on the gap line
 const float PS_AO_SEAM     = 0.85;
 const float PS_DIRECT_HAIR = 0.55;
 
-// Dominant-axis projection into 2D (Y→xz, X→zy, Z→xy), matching the other POM materials.
-vec2 psProjectUV(vec3 pos, vec3 axisNormal) {
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-}
+// Dominant-axis projection lives in proceduralMaterialGrid.glsl (domProject/domAxis/domUnproject).
 
 // Distance to the nearest cell boundary; `cl` = signed cell-local coords (for
 // the gradient direction).
 float psBoundaryDist(vec2 uv, out vec2 cl) {
-  cl = (fract(uv / PS_CELL) - 0.5) * PS_CELL;
+  cl = gridCellLocal(uv, PS_CELL);
   return 0.5 * PS_CELL - max(abs(cl.x), abs(cl.y));
 }
 
-// Seam carve vs boundary distance `b`; the gap notch lies inside the chamfer.
-float psSeamCarve(float b) {
-  return PS_SEAM_DEPTH * (1. - smoothstep(0., PS_SEAM_W, b))
-       + PS_HAIR_DEPTH * (1. - smoothstep(PS_HAIR_HW, PS_HAIR_HW + PS_HAIR_WALL, b));
+// Seam carve vs boundary distance `b` (the gap notch lies inside the chamfer) paired with its
+// slope dcarve/db, so height and normal share one definition. .x = carve, .y = dcarve/db.
+vec2 psSeamCarveVS(float b) {
+  vec2 ss = smoothstepVS(0., PS_SEAM_W, b);
+  vec2 sh = smoothstepVS(PS_HAIR_HW, PS_HAIR_HW + PS_HAIR_WALL, b);
+  return vec2(PS_SEAM_DEPTH * (1. - ss.x) + PS_HAIR_DEPTH * (1. - sh.x),
+              -PS_SEAM_DEPTH * ss.y - PS_HAIR_DEPTH * sh.y);
 }
 
 // AA'd seam visibility as (chamfer, gap) profiles, for the color + attenuation slots.

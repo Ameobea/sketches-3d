@@ -72,6 +72,9 @@ export type PomRefinement = 'secant' | 'binary';
 export const buildPomDefs = (opts: {
   pomSteps: number;
   pomBounded: boolean;
+  // `projectedField` tier: emit `pomMarchProjected`, which hoists the dominant-axis
+  // projection out of the march loop. The material supplies `gridHeight(vec2 uv, float t)`.
+  pomProjected: boolean;
   lodFadeStart: number;
   lodFadeEnd: number;
   pomRefinement: PomRefinement;
@@ -92,6 +95,7 @@ export const buildPomDefs = (opts: {
   const {
     pomSteps,
     pomBounded,
+    pomProjected,
     lodFadeStart,
     lodFadeEnd,
     pomRefinement,
@@ -300,6 +304,90 @@ vec3 pomMarchBounded(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRa
 `
     : ''
 }
+${
+  pomProjected
+    ? /* glsl */ `
+// projectedField (L1) carved depth from the hoisted UV directly (cf. _pomSurf).
+float _pomSurfUv(vec2 uv, float depth, float t) {
+#ifdef POM_DEBUG_COUNTERS
+  _pomSampleCount++;
+#endif
+  return clamp(gridHeight(uv, t), 0., 0.8) * depth;
+}
+
+// s-space mirror of _pomRefineHit for the projected marcher (uv = uv0 + duv*s,
+// rayDepth = s*NdotVraw). Returns the hit's ray parameter. Keep in sync with _pomRefineHit.
+float _pomRefineHitProjected(vec2 uv0, vec2 duv, float NdotVraw, float depth, float t,
+                             float sPrev, float hPrev, float dPrev,
+                             float s, float surfH, float rayDepth) {
+#ifdef POM_REFINE_BINARY
+  float overshoot = rayDepth - surfH;
+  float prevGap   = hPrev - dPrev;
+  float span      = overshoot + prevGap;
+  float w = span > 1e-6 ? overshoot / span : 0.0;
+  if (prevGap <= 1e-6) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;
+#endif
+    return mix(s, sPrev, w);
+  }
+#ifdef POM_REFINE_SKIP
+  if (overshoot <= POM_REFINE_SKIP * (depth / float(POM_STEPS))) {
+#ifdef POM_DEBUG_COUNTERS
+    _pomRefineState = 1;
+#endif
+    return mix(s, sPrev, w);
+  }
+#endif
+#ifdef POM_DEBUG_COUNTERS
+  _pomRefineState = 2;
+#endif
+  float lo = sPrev;
+  float hi = s;
+  for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+    float mid = 0.5 * (lo + hi);
+    float midDepth = mid * NdotVraw;
+    float midSurf = _pomSurfUv(uv0 + duv * mid, depth, t);
+    if (midDepth >= midSurf) hi = mid; else lo = mid;
+  }
+  return hi;
+#else
+  float a = surfH - rayDepth;
+  float b = hPrev - dPrev;
+  float w = clamp(a / (a - b), 0.0, 1.0);
+  return mix(s, sPrev, w);
+#endif
+}
+
+// Same kernel as pomMarch, with the dominant-axis projection computed once: the per-step
+// world point and the branchy per-sample reprojection collapse to a 2-component MAD on uv.
+vec3 pomMarchProjected(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float dStep = (depth / NdotV) / float(POM_STEPS);
+  float jit = POM_JITTER_OFF;
+
+  float sPrev = 0.0;
+  float hPrev = 0.0;
+  float dPrev = 0.0;
+  for (int i = 1; i <= POM_STEPS; i++) {
+    float s = dStep * (float(i) - jit);
+    float rayDepth = s * NdotVraw;
+    float surfH = _pomSurfUv(uv0 + duv * s, depth, t);
+    if (rayDepth >= surfH) {
+      float sHit = _pomRefineHitProjected(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+  }
+  return ro + rd * sPrev;
+}
+`
+    : ''
+}
 // finite-difference normal of the carved floor (\`eps\` in world space). 3-tap
 // forward differences rather than 4-tap central: one fewer \`_pomSurf\` eval, and
 // the bias is imperceptible on this relief.
@@ -368,6 +456,7 @@ float pomSelfShadow(vec3 hit, vec3 ro, vec3 N, vec3 L, float depth, float t) {
 
 export const buildPomMainBlock = (
   pomBounded: boolean,
+  pomProjected: boolean,
   pomTexturing: PomTexturing,
   normalEps: number | undefined,
   pomSelfShadow: { strength: number } | null,
@@ -427,7 +516,9 @@ export const buildPomMainBlock = (
       if (_pomCarved) {
         discard;
       }`
-          : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+          : pomProjected
+            ? /* glsl */ `_pomHit = pomMarchProjected(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+            : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
       // Skip the analytic-normal taps once the LOD fade is negligible (<=2%):
       // saves the _pomSurf evals on distant fragments.

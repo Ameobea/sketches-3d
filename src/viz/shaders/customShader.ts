@@ -3,6 +3,7 @@ import { UniformsLib } from 'three';
 
 import commonShaderCode from './common.frag?raw';
 import proceduralMaterialAACode from './proceduralMaterialAA.glsl?raw';
+import proceduralMaterialGridCode from './proceduralMaterialGrid.glsl?raw';
 import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
 import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
 import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
@@ -927,6 +928,24 @@ export const buildCustomShaderArgs = (
         );
       }
     }
+    if ((pom.tier ?? 'field') === 'projectedField') {
+      if (!pomHeightShader) {
+        throw new Error(
+          '`pom.tier: "projectedField"` requires `shaders.pomHeightShader` defining `float gridHeight(vec2 uv, float t)`'
+        );
+      }
+      if (pomHeightMap) {
+        throw new Error('`pom.tier: "projectedField"` is procedural-only; drop `props.pomHeightMap`');
+      }
+      if (pomTexturing !== 'baseline') {
+        throw new Error(
+          '`pom.tier: "projectedField"` owns its own world-grid projection; remove `useTriplanarMapping` / `useGeneratedUVs` / `pom.tangentSpace`'
+        );
+      }
+      if (pom.boundedSilhouette) {
+        throw new Error('`pom.tier: "projectedField"` does not yet support `boundedSilhouette`');
+      }
+    }
   }
   const pomSteps = pom?.steps ?? 24;
   const pomBounded = !!pom?.boundedSilhouette;
@@ -988,6 +1007,7 @@ export const buildCustomShaderArgs = (
 
   const pomGen = !!pom && pomTexturing === 'generated';
   const pomTangent = !!pom && pomTexturing === 'tangent';
+  const pomProjected = !!pom && (pom.tier ?? 'field') === 'projectedField';
   // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
   const mapUvSym = pomGen || pomTangent ? '_pomGenUv' : 'vMapUv';
 
@@ -1020,6 +1040,7 @@ export const buildCustomShaderArgs = (
     return buildPomDefs({
       pomSteps,
       pomBounded,
+      pomProjected,
       lodFadeStart,
       lodFadeEnd,
       pomRefinement,
@@ -1684,6 +1705,7 @@ vec2 pomUvWorldScale() {
 }
 
 ${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
+${pomProjected ? proceduralMaterialGridCode : ''}
 
 ${buildCustomUniformDecls(false)}
 
@@ -1701,6 +1723,7 @@ ${metalnessReverseColorRamp ? buildReverseColorRampGenerator('metalnessFromColor
 ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
+${pomProjected ? 'float getPomHeight(vec3 p, vec3 N, float t) { return gridHeight(domProject(p, domAxis(N)), t); }' : ''}
 ${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
 ${pom && pomNormalShader ? pomNormalShader : ''}
 ${buildPomDefsFragment()}
@@ -1778,7 +1801,7 @@ void main() {
   }
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
-  ${pom ? buildPomMainBlock(pomBounded, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;

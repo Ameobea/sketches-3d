@@ -2,7 +2,7 @@
 // which is what sells the joint. Mild AO over the seam valley.
 vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   vec2 cl;
-  float b = psBoundaryDist(psProjectUV(pos, vWorldNormal), cl);
+  float b = psBoundaryDist(domProject(pos, domAxis(vWorldNormal)), cl);
   if (b >= PS_SEAM_W) {
     return vec2(1.);
   }

@@ -134,6 +134,7 @@
         "useTriplanarMapping": false,
         "useGeneratedUVs": false,
         "pom": {
+          "tier": "projectedField",
           "depth": 0.05,
           "steps": 6,
           "lodFadeStart": 10,

@@ -437,11 +437,9 @@ export const processLoadedScene = async (
     presets: PRESETS,
   };
 
-  setStatus(
-    '[pomBench] ready — running sweep…\n' + 'window.pomBench.run(5) to average 5 sweeps · .run() for one'
-  );
+  setStatus('[pomBench] ready\n' + 'window.pomBench.run(5) to average 5 sweeps · .run() for one');
   // Kick off after a beat so shader compiles overlap the warmup, not the first sample.
-  setTimeout(() => runAll(1), 400);
+  // setTimeout(() => runAll(1), 400);
 
   return {
     locations: {

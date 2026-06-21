@@ -333,6 +333,10 @@
                     "depth": {
                       "type": "number"
                     },
+                    "tier": {
+                      "type": "string",
+                      "enum": ["field", "projectedField"]
+                    },
                     "steps": {
                       "type": "integer",
                       "minimum": 1,
@@ -417,6 +421,7 @@
                         "axis",
                         "hit",
                         "samples",
+                        "evals",
                         "skip"
                       ]
                     }

@@ -301,6 +301,17 @@ export interface CustomShaderOptions {
   pom?: {
     /** Max carve depth in world units. Also scales the analytic normal. */
     depth: number;
+    /**
+     * Capability tier (see `pom-capability-ladder-plan.md`).
+     * - `'field'` (default): black-box `getPomHeight(pos, normal, t)`; the marcher
+     *   re-projects every sample.
+     * - `'projectedField'`: the engine owns the dominant-axis projection and hoists
+     *   it out of the march loop. `shaders.pomHeightShader` must define
+     *   `float gridHeight(vec2 uv, float t)` instead of `getPomHeight`. Procedural-only
+     *   (no `pomHeightMap`), baseline texturing only (no triplanar/generated/tangent UVs),
+     *   no `boundedSilhouette`. Slots reach the same projection via `domProject`/`domAxis`.
+     */
+    tier?: 'field' | 'projectedField';
     /** Linear search step count. Default 24. */
     steps?: number;
     /**
