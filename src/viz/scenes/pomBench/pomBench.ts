@@ -55,7 +55,7 @@ interface Preset {
 // The bench surface is a large horizontal floor (normal +Y). head-on looks
 // straight down (NdotV≈1, frame-filling); grazing skims it toward the horizon
 // (shallow incidence over a big chunk of frame → long marches, the worst case).
-const PRESETS: Record<'headOn' | 'grazing', Preset> = {
+const PRESETS: Record<string, Preset> = {
   headOn: {
     pos: new THREE.Vector3(0, 12, 0),
     target: new THREE.Vector3(0, 0, 0),
@@ -67,6 +67,15 @@ const PRESETS: Record<'headOn' | 'grazing', Preset> = {
     target: new THREE.Vector3(0, 0, -60),
     up: new THREE.Vector3(0, 1, 0),
     fov: 60,
+  },
+  // Grazing along world-X (down a grate trench), so the view crosses the thin
+  // slat-gap walls perpendicularly — the worst case for safeStep bracket precision,
+  // where coarse refinement serrates the long feature edges.
+  grazingX: {
+    pos: new THREE.Vector3(26, 2.2, 0),
+    target: new THREE.Vector3(-90, 0.5, 0),
+    up: new THREE.Vector3(0, 1, 0),
+    fov: 58,
   },
 };
 
@@ -109,15 +118,11 @@ const getRawDef = (name: string): unknown => {
   return raw;
 };
 
-/**
- * Inline `{ file }` shader refs to GLSL strings (the server does this in prod),
- * then force the marcher fully active and unbounded so we measure the raw march
- * cost rather than the LOD/silhouette systems.
- */
-const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material => {
+// Clone the raw def, numericize "#rrggbb" colors (the level loader's Zod transform
+// normally does this; we import the JSON raw), and inline `{ file }` shader refs to
+// GLSL strings (the server does this in prod).
+const loadInlinedDef = (name: string): any => {
   const def = structuredClone(getRawDef(name)) as any;
-  // materials.json stores colors as "#rrggbb" strings, normally numericized by the
-  // level loader's Zod transform; we import the JSON raw, so convert here.
   for (const key of ['color', 'sheenColor']) {
     if (typeof def.props?.[key] === 'string') {
       def.props[key] = new THREE.Color(def.props[key]).getHex();
@@ -134,6 +139,14 @@ const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material
       shaders[key] = src;
     }
   }
+  return def;
+};
+
+// Force the marcher fully active and unbounded so we measure the raw march cost
+// rather than the LOD/silhouette systems.
+const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material => {
+  const def = loadInlinedDef(name);
+  const shaders = def.shaders ?? {};
   const pom = (def.options ??= {}).pom ?? {};
   pom.lodFadeStart = 1e6;
   pom.lodFadeRange = 1;
@@ -141,17 +154,43 @@ const buildBenchMaterial = (name: string, debugSamples: boolean): THREE.Material
   if (debugSamples) {
     pom.debug = 'evals';
   }
-  // raised_tiles ablation twins: drop back to the pre-cache height variants.
-  if (name === 'raised_tiles_field') {
-    pom.tier = 'field';
+  // raised_tiles ablation twins: drop back to the pre-cache height variants. These stay on the
+  // fixed-step march (safeStep stripped) so they remain the hoist/cache baselines; the shipping
+  // `raised_tiles` row carries safeStep.
+  if (name === 'raised_tiles_field' || name === 'raised_tiles_proj') {
+    delete pom.intersect;
+    delete pom.minFeatureWidth;
+    delete pom.lateralDist;
     delete pom.cellPitch;
     delete pom.cellType;
-    shaders.pomHeightShader = RT_FIELD_HEIGHT;
-  } else if (name === 'raised_tiles_proj') {
-    pom.tier = 'projectedField';
-    delete pom.cellPitch;
-    delete pom.cellType;
-    shaders.pomHeightShader = RT_PROJ_HEIGHT;
+    if (name === 'raised_tiles_field') {
+      pom.tier = 'field';
+      shaders.pomHeightShader = RT_FIELD_HEIGHT;
+    } else {
+      pom.tier = 'projectedField';
+      shaders.pomHeightShader = RT_PROJ_HEIGHT;
+    }
+  }
+  def.options.pom = pom;
+  return buildMaterial(def as MaterialDef, new Map());
+};
+
+// Visual-comparison build: native material settings except POM LOD-fade forced off
+// (so the whole floor shows relief, including the grazing distance). `forceMarch`
+// strips safeStep back to the fixed-step marcher for before/after captures.
+const buildShotMaterial = (name: string, forceMarch: boolean, refine?: number): THREE.Material => {
+  const def = loadInlinedDef(name);
+  const pom = (def.options ??= {}).pom ?? {};
+  pom.lodFadeStart = 1e6;
+  pom.lodFadeRange = 1;
+  if (forceMarch) {
+    delete pom.intersect;
+    delete pom.minFeatureWidth;
+    delete pom.lateralDist;
+  }
+  if (refine !== undefined) {
+    pom.refinement = 'binary';
+    pom.refinementSteps = refine;
   }
   def.options.pom = pom;
   return buildMaterial(def as MaterialDef, new Map());
@@ -465,9 +504,39 @@ export const processLoadedScene = async (
   applyPreset(PRESETS.headOn);
   renderToScreen();
 
+  // sRGB target for visual before/after capture (benchRT stays linear for eval readback).
+  const shotRT = new THREE.WebGLRenderTarget(RT_W, RT_H, { depthBuffer: true });
+  shotRT.texture.colorSpace = THREE.SRGBColorSpace;
+  const shotCanvas = document.createElement('canvas');
+  shotCanvas.width = RT_W;
+  shotCanvas.height = RT_H;
+  const shotCtx = shotCanvas.getContext('2d')!;
+  const shotBuf = new Uint8Array(RT_W * RT_H * 4);
+  // Render one material/preset (native settings, LOD-fade off) into shotRT → PNG data URL.
+  // mode 'march' strips safeStep for the before/after pair; reads pixels back so it's immune
+  // to drawing-buffer clears.
+  const captureShot = (name: string, presetName: string, mode: 'march' | 'safe', refine?: number): string => {
+    wall.material = buildShotMaterial(name, mode === 'march', refine);
+    (wall.material as any).setCurTimeSeconds?.(FIXED_TIME);
+    applyPreset(PRESETS[presetName]);
+    renderer.compile(scene, camera);
+    renderer.setRenderTarget(shotRT);
+    renderer.render(scene, camera);
+    renderer.readRenderTargetPixels(shotRT, 0, 0, RT_W, RT_H, shotBuf);
+    renderer.setRenderTarget(null);
+    const img = shotCtx.createImageData(RT_W, RT_H);
+    for (let y = 0; y < RT_H; y++) {
+      const src = (RT_H - 1 - y) * RT_W * 4;
+      img.data.set(shotBuf.subarray(src, src + RT_W * 4), y * RT_W * 4);
+    }
+    shotCtx.putImageData(img, 0, 0);
+    return shotCanvas.toDataURL('image/png');
+  };
+
   (window as any).pomBench = {
     results: published,
     run: runAll,
+    shot: captureShot,
     setMaterial: (name: string, debug = false) => {
       wall.material = name === 'flat' ? flatMat : buildBenchMaterial(name, debug);
       (wall.material as any).setCurTimeSeconds?.(FIXED_TIME);

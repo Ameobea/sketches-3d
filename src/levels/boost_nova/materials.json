@@ -58,6 +58,9 @@
         "useGeneratedUVs": false,
         "pom": {
           "tier": "projectedField",
+          "intersect": "safeStep",
+          "minFeatureWidth": 0.15,
+          "lateralDist": true,
           "depth": 0.45,
           "steps": 16,
           "lodFadeStart": 15,
@@ -100,12 +103,14 @@
           "tier": "grid",
           "cellPitch": 4,
           "cellType": "GpCell",
+          "intersect": "safeStep",
+          "minFeatureWidth": 0.06,
           "depth": 0.07,
           "steps": 8,
           "lodFadeStart": 12,
           "lodFadeRange": 30,
           "refinement": "binary",
-          "refinementSteps": 3,
+          "refinementSteps": 8,
           "applyReliefNormal": true
         }
       },
@@ -139,6 +144,8 @@
         "useGeneratedUVs": false,
         "pom": {
           "tier": "projectedField",
+          "intersect": "safeStep",
+          "minFeatureWidth": 0.1,
           "depth": 0.05,
           "steps": 6,
           "lodFadeStart": 10,
@@ -218,12 +225,15 @@
         "useGeneratedUVs": false,
         "pom": {
           "tier": "projectedField",
+          "intersect": "safeStep",
+          "minFeatureWidth": 0.1,
+          "lateralDist": true,
           "depth": 0.12,
           "steps": 10,
           "lodFadeStart": 12,
           "lodFadeRange": 30,
           "refinement": "binary",
-          "refinementSteps": 3,
+          "refinementSteps": 8,
           "applyReliefNormal": true
         }
       },

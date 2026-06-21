@@ -49,6 +49,14 @@ float triEdgeDist(vec2 uv) {
   return min(d.x, min(d.y, d.z));
 }
 
+// safeStep lateral distance to the nearest height-varying region — the carve ramp lives in the
+// edge-distance band [TRI_BORDER_END, TRI_WALL_END]; flat top below it, flat floor above. 0 in the
+// band. triEdgeDist is 1-Lipschitz, so this is a valid lateral distance.
+float gridLateralDist(vec2 uv) {
+  float ed = triEdgeDist(uv);
+  return max(0., max(TRI_BORDER_END - ed, ed - TRI_WALL_END));
+}
+
 // As triEdgeDist, but per-family (x/y/z) plus each family's sawtooth sign, so the
 // inward edge normal reconstructs as `sgns[i] * TRI_Ni`.
 vec3 triEdgeDist3(vec2 uv, out vec3 sgns) {

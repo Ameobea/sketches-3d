@@ -347,6 +347,17 @@
                     "hitType": {
                       "type": "string"
                     },
+                    "intersect": {
+                      "type": "string",
+                      "enum": ["march", "safeStep"]
+                    },
+                    "minFeatureWidth": {
+                      "type": "number",
+                      "exclusiveMinimum": 0
+                    },
+                    "lateralDist": {
+                      "type": "boolean"
+                    },
                     "steps": {
                       "type": "integer",
                       "minimum": 1,

@@ -114,3 +114,13 @@ RtCell gridComputeCell(vec2 cellId) {
 float rtWallCarve(float b, float cThis, float cNb) {
   return mix(0.5 * (cThis + cNb), cThis, smoothstep(0.0, RT_WALL_W, b));
 }
+
+// safeStep lateral distance to the nearest height-varying region — the step wall lives within
+// RT_WALL_W of a cell edge; the plateau (b ≥ RT_WALL_W) is flat per tile. `b` (Chebyshev edge
+// distance) is 1-Lipschitz, so this is a valid lateral distance; the marcher strides the wide
+// plateaus and steps fine only across the thin walls.
+float gridLateralDist(vec2 uv) {
+  vec2 cl = (fract(uv / RT_CELL) - 0.5) * RT_CELL;
+  float b = 0.5 * RT_CELL - max(abs(cl.x), abs(cl.y));
+  return max(0., b - RT_WALL_W);
+}

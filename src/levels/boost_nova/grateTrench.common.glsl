@@ -34,6 +34,17 @@ float gtGapOffset(vec2 uv) {
   return (fract(u / GT_SLAT_PITCH + 0.5) - 0.5) * GT_SLAT_PITCH;
 }
 
+// safeStep lateral distance to the nearest height-varying wall — the gap-wall ramp
+// (along-axis) ∪ the trench-end-wall ramp (across-axis). 0 inside a ramp band; the
+// marcher strides flats at this distance and steps fine through the bands.
+float gridLateralDist(vec2 uv) {
+  float dv = abs(gtTrenchOffset(uv));
+  float g = abs(gtGapOffset(uv));
+  float dGap = max(GT_GAP_HW - g, g - (GT_GAP_HW + GT_WALL));
+  float dEnd = abs(dv - (GT_END_OUT - 0.5 * GT_END_WALL)) - 0.5 * GT_END_WALL;
+  return max(0., min(dGap, dEnd));
+}
+
 // AA'd visual carve (gap coverage) for the color + attenuation slots; `dv`
 // must already be inside the trench.
 float gtVisCarve(vec2 uv, float dv, float aa) {

@@ -333,6 +333,29 @@ export interface CustomShaderOptions {
      * the engine generates the `getFragColor`/… shims. Incompatible with the antialias-* slots.
      */
     hitType?: string;
+    /**
+     * Intersection strategy (orthogonal to `tier`; see `pom-capability-ladder-plan.md`).
+     * - `'march'` (default): fixed-step linear search + `refinement`.
+     * - `'safeStep'`: bracket-safe adaptive stepping (`tier: 'projectedField'` or `'grid'`).
+     *   Strides by the lateral distance to the nearest height-varying feature, floored to
+     *   `minFeatureWidth`, then brackets + refines — immune to vertical walls (step size is
+     *   governed by *where* features are, not their slope) and ~one stride head-on. `steps`
+     *   becomes the max-stride cap. Requires `minFeatureWidth`.
+     */
+    intersect?: 'march' | 'safeStep';
+    /**
+     * `intersect: 'safeStep'`: the no-skip stride floor in projected-UV world units — the
+     * narrowest flat region the march may stride across in one hop. Set to the smallest
+     * feature spacing that must always be sampled (≈ the AA feature widths).
+     */
+    minFeatureWidth?: number;
+    /**
+     * `intersect: 'safeStep'`: the material provides `float gridLateralDist(vec2 uv)` (a
+     * 1-Lipschitz lower bound on the lateral distance to the nearest height-varying region)
+     * for adaptive striding across flats. Omit for uniform `minFeatureWidth` striding (still
+     * bracket-safe, still ~one stride head-on, just no flat-region coarsening).
+     */
+    lateralDist?: boolean;
     /** Linear search step count. Default 24. */
     steps?: number;
     /**

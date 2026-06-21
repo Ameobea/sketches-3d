@@ -80,6 +80,11 @@ export const buildPomDefs = (opts: {
   // supplies `struct <cellType>`, `gridComputeCell(vec2)`, and `gridHeight(GridCtx, <cellType>)`.
   pomGrid: boolean;
   cellType: string;
+  // `projectedField` + `intersect: 'safeStep'`: emit `pomMarchProjectedSafe`, which strides by
+  // the material's `gridLateralDist` (or uniformly) floored to `minFeatureWidth`, bracketing
+  // walls instead of fixed-stepping. `pomSteps` becomes the max-stride cap.
+  pomSafe: boolean;
+  minFeatureWidth: number;
   lodFadeStart: number;
   lodFadeEnd: number;
   pomRefinement: PomRefinement;
@@ -103,6 +108,8 @@ export const buildPomDefs = (opts: {
     pomProjected,
     pomGrid,
     cellType,
+    pomSafe,
+    minFeatureWidth,
     lodFadeStart,
     lodFadeEnd,
     pomRefinement,
@@ -120,6 +127,8 @@ export const buildPomDefs = (opts: {
   const maxSamples = pomSteps + (useBinary ? pomBinarySteps : 0) + (pomHasNormalShader ? 0 : 3);
   return /* glsl */ `
 #define POM_STEPS ${pomSteps}
+${pomSafe ? `#define POM_MIN_FEATURE ${minFeatureWidth.toFixed(6)}` : ''}
+${pomSafe ? `#define POM_REFINE_TOL ${(0.01 * minFeatureWidth).toFixed(6)}` : ''}
 ${useBinary ? `#define POM_REFINE_BINARY\n#define POM_BINARY_STEPS ${pomBinarySteps}` : ''}
 ${useBinary && pomRefineSkip > 0 ? `#define POM_REFINE_SKIP ${pomRefineSkip.toFixed(4)}` : ''}
 ${debugCounters ? `#define POM_DEBUG_COUNTERS\n#define POM_DEBUG_MAX_SAMPLES ${maxSamples}` : ''}
@@ -393,6 +402,117 @@ vec3 pomMarchProjected(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
   return ro + rd * sPrev;
 }
 ${
+  pomSafe
+    ? /* glsl */ `
+// safeStep refine: when the bracketing stride stayed in a constant-H (flat) region the
+// secant root is exact, so bisection would only re-derive it; otherwise (a feature band the
+// stride landed in) bisect for steep-wall robustness. Mirrors _pomRefineHitProjected.
+float _pomRefineHitProjectedSafe(vec2 uv0, vec2 duv, float NdotVraw, float depth, float t,
+                                 float sPrev, float hPrev, float dPrev,
+                                 float s, float surfH, float rayDepth) {
+  float overshoot = rayDepth - surfH;
+  float prevGap   = hPrev - dPrev;
+  float span      = overshoot + prevGap;
+  float w = span > 1e-6 ? overshoot / span : 0.0;
+#ifdef POM_REFINE_BINARY
+  if (prevGap <= 1e-6 || abs(surfH - hPrev) <= 1e-3 * depth) {
+    return mix(s, sPrev, w);
+  }
+  float lo = sPrev;
+  float hi = s;
+  float latSpeed = length(duv);
+  for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+    if ((hi - lo) * latSpeed <= POM_REFINE_TOL) { break; }   // bracket localized in uv; collapses to ~0 head-on, full at grazing
+    float mid = 0.5 * (lo + hi);
+    float midSurf = _pomSurfUv(uv0 + duv * mid, depth, t);
+    if (mid * NdotVraw >= midSurf) hi = mid; else lo = mid;
+  }
+  return hi;
+#else
+  return mix(s, sPrev, w);
+#endif
+}
+
+// Bracket-safe adaptive march (cf. pomMarchProjected). Each stride is the lateral distance to
+// the nearest height-varying feature (gridLateralDist), floored to POM_MIN_FEATURE so no flat
+// region thinner than that is strided across — guaranteeing every wall is bracketed regardless
+// of its slope. Head-on (lateral speed -> 0) collapses to ~one stride + exact secant; grazing
+// tightens to feature resolution. Each stride is also floored to a per-step deadline
+// (remaining length / remaining steps) so the march always reaches the slab bottom within
+// POM_STEPS — at grazing, where features outnumber the budget, it degrades to fixed-step
+// coverage rather than stepping out short. See the capability-ladder plan.
+vec3 pomMarchProjectedSafe(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float latSpeed = max(length(duv), 1e-4);          // lateral uv advance per unit s
+  float minStride = POM_MIN_FEATURE / latSpeed;
+
+  float s = 0.0, sPrev = 0.0, hPrev = 0.0, dPrev = 0.0;
+  for (int i = 0; i < POM_STEPS; i++) {
+    vec2 uv = uv0 + duv * s;
+    float surfH = _pomSurfUv(uv, depth, t);
+    float rayDepth = s * NdotVraw;
+    if (rayDepth >= surfH) {
+      if (i == 0) { return ro; }                     // entry already on the surface (flat top)
+      float sHit = _pomRefineHitProjectedSafe(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (s >= marchLen) { break; }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+    float cover = (marchLen - s) / float(max(POM_STEPS - 1 - i, 1));
+    s = min(s + max(max(gridLateralDist(uv) / latSpeed, minStride), cover), marchLen);
+  }
+  return ro + rd * sPrev;                            // no crossing: clamp to deepest sample
+}
+${
+  pomBounded
+    ? /* glsl */ `
+// Back-face-bounded safeStep marcher (cf. pomMarchProjectedBounded + pomMarchProjectedSafe). The
+// march is bounded by the nearer of the slab bottom and the mesh back face; reaching the back-face
+// bound first without a crossing means the view ray passed clean through a carved-away region.
+vec3 pomMarchProjectedBoundedSafe(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRayLen, out bool carved) {
+  carved = false;
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float latSpeed = max(length(duv), 1e-4);
+  float minStride = POM_MIN_FEATURE / latSpeed;
+  float endLen = min(marchLen, maxRayLen);
+
+  float s = 0.0, sPrev = 0.0, hPrev = 0.0, dPrev = 0.0;
+  for (int i = 0; i < POM_STEPS; i++) {
+    vec2 uv = uv0 + duv * s;
+    float surfH = _pomSurfUv(uv, depth, t);
+    float rayDepth = s * NdotVraw;
+    if (rayDepth >= surfH) {
+      if (i == 0) { return ro; }                     // entry already on the surface (flat top)
+      float sHit = _pomRefineHitProjectedSafe(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (s >= endLen) {
+      carved = maxRayLen < marchLen;                  // cut off by the back face before the slab bottom
+      return ro + rd * s;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+    float cover = (endLen - s) / float(max(POM_STEPS - 1 - i, 1));
+    s = min(s + max(max(gridLateralDist(uv) / latSpeed, minStride), cover), endLen);
+  }
+  return ro + rd * sPrev;
+}
+`
+    : ''
+}
+`
+    : ''
+}
+${
   pomBounded
     ? /* glsl */ `
 // Back-face-bounded projected marcher (cf. pomMarchBounded): projection hoisted, no cell cache.
@@ -541,6 +661,130 @@ vec3 pomMarchGrid(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
   return ro + rd * sPrev;
 }
 ${
+  pomSafe
+    ? /* glsl */ `
+// grid-tier safeStep refine (cf. _pomRefineHitProjectedSafe + _pomRefineHitGrid): secant when the
+// bracket stayed in a flat (constant-cell-carve) region, else cell-aware bisect (recompute the cell
+// at each midpoint, since a stride can straddle a cell boundary).
+float _pomRefineHitGridSafe(vec2 uv0, vec2 duv, float NdotVraw, float depth, float t,
+                            float sPrev, float hPrev, float dPrev,
+                            float s, float surfH, float rayDepth) {
+  float overshoot = rayDepth - surfH;
+  float prevGap   = hPrev - dPrev;
+  float span      = overshoot + prevGap;
+  float w = span > 1e-6 ? overshoot / span : 0.0;
+#ifdef POM_REFINE_BINARY
+  if (prevGap <= 1e-6 || abs(surfH - hPrev) <= 1e-3 * depth) {
+    return mix(s, sPrev, w);
+  }
+  float lo = sPrev;
+  float hi = s;
+  float latSpeed = length(duv);
+  for (int bi = 0; bi < POM_BINARY_STEPS; bi++) {
+    if ((hi - lo) * latSpeed <= POM_REFINE_TOL) { break; }   // bracket localized in uv; collapses to ~0 head-on, full at grazing
+    float mid = 0.5 * (lo + hi);
+    vec2 uv = uv0 + duv * mid;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float midSurf = _pomSurfGrid(ctx, gridComputeCell(cellId), depth);
+    if (mid * NdotVraw >= midSurf) hi = mid; else lo = mid;
+  }
+  return hi;
+#else
+  return mix(s, sPrev, w);
+#endif
+}
+
+// Bracket-safe adaptive grid march (cf. pomMarchProjectedSafe + pomMarchGrid): adaptive stride
+// (gridLateralDist floored to POM_MIN_FEATURE) plus the engine-owned one-cell cache.
+vec3 pomMarchGridSafe(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float latSpeed = max(length(duv), 1e-4);
+  float minStride = POM_MIN_FEATURE / latSpeed;
+
+  vec2 cachedId = floor(uv0 / GRID_PITCH);
+  ${cellType} cell = gridComputeCell(cachedId);
+
+  float s = 0.0, sPrev = 0.0, hPrev = 0.0, dPrev = 0.0;
+  for (int i = 0; i < POM_STEPS; i++) {
+    vec2 uv = uv0 + duv * s;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    if (any(notEqual(cellId, cachedId))) {
+      cell = gridComputeCell(cellId);
+      cachedId = cellId;
+    }
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float surfH = _pomSurfGrid(ctx, cell, depth);
+    float rayDepth = s * NdotVraw;
+    if (rayDepth >= surfH) {
+      if (i == 0) { return ro; }
+      float sHit = _pomRefineHitGridSafe(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (s >= marchLen) { break; }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+    float cover = (marchLen - s) / float(max(POM_STEPS - 1 - i, 1));
+    s = min(s + max(max(gridLateralDist(uv) / latSpeed, minStride), cover), marchLen);
+  }
+  return ro + rd * sPrev;
+}
+${
+  pomBounded
+    ? /* glsl */ `
+// Back-face-bounded grid safeStep marcher (cf. pomMarchProjectedBoundedSafe + pomMarchGridSafe).
+vec3 pomMarchGridBoundedSafe(vec3 ro, vec3 rd, vec3 N, float depth, float t, float maxRayLen, out bool carved) {
+  carved = false;
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float NdotVraw = dot(N, -rd);
+  float NdotV = max(NdotVraw, 1e-3);
+  float marchLen = depth / NdotV;
+  float latSpeed = max(length(duv), 1e-4);
+  float minStride = POM_MIN_FEATURE / latSpeed;
+  float endLen = min(marchLen, maxRayLen);
+
+  vec2 cachedId = floor(uv0 / GRID_PITCH);
+  ${cellType} cell = gridComputeCell(cachedId);
+
+  float s = 0.0, sPrev = 0.0, hPrev = 0.0, dPrev = 0.0;
+  for (int i = 0; i < POM_STEPS; i++) {
+    vec2 uv = uv0 + duv * s;
+    vec2 cellId = floor(uv / GRID_PITCH);
+    if (any(notEqual(cellId, cachedId))) {
+      cell = gridComputeCell(cellId);
+      cachedId = cellId;
+    }
+    GridCtx ctx = GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cellId, t);
+    float surfH = _pomSurfGrid(ctx, cell, depth);
+    float rayDepth = s * NdotVraw;
+    if (rayDepth >= surfH) {
+      if (i == 0) { return ro; }
+      float sHit = _pomRefineHitGridSafe(uv0, duv, NdotVraw, depth, t, sPrev, hPrev, dPrev, s, surfH, rayDepth);
+      return ro + rd * sHit;
+    }
+    if (s >= endLen) {
+      carved = maxRayLen < marchLen;
+      return ro + rd * s;
+    }
+    sPrev = s; hPrev = surfH; dPrev = rayDepth;
+    float cover = (endLen - s) / float(max(POM_STEPS - 1 - i, 1));
+    s = min(s + max(max(gridLateralDist(uv) / latSpeed, minStride), cover), endLen);
+  }
+  return ro + rd * sPrev;
+}
+`
+    : ''
+}
+`
+    : ''
+}
+${
   pomBounded
     ? /* glsl */ `
 // Back-face-bounded grid marcher (cf. pomMarchBounded), with the engine-owned cell cache.
@@ -681,6 +925,7 @@ export const buildPomMainBlock = (
   pomBounded: boolean,
   pomProjected: boolean,
   pomGrid: boolean,
+  pomSafe: boolean,
   pomTexturing: PomTexturing,
   normalEps: number | undefined,
   pomSelfShadow: { strength: number } | null,
@@ -739,14 +984,14 @@ export const buildPomMainBlock = (
       }
       float _pomMaxLen = _pomNoBound ? 1e9 : _pomChord;
       bool _pomCarved = false;
-      _pomHit = ${pomGrid ? 'pomMarchGridBounded' : pomProjected ? 'pomMarchProjectedBounded' : 'pomMarchBounded'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
+      _pomHit = ${pomGrid ? (pomSafe ? 'pomMarchGridBoundedSafe' : 'pomMarchGridBounded') : pomProjected ? (pomSafe ? 'pomMarchProjectedBoundedSafe' : 'pomMarchProjectedBounded') : 'pomMarchBounded'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds, _pomMaxLen, _pomCarved);
       if (_pomCarved) {
         discard;
       }`
           : pomGrid
-            ? /* glsl */ `_pomHit = pomMarchGrid(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+            ? /* glsl */ `_pomHit = ${pomSafe ? 'pomMarchGridSafe' : 'pomMarchGrid'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
             : pomProjected
-              ? /* glsl */ `_pomHit = pomMarchProjected(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+              ? /* glsl */ `_pomHit = ${pomSafe ? 'pomMarchProjectedSafe' : 'pomMarchProjected'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
               : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
       ${hitFramePrep ?? ''}

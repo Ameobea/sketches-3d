@@ -967,6 +967,16 @@ export const buildCustomShaderArgs = (
         );
       }
     }
+    if (pom.intersect === 'safeStep') {
+      if (pomTier !== 'projectedField' && pomTier !== 'grid') {
+        throw new Error('`pom.intersect: "safeStep"` requires `pom.tier: "projectedField"` or `"grid"`');
+      }
+      if (typeof pom.minFeatureWidth !== 'number') {
+        throw new Error(
+          '`pom.intersect: "safeStep"` requires `pom.minFeatureWidth` (the no-skip stride floor, projected-UV world units)'
+        );
+      }
+    }
   }
   const pomSteps = pom?.steps ?? 24;
   const pomBounded = !!pom?.boundedSilhouette;
@@ -1034,6 +1044,9 @@ export const buildCustomShaderArgs = (
   const cellType = pom?.cellType ?? 'GridCell';
   const hitType = pom?.hitType;
   const pomHitFrame = !!hitType && (pomProjected || pomGrid);
+  const pomSafe = !!pom && pom.intersect === 'safeStep';
+  const pomLateralDist = !!pom?.lateralDist;
+  const minFeatureWidth = pom?.minFeatureWidth ?? 0;
   // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
   const mapUvSym = pomGen || pomTangent ? '_pomGenUv' : 'vMapUv';
 
@@ -1069,6 +1082,8 @@ export const buildCustomShaderArgs = (
       pomProjected,
       pomGrid,
       cellType,
+      pomSafe,
+      minFeatureWidth,
       lodFadeStart,
       lodFadeEnd,
       pomRefinement,
@@ -1753,6 +1768,7 @@ ${iridescenceShader ?? ''}
 ${iridescenceReverseColorRamp ? buildReverseColorRampGenerator('iridescenceFromColor', iridescenceReverseColorRamp) : ''}
 ${pomHeightShader ?? ''}
 ${pomProjected ? 'float getPomHeight(vec3 p, vec3 N, float t) { return gridHeight(domProject(p, domAxis(N)), t); }' : ''}
+${pomSafe && !pomLateralDist ? 'float gridLateralDist(vec2 uv) { return 0.; }' : ''}
 ${pomGrid ? `float getPomHeight(vec3 p, vec3 N, float t) { vec2 uv = domProject(p, domAxis(N)); vec2 cid = floor(uv / GRID_PITCH); return gridHeight(GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cid, t), gridComputeCell(cid)); }` : ''}
 ${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
 ${pom && pomNormalShader ? pomNormalShader : ''}
@@ -1836,7 +1852,7 @@ void main() {
   }
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
-  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;
