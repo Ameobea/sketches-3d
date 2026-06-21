@@ -183,6 +183,14 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     metadata: { title: 'POM demo' },
     legacyLights: false,
   },
+  pomBench: {
+    modulePath: 'src/viz/scenes/pomBench/pomBench',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'POM benchmark' },
+    legacyLights: false,
+    audio: false,
+  },
   runeGenTest: {
     modulePath: 'src/viz/scenes/experiments/runeGen/runeGen',
     sceneName: 'Scene',

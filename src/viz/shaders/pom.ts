@@ -103,7 +103,7 @@ export const buildPomDefs = (opts: {
     pomDebug,
   } = opts;
   const useBinary = pomRefinement === 'binary';
-  const debugCounters = pomDebug === 'samples' || pomDebug === 'skip';
+  const debugCounters = pomDebug === 'samples' || pomDebug === 'evals' || pomDebug === 'skip';
   // Worst-case _pomSurf evals per fragment: linear march + binary refine (secant
   // adds none) + the 3 finite-difference normal taps (none with a normal shader).
   const maxSamples = pomSteps + (useBinary ? pomBinarySteps : 0) + (pomHasNormalShader ? 0 : 3);
@@ -519,6 +519,7 @@ export type PomDebugMode =
   | 'axis'
   | 'hit'
   | 'samples'
+  | 'evals'
   | 'skip';
 
 // Overrides `outFragColor` at the end of `main()` with a diagnostic, bypassing
@@ -557,7 +558,16 @@ export const buildPomDebug = (debug: PomDebugMode | undefined): string => {
     outFragColor = vec4(_pomHeat(_dbgT), 1.0);
   }`;
   }
-  const expr: Record<Exclude<PomDebugMode, 'axis' | 'skip' | 'samples'>, string> = {
+  if (debug === 'evals') {
+    // Same count as 'samples' but written linearly (grayscale = evals/worst-case)
+    // so a framebuffer readback recovers the eval fraction without inverting _pomHeat.
+    return /* glsl */ `
+  {
+    float _dbgT = clamp(float(_pomSampleCount) / float(POM_DEBUG_MAX_SAMPLES), 0.0, 1.0);
+    outFragColor = vec4(vec3(_dbgT), 1.0);
+  }`;
+  }
+  const expr: Record<Exclude<PomDebugMode, 'axis' | 'skip' | 'samples' | 'evals'>, string> = {
     heightmap: 'vec3(samplePomHeightMap(_pomHit, vWorldNormal))',
     depth: 'vec3(_pomSurf(_pomHit, vWorldNormal, 1.0, curTimeSeconds))',
     normal: '_pomNormalW * 0.5 + 0.5',

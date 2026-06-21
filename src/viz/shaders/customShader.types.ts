@@ -413,11 +413,13 @@ export interface CustomShaderOptions {
      * - `'samples'`     — per-fragment height-field eval count (linear march +
      *                     binary refine + analytic-normal taps) as a heat map
      *                     (blue = cheap → red = worst case). Estimated march cost.
+     * - `'evals'`       — same count as `'samples'` but grayscale-linear
+     *                     (`evals / worst-case`), for framebuffer-readback metrics.
      * - `'skip'`        — refinement decision (binary refinement only): green =
      *                     bisection skipped (linear hit accepted), red = full
      *                     bisection ran, dark blue = no refinement reached.
      */
-    debug?: 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit' | 'samples' | 'skip';
+    debug?: 'heightmap' | 'depth' | 'normal' | 'normalDelta' | 'axis' | 'hit' | 'samples' | 'evals' | 'skip';
   };
   /**
    * Material class controls things like the sfx that are played when players land on the surface and
