@@ -22,6 +22,7 @@ import type { MaterialDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
 import boostNovaMaterials from 'src/levels/boost_nova/materials.json';
 import raisedTilesAsset from 'src/assets/materials/procedural/raised_tiles/raised_tiles.json';
+import chevronStripsAsset from 'src/assets/materials/procedural/chevron_strips/chevron_strips.json';
 
 const RT_W = 1280;
 const RT_H = 720;
@@ -40,6 +41,7 @@ const BENCH_MATERIALS: { name: string; cls: string }[] = [
   { name: 'superellipse_tiles', cls: 'L2 ~analytic' },
   { name: 'grate_trench', cls: 'L2 1D / Tier-A' },
   { name: 'triangle_grid', cls: 'L1 tri-lattice' },
+  { name: 'chevron_strips', cls: 'L1 chevron / hitType' },
   { name: 'raised_tiles_field', cls: 'L2 hash · field' },
   { name: 'raised_tiles_proj', cls: 'L2 hash · projField' },
   { name: 'raised_tiles', cls: 'L2 hash · grid' },
@@ -80,7 +82,11 @@ const PRESETS: Record<string, Preset> = {
 };
 
 const glslModules = import.meta.glob(
-  ['/src/levels/boost_nova/*.glsl', '/src/assets/materials/procedural/raised_tiles/*.glsl'],
+  [
+    '/src/levels/boost_nova/*.glsl',
+    '/src/assets/materials/procedural/raised_tiles/*.glsl',
+    '/src/assets/materials/procedural/chevron_strips/*.glsl',
+  ],
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>;
 const glslByName: Record<string, string> = {};
@@ -110,6 +116,9 @@ const RT_VARIANTS = new Set(['raised_tiles', 'raised_tiles_field', 'raised_tiles
 const getRawDef = (name: string): unknown => {
   if (RT_VARIANTS.has(name)) {
     return (raisedTilesAsset as { material: unknown }).material;
+  }
+  if (name === 'chevron_strips') {
+    return (chevronStripsAsset as { material: unknown }).material;
   }
   const raw = (boostNovaMaterials.materials as Record<string, unknown>)[name];
   if (!raw) {

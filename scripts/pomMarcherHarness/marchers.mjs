@@ -126,6 +126,18 @@ export const safeMarch = (uv0, duv, NdotV, marchLen, F) => {
   return { s: sPrev, evals };
 };
 
+// analytic (Tier-A): the material's closed-form first-hit when the ray stays in one cell;
+// -1 sentinel -> safeStep fallback (cf. the planned pomMarchProjectedAnalytic). F.analyticHit
+// returns hit s in [0, marchLen] or -1. Returns `fast` = whether the closed form applied.
+export const analyticMarch = (uv0, duv, NdotV, marchLen, F) => {
+  const s = F.analyticHit(uv0, duv, NdotV, marchLen);
+  if (s >= 0) {
+    return { s, evals: 0, fast: true };
+  }
+  const r = safeMarch(uv0, duv, NdotV, marchLen, F);
+  return { s: r.s, evals: r.evals, fast: false };
+};
+
 // Score fixed + safe against truth over a "scanline" of parallel pixels (uv0 swept along
 // `axis`, fixed ray dir + NdotV). classify(uv)->tag flags surface mis-hits; normGrad(uv)
 // proxies relief-normal serration (jaggedness of the per-pixel series).
@@ -141,23 +153,28 @@ export const jag = arr => {
 
 export const sweep = (NdotV, dir, uv0Fn, NP, F, { classify, normGrad } = {}) => {
   const marchLen = F.depth / Math.max(NdotV, 1e-3);
+  const an = !!F.analyticHit;
   const r = {
-    hitErr: { fixed: 0, safe: 0 },
-    classMiss: { fixed: 0, safe: 0 },
-    evals: { fixed: 0, safe: 0 },
+    hitErr: { fixed: 0, safe: 0, analytic: 0 },
+    classMiss: { fixed: 0, safe: 0, analytic: 0 },
+    evals: { fixed: 0, safe: 0, analytic: 0 },
+    fast: 0,
     jagNorm: {},
   };
   const tS = [],
     fS = [],
     sS = [],
+    aS = [],
     tN = [],
     fN = [],
-    sN = [];
+    sN = [],
+    aN = [];
   for (let p = 0; p < NP; p++) {
     const uv0 = uv0Fn(p / NP);
     const t = truth(uv0, dir, NdotV, marchLen, F);
     const f = fixedMarch(uv0, dir, NdotV, marchLen, F);
     const s = safeMarch(uv0, dir, NdotV, marchLen, F);
+    const a = an ? analyticMarch(uv0, dir, NdotV, marchLen, F) : null;
     r.hitErr.fixed += Math.abs(f.s - t);
     r.hitErr.safe += Math.abs(s.s - t);
     r.evals.fixed += f.evals;
@@ -165,6 +182,14 @@ export const sweep = (NdotV, dir, uv0Fn, NP, F, { classify, normGrad } = {}) => 
     if (classify) {
       if (classify(at(uv0, dir, f.s)) !== classify(at(uv0, dir, t))) r.classMiss.fixed++;
       if (classify(at(uv0, dir, s.s)) !== classify(at(uv0, dir, t))) r.classMiss.safe++;
+    }
+    if (a) {
+      r.hitErr.analytic += Math.abs(a.s - t);
+      r.evals.analytic += a.evals;
+      if (a.fast) r.fast++;
+      if (classify && classify(at(uv0, dir, a.s)) !== classify(at(uv0, dir, t))) r.classMiss.analytic++;
+      aS.push(a.s);
+      if (normGrad) aN.push(normGrad(at(uv0, dir, a.s)));
     }
     tS.push(t);
     fS.push(f.s);
@@ -180,10 +205,26 @@ export const sweep = (NdotV, dir, uv0Fn, NP, F, { classify, normGrad } = {}) => 
   return {
     NdotV,
     marchLen: +marchLen.toFixed(3),
-    hitErr: { fixed: num(r.hitErr.fixed), safe: num(r.hitErr.safe) },
-    classMiss: classify ? { fixed: pct(r.classMiss.fixed), safe: pct(r.classMiss.safe) } : undefined,
+    hitErr: {
+      fixed: num(r.hitErr.fixed),
+      safe: num(r.hitErr.safe),
+      analytic: an ? num(r.hitErr.analytic) : undefined,
+    },
+    classMiss: classify
+      ? {
+          fixed: pct(r.classMiss.fixed),
+          safe: pct(r.classMiss.safe),
+          analytic: an ? pct(r.classMiss.analytic) : undefined,
+        }
+      : undefined,
+    fastRate: an ? pct(r.fast) : undefined,
     jagNorm: normGrad
-      ? { truth: jag(tN).toFixed(4), fixed: jag(fN).toFixed(4), safe: jag(sN).toFixed(4) }
+      ? {
+          truth: jag(tN).toFixed(4),
+          fixed: jag(fN).toFixed(4),
+          safe: jag(sN).toFixed(4),
+          analytic: an ? jag(aN).toFixed(4) : undefined,
+        }
       : undefined,
     evals: { fixed: (r.evals.fixed / NP).toFixed(1), safe: (r.evals.safe / NP).toFixed(1) },
   };

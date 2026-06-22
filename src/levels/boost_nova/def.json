@@ -81,7 +81,7 @@
     "skyColor": "#99caf2",
     "horizonColor": "#dbd5b6",
     "groundColor": "#585e48",
-    "intensity": 0.6,
+    "intensity": 0.1,
     "setBackground": false
   },
   "lights": [
@@ -89,7 +89,7 @@
       "id": "sun",
       "type": "directional",
       "color": "#ffffff",
-      "intensity": 2.6,
+      "intensity": 1.6,
       "position": [70, 105, -45],
       "target": [0, 0, 0],
       "castShadow": true,
@@ -111,7 +111,7 @@
       "id": "ambient",
       "type": "ambient",
       "color": "#ffffff",
-      "intensity": 0.4
+      "intensity": 0.8
     }
   ],
   "objects": []

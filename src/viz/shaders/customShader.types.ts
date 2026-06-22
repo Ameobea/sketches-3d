@@ -157,6 +157,26 @@ export type CustomUniformDef = (
   | { type: 'sampler2D'; value: THREE.Texture | null }
 ) & { vertex?: boolean };
 
+/**
+ * A user-provided constant baked into the generated fragment GLSL as a `#define`, emitted before
+ * the user shader slots. Unlike `CustomUniformDef` the value is compile-time (folded into the
+ * shader), so it can appear in const-expressions, array sizes, and loop bounds where a uniform
+ * cannot — and changing it requires a recompile. The material's GLSL opts in by guarding its
+ * default so a supplied value wins:
+ *   #ifndef CH_WPITCH
+ *   #define CH_WPITCH 5.0
+ *   #endif
+ * Overriding a name the GLSL does NOT guard is a compile error (the `#define` rewrites the
+ * declaration). No collision checking — rely on the material's name prefix (e.g. `CH_`).
+ */
+export type ShaderConstantDef =
+  | { type: 'float'; value: number }
+  | { type: 'int'; value: number }
+  | { type: 'bool'; value: boolean }
+  | { type: 'vec2'; value: [number, number] }
+  | { type: 'vec3'; value: [number, number, number] }
+  | { type: 'vec4'; value: [number, number, number, number] };
+
 export interface CustomShaderShaders {
   customVertexFragment?: string;
   /**
@@ -222,6 +242,12 @@ export interface CustomShaderShaders {
    * The slot's GLSL snippets reference them by name. See `CustomUniformDef`.
    */
   customUniforms?: Record<string, CustomUniformDef>;
+  /**
+   * User-provided compile-time constants baked into the fragment GLSL as `#define`s. The slot
+   * GLSL guards its own defaults with `#ifndef`; a value here overrides that default. See
+   * `ShaderConstantDef`.
+   */
+  constants?: Record<string, ShaderConstantDef>;
 }
 
 export interface CustomShaderOptions {
@@ -341,8 +367,13 @@ export interface CustomShaderOptions {
      *   `minFeatureWidth`, then brackets + refines — immune to vertical walls (step size is
      *   governed by *where* features are, not their slope) and ~one stride head-on. `steps`
      *   becomes the max-stride cap. Requires `minFeatureWidth`.
+     * - `'analytic'` (Tier-A, `tier: 'projectedField'`, unbounded): the material provides
+     *   `float gridAnalyticHit(vec2 uv0, vec2 duv, float NdotV, float depth)` returning the
+     *   closed-form first-hit `s` (or `-1.` to fall back to `safeStep`). For fields whose
+     *   profile is piecewise low-order along a ray (see the authorship guide); zero iterations
+     *   where it applies. Superset of `safeStep` (its fallback) — also requires `minFeatureWidth`.
      */
-    intersect?: 'march' | 'safeStep';
+    intersect?: 'march' | 'safeStep' | 'analytic';
     /**
      * `intersect: 'safeStep'`: the no-skip stride floor in projected-UV world units — the
      * narrowest flat region the march may stride across in one hop. Set to the smallest

@@ -84,6 +84,10 @@ export const buildPomDefs = (opts: {
   // the material's `gridLateralDist` (or uniformly) floored to `minFeatureWidth`, bracketing
   // walls instead of fixed-stepping. `pomSteps` becomes the max-stride cap.
   pomSafe: boolean;
+  // `intersect: 'analytic'` (projectedField, unbounded): emit `pomMarchProjectedAnalytic`, which
+  // tries the material's closed-form `gridAnalyticHit` and falls back to `pomMarchProjectedSafe`.
+  // A strict superset of `pomSafe` (always set alongside it).
+  pomAnalytic: boolean;
   minFeatureWidth: number;
   lodFadeStart: number;
   lodFadeEnd: number;
@@ -109,6 +113,7 @@ export const buildPomDefs = (opts: {
     pomGrid,
     cellType,
     pomSafe,
+    pomAnalytic,
     minFeatureWidth,
     lodFadeStart,
     lodFadeEnd,
@@ -505,6 +510,22 @@ vec3 pomMarchProjectedBoundedSafe(vec3 ro, vec3 rd, vec3 N, float depth, float t
     s = min(s + max(max(gridLateralDist(uv) / latSpeed, minStride), cover), endLen);
   }
   return ro + rd * sPrev;
+}
+`
+    : ''
+}
+${
+  pomAnalytic
+    ? /* glsl */ `
+// Tier-A analytic marcher (cf. pomMarchProjectedSafe): try the material's closed-form first-hit;
+// gridAnalyticHit returns -1 for the cases it doesn't cover (multi-cell / grazing) -> safeStep.
+vec3 pomMarchProjectedAnalytic(vec3 ro, vec3 rd, vec3 N, float depth, float t) {
+  int axis = domAxis(N);
+  vec2 uv0 = domProject(ro, axis);
+  vec2 duv = domProject(rd, axis);
+  float sHit = gridAnalyticHit(uv0, duv, dot(N, -rd), depth);
+  if (sHit >= 0.) { return ro + rd * sHit; }
+  return pomMarchProjectedSafe(ro, rd, N, depth, t);
 }
 `
     : ''
@@ -926,6 +947,7 @@ export const buildPomMainBlock = (
   pomProjected: boolean,
   pomGrid: boolean,
   pomSafe: boolean,
+  pomAnalytic: boolean,
   pomTexturing: PomTexturing,
   normalEps: number | undefined,
   pomSelfShadow: { strength: number } | null,
@@ -991,7 +1013,7 @@ export const buildPomMainBlock = (
           : pomGrid
             ? /* glsl */ `_pomHit = ${pomSafe ? 'pomMarchGridSafe' : 'pomMarchGrid'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
             : pomProjected
-              ? /* glsl */ `_pomHit = ${pomSafe ? 'pomMarchProjectedSafe' : 'pomMarchProjected'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
+              ? /* glsl */ `_pomHit = ${pomAnalytic ? 'pomMarchProjectedAnalytic' : pomSafe ? 'pomMarchProjectedSafe' : 'pomMarchProjected'}(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
               : /* glsl */ `_pomHit = pomMarch(vWorldPos, _pomRd, _pomNormalW, _pomD, curTimeSeconds);`
       }
       ${hitFramePrep ?? ''}

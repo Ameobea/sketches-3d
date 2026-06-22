@@ -88,8 +88,8 @@ float gpSlotCarve(vec2 cl, vec2 cellId, float aa) {
 
 // Seam carve vs distance-to-cell-boundary `b`; the gap notch lies inside the chamfer.
 float gpSeamCarve(float b) {
-  return GP_SEAM_DEPTH * (1. - smoothstep(0., GP_SEAM_W, b))
-       + GP_HAIR_DEPTH * (1. - smoothstep(GP_HAIR_HW, GP_HAIR_HW + GP_HAIR_WALL, b));
+  return GP_SEAM_DEPTH * clamp((GP_SEAM_W - b) / GP_SEAM_W, 0., 1.)
+       + GP_HAIR_DEPTH * clamp((GP_HAIR_HW + GP_HAIR_WALL - b) / GP_HAIR_WALL, 0., 1.);
 }
 
 // AA'd seam visibility as (chamfer, gap) profiles, for the color + attenuation slots.

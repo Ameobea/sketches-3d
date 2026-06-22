@@ -8,6 +8,7 @@ import { getAssetsDir } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
 import { resolveLibraryMaterials } from './libraryMaterials.server';
+import { flattenMaterialExtends } from './materialExtends.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type {
   GeotoyCompositionAssetDef,
@@ -193,6 +194,9 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   }
 
   const withLibrary = resolveLibraryMaterials(rawResult.data);
+  const flatMaterials = withLibrary.materials
+    ? flattenMaterialExtends(withLibrary.materials)
+    : withLibrary.materials;
 
   const resolvedAssets = Object.fromEntries(
     await Promise.all(
@@ -213,9 +217,9 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     )
   );
 
-  const resolvedMaterials = withLibrary.materials
+  const resolvedMaterials = flatMaterials
     ? Object.fromEntries(
-        Object.entries(withLibrary.materials).map(([matId, matDef]) => {
+        Object.entries(flatMaterials).map(([matId, matDef]) => {
           if (matDef.type !== 'customShader' || !matDef.shaders) return [matId, matDef];
           const shaders = { ...matDef.shaders };
           for (const field of SHADER_GLSL_FIELDS) {
@@ -227,7 +231,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           return [matId, { ...matDef, shaders }];
         })
       )
-    : withLibrary.materials;
+    : flatMaterials;
 
   const inlinedDef = { ...withLibrary, assets: resolvedAssets, materials: resolvedMaterials };
 

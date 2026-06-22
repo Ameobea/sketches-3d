@@ -713,6 +713,7 @@ export const buildCustomShaderArgs = (
     pomNormalShader,
     includeNoiseShadersVertex,
     customUniforms,
+    constants,
   }: CustomShaderShaders = {},
   {
     antialiasColorShader,
@@ -977,6 +978,21 @@ export const buildCustomShaderArgs = (
         );
       }
     }
+    if (pom.intersect === 'analytic') {
+      if (pomTier !== 'projectedField') {
+        throw new Error(
+          '`pom.intersect: "analytic"` is currently supported only on `pom.tier: "projectedField"`'
+        );
+      }
+      if (pom.boundedSilhouette) {
+        throw new Error('`pom.intersect: "analytic"` does not support `pom.boundedSilhouette`');
+      }
+      if (typeof pom.minFeatureWidth !== 'number') {
+        throw new Error(
+          '`pom.intersect: "analytic"` requires `pom.minFeatureWidth` (used by the `safeStep` fallback)'
+        );
+      }
+    }
   }
   const pomSteps = pom?.steps ?? 24;
   const pomBounded = !!pom?.boundedSilhouette;
@@ -1044,7 +1060,8 @@ export const buildCustomShaderArgs = (
   const cellType = pom?.cellType ?? 'GridCell';
   const hitType = pom?.hitType;
   const pomHitFrame = !!hitType && (pomProjected || pomGrid);
-  const pomSafe = !!pom && pom.intersect === 'safeStep';
+  const pomAnalytic = !!pom && pom.intersect === 'analytic';
+  const pomSafe = !!pom && (pom.intersect === 'safeStep' || pomAnalytic);
   const pomLateralDist = !!pom?.lateralDist;
   const minFeatureWidth = pom?.minFeatureWidth ?? 0;
   // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
@@ -1083,6 +1100,7 @@ export const buildCustomShaderArgs = (
       pomGrid,
       cellType,
       pomSafe,
+      pomAnalytic,
       minFeatureWidth,
       lodFadeStart,
       lodFadeEnd,
@@ -1341,6 +1359,29 @@ export const buildCustomShaderArgs = (
     return Object.entries(customUniforms)
       .filter(([, def]) => (forVertex ? def.vertex : true))
       .map(([name, def]) => `uniform ${def.type} ${name};`)
+      .join('\n');
+  };
+
+  // User constants baked into the fragment GLSL as `#define`s (override a slot's `#ifndef` default).
+  // Parenthesized scalars so they compose in expressions; floats forced to a decimal literal.
+  const buildConstantDefines = (): string => {
+    if (!constants) {
+      return '';
+    }
+    const lit = (def: NonNullable<typeof constants>[string]): string => {
+      switch (def.type) {
+        case 'float':
+          return `(${def.value.toFixed(6)})`;
+        case 'int':
+          return `(${Math.trunc(def.value)})`;
+        case 'bool':
+          return def.value ? 'true' : 'false';
+        default:
+          return `${def.type}(${def.value.map(n => n.toFixed(6)).join(', ')})`;
+      }
+    };
+    return Object.entries(constants)
+      .map(([name, def]) => `#define ${name} ${lit(def)}`)
       .join('\n');
   };
 
@@ -1750,6 +1791,7 @@ vec2 pomUvWorldScale() {
 ${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
 ${pomProjected || pomGrid ? proceduralMaterialGridCode : ''}
 ${pomGrid ? `#define GRID_PITCH ${cellPitch.toFixed(6)}` : ''}
+${buildConstantDefines()}
 
 ${buildCustomUniformDecls(false)}
 
@@ -1852,7 +1894,7 @@ void main() {
   }
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
-  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
+  ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomAnalytic, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
 	vec3 totalEmissiveRadiance = emissive;

@@ -104,6 +104,22 @@
           "scale": [1, 1, 1]
         },
         {
+          "id": "chevron_strips_test_pad",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/chevron_strips",
+          "position": [61.1, -2.563, 49.475],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "chevron_strips_wide_test_pad",
+          "asset": "plat",
+          "material": "chevron_strips_wide",
+          "position": [83.25, -2.563, 49.475],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
           "id": "raised_tiles_test_pad",
           "asset": "plat",
           "material": "__ASSETS__/materials/procedural/raised_tiles",

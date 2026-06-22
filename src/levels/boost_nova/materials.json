@@ -58,6 +58,7 @@
         "useGeneratedUVs": false,
         "pom": {
           "tier": "projectedField",
+          "hitType": "TriHit",
           "intersect": "safeStep",
           "minFeatureWidth": 0.15,
           "lateralDist": true,
@@ -86,6 +87,22 @@
         },
         "pomNormalShader": {
           "file": "triangleGrid.normal.glsl"
+        }
+      }
+    },
+    "chevron_strips_wide": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/chevron_strips",
+      "props": {
+        "roughness": 0.4,
+        "metalness": 0.2
+      },
+      "shaders": {
+        "constants": {
+          "CH_AMP": { "type": "float", "value": 2.4 },
+          "CH_WPITCH": { "type": "float", "value": 6.5 },
+          "CH_COLOR_A": { "type": "vec3", "value": [0.1, 0.12, 0.16] },
+          "CH_COLOR_B": { "type": "vec3", "value": [0.62, 0.5, 0.16] }
         }
       }
     },
@@ -225,7 +242,7 @@
         "useGeneratedUVs": false,
         "pom": {
           "tier": "projectedField",
-          "intersect": "safeStep",
+          "intersect": "analytic",
           "minFeatureWidth": 0.1,
           "lateralDist": true,
           "depth": 0.12,
@@ -309,14 +326,14 @@
     "palm_leaf": {
       "type": "customShader",
       "props": {
-        "color": "#4f9622",
+        "color": "#6fd232",
         "roughness": 0.95,
         "metalness": 0.23,
         "normalScale": 1,
+        "ambientLightScale": 2,
         "uvScale": [0.23, 0.23],
         "map": "shiny_patchwork_stone_diffuse",
-        "normalMap": "shiny_patchwork_stone_normal",
-        "ambientLightScale": 2
+        "normalMap": "shiny_patchwork_stone_normal"
       },
       "options": {
         "useTriplanarMapping": true
@@ -325,11 +342,11 @@
     "palm_trunk": {
       "type": "customShader",
       "props": {
-        "color": "#d9ca96",
+        "color": "#f7eecf",
         "roughness": 0.99,
         "metalness": 0.09,
         "normalScale": 0.72,
-        "uvScale": [0.2, 0.2],
+        "uvScale": [0.1, 0.1],
         "map": "rusty_metal_1_diffuse",
         "normalMap": "gravel_1_normal"
       },
@@ -340,7 +357,7 @@
     "palm_coconut": {
       "type": "customShader",
       "props": {
-        "color": "#a59f91",
+        "color": "#f6f4ef",
         "roughness": 1,
         "metalness": 0.35,
         "normalScale": 1.2,

@@ -171,6 +171,7 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
   if (shadersJson.pomNormalShader !== undefined) shaders.pomNormalShader = shadersJson.pomNormalShader;
   if (shadersJson.customUniforms !== undefined)
     shaders.customUniforms = resolveCustomUniforms(shadersJson.customUniforms);
+  if (shadersJson.constants !== undefined) shaders.constants = shadersJson.constants;
   return shaders;
 };
 

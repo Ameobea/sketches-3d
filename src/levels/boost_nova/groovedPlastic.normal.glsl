@@ -15,13 +15,11 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
     float g = abs(off);
     float a = abs(aSgn);
 
-    float tg = clamp((g - GP_HW) / GP_WALL, 0., 1.);
-    float slot = 1. - tg * tg * (3. - 2. * tg);
-    float dSlot = -6. * tg * (1. - tg) / GP_WALL * sign(off);
+    float slot = clamp((GP_HW + GP_WALL - g) / GP_WALL, 0., 1.);
+    float dSlot = (g > GP_HW && g < GP_HW + GP_WALL) ? -sign(off) / GP_WALL : 0.;
 
-    float te = clamp((a - GP_END_OUT + GP_END_WALL) / GP_END_WALL, 0., 1.);
-    float endMask = 1. - te * te * (3. - 2. * te);
-    float dEnd = -6. * te * (1. - te) / GP_END_WALL * sign(aSgn);
+    float endMask = clamp((GP_END_OUT - a) / GP_END_WALL, 0., 1.);
+    float dEnd = (a > GP_END_OUT - GP_END_WALL && a < GP_END_OUT) ? -sign(aSgn) / GP_END_WALL : 0.;
 
     vec2 perpDir = alongX ? vec2(0., 1.) : vec2(1., 0.);
     vec2 alongDir = alongX ? vec2(1., 0.) : vec2(0., 1.);
@@ -32,10 +30,8 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
     if (b >= GP_SEAM_W) {
       return N;
     }
-    float tc = b / GP_SEAM_W;
-    float dCarveDb = -6. * GP_SEAM_DEPTH * tc * (1. - tc) / GP_SEAM_W;
-    float th = clamp((b - GP_HAIR_HW) / GP_HAIR_WALL, 0., 1.);
-    dCarveDb -= 6. * GP_HAIR_DEPTH * th * (1. - th) / GP_HAIR_WALL;
+    float dCarveDb = -GP_SEAM_DEPTH / GP_SEAM_W; // b is always < GP_SEAM_W in this branch
+    dCarveDb += (b > GP_HAIR_HW && b < GP_HAIR_HW + GP_HAIR_WALL) ? -GP_HAIR_DEPTH / GP_HAIR_WALL : 0.;
     vec2 chebDir = abs(cl.x) >= abs(cl.y) ? vec2(sign(cl.x), 0.) : vec2(0., sign(cl.y));
     gradUV = -dCarveDb * chebDir;
     gradUV *= reliefAAFade(aa, GP_HAIR_WALL);

@@ -8,8 +8,8 @@ float gridHeight(GridCtx ctx, GpCell cell) {
     float g = abs(gpSlotOffset(cell.alongX ? cl.y : cl.x));
     float a = abs(cell.alongX ? cl.x : cl.y);
     return GP_CARVE
-         * (1. - smoothstep(GP_HW, GP_HW + GP_WALL, g))
-         * (1. - smoothstep(GP_END_OUT - GP_END_WALL, GP_END_OUT, a));
+         * clamp((GP_HW + GP_WALL - g) / GP_WALL, 0., 1.)
+         * clamp((GP_END_OUT - a) / GP_END_WALL, 0., 1.);
   }
   float b = 0.5 * GP_CELL - d;
   return b < GP_SEAM_W ? gpSeamCarve(b) : 0.;

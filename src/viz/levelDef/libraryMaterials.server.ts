@@ -79,15 +79,14 @@ const collectLibraryRefs = (value: unknown, out: Set<string>): void => {
  * which becomes the key into `def.materials` post-merge.
  */
 export const resolveLibraryMaterials = (def: LevelDefRaw): LevelDefRaw => {
-  const refs = new Set<string>();
-  collectLibraryRefs(def.objects, refs);
-  if (refs.size === 0) return def;
+  const objRefs = new Set<string>();
+  collectLibraryRefs(def.objects, objRefs);
 
   const materials = { ...(def.materials ?? {}) };
   const textures: Record<string, TextureDef> = { ...(def.textures ?? {}) };
 
-  for (const ref of refs) {
-    if (ref in materials) continue;
+  const pullIn = (ref: string): void => {
+    if (ref in materials) return;
     const filePath = resolveLibraryFilePath(ref);
     if (!existsSync(filePath)) {
       throw new Error(`[resolveLibraryMaterials] Library material file not found for "${ref}": ${filePath}`);
@@ -107,6 +106,24 @@ export const resolveLibraryMaterials = (def: LevelDefRaw): LevelDefRaw => {
     for (const [texKey, texDef] of Object.entries(parsed.data.textures ?? {})) {
       textures[`${ref}/${texKey}`] = texDef;
     }
+  };
+
+  // Library refs come from object fields (material:, behavior params, …) and from a material's
+  // `extends`. A pulled-in library material may itself `extends` another, so iterate to a fixpoint.
+  const gatherRefs = (): Set<string> => {
+    const refs = new Set(objRefs);
+    for (const mat of Object.values(materials)) {
+      const ext = mat.type === 'customShader' ? mat.extends : undefined;
+      if (isLibraryRef(ext)) refs.add(ext);
+    }
+    return refs;
+  };
+
+  let pending = [...gatherRefs()].filter(ref => !(ref in materials));
+  if (objRefs.size === 0 && pending.length === 0) return def;
+  while (pending.length > 0) {
+    for (const ref of pending) pullIn(ref);
+    pending = [...gatherRefs()].filter(ref => !(ref in materials));
   }
 
   return { ...def, materials, textures };

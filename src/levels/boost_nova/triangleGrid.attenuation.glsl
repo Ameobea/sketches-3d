@@ -1,18 +1,16 @@
-// Procedural light attenuation: fake cast shadow (→ direct) + fake AO
-// (→ indirect), as (directMul, indirectMul). Applied after lighting, so it dims
-// real light incl. specular — unlike the color shader, which only reaches albedo.
-vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec3 sgns;
-  vec3 d = triEdgeDist3(domProject(pos, domAxis(vWorldNormal)), sgns);
+// Procedural light attenuation: fake cast shadow (→ direct) + fake AO (→ indirect), as
+// (directMul, indirectMul). Applied after lighting, so it dims real light incl. specular.
+// Reads the shared at-hit frame (TriHit).
+vec2 gridAttenuation(TriHit h, SceneCtx ctx) {
+  vec3 d = h.d;
+  vec3 sgns = h.sgns;
   float ed = min(d.x, min(d.y, d.z));
   float aa = max(ctx.aaFootprint, 1e-4);
 
-  float cd = smoothstep(TRI_BORDER_END, TRI_WALL_END, ed);              // 0 top → 1 floor
+  float cd = smoothstep(TRI_BORDER_END, TRI_WALL_END, ed); // 0 top → 1 floor
   float pitMask = smoothstep(TRI_BORDER_END - aa, TRI_BORDER_END + aa, ed);
 
-  // AO → indirect: depth darkening + contact darkening at the creases. The
-  // smooth-min distance to the three rim creases dips at corners (two creases
-  // near), so corners darken extra and the un-AO'd core rounds off.
+  // AO → indirect: depth darkening + corner-biased contact darkening at the rim creases.
   float depthAO = mix(1., TRI_AO_DEPTH, cd);
   float aoDist = triSmin(triSmin(abs(d.x - TRI_WALL_END), abs(d.y - TRI_WALL_END), TRI_AO_CORNER),
                          abs(d.z - TRI_WALL_END), TRI_AO_CORNER);
@@ -20,11 +18,9 @@ vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx c
   creaseAO = mix(1., creaseAO, pitMask);
   float indirectMul = depthAO * creaseAO;
 
-  // Cast shadow → direct.
-  // worldN is used only scale-invariantly here (a dot-sign test + abs-based axis
-  // pick), so the interpolated varying needs no normalize.
+  // Cast shadow → direct. vWorldNormal is used only scale-invariantly (dot-sign + abs axis pick).
   float shadow = triPitShadowFromEdges(d, sgns, cd, vWorldNormal) * pitMask;
   float directMul = mix(1., TRI_SHADOW_DARKEN, shadow);
 
-  return vec2(directMul, indirectMul);
+  return vec2(directMul, indirectMul * mix(directMul, 1., 0.5));
 }

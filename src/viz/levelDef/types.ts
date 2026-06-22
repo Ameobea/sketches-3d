@@ -253,6 +253,21 @@ export const CustomUniformJsonSchema = z.discriminatedUnion('type', [
 ]);
 export type CustomUniformJson = z.infer<typeof CustomUniformJsonSchema>;
 
+/**
+ * Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL
+ * as a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here
+ * overrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach.
+ */
+export const ShaderConstantJsonSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('float'), value: z.number() }),
+  z.object({ type: z.literal('int'), value: z.number().int() }),
+  z.object({ type: z.literal('bool'), value: z.boolean() }),
+  z.object({ type: z.literal('vec2'), value: Vec2 }),
+  z.object({ type: z.literal('vec3'), value: Vec3 }),
+  z.object({ type: z.literal('vec4'), value: z.tuple([z.number(), z.number(), z.number(), z.number()]) }),
+]);
+export type ShaderConstantJson = z.infer<typeof ShaderConstantJsonSchema>;
+
 export const ShaderShadersJsonSchema = z.object({
   customVertexFragment: z.string().optional(),
   /** Shared GLSL emitted before all other user shader slots; see `CustomShaderShaders.commonShader`. */
@@ -272,6 +287,7 @@ export const ShaderShadersJsonSchema = z.object({
   pomHeightShader: z.string().optional(),
   pomNormalShader: z.string().optional(),
   customUniforms: z.record(z.string(), CustomUniformJsonSchema).optional(),
+  constants: z.record(z.string(), ShaderConstantJsonSchema).optional(),
 });
 
 /** Texture-bearing slots on `CustomShaderMatDef.props`; values are texture-registry keys. */
@@ -361,7 +377,7 @@ export const ShaderOptionsJsonSchema = z.object({
       cellPitch: z.number().positive().optional(),
       cellType: z.string().optional(),
       hitType: z.string().optional(),
-      intersect: z.enum(['march', 'safeStep']).optional(),
+      intersect: z.enum(['march', 'safeStep', 'analytic']).optional(),
       minFeatureWidth: z.number().positive().optional(),
       lateralDist: z.boolean().optional(),
       steps: z.number().int().min(1),
@@ -518,6 +534,14 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
 const CustomShaderMatDefRawSchema = CustomShaderMatDefSchema.extend({
   props: ShaderPropsJsonRawSchema.optional(),
   shaders: ShaderShadersJsonRawSchema.optional(),
+  /**
+   * Inherit from another material — a level-local material name or an `__ASSETS__/materials/…`
+   * library path — and deep-merge this def's fields over it (arrays/scalars replace, objects merge
+   * per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`). Resolved
+   * server-side into a fully-flattened def; `extends` itself is stripped before the client sees it.
+   * Both parent and child must be `customShader`.
+   */
+  extends: z.string().optional(),
 });
 
 const CustomBasicShaderMatDefRawSchema = CustomBasicShaderMatDefSchema.extend({

@@ -83,6 +83,15 @@ float triEdgeDistGrad(vec2 uv, out vec2 gradDir) {
   return d.z;
 }
 
+// Shared at-hit frame (hitType): one triEdgeDist3 eval, reused by the color/attenuation/normal
+// slots so they don't each re-project and re-decompose. ed/gradDir/AO/shadow all derive from (d, sgns).
+struct TriHit { vec3 d; vec3 sgns; };
+TriHit gridComputeHit(vec2 uv) {
+  vec3 sgns;
+  vec3 d = triEdgeDist3(uv, sgns);
+  return TriHit(d, sgns);
+}
+
 // Polynomial smooth-minimum (Inigo Quilez); `k` is the rounding radius.
 float triSmin(float a, float b, float k) {
   float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
