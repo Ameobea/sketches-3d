@@ -23,6 +23,8 @@ import type { SceneConfig } from '..';
 import boostNovaMaterials from 'src/levels/boost_nova/materials.json';
 import raisedTilesAsset from 'src/assets/materials/procedural/raised_tiles/raised_tiles.json';
 import chevronStripsAsset from 'src/assets/materials/procedural/chevron_strips/chevron_strips.json';
+import pitGridAsset from 'src/assets/materials/procedural/pit_grid/pit_grid.json';
+import sparseSeamsAsset from 'src/assets/materials/procedural/sparse_seams/sparse_seams.json';
 
 const RT_W = 1280;
 const RT_H = 720;
@@ -42,6 +44,8 @@ const BENCH_MATERIALS: { name: string; cls: string }[] = [
   { name: 'grate_trench', cls: 'L2 1D / Tier-A' },
   { name: 'triangle_grid', cls: 'L1 tri-lattice' },
   { name: 'chevron_strips', cls: 'L1 chevron / hitType' },
+  { name: 'pit_grid', cls: 'L1 pit SDF' },
+  { name: 'sparse_seams', cls: 'L1 sparse seams' },
   { name: 'raised_tiles_field', cls: 'L2 hash · field' },
   { name: 'raised_tiles_proj', cls: 'L2 hash · projField' },
   { name: 'raised_tiles', cls: 'L2 hash · grid' },
@@ -79,6 +83,14 @@ const PRESETS: Record<string, Preset> = {
     up: new THREE.Vector3(0, 1, 0),
     fov: 58,
   },
+  // High top-down for large-cell materials (sparse_seams ~40u cells): spans ~90 units so several
+  // cells are visible while the footprint stays small enough to keep seams + relief crisp.
+  aerial: {
+    pos: new THREE.Vector3(0, 80, 0),
+    target: new THREE.Vector3(0, 0, 0.0001),
+    up: new THREE.Vector3(0, 0, -1),
+    fov: 60,
+  },
 };
 
 const glslModules = import.meta.glob(
@@ -86,6 +98,8 @@ const glslModules = import.meta.glob(
     '/src/levels/boost_nova/*.glsl',
     '/src/assets/materials/procedural/raised_tiles/*.glsl',
     '/src/assets/materials/procedural/chevron_strips/*.glsl',
+    '/src/assets/materials/procedural/pit_grid/*.glsl',
+    '/src/assets/materials/procedural/sparse_seams/*.glsl',
   ],
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>;
@@ -113,12 +127,43 @@ const RT_PROJ_HEIGHT = /* glsl */ `float gridHeight(vec2 uv, float curTimeSecond
 }`;
 
 const RT_VARIANTS = new Set(['raised_tiles', 'raised_tiles_field', 'raised_tiles_proj']);
+
+// pit_grid ships one library file (square, aligned); these inject the shape/stagger defines via
+// baked `shaders.constants` so the bench can render every option (loadLevelData's `extends`/constants
+// path is bypassed here, but buildMaterial still bakes `shaders.constants`).
+const PIT_GRID_CONSTANTS: Record<string, Record<string, unknown>> = {
+  pit_grid: {},
+  pit_grid_diamond: { PG_SHAPE: { type: 'int', value: 1 } },
+  pit_grid_triangle: { PG_SHAPE: { type: 'int', value: 2 } },
+  pit_grid_trapezoid: { PG_SHAPE: { type: 'int', value: 3 } },
+  pit_grid_stagger: { PG_STAGGER: { type: 'int', value: 1 }, PG_SHAPE: { type: 'int', value: 1 } },
+};
+
 const getRawDef = (name: string): unknown => {
   if (RT_VARIANTS.has(name)) {
     return (raisedTilesAsset as { material: unknown }).material;
   }
   if (name === 'chevron_strips') {
     return (chevronStripsAsset as { material: unknown }).material;
+  }
+  if (name === 'sparse_seams' || name === 'sparse_seams_demo') {
+    const base = structuredClone((sparseSeamsAsset as { material: any }).material);
+    // _demo shrinks the plate grid (and thus the derived seam pitch) so many cells fit a bench frame.
+    if (name === 'sparse_seams_demo') {
+      (base.shaders ??= {}).constants = {
+        SS_PLATE_W: { type: 'float', value: 7 },
+        SS_PLATE_H: { type: 'float', value: 6 },
+      };
+    }
+    return base;
+  }
+  if (name in PIT_GRID_CONSTANTS) {
+    const base = structuredClone((pitGridAsset as { material: any }).material);
+    const consts = PIT_GRID_CONSTANTS[name];
+    if (Object.keys(consts).length > 0) {
+      (base.shaders ??= {}).constants = consts;
+    }
+    return base;
   }
   const raw = (boostNovaMaterials.materials as Record<string, unknown>)[name];
   if (!raw) {

@@ -41,11 +41,11 @@ export const flattenMaterialExtends = (
       const from = chain.length ? ` (from "${chain[chain.length - 1]}")` : '';
       throw new Error(`[flattenMaterialExtends] \`extends\` references unknown material "${name}"${from}`);
     }
-    const parentName = def.type === 'customShader' ? def.extends : undefined;
-    if (parentName === undefined) {
+    if (def.type !== 'customShader' || def.extends === undefined) {
       resolved.set(name, def);
       return def;
     }
+    const parentName = def.extends;
 
     resolving.add(name);
     const parent = resolve(parentName, [...chain, name]);

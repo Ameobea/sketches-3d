@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#4c4f53",
+      "roughness": 0.7,
+      "metalness": 0.05
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "projectedField",
+        "intersect": "safeStep",
+        "minFeatureWidth": 0.08,
+        "lateralDist": true,
+        "depth": 0.2,
+        "steps": 12,
+        "lodFadeStart": 16,
+        "lodFadeRange": 45,
+        "boundedSilhouette": true,
+        "refinement": "binary",
+        "refinementSteps": 5,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "pitGrid.common.glsl" },
+      "colorShader": { "file": "pitGrid.color.glsl" },
+      "lightAttenuationShader": { "file": "pitGrid.attenuation.glsl" },
+      "pomHeightShader": { "file": "pitGrid.height.glsl" },
+      "pomNormalShader": { "file": "pitGrid.normal.glsl" }
+    }
+  }
+}

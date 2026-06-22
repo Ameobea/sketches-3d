@@ -18,58 +18,33 @@
           },
           "wrapS": {
             "type": "string",
-            "enum": [
-              "repeat",
-              "clamp",
-              "mirror"
-            ]
+            "enum": ["repeat", "clamp", "mirror"]
           },
           "wrapT": {
             "type": "string",
-            "enum": [
-              "repeat",
-              "clamp",
-              "mirror"
-            ]
+            "enum": ["repeat", "clamp", "mirror"]
           },
           "magFilter": {
             "type": "string",
-            "enum": [
-              "nearest",
-              "linear"
-            ]
+            "enum": ["nearest", "linear"]
           },
           "minFilter": {
             "type": "string",
-            "enum": [
-              "nearest",
-              "nearestMipNearest",
-              "nearestMipLinear",
-              "linearMipLinear"
-            ]
+            "enum": ["nearest", "nearestMipNearest", "nearestMipLinear", "linearMipLinear"]
           },
           "anisotropy": {
             "type": "number"
           },
           "colorSpace": {
             "type": "string",
-            "enum": [
-              "srgb",
-              ""
-            ]
+            "enum": ["srgb", ""]
           },
           "format": {
             "type": "string",
-            "enum": [
-              "rgba",
-              "rg",
-              "red"
-            ]
+            "enum": ["rgba", "rg", "red"]
           }
         },
-        "required": [
-          "url"
-        ],
+        "required": ["url"],
         "additionalProperties": false
       }
     },
@@ -198,11 +173,7 @@
                 },
                 "side": {
                   "type": "string",
-                  "enum": [
-                    "front",
-                    "back",
-                    "double"
-                  ]
+                  "enum": ["front", "back", "double"]
                 },
                 "uvScale": {
                   "type": "array",
@@ -255,11 +226,7 @@
                       "type": "number"
                     }
                   },
-                  "required": [
-                    "falloffStartDistance",
-                    "falloffEndDistance",
-                    "ampFactor"
-                  ],
+                  "required": ["falloffStartDistance", "falloffEndDistance", "ampFactor"],
                   "additionalProperties": false
                 },
                 "heightAlpha": {
@@ -332,9 +299,7 @@
                       "type": "number"
                     }
                   },
-                  "required": [
-                    "type"
-                  ],
+                  "required": ["type"],
                   "additionalProperties": false
                 },
                 "enableFog": {
@@ -360,12 +325,7 @@
                 },
                 "materialClass": {
                   "type": "string",
-                  "enum": [
-                    "default",
-                    "rock",
-                    "crystal",
-                    "metalplate"
-                  ]
+                  "enum": ["default", "rock", "crystal", "metalplate"]
                 },
                 "pom": {
                   "type": "object",
@@ -375,11 +335,7 @@
                     },
                     "tier": {
                       "type": "string",
-                      "enum": [
-                        "field",
-                        "projectedField",
-                        "grid"
-                      ]
+                      "enum": ["field", "projectedField", "grid"]
                     },
                     "cellPitch": {
                       "type": "number",
@@ -393,11 +349,7 @@
                     },
                     "intersect": {
                       "type": "string",
-                      "enum": [
-                        "march",
-                        "safeStep",
-                        "analytic"
-                      ]
+                      "enum": ["march", "safeStep", "analytic"]
                     },
                     "minFeatureWidth": {
                       "type": "number",
@@ -460,17 +412,12 @@
                           "exclusiveMinimum": 0
                         }
                       },
-                      "required": [
-                        "lightDir"
-                      ],
+                      "required": ["lightDir"],
                       "additionalProperties": false
                     },
                     "refinement": {
                       "type": "string",
-                      "enum": [
-                        "secant",
-                        "binary"
-                      ]
+                      "enum": ["secant", "binary"]
                     },
                     "refinementSteps": {
                       "type": "integer",
@@ -500,10 +447,7 @@
                       ]
                     }
                   },
-                  "required": [
-                    "depth",
-                    "steps"
-                  ],
+                  "required": ["depth", "steps"],
                   "additionalProperties": false
                 }
               },
@@ -524,9 +468,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -543,9 +485,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -562,9 +502,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -581,9 +519,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -600,9 +536,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -619,9 +553,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -677,10 +609,7 @@
                     },
                     "colorSpace": {
                       "type": "string",
-                      "enum": [
-                        "srgb",
-                        "linear"
-                      ]
+                      "enum": ["srgb", "linear"]
                     }
                   },
                   "required": [
@@ -707,9 +636,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -765,10 +692,7 @@
                     },
                     "colorSpace": {
                       "type": "string",
-                      "enum": [
-                        "srgb",
-                        "linear"
-                      ]
+                      "enum": ["srgb", "linear"]
                     }
                   },
                   "required": [
@@ -795,9 +719,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -814,9 +736,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -872,10 +792,7 @@
                     },
                     "colorSpace": {
                       "type": "string",
-                      "enum": [
-                        "srgb",
-                        "linear"
-                      ]
+                      "enum": ["srgb", "linear"]
                     }
                   },
                   "required": [
@@ -902,9 +819,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -924,9 +839,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -943,9 +856,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "file"
-                      ],
+                      "required": ["file"],
                       "additionalProperties": false
                     }
                   ]
@@ -971,10 +882,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -993,10 +901,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1021,10 +926,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1052,10 +954,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1086,10 +985,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1111,10 +1007,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1136,10 +1029,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       }
                     ]
@@ -1163,10 +1053,7 @@
                             "type": "number"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1182,10 +1069,7 @@
                             "maximum": 9007199254740991
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1199,10 +1083,7 @@
                             "type": "boolean"
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1224,10 +1105,7 @@
                             ]
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1252,10 +1130,7 @@
                             ]
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       },
                       {
@@ -1283,10 +1158,7 @@
                             ]
                           }
                         },
-                        "required": [
-                          "type",
-                          "value"
-                        ],
+                        "required": ["type", "value"],
                         "additionalProperties": false
                       }
                     ]
@@ -1323,10 +1195,7 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "targetSpeed",
-                    "jumpRetention"
-                  ],
+                  "required": ["targetSpeed", "jumpRetention"],
                   "additionalProperties": false
                 }
               },
@@ -1364,9 +1233,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         },
         {
@@ -1438,10 +1305,7 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "targetSpeed",
-                    "jumpRetention"
-                  ],
+                  "required": ["targetSpeed", "jumpRetention"],
                   "additionalProperties": false
                 }
               },
@@ -1476,9 +1340,7 @@
               ]
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         },
         {
@@ -1513,10 +1375,7 @@
                       "type": "boolean"
                     }
                   },
-                  "required": [
-                    "targetSpeed",
-                    "jumpRetention"
-                  ],
+                  "required": ["targetSpeed", "jumpRetention"],
                   "additionalProperties": false
                 }
               },
@@ -1551,17 +1410,13 @@
               ]
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "additionalProperties": false
         }
       ]
     }
   },
-  "required": [
-    "material"
-  ],
+  "required": ["material"],
   "additionalProperties": false,
   "title": "LibraryMaterialFile",
   "$id": "https://ameo.design/schemas/library-material.json"

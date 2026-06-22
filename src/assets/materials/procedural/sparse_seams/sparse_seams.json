@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#5d5e60",
+      "roughness": 0.6,
+      "metalness": 0.0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "projectedField",
+        "intersect": "safeStep",
+        "minFeatureWidth": 0.1,
+        "lateralDist": true,
+        "depth": 0.35,
+        "steps": 8,
+        "lodFadeStart": 80,
+        "lodFadeRange": 300,
+        "refinement": "binary",
+        "refinementSteps": 4,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "sparseSeams.common.glsl" },
+      "colorShader": { "file": "sparseSeams.color.glsl" },
+      "lightAttenuationShader": { "file": "sparseSeams.attenuation.glsl" },
+      "pomHeightShader": { "file": "sparseSeams.height.glsl" },
+      "pomNormalShader": { "file": "sparseSeams.normal.glsl" }
+    }
+  }
+}

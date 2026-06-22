@@ -107,17 +107,17 @@
           "id": "chevron_strips_test_pad",
           "asset": "plat",
           "material": "__ASSETS__/materials/procedural/chevron_strips",
-          "position": [61.1, -2.563, 49.475],
+          "position": [61.1, 2.3977, 49.475],
           "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "scale": [1, 22.588, 1]
         },
         {
           "id": "chevron_strips_wide_test_pad",
           "asset": "plat",
           "material": "chevron_strips_wide",
-          "position": [83.25, -2.563, 49.475],
+          "position": [83.25, 5.894, 49.475],
           "rotation": [0, 0, 0],
-          "scale": [1, 1, 1]
+          "scale": [1, 32.5505, 1]
         },
         {
           "id": "raised_tiles_test_pad",
@@ -163,6 +163,62 @@
       "position": [5.1586, 2.3972, -13.225],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "pit_grid_gallery",
+      "children": [
+        {
+          "id": "pg_square",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/pit_grid",
+          "position": [-22, 4.2, 32.8624],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "pg_diamond",
+          "asset": "plat",
+          "material": "pit_grid_diamond",
+          "position": [-11, 4.2, 32.8624],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "pg_triangle",
+          "asset": "plat",
+          "material": "pit_grid_triangle",
+          "position": [0, 4.2, 32.8624],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "pg_trapezoid",
+          "asset": "plat",
+          "material": "pit_grid_trapezoid",
+          "position": [11, 4.2, 32.8624],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "pg_stagger",
+          "asset": "plat",
+          "material": "pit_grid_stagger",
+          "position": [22, 4.2, 32.8624],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        }
+      ],
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "sparse_seams_backdrop",
+      "asset": "plat",
+      "material": "__ASSETS__/materials/procedural/sparse_seams",
+      "position": [0, 55, 164.1542],
+      "rotation": [-1.5708, 0, 0],
+      "scale": [46.8323, 1, 12.7025]
     },
     {
       "id": "group",

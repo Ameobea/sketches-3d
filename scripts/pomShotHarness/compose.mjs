@@ -34,7 +34,11 @@ for (const preset of presetsArg.split(',')) {
   }
   const { width: W, height: H } = await sharp(a).metadata();
   const bBuf = await sharp(b).toBuffer();
-  const diff = await sharp(a).composite([{ input: bBuf, blend: 'difference' }]).linear(DIFF_AMP, 0).png().toBuffer();
+  const diff = await sharp(a)
+    .composite([{ input: bBuf, blend: 'difference' }])
+    .linear(DIFF_AMP, 0)
+    .png()
+    .toBuffer();
   const out = `${OUT}/cmp_${material}__${preset}.png`;
   await sharp({ create: { width: W * 3, height: H, channels: 3, background: '#101010' } })
     .composite([
