@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson } from './types';
+  import { hexIntToStr, hexStrToInt } from './colorUtils';
   import FormField from 'src/viz/scenes/geoscriptPlayground/materialEditor/FormField.svelte';
 
   interface Props {
@@ -50,11 +51,7 @@
     return localDef.options;
   };
 
-  // Color conversion: hex int ↔ #rrggbb string
-  const hexIntToStr = (c: number | undefined): string =>
-    c !== undefined ? '#' + (c >>> 0).toString(16).padStart(6, '0') : '#808080';
-
-  const strToHexInt = (s: string): number => parseInt(s.slice(1), 16);
+  const colorStr = (c: number | undefined): string => (c !== undefined ? hexIntToStr(c) : '#808080');
 
   const confirmName = () => {
     const name = nameInputValue.trim();
@@ -156,77 +153,39 @@
         {@const p = localDef.props ?? {}}
         {@const o = localDef.options ?? {}}
 
+        {#snippet rangeField(key: keyof ShaderPropsJson, max: number, dflt: number)}
+          <FormField label={key}>
+            <input
+              type="range"
+              min="0"
+              {max}
+              step="0.01"
+              value={(p[key] as number | undefined) ?? dflt}
+              oninput={e => {
+                (ensureProps() as any)[key] = Number((e.target as HTMLInputElement).value);
+                emit();
+              }}
+            />
+            <span class="val">{((p[key] as number | undefined) ?? dflt).toFixed(2)}</span>
+          </FormField>
+        {/snippet}
+
         <!-- Core section -->
         <FormField label="color">
           <input
             type="color"
-            value={hexIntToStr(p.color)}
+            value={colorStr(p.color)}
             oninput={e => {
-              ensureProps().color = strToHexInt((e.target as HTMLInputElement).value);
+              ensureProps().color = hexStrToInt((e.target as HTMLInputElement).value);
               emit();
             }}
           />
         </FormField>
 
-        <FormField label="roughness">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={p.roughness ?? 0.5}
-            oninput={e => {
-              ensureProps().roughness = Number((e.target as HTMLInputElement).value);
-              emit();
-            }}
-          />
-          <span class="val">{(p.roughness ?? 0.5).toFixed(2)}</span>
-        </FormField>
-
-        <FormField label="metalness">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={p.metalness ?? 0}
-            oninput={e => {
-              ensureProps().metalness = Number((e.target as HTMLInputElement).value);
-              emit();
-            }}
-          />
-          <span class="val">{(p.metalness ?? 0).toFixed(2)}</span>
-        </FormField>
-
-        <FormField label="normalScale">
-          <input
-            type="range"
-            min="0"
-            max="5"
-            step="0.01"
-            value={p.normalScale ?? 1}
-            oninput={e => {
-              ensureProps().normalScale = Number((e.target as HTMLInputElement).value);
-              emit();
-            }}
-          />
-          <span class="val">{(p.normalScale ?? 1).toFixed(2)}</span>
-        </FormField>
-
-        <FormField label="iridescence">
-          <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={p.iridescence ?? 0}
-            oninput={e => {
-              ensureProps().iridescence = Number((e.target as HTMLInputElement).value);
-              emit();
-            }}
-          />
-          <span class="val">{(p.iridescence ?? 0).toFixed(2)}</span>
-        </FormField>
+        {@render rangeField('roughness', 1, 0.5)}
+        {@render rangeField('metalness', 1, 0)}
+        {@render rangeField('normalScale', 5, 1)}
+        {@render rangeField('iridescence', 1, 0)}
 
         <FormField label="map">
           <select
@@ -389,50 +348,9 @@
 
         {#if advancedOpen}
           <div class="advanced-content">
-            <FormField label="clearcoat">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={p.clearcoat ?? 0}
-                oninput={e => {
-                  ensureProps().clearcoat = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-              <span class="val">{(p.clearcoat ?? 0).toFixed(2)}</span>
-            </FormField>
-
-            <FormField label="clearcoatRoughness">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={p.clearcoatRoughness ?? 0}
-                oninput={e => {
-                  ensureProps().clearcoatRoughness = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-              <span class="val">{(p.clearcoatRoughness ?? 0).toFixed(2)}</span>
-            </FormField>
-
-            <FormField label="clearcoatNormalScale">
-              <input
-                type="range"
-                min="0"
-                max="5"
-                step="0.01"
-                value={p.clearcoatNormalScale ?? 0}
-                oninput={e => {
-                  ensureProps().clearcoatNormalScale = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-              <span class="val">{(p.clearcoatNormalScale ?? 0).toFixed(2)}</span>
-            </FormField>
+            {@render rangeField('clearcoat', 1, 0)}
+            {@render rangeField('clearcoatRoughness', 1, 0)}
+            {@render rangeField('clearcoatNormalScale', 5, 0)}
 
             <FormField label="clearcoatNormalMap">
               <select
@@ -446,42 +364,15 @@
               </select>
             </FormField>
 
-            <FormField label="sheen">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={p.sheen ?? 0}
-                oninput={e => {
-                  ensureProps().sheen = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-              <span class="val">{(p.sheen ?? 0).toFixed(2)}</span>
-            </FormField>
-
-            <FormField label="sheenRoughness">
-              <input
-                type="range"
-                min="0"
-                max="1"
-                step="0.01"
-                value={p.sheenRoughness ?? 0}
-                oninput={e => {
-                  ensureProps().sheenRoughness = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-              <span class="val">{(p.sheenRoughness ?? 0).toFixed(2)}</span>
-            </FormField>
+            {@render rangeField('sheen', 1, 0)}
+            {@render rangeField('sheenRoughness', 1, 0)}
 
             <FormField label="sheenColor">
               <input
                 type="color"
-                value={hexIntToStr(p.sheenColor)}
+                value={colorStr(p.sheenColor)}
                 oninput={e => {
-                  ensureProps().sheenColor = strToHexInt((e.target as HTMLInputElement).value);
+                  ensureProps().sheenColor = hexStrToInt((e.target as HTMLInputElement).value);
                   emit();
                 }}
               />

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import type { CsgAssetDef, CsgTreeNode } from './types';
 import { UNBAKED_RENDER_WRAPPER, type LevelObject } from './loadLevelDef';
-import { LEVEL_PLACEHOLDER_MAT } from './levelObjectUtils';
+import { LEVEL_PLACEHOLDER_MAT, groupOrSingle, meshesFromRunObjects } from './levelObjectUtils';
 import { generateComplementCode, generateSubtreeCode } from './csgCodeGen';
 import { isOpNode, getNodeAtPath, computeNodePolarities } from './csgTreeUtils';
 import type { LevelEditor } from './LevelEditor.svelte';
@@ -19,14 +19,9 @@ const CSG_NESTED_NEGATIVE_MAT = new THREE.MeshBasicMaterial({
 const CSG_PICK_MAT = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 
 /**
- * Manages the Three.js preview objects that visualise the CSG tree during
- * interactive editing.
- *
- * Owns:
- * - the preview object maps and selectable mesh registry
- * - render configuration selection (which nodes to show and how)
- * - subtree / complement preview building via the geoscript worker
- * - preview transform syncing for non-selected nodes during drags
+ * Owns the Three.js preview objects visualising the CSG tree during interactive editing:
+ * the preview/selectable-mesh registries, render-config selection, subtree/complement preview
+ * building via the geoscript worker, and transform syncing of non-selected nodes during drags.
  */
 export class CsgPreviewScene {
   private editGroup: THREE.Group | null = null;
@@ -51,10 +46,6 @@ export class CsgPreviewScene {
   get nodePolarities(): Map<string, 'positive' | 'negative'> {
     return this._nodePolarities;
   }
-
-  // ---------------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------------
 
   /** Begin a CSG edit session for the given group and level object. */
   activate(editGroup: THREE.Group, editLevelObj: LevelObject): void {
@@ -114,20 +105,7 @@ export class CsgPreviewScene {
     if (selectedNodePath === null) {
       // Config 1: no selection — show full result with negative overlays
       this.editLevelObj.object.visible = true;
-      const negPaths = new Set(this.collectNegativeSubtreePaths(csgDef.tree, ''));
-      for (const path of this.collectSubtreePaths(csgDef.tree, '')) {
-        if (negPaths.has(path)) continue;
-        void this.resolveSubtreePreview(path, CSG_PICK_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
-      for (const path of negPaths) {
-        void this.resolveSubtreePreview(path, CSG_NEGATIVE_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
+      this.renderDescendantOverlays('', assetName, csgDef, CSG_NEGATIVE_MAT);
       return;
     }
 
@@ -135,12 +113,7 @@ export class CsgPreviewScene {
       // Config ROOT: root selected — show full result, gizmo on level object
       this.editLevelObj.object.visible = true;
       this.editor.transformControls?.attach(this.editLevelObj.object);
-      for (const path of this.collectSubtreePaths(csgDef.tree, '')) {
-        void this.resolveSubtreePreview(path, CSG_PICK_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
+      this.renderDescendantOverlays('', assetName, csgDef, CSG_PICK_MAT);
       return;
     }
 
@@ -155,20 +128,7 @@ export class CsgPreviewScene {
         pickable: true,
         trackNodePreview: true,
       });
-      const negPaths = new Set(this.collectNegativeSubtreePaths(csgDef.tree, selectedNodePath));
-      for (const path of this.collectSubtreePaths(csgDef.tree, selectedNodePath)) {
-        if (negPaths.has(path)) continue;
-        void this.resolveSubtreePreview(path, CSG_PICK_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
-      for (const path of negPaths) {
-        void this.resolveSubtreePreview(path, CSG_NEGATIVE_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
+      this.renderDescendantOverlays(selectedNodePath, assetName, csgDef, CSG_NEGATIVE_MAT);
     } else {
       // Config 3: negative selection — full result visible, overlay selection in red
       this.editLevelObj.object.visible = true;
@@ -177,20 +137,27 @@ export class CsgPreviewScene {
         pickable: true,
         trackNodePreview: true,
       });
-      const nestedNegPaths = new Set(this.collectNegativeSubtreePaths(csgDef.tree, selectedNodePath));
-      for (const path of this.collectSubtreePaths(csgDef.tree, selectedNodePath)) {
-        if (nestedNegPaths.has(path)) continue;
-        void this.resolveSubtreePreview(path, CSG_PICK_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
-      for (const path of nestedNegPaths) {
-        void this.resolveSubtreePreview(path, CSG_NESTED_NEGATIVE_MAT, assetName, {
-          pickable: true,
-          trackNodePreview: false,
-        });
-      }
+      this.renderDescendantOverlays(selectedNodePath, assetName, csgDef, CSG_NESTED_NEGATIVE_MAT);
+    }
+  }
+
+  /**
+   * Render every descendant subtree of `rootPath` as a pickable overlay: negative children of
+   * difference ops use `negMaterial`, the rest the invisible pick material. Pass `CSG_PICK_MAT`
+   * as `negMaterial` to render everything uniformly (no negative tinting).
+   */
+  private renderDescendantOverlays(
+    rootPath: string,
+    assetName: string,
+    csgDef: CsgAssetDef,
+    negMaterial: THREE.Material
+  ): void {
+    const negPaths = new Set(this.collectNegativeSubtreePaths(csgDef.tree, rootPath));
+    for (const path of this.collectSubtreePaths(csgDef.tree, rootPath)) {
+      void this.resolveSubtreePreview(path, negPaths.has(path) ? negMaterial : CSG_PICK_MAT, assetName, {
+        pickable: true,
+        trackNodePreview: false,
+      });
     }
   }
 
@@ -231,10 +198,6 @@ export class CsgPreviewScene {
       this.applyNodeTransform(entry.preview, node);
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Internal helpers
-  // ---------------------------------------------------------------------------
 
   /** Collect paths of negative children of difference ops within a subtree. */
   private collectNegativeSubtreePaths(tree: CsgTreeNode, rootPath: string): string[] {
@@ -368,23 +331,10 @@ export class CsgPreviewScene {
     }
     if (generation !== this.configGeneration || !this.isActive || !this.editGroup) return;
 
-    const meshes: THREE.Mesh[] = [];
-    for (const obj of result.objects) {
-      if (obj.type !== 'mesh') continue;
-      const mesh = new THREE.Mesh(obj.geometry, material);
-      mesh.applyMatrix4(obj.transform);
-      meshes.push(mesh);
-    }
+    const meshes = meshesFromRunObjects(result.objects, material);
     if (meshes.length === 0) return;
 
-    const preview: THREE.Object3D =
-      meshes.length === 1
-        ? meshes[0]
-        : (() => {
-            const g = new THREE.Group();
-            meshes.forEach(m => g.add(m));
-            return g;
-          })();
+    const preview = groupOrSingle(meshes);
 
     // A wrapper group carries the ancestor transform so the preview's own
     // local transform represents only this node's contribution.
@@ -449,26 +399,12 @@ export class CsgPreviewScene {
       ? (this.editor.builtMaterials.get(this.editLevelObj.def.material) ?? LEVEL_PLACEHOLDER_MAT)
       : LEVEL_PLACEHOLDER_MAT;
 
-    const meshes: THREE.Mesh[] = [];
-    for (const obj of result.objects) {
-      if (obj.type !== 'mesh') continue;
-      const mesh = new THREE.Mesh(obj.geometry, levelMat);
-      mesh.applyMatrix4(obj.transform);
-      meshes.push(mesh);
-    }
+    const meshes = meshesFromRunObjects(result.objects, levelMat);
     if (meshes.length === 0) return;
 
     if (this.complementPreview) this.editGroup.remove(this.complementPreview);
 
-    const complement: THREE.Object3D =
-      meshes.length === 1
-        ? meshes[0]
-        : (() => {
-            const g = new THREE.Group();
-            meshes.forEach(m => g.add(m));
-            return g;
-          })();
-
+    const complement = groupOrSingle(meshes);
     this.complementPreview = complement;
     this.editGroup.add(complement);
     // Complement is purely visual context — not selectable

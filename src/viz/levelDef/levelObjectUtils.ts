@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import type { GeneratedObject } from 'src/geoscript/runner/types';
 import type { ObjectDef, ObjectGroupDef } from './types';
 
 export const LEVEL_PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
@@ -16,6 +17,32 @@ export const applyTransform = (object: THREE.Object3D, def: TransformDef) => {
   object.position.set(px, py, pz);
   object.rotation.set(rx, ry, rz, 'YXZ');
   object.scale.set(sx, sy, sz);
+};
+
+/** Build a THREE.Mesh per `mesh`-type object in a geoscript run result, each with the given material. */
+export const meshesFromRunObjects = (objects: GeneratedObject[], material: THREE.Material): THREE.Mesh[] => {
+  const meshes: THREE.Mesh[] = [];
+  for (const obj of objects) {
+    if (obj.type !== 'mesh') {
+      continue;
+    }
+    const mesh = new THREE.Mesh(obj.geometry, material);
+    mesh.applyMatrix4(obj.transform);
+    meshes.push(mesh);
+  }
+  return meshes;
+};
+
+/** The single mesh when there's exactly one; otherwise a Group wrapping all of them. */
+export const groupOrSingle = (meshes: THREE.Mesh[]): THREE.Object3D => {
+  if (meshes.length === 1) {
+    return meshes[0];
+  }
+  const group = new THREE.Group();
+  for (const mesh of meshes) {
+    group.add(mesh);
+  }
+  return group;
 };
 
 export const forEachMesh = (object: THREE.Object3D, cb: (mesh: THREE.Mesh) => void) =>

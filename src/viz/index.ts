@@ -33,6 +33,7 @@ import { clearPhysicsBinding } from './util/physics';
 import { clamp, delay, mergeDeep, mix, type PopupScreenFocus } from './util/util.ts';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable.ts';
 import { buildEasingFn, EasingFnType } from './util/easingFns.ts';
+import { ensureGlPositionInvariant } from './shaders/glPositionInvariant';
 import type { Unsubscriber } from 'svelte/store';
 import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
@@ -307,6 +308,7 @@ export class Viz {
     });
 
     ensureRectAreaLightUniforms();
+    ensureGlPositionInvariant();
 
     // backwards compat
     if (sceneDef.legacyLights) {

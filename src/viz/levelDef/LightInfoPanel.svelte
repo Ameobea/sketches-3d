@@ -1,5 +1,8 @@
 <script lang="ts">
   import type { LightDef } from './types';
+  import { hexIntToStr, hexStrToInt } from './colorUtils';
+  import { fmt } from './mathUtils';
+  import Vec3Input from './Vec3Input.svelte';
 
   interface Props {
     lightDef: LightDef;
@@ -22,25 +25,22 @@
   const isSpot = (def: LightDef): boolean => def.type === 'spot';
 
   // --- Color ---
-  const numToHex = (n: number): string => '#' + n.toString(16).padStart(6, '0');
-  const hexToNum = (s: string): number => parseInt(s.slice(1), 16);
-
-  const colorStr = $derived(numToHex((lightDef as any).color ?? 0xffffff));
+  const colorStr = $derived(hexIntToStr((lightDef as any).color ?? 0xffffff));
 
   const onColorChange = (e: Event) => {
     const val = (e.target as HTMLInputElement).value;
-    onpropertychange({ color: hexToNum(val) } as Partial<LightDef>);
+    onpropertychange({ color: hexStrToInt(val) } as Partial<LightDef>);
   };
 
   // --- Hemisphere sky/ground colors ---
-  const skyColorStr = $derived(numToHex((lightDef as any).skyColor ?? 0xffffff));
-  const groundColorStr = $derived(numToHex((lightDef as any).groundColor ?? 0x444444));
+  const skyColorStr = $derived(hexIntToStr((lightDef as any).skyColor ?? 0xffffff));
+  const groundColorStr = $derived(hexIntToStr((lightDef as any).groundColor ?? 0x444444));
 
   const onSkyColorChange = (e: Event) => {
-    onpropertychange({ skyColor: hexToNum((e.target as HTMLInputElement).value) } as Partial<LightDef>);
+    onpropertychange({ skyColor: hexStrToInt((e.target as HTMLInputElement).value) } as Partial<LightDef>);
   };
   const onGroundColorChange = (e: Event) => {
-    onpropertychange({ groundColor: hexToNum((e.target as HTMLInputElement).value) } as Partial<LightDef>);
+    onpropertychange({ groundColor: hexStrToInt((e.target as HTMLInputElement).value) } as Partial<LightDef>);
   };
 
   // --- Intensity ---
@@ -55,46 +55,6 @@
     if (!isNaN(n)) onpropertychange({ intensity: n } as Partial<LightDef>);
     else intensityDraft = fmt(lightDef.intensity ?? 1);
     intensityFocused = false;
-  };
-
-  // --- Position ---
-  type Axis = 0 | 1 | 2;
-  let posFocused: Axis | null = $state(null);
-  let posDraft = $state('');
-
-  const posDisplayVal = (axis: Axis): string => {
-    if (posFocused === axis) return posDraft;
-    return fmt(lightPosition[axis]);
-  };
-
-  const onPosFocus = (axis: Axis) => {
-    posDraft = fmt(lightPosition[axis]);
-    posFocused = axis;
-  };
-
-  const onPosBlur = () => {
-    commitPos();
-    posFocused = null;
-  };
-
-  const commitPos = () => {
-    if (posFocused === null) return;
-    const n = parseFloat(posDraft);
-    if (isNaN(n)) return;
-    const next: [number, number, number] = [...lightPosition];
-    next[posFocused] = n;
-    onapplyposition(next);
-  };
-
-  const onPosKeydown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      commitPos();
-      (e.target as HTMLInputElement).blur();
-    }
-    if (e.key === 'Escape') {
-      posFocused = null;
-      (e.target as HTMLInputElement).blur();
-    }
   };
 
   // --- Light-type-specific fields ---
@@ -153,13 +113,6 @@
   const onShadowChange = (e: Event) => {
     onpropertychange({ castShadow: (e.target as HTMLInputElement).checked } as Partial<LightDef>);
   };
-
-  const fmt = (n: number) => {
-    const s = n.toFixed(4);
-    return s.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '.0');
-  };
-
-  const axisLabels: [string, string, string] = ['x', 'y', 'z'];
 </script>
 
 <div class="light-panel">
@@ -221,23 +174,7 @@
 
   <!-- Position (non-ambient) -->
   {#if hasPosition(lightDef)}
-    <div class="tf-row">
-      <span class="tf-label">pos</span>
-      {#each [0, 1, 2] as const as axis}
-        <span class="axis-label">{axisLabels[axis]}</span>
-        <input
-          class="tf-input"
-          type="text"
-          value={posDisplayVal(axis)}
-          oninput={e => {
-            posDraft = (e.target as HTMLInputElement).value;
-          }}
-          onfocus={() => onPosFocus(axis)}
-          onblur={onPosBlur}
-          onkeydown={onPosKeydown}
-        />
-      {/each}
-    </div>
+    <Vec3Input label="pos" labelWidth="42px" values={lightPosition} onchange={onapplyposition} />
   {/if}
 
   <!-- Distance / Decay (point + spot) -->
@@ -354,23 +291,10 @@
     gap: 3px;
   }
 
-  .tf-row {
-    display: flex;
-    align-items: center;
-    gap: 3px;
-  }
-
   .tf-label {
     width: 42px;
     font-size: 11px;
     color: #888;
-    flex-shrink: 0;
-  }
-
-  .axis-label {
-    font-size: 10px;
-    color: #666;
-    width: 8px;
     flex-shrink: 0;
   }
 

@@ -11,7 +11,9 @@ import {
   assignMaterial,
   forEachMesh,
   instantiateLevelObject,
+  meshesFromRunObjects,
 } from './levelObjectUtils';
+import type { GeneratedObject } from 'src/geoscript/runner/types';
 import type {
   AssetDef,
   BehaviorSpec,
@@ -23,6 +25,7 @@ import type {
   ObjectDef,
   ObjectGroupDef,
 } from './types';
+import { TEXTURE_SLOTS } from './types';
 import { compileTree, buildGizmoValues } from 'src/geoscript/treeCodegen';
 import {
   bakeCompositionMeshes,
@@ -49,84 +52,47 @@ import { generateCsgCode } from './csgCodeGen';
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
 
 export interface LevelLoadHandle {
-  /**
-   * Resolves with all placed LevelObjects once every asset (gltf + geoscript) has been resolved
-   * and every object is in the scene. Materials may still be streaming in at this point.
-   */
+  /** Resolves once every asset is resolved and placed in the scene. Materials may still be streaming. */
   objects: Promise<LevelObject[]>;
   /**
-   * Resolves when all texture fetches are done and all materials have been assigned.
-   * Gate player input on this to avoid unplayable low FPS during texture uploads.
+   * Resolves when all textures are loaded and materials assigned. Gate player input on this to
+   * avoid unplayable FPS during texture uploads.
    */
   complete: Promise<void>;
-  /**
-   * Map from assetId → uncloned prototype Object3D. Populated incrementally as assets resolve.
-   * Safe to read (with full coverage) once `objects` has resolved.
-   * Intended for the level editor's "add object" flow.
-   */
+  /** assetId → uncloned prototype. Populated incrementally; full once `objects` resolves. */
   prototypes: Map<string, THREE.Mesh>;
-  /**
-   * Map from material name → built THREE.Material. Populated incrementally as textures load.
-   * Safe to read (with full coverage) once `complete` has resolved.
-   * Intended for the level editor's "add object" flow.
-   */
+  /** material name → built material. Populated incrementally; full once `complete` resolves. */
   builtMaterials: Map<string, THREE.Material>;
-  /**
-   * Flat map of texKey → THREE.Texture for all textures that have successfully loaded.
-   * Populated incrementally; complete once `complete` resolves.
-   * Intended for the level editor's live material rebuild path.
-   */
+  /** texKey → loaded texture. Populated incrementally; full once `complete` resolves. */
   loadedTextures: Map<string, THREE.Texture>;
-  /**
-   * The top-level scene nodes (LevelObjects and LevelGroups) in the order they appear
-   * in the level def. Available once `objects` has resolved.
-   */
+  /** Top-level scene nodes in level-def order. Available once `objects` resolves. */
   rootNodes: LevelSceneNode[];
-  /**
-   * Fast lookup from any node id (group or object) to its LevelSceneNode.
-   * Populated incrementally — safe to read once `objects` has resolved.
-   */
+  /** Any node id → its LevelSceneNode. Populated incrementally; full once `objects` resolves. */
   nodeById: Map<string, LevelSceneNode>;
-  /**
-   * Resolves with all LevelObjects that carry `parkour` metadata in their def.
-   * Available once `objects` has resolved.
-   */
+  /** Resolves with all LevelObjects carrying `parkour` metadata. */
   parkourObjects: Promise<LevelObject[]>;
   /**
-   * Resolves (after `complete`) with every THREE.Mesh whose assigned material def
-   * has `emissiveBypass: true`. These are automatically added to
-   * `viz.postprocessingController.emissiveBypassPass` if one is present.
+   * Resolves (after `complete`) with every mesh whose material has `emissiveBypass: true`; these
+   * are auto-added to `viz.postprocessingController.emissiveBypassPass` when one is present.
    */
   emissiveBypassMeshes: Promise<THREE.Mesh[]>;
   /**
-   * Register factory functions for `type: "generated"` materials.  Call this synchronously
-   * inside `processLoadedScene` so factories are available before async asset resolution
-   * finishes and objects start being placed.
-   *
-   * Each key must match a material name in the level def whose `type` is `"generated"`.
-   * The factory receives `viz` and returns a `MaterialFactoryResult` — either a plain
-   * `THREE.Material`, or `{ material, onAssigned }` where `onAssigned` is called for every
-   * mesh the material is applied to, after the mesh is placed with its final transform.
+   * Register factories for `type: "generated"` materials (keyed by material name). Must be called
+   * synchronously inside `processLoadedScene`, before async asset resolution places objects.
    */
   setMaterialFactories(factories: Record<string, (viz: Viz) => MaterialFactoryResult>): void;
-  /**
-   * All lights instantiated from the level def. Available immediately (synchronous).
-   */
+  /** All lights instantiated from the level def. Available synchronously. */
   lights: LevelLight[];
   /**
-   * Connect a SceneRuntime to the level def system.  Objects with `behaviors` or `spawner`
-   * fields in the level def will have entities created and behaviors attached automatically
-   * once objects are placed and physics is ready.
-   *
-   * @param sceneName — used to resolve level-local behaviors (e.g. `holes__myBehavior`)
+   * Wire a SceneRuntime: objects with `behaviors`/`spawner` get entities + behaviors once placed
+   * and physics is ready. `sceneName` resolves level-local behaviors (e.g. `holes__myBehavior`).
    */
   setSceneRuntime(runtime: SceneRuntime, sceneName: string): void;
 }
 
 /**
- * Return type for generated material factories.  Return a plain `THREE.Material` when no
- * post-assignment setup is needed, or `{ material, onAssigned }` to receive a callback for
- * each mesh the material is applied to (useful e.g. for bbox-dependent uniform initialization).
+ * Return a plain `THREE.Material`, or `{ material, onAssigned }` to get a per-mesh callback after
+ * each mesh is placed with its final transform (e.g. for bbox-dependent uniform init).
  */
 export type MaterialFactoryResult =
   | THREE.Material
@@ -242,20 +208,8 @@ const topoSortAssets = (assets: Record<string, AssetDef>): string[] => {
  * Extract a prototype Object3D from a geoscript run result.
  * Returns null if no meshes were produced.
  */
-const extractPrototype = (
-  objects: { type: string; geometry?: THREE.BufferGeometry; transform?: THREE.Matrix4 }[]
-): THREE.Mesh | null => {
-  const meshes: THREE.Mesh[] = [];
-  for (const obj of objects) {
-    if (obj.type !== 'mesh') {
-      continue;
-    }
-
-    const mesh = new THREE.Mesh(obj.geometry!, LEVEL_PLACEHOLDER_MAT);
-    mesh.applyMatrix4(obj.transform!);
-    meshes.push(mesh);
-  }
-
+const extractPrototype = (objects: GeneratedObject[]): THREE.Mesh | null => {
+  const meshes = meshesFromRunObjects(objects, LEVEL_PLACEHOLDER_MAT);
   if (meshes.length === 0) {
     return null;
   }
@@ -305,7 +259,7 @@ export const resolveGeoscriptAsset = async (code: string): Promise<THREE.Mesh | 
     return null;
   }
 
-  return extractPrototype(result.objects as any);
+  return extractPrototype(result.objects);
 };
 
 /**
@@ -425,7 +379,7 @@ const resolveScriptAssets = async (
         console.error(`[levelDef] ${assets[id].type} error for asset "${id}":`, res.error);
         return;
       }
-      const prototype = extractPrototype(res.objects as any);
+      const prototype = extractPrototype(res.objects);
       if (!prototype) {
         console.warn(`[levelDef] Asset "${id}" produced no meshes`);
         return;
@@ -483,16 +437,7 @@ export const loadLevelDef = (
     const def = levelDef.materials?.[matName];
     if (!def || def.type !== 'customShader' || !def.props) return [];
     const p = def.props;
-    return [
-      p.map,
-      p.normalMap,
-      p.roughnessMap,
-      p.metalnessMap,
-      p.lightMap,
-      p.transmissionMap,
-      p.clearcoatNormalMap,
-      p.pomHeightMap,
-    ].filter((x): x is string => typeof x === 'string');
+    return TEXTURE_SLOTS.map(slot => p[slot]).filter((x): x is string => typeof x === 'string');
   };
 
   for (const matName of Object.keys(levelDef.materials ?? {})) {
@@ -1155,11 +1100,11 @@ export const loadLevelDef = (
 
     objectsPromise.then(objects =>
       import('./LevelEditor.svelte').then(({ initLevelEditor }) => {
-        const editor = initLevelEditor(
+        const editor = initLevelEditor({
           viz,
           objects,
-          viz.sceneName,
-          assetPrototypes,
+          levelName: viz.sceneName,
+          prototypes: assetPrototypes,
           builtMaterials,
           loadedTextures,
           levelDef,
@@ -1168,8 +1113,8 @@ export const loadLevelDef = (
           levelLights,
           assetCollisionMeshes,
           resolveAssetPrototype,
-          compositionBaked
-        );
+          compositionBaked,
+        });
 
         // Subscribe to geo file changes for in-place hot reload.
         const sse = new EventSource(`/level_editor/${viz.sceneName}/geo-watch`);

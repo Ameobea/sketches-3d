@@ -30,7 +30,10 @@
 
   const isNodeSelected = (id: string) => selectedNodeIds.includes(id);
   const compareIds = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
-  const sortNodes = (nodes: LevelSceneNode[]) => [...nodes].sort((a, b) => compareIds(a.id, b.id));
+  // `_version` is unused except as a reactive trigger: passing `treeVersion` makes nested
+  // each-blocks re-run when children are mutated in place (push/splice on node.children).
+  const sortNodes = (nodes: LevelSceneNode[], _version?: number) =>
+    [...nodes].sort((a, b) => compareIds(a.id, b.id));
   const sortLights = (items: LevelLight[]) => [...items].sort((a, b) => compareIds(a.id, b.id));
 
   const expanded = new SvelteMap<string, boolean>();
@@ -208,7 +211,7 @@
       {/if}
     </div>
     {#if !isComp && expanded.get(node.id)}
-      {#each sortNodes(treeVersion >= 0 ? node.children : node.children) as child (child.id)}
+      {#each sortNodes(node.children, treeVersion) as child (child.id)}
         {@render renderNode(child, depth + 1)}
       {/each}
     {/if}

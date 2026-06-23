@@ -1,56 +1,54 @@
 import { WorkerManager } from 'src/geoscript/workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
-/**
- * Manages the worker pool and execution queues used by the CSG editor for
- * preview resolution and full asset re-resolution.
- *
- * Two separate workers are maintained so that cheap preview resolves and
- * expensive full-asset resolves do not block each other.
- */
-export class CsgResolveRuntime {
-  private previewWorkerManager: WorkerManager | null = null;
-  private previewRepl: ReturnType<WorkerManager['getWorker']> | null = null;
-  private previewCtxPtrPromise: Promise<number> | null = null;
-  private previewResolveQueue: Promise<void> = Promise.resolve();
+/** A lazily-created geoscript worker + its initialized context pointer. */
+class WorkerSlot {
+  private manager: WorkerManager | null = null;
+  private repl: ReturnType<WorkerManager['getWorker']> | null = null;
+  private ctxPtrPromise: Promise<number> | null = null;
 
-  private assetWorkerManager: WorkerManager | null = null;
-  private assetRepl: ReturnType<WorkerManager['getWorker']> | null = null;
-  private assetCtxPtrPromise: Promise<number> | null = null;
-
-  /** Return (or lazily create) the preview worker runtime. */
-  getPreviewRuntime() {
-    if (!this.previewWorkerManager || !this.previewRepl || !this.previewCtxPtrPromise) {
-      this.previewWorkerManager = new WorkerManager();
-      this.previewRepl = this.previewWorkerManager.getWorker();
-      this.previewCtxPtrPromise = this.previewRepl.init(getGeoscriptWorkerWasmURLs());
+  get() {
+    if (!this.manager || !this.repl || !this.ctxPtrPromise) {
+      this.manager = new WorkerManager();
+      this.repl = this.manager.getWorker();
+      this.ctxPtrPromise = this.repl.init(getGeoscriptWorkerWasmURLs());
     }
-    return { repl: this.previewRepl, ctxPtrPromise: this.previewCtxPtrPromise };
+    return { repl: this.repl, ctxPtrPromise: this.ctxPtrPromise };
   }
 
-  /** Return (or lazily create) the asset re-resolution worker runtime. */
+  terminate() {
+    this.manager?.terminate();
+    this.manager = null;
+    this.repl = null;
+    this.ctxPtrPromise = null;
+  }
+}
+
+/**
+ * Manages the workers and execution queues used by the CSG editor for preview resolution
+ * and full asset re-resolution. Two separate workers keep cheap preview resolves and
+ * expensive full-asset resolves from blocking each other.
+ */
+export class CsgResolveRuntime {
+  private readonly previewSlot = new WorkerSlot();
+  private readonly assetSlot = new WorkerSlot();
+  private previewResolveQueue: Promise<void> = Promise.resolve();
+
+  getPreviewRuntime() {
+    return this.previewSlot.get();
+  }
+
   getAssetRuntime() {
-    if (!this.assetWorkerManager || !this.assetRepl || !this.assetCtxPtrPromise) {
-      this.assetWorkerManager = new WorkerManager();
-      this.assetRepl = this.assetWorkerManager.getWorker();
-      this.assetCtxPtrPromise = this.assetRepl.init(getGeoscriptWorkerWasmURLs());
-    }
-    return { repl: this.assetRepl, ctxPtrPromise: this.assetCtxPtrPromise };
+    return this.assetSlot.get();
   }
 
   terminatePreviewWorker() {
-    if (this.previewWorkerManager) this.previewWorkerManager.terminate();
-    this.previewWorkerManager = null;
-    this.previewRepl = null;
-    this.previewCtxPtrPromise = null;
+    this.previewSlot.terminate();
     this.previewResolveQueue = Promise.resolve();
   }
 
   terminateAssetWorker() {
-    if (this.assetWorkerManager) this.assetWorkerManager.terminate();
-    this.assetWorkerManager = null;
-    this.assetRepl = null;
-    this.assetCtxPtrPromise = null;
+    this.assetSlot.terminate();
   }
 
   /**

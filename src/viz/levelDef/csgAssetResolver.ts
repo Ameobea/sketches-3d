@@ -1,9 +1,7 @@
-import * as THREE from 'three';
-
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import type { CsgAssetDef } from './types';
 import { BAKED_RENDER_WRAPPER, type LevelObject } from './loadLevelDef';
-import { LEVEL_PLACEHOLDER_MAT, instantiateLevelObject } from './levelObjectUtils';
+import { LEVEL_PLACEHOLDER_MAT, instantiateLevelObject, meshesFromRunObjects } from './levelObjectUtils';
 import { replaceLeafInstance } from './editorStructuralOps';
 import { generateCsgCode } from './csgCodeGen';
 import type { LevelEditor } from './LevelEditor.svelte';
@@ -108,13 +106,7 @@ export class CsgAssetResolver {
     // Bail if a newer request has been queued since we started.
     if (requestId !== this.assetResolveLatestQueuedRequestId) return;
 
-    const meshes: THREE.Mesh[] = [];
-    for (const obj of result.objects) {
-      if (obj.type !== 'mesh') continue;
-      const mesh = new THREE.Mesh(obj.geometry, LEVEL_PLACEHOLDER_MAT);
-      mesh.applyMatrix4(obj.transform);
-      meshes.push(mesh);
-    }
+    const meshes = meshesFromRunObjects(result.objects, LEVEL_PLACEHOLDER_MAT);
     if (meshes.length === 0) {
       console.warn(`[CsgAssetResolver] CSG asset "${assetId}" produced no meshes`);
       return;
@@ -125,7 +117,7 @@ export class CsgAssetResolver {
         `[CsgAssetResolver] CSG asset "${assetId}" produced ${meshes.length} meshes; leaf objects must resolve to a single mesh`
       );
     }
-    const newPrototype: THREE.Mesh = meshes[0];
+    const newPrototype = meshes[0];
 
     // Adopt the new prototype + (re)compute its collision hull if the asset's
     // `colliderShape` requires one.  Awaiting before triggering the physics rebuild

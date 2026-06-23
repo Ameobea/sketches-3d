@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { MATERIAL_CLASS_NAMES, type MaterialClassName } from 'src/viz/shaders/customShader.types';
 import type { TreeDef as GeotoyTreeDef } from 'src/geoscript/geotoyAPIClient';
+import { COLOR_KEYS, hexStrToInt } from './colorUtils';
 
 // Extract values from the enum→name map as a non-empty tuple for z.enum
 const materialClassNameValues = Object.values(MATERIAL_CLASS_NAMES) as [
@@ -24,13 +25,9 @@ const ColorInputSchema = z.union([
 ]);
 
 /**
- * Collision shape type for an asset's collider.  Default: `trimesh` (exact triangle mesh,
- * with automatic box/sphere detection for simple primitives).  `convexHull` precomputes
- * a real convex hull (via Manifold) once per asset and uses that as the trimesh; useful
- * for shapes where concave accuracy isn't needed and a smooth bounding hull is preferred.
- *
- * Lives on the asset, not the object, so the (potentially expensive) hull is computed
- * exactly once per asset and shared across all instances.
+ * Asset collider shape (default `trimesh`, with auto box/sphere detection for primitives).
+ * `convexHull` precomputes a real hull once per asset via Manifold and shares it across all
+ * instances — for shapes that don't need concave accuracy.
  */
 const AssetColliderShapeSchema = z.enum(['trimesh', 'convexHull']);
 export type AssetColliderShape = z.infer<typeof AssetColliderShapeSchema>;
@@ -578,12 +575,10 @@ export type LibraryMaterialFile = z.infer<typeof LibraryMaterialFileSchema>;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/i;
 
-const COLOR_KEYS = new Set(['color', 'sheenColor', 'skyColor', 'groundColor', 'horizonColor']);
-
 /** Recursively walk a plain JSON object and convert hex color strings to integers in-place for known color keys. */
 export const normalizeRawDefColors = (obj: unknown, key = ''): unknown => {
   if (COLOR_KEYS.has(key) && typeof obj === 'string' && HEX_COLOR_RE.test(obj)) {
-    return parseInt(obj.slice(1), 16);
+    return hexStrToInt(obj);
   }
   if (Array.isArray(obj)) return obj.map(v => normalizeRawDefColors(v));
   if (obj !== null && typeof obj === 'object') {

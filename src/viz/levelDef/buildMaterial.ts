@@ -31,42 +31,60 @@ const MATERIAL_CLASS_MAP = Object.fromEntries(
   ])
 ) as Record<MaterialClassName, MaterialClass>;
 
+/** Keys present in both `Src` and `Dst` whose `Src` value type is assignable to `Dst`. */
+type CopyableKeys<Src, Dst> = {
+  [K in keyof Src & keyof Dst]: Src[K] extends Dst[K] ? K : never;
+}[keyof Src & keyof Dst];
+
+/** Copy each listed key from `src` to `out` when its value is defined. */
+const copyDefined = <Src extends object, Dst extends object>(
+  out: Dst,
+  src: Src,
+  keys: readonly CopyableKeys<Src, Dst>[]
+): void => {
+  for (const k of keys) {
+    const v = src[k];
+    if (v !== undefined) {
+      out[k] = v as Dst[typeof k];
+    }
+  }
+};
+
 const resolveShaderProps = (
   propsJson: ShaderPropsJson,
   textures: ReadonlyMap<string, THREE.Texture>
 ): CustomShaderProps => {
   const props: CustomShaderProps = {};
 
-  if (propsJson.color !== undefined) props.color = propsJson.color;
-  if (propsJson.roughness !== undefined) props.roughness = propsJson.roughness;
-  if (propsJson.metalness !== undefined) props.metalness = propsJson.metalness;
-  if (propsJson.normalScale !== undefined) props.normalScale = propsJson.normalScale;
-  if (propsJson.emissiveIntensity !== undefined) props.emissiveIntensity = propsJson.emissiveIntensity;
-  if (propsJson.lightMapIntensity !== undefined) props.lightMapIntensity = propsJson.lightMapIntensity;
-  if (propsJson.envMapIntensity !== undefined) props.envMapIntensity = propsJson.envMapIntensity;
-  if (propsJson.opacity !== undefined) props.opacity = propsJson.opacity;
-  if (propsJson.alphaTest !== undefined) props.alphaTest = propsJson.alphaTest;
-  if (propsJson.transparent !== undefined) props.transparent = propsJson.transparent;
-  if (propsJson.transmission !== undefined) props.transmission = propsJson.transmission;
-  if (propsJson.ior !== undefined) props.ior = propsJson.ior;
-  if (propsJson.clearcoat !== undefined) props.clearcoat = propsJson.clearcoat;
-  if (propsJson.clearcoatRoughness !== undefined) props.clearcoatRoughness = propsJson.clearcoatRoughness;
-  if (propsJson.clearcoatNormalScale !== undefined)
-    props.clearcoatNormalScale = propsJson.clearcoatNormalScale;
-  if (propsJson.iridescence !== undefined) props.iridescence = propsJson.iridescence;
-  if (propsJson.sheen !== undefined) props.sheen = propsJson.sheen;
-  if (propsJson.sheenColor !== undefined) props.sheenColor = propsJson.sheenColor;
-  if (propsJson.sheenRoughness !== undefined) props.sheenRoughness = propsJson.sheenRoughness;
-  if (propsJson.fogMultiplier !== undefined) props.fogMultiplier = propsJson.fogMultiplier;
-  if (propsJson.fogShadowFactor !== undefined) props.fogShadowFactor = propsJson.fogShadowFactor;
-  if (propsJson.ambientLightScale !== undefined) props.ambientLightScale = propsJson.ambientLightScale;
-  if (propsJson.mapDisableDistance !== undefined) props.mapDisableDistance = propsJson.mapDisableDistance;
-  if (propsJson.mapDisableDistanceAxes !== undefined)
-    props.mapDisableDistanceAxes = propsJson.mapDisableDistanceAxes;
-  if (propsJson.mapDisableTransitionThreshold !== undefined)
-    props.mapDisableTransitionThreshold = propsJson.mapDisableTransitionThreshold;
-  if (propsJson.ambientDistanceAmp !== undefined) props.ambientDistanceAmp = propsJson.ambientDistanceAmp;
-  if (propsJson.heightAlpha !== undefined) props.heightAlpha = propsJson.heightAlpha;
+  copyDefined(props, propsJson, [
+    'color',
+    'roughness',
+    'metalness',
+    'normalScale',
+    'emissiveIntensity',
+    'lightMapIntensity',
+    'envMapIntensity',
+    'opacity',
+    'alphaTest',
+    'transparent',
+    'transmission',
+    'ior',
+    'clearcoat',
+    'clearcoatRoughness',
+    'clearcoatNormalScale',
+    'iridescence',
+    'sheen',
+    'sheenColor',
+    'sheenRoughness',
+    'fogMultiplier',
+    'fogShadowFactor',
+    'ambientLightScale',
+    'mapDisableDistance',
+    'mapDisableDistanceAxes',
+    'mapDisableTransitionThreshold',
+    'ambientDistanceAmp',
+    'heightAlpha',
+  ]);
 
   if (propsJson.side !== undefined) props.side = SIDE_MAP[propsJson.side];
 
@@ -92,25 +110,24 @@ const resolveShaderProps = (
 const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptions => {
   const options: CustomShaderOptions = {};
 
+  copyDefined(options, optionsJson, [
+    'useGeneratedUVs',
+    'useWorldSpaceUVs',
+    'tileBreaking',
+    'enableFog',
+    'antialiasColorShader',
+    'antialiasRoughnessShader',
+    'readRoughnessMapFromRChannel',
+    'disableToneMapping',
+    'randomizeUVOffset',
+    'useNoise2',
+    'pom',
+  ]);
+
   if (optionsJson.useTriplanarMapping !== undefined)
     options.useTriplanarMapping = optionsJson.useTriplanarMapping as any;
-  if (optionsJson.useGeneratedUVs !== undefined) options.useGeneratedUVs = optionsJson.useGeneratedUVs;
-  if (optionsJson.useWorldSpaceUVs !== undefined) options.useWorldSpaceUVs = optionsJson.useWorldSpaceUVs;
-  if (optionsJson.tileBreaking !== undefined) options.tileBreaking = optionsJson.tileBreaking;
-  if (optionsJson.enableFog !== undefined) options.enableFog = optionsJson.enableFog;
-  if (optionsJson.antialiasColorShader !== undefined)
-    options.antialiasColorShader = optionsJson.antialiasColorShader;
-  if (optionsJson.antialiasRoughnessShader !== undefined)
-    options.antialiasRoughnessShader = optionsJson.antialiasRoughnessShader;
-  if (optionsJson.readRoughnessMapFromRChannel !== undefined)
-    options.readRoughnessMapFromRChannel = optionsJson.readRoughnessMapFromRChannel;
-  if (optionsJson.disableToneMapping !== undefined)
-    options.disableToneMapping = optionsJson.disableToneMapping;
-  if (optionsJson.randomizeUVOffset !== undefined) options.randomizeUVOffset = optionsJson.randomizeUVOffset;
-  if (optionsJson.useNoise2 !== undefined) options.useNoise2 = optionsJson.useNoise2;
   if (optionsJson.materialClass !== undefined)
     options.materialClass = MATERIAL_CLASS_MAP[optionsJson.materialClass];
-  if (optionsJson.pom !== undefined) options.pom = optionsJson.pom;
 
   return options;
 };
@@ -146,32 +163,27 @@ const resolveCustomUniforms = (json: Record<string, CustomUniformJson>): Record<
 
 const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShaders => {
   const shaders: CustomShaderShaders = {};
-  if (shadersJson.customVertexFragment !== undefined)
-    shaders.customVertexFragment = shadersJson.customVertexFragment;
-  if (shadersJson.commonShader !== undefined) shaders.commonShader = shadersJson.commonShader;
-  if (shadersJson.colorShader !== undefined) shaders.colorShader = shadersJson.colorShader;
-  if (shadersJson.lightAttenuationShader !== undefined)
-    shaders.lightAttenuationShader = shadersJson.lightAttenuationShader;
-  if (shadersJson.normalShader !== undefined) shaders.normalShader = shadersJson.normalShader;
-  if (shadersJson.roughnessShader !== undefined) shaders.roughnessShader = shadersJson.roughnessShader;
-  if (shadersJson.roughnessReverseColorRamp !== undefined)
-    shaders.roughnessReverseColorRamp = shadersJson.roughnessReverseColorRamp;
-  if (shadersJson.metalnessShader !== undefined) shaders.metalnessShader = shadersJson.metalnessShader;
-  if (shadersJson.metalnessReverseColorRamp !== undefined)
-    shaders.metalnessReverseColorRamp = shadersJson.metalnessReverseColorRamp;
-  if (shadersJson.emissiveShader !== undefined) shaders.emissiveShader = shadersJson.emissiveShader;
-  if (shadersJson.iridescenceShader !== undefined) shaders.iridescenceShader = shadersJson.iridescenceShader;
-  if (shadersJson.iridescenceReverseColorRamp !== undefined)
-    shaders.iridescenceReverseColorRamp = shadersJson.iridescenceReverseColorRamp;
-  if (shadersJson.displacementShader !== undefined)
-    shaders.displacementShader = shadersJson.displacementShader;
-  if (shadersJson.includeNoiseShadersVertex !== undefined)
-    shaders.includeNoiseShadersVertex = shadersJson.includeNoiseShadersVertex;
-  if (shadersJson.pomHeightShader !== undefined) shaders.pomHeightShader = shadersJson.pomHeightShader;
-  if (shadersJson.pomNormalShader !== undefined) shaders.pomNormalShader = shadersJson.pomNormalShader;
+  copyDefined(shaders, shadersJson, [
+    'customVertexFragment',
+    'commonShader',
+    'colorShader',
+    'lightAttenuationShader',
+    'normalShader',
+    'roughnessShader',
+    'roughnessReverseColorRamp',
+    'metalnessShader',
+    'metalnessReverseColorRamp',
+    'emissiveShader',
+    'iridescenceShader',
+    'iridescenceReverseColorRamp',
+    'displacementShader',
+    'includeNoiseShadersVertex',
+    'pomHeightShader',
+    'pomNormalShader',
+    'constants',
+  ]);
   if (shadersJson.customUniforms !== undefined)
     shaders.customUniforms = resolveCustomUniforms(shadersJson.customUniforms);
-  if (shadersJson.constants !== undefined) shaders.constants = shadersJson.constants;
   return shaders;
 };
 

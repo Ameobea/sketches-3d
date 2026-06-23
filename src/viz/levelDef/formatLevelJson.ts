@@ -1,15 +1,14 @@
+import { COLOR_KEYS, hexIntToStr } from './colorUtils';
+
 const NUM = '-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?';
 const NUMERIC_ARRAY_RE = new RegExp(`\\[\\s*${NUM}(?:\\s*,\\s*${NUM})*\\s*\\]`, 'g');
 
 // _meta contains no nested objects so [^{}]* safely matches the full block.
 const META_BLOCK_RE = /"_meta":\s*\{[^{}]*\}/g;
 
-/** JSON keys whose integer values represent hex colors and should be serialized as "#rrggbb" strings. */
-const COLOR_KEYS = new Set(['color', 'sheenColor']);
-
 const colorReplacer = (key: string, value: unknown): unknown => {
   if (COLOR_KEYS.has(key) && typeof value === 'number' && Number.isInteger(value)) {
-    return '#' + value.toString(16).padStart(6, '0');
+    return hexIntToStr(value);
   }
   return value;
 };

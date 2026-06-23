@@ -53,6 +53,23 @@ type UndoEntry =
     }
   | StructuralUndoEntry;
 
+export interface LevelEditorInit {
+  viz: Viz;
+  objects: LevelObject[];
+  levelName: string;
+  prototypes: Map<string, THREE.Mesh>;
+  builtMaterials: Map<string, THREE.Material>;
+  loadedTextures: Map<string, THREE.Texture>;
+  levelDef: LevelDef;
+  rootNodes: LevelSceneNode[];
+  nodeById: Map<string, LevelSceneNode>;
+  levelLights: LevelLight[];
+  assetCollisionMeshes: Map<string, CollisionMeshOverride>;
+  /** See `LevelEditor.resolveAssetPrototype`. Null when running outside `loadLevelDef`. */
+  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null;
+  compositionBaked: Map<string, BakedCompositionMesh[]>;
+}
+
 export class LevelEditor {
   viz: Viz;
   levelDef: LevelDef;
@@ -153,39 +170,25 @@ export class LevelEditor {
 
   private bookmarks = new Map<number, EditorBookmark>();
 
-  constructor(
-    viz: Viz,
-    objects: LevelObject[],
-    levelName: string,
-    prototypes: Map<string, THREE.Mesh>,
-    builtMaterials: Map<string, THREE.Material>,
-    loadedTextures: Map<string, THREE.Texture>,
-    levelDef: LevelDef,
-    rootNodes: LevelSceneNode[],
-    nodeById: Map<string, LevelSceneNode>,
-    levelLights: LevelLight[],
-    assetCollisionMeshes: Map<string, CollisionMeshOverride>,
-    resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null,
-    compositionBaked: Map<string, BakedCompositionMesh[]>
-  ) {
-    this.viz = viz;
-    this.levelDef = levelDef;
-    this.prototypes = prototypes;
-    this.builtMaterials = builtMaterials;
-    this.compositionBaked = compositionBaked;
-    this.assetCollisionMeshes = assetCollisionMeshes;
-    this.resolveAssetPrototype = resolveAssetPrototype;
-    this.allLevelObjects = objects;
-    this.rootNodes = rootNodes;
-    this.nodeById = nodeById;
-    this.allLevelLights = levelLights;
+  constructor(init: LevelEditorInit) {
+    this.viz = init.viz;
+    this.levelDef = init.levelDef;
+    this.prototypes = init.prototypes;
+    this.builtMaterials = init.builtMaterials;
+    this.compositionBaked = init.compositionBaked;
+    this.assetCollisionMeshes = init.assetCollisionMeshes;
+    this.resolveAssetPrototype = init.resolveAssetPrototype;
+    this.allLevelObjects = init.objects;
+    this.rootNodes = init.rootNodes;
+    this.nodeById = init.nodeById;
+    this.allLevelLights = init.levelLights;
 
-    this.api = new LevelEditorApi(levelName);
+    this.api = new LevelEditorApi(init.levelName);
     this.materialEditor = new MaterialEditorController(
-      levelDef,
-      builtMaterials,
-      loadedTextures,
-      objects,
+      init.levelDef,
+      init.builtMaterials,
+      init.loadedTextures,
+      init.objects,
       this.api
     );
 
@@ -196,12 +199,12 @@ export class LevelEditor {
       pred => this.undoSystem.purge(pred)
     );
 
-    for (const levelObj of objects) {
+    for (const levelObj of init.objects) {
       this.registerMeshes(levelObj);
     }
 
     window.addEventListener('keydown', this.onKeyDown);
-    viz.registerDestroyedCb(() => this.destroy());
+    init.viz.registerDestroyedCb(() => this.destroy());
 
     void this.api.fetchLocations().then(file => {
       if (!file) return;
@@ -1478,33 +1481,4 @@ export class LevelEditor {
   }
 }
 
-export const initLevelEditor = (
-  viz: Viz,
-  objects: LevelObject[],
-  levelName: string,
-  prototypes: Map<string, THREE.Mesh>,
-  builtMaterials: Map<string, THREE.Material>,
-  loadedTextures: Map<string, THREE.Texture>,
-  levelDef: LevelDef,
-  rootNodes: LevelSceneNode[],
-  nodeById: Map<string, LevelSceneNode>,
-  levelLights: LevelLight[],
-  assetCollisionMeshes: Map<string, CollisionMeshOverride>,
-  resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null,
-  compositionBaked: Map<string, BakedCompositionMesh[]>
-): LevelEditor =>
-  new LevelEditor(
-    viz,
-    objects,
-    levelName,
-    prototypes,
-    builtMaterials,
-    loadedTextures,
-    levelDef,
-    rootNodes,
-    nodeById,
-    levelLights,
-    assetCollisionMeshes,
-    resolveAssetPrototype,
-    compositionBaked
-  );
+export const initLevelEditor = (init: LevelEditorInit): LevelEditor => new LevelEditor(init);

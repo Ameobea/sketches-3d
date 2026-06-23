@@ -14,8 +14,40 @@ import { round } from './mathUtils';
 import { isLevelGroup } from './levelSceneTypes';
 import { serializeGroup, compositionPointerDef } from './editorNodeFactory';
 
+const JSON_HEADERS = { 'Content-Type': 'application/json' };
+
+const jsonInit = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: JSON_HEADERS,
+  body: JSON.stringify(body),
+});
+
 export class LevelEditorApi {
   constructor(private levelName: string) {}
+
+  /** Fetch + ok-check, logging failures under `label`. Returns the Response, or null on failure. */
+  private async fetchOk(label: string, path: string, init?: RequestInit): Promise<Response | null> {
+    try {
+      const res = await fetch(`/level_editor/${this.levelName}${path}`, init);
+      if (res.ok) return res;
+      console.error(`[LevelEditor] ${label} failed:`, res.status, await res.text());
+    } catch (err) {
+      console.error(`[LevelEditor] ${label} error:`, err);
+    }
+    return null;
+  }
+
+  /** As `fetchOk`, but parses and returns the JSON body (null on any failure). */
+  private async reqJson<T>(label: string, path: string, init?: RequestInit): Promise<T | null> {
+    const res = await this.fetchOk(label, path, init);
+    if (!res) return null;
+    try {
+      return (await res.json()) as T;
+    } catch (err) {
+      console.error(`[LevelEditor] ${label} parse error:`, err);
+      return null;
+    }
+  }
 
   saveTransform = async (node: LevelSceneNode) => {
     const { object, id, def } = node;
@@ -36,21 +68,10 @@ export class LevelEditorApi {
     def.rotation = body.rotation;
     def.scale = body.scale;
 
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] save failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] save error:', err);
-    }
+    await this.fetchOk('save', '', jsonInit('PATCH', body));
   };
 
-  sendAdd = async (body: {
+  sendAdd = (body: {
     asset: string;
     material?: string;
     position: [number, number, number];
@@ -59,82 +80,21 @@ export class LevelEditorApi {
     id?: string;
     parentId?: string;
     index?: number;
-  }): Promise<ObjectDef | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] add failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] add error:', err);
-      return null;
-    }
-  };
+  }): Promise<ObjectDef | null> => this.reqJson('add', '', jsonInit('POST', body));
 
-  sendPasteGroup = async (
-    def: ObjectGroupDef,
-    parentId?: string,
-    index?: number
-  ): Promise<ObjectGroupDef | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'group_paste', def, parentId, index }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] paste group failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] paste group error:', err);
-      return null;
-    }
-  };
+  sendPasteGroup = (def: ObjectGroupDef, parentId?: string, index?: number): Promise<ObjectGroupDef | null> =>
+    this.reqJson('paste group', '', jsonInit('POST', { type: 'group_paste', def, parentId, index }));
 
-  sendAddGroup = async (body: {
+  sendAddGroup = (body: {
     position: [number, number, number];
     rotation?: [number, number, number];
     scale?: [number, number, number];
     id?: string;
-  }): Promise<ObjectGroupDef | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'group', ...body }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] add group failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] add group error:', err);
-      return null;
-    }
-  };
+  }): Promise<ObjectGroupDef | null> =>
+    this.reqJson('add group', '', jsonInit('POST', { type: 'group', ...body }));
 
   sendDelete = async (id: string) => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] delete failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] delete error:', err);
-    }
+    await this.fetchOk('delete', '', jsonInit('DELETE', { id }));
   };
 
   restoreSubtree = async (subtree: RuntimeSubtree): Promise<void> => {
@@ -150,250 +110,68 @@ export class LevelEditorApi {
     def.rotation = subtree.transform.rotation.map(round) as [number, number, number];
     def.scale = subtree.transform.scale.map(round) as [number, number, number];
 
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'restore_subtree',
-          def,
-          parentId: subtree.placement.parent.type === 'group' ? subtree.placement.parent.groupId : undefined,
-          index: subtree.placement.index,
-        }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] restore subtree failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] restore subtree error:', err);
-    }
+    await this.fetchOk(
+      'restore subtree',
+      '',
+      jsonInit('POST', {
+        type: 'restore_subtree',
+        def,
+        parentId: subtree.placement.parent.type === 'group' ? subtree.placement.parent.groupId : undefined,
+        index: subtree.placement.index,
+      })
+    );
   };
 
-  renameNode = async (id: string, newId: string): Promise<{ resolvedId: string } | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, newId }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] rename failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] rename error:', err);
-      return null;
-    }
-  };
+  renameNode = (id: string, newId: string): Promise<{ resolvedId: string } | null> =>
+    this.reqJson('rename', '', jsonInit('PATCH', { id, newId }));
 
   saveMaterialAssignment = async (id: string, material: string | null) => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id, material }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] material assignment save failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] material assignment save error:', err);
-    }
+    await this.fetchOk('material assignment save', '', jsonInit('PATCH', { id, material }));
   };
 
   saveMaterial = async (id: string, def: import('./types').MaterialDef) => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/materials`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: id, def }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] material save failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] material save error:', err);
-    }
+    await this.fetchOk('material save', '/materials', jsonInit('PUT', { name: id, def }));
   };
 
   deleteMaterial = async (id: string) => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/materials`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: id }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] material delete failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] material delete error:', err);
-    }
+    await this.fetchOk('material delete', '/materials', jsonInit('DELETE', { name: id }));
   };
 
   fetchAssetLibrary = async (): Promise<AssetLibFolder[]> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/asset-library`);
-      if (!res.ok) {
-        console.error('[LevelEditor] asset library fetch failed:', res.status, await res.text());
-        return [];
-      }
-      const data = (await res.json()) as { folders: AssetLibFolder[] };
-      return data.folders;
-    } catch (err) {
-      console.error('[LevelEditor] asset library fetch error:', err);
-      return [];
-    }
+    const data = await this.reqJson<{ folders: AssetLibFolder[] }>('asset library fetch', '/asset-library');
+    return data?.folders ?? [];
   };
 
-  registerLibraryAsset = async (file: string): Promise<{ id: string; code: string } | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/assets`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ file }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] register library asset failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] register library asset error:', err);
-      return null;
-    }
-  };
+  registerLibraryAsset = (file: string): Promise<{ id: string; code: string } | null> =>
+    this.reqJson('register library asset', '/assets', jsonInit('POST', { file }));
 
   saveCsgTree = (assetName: string, tree: CsgTreeNode) => {
-    fetch(`/level_editor/${this.levelName}/csg`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ assetName, tree }),
-    })
-      .then(res => {
-        if (!res.ok)
-          res.text().then(t => console.error('[LevelEditor] CSG tree save failed:', res.status, t));
-      })
-      .catch(err => console.error('[LevelEditor] CSG tree save error:', err));
+    void this.fetchOk('CSG tree save', '/csg', jsonInit('PATCH', { assetName, tree }));
   };
 
-  addLight = async (def: Omit<LightDef, 'id'> & { id?: string }): Promise<LightDef | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(def),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] add light failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] add light error:', err);
-      return null;
-    }
-  };
+  addLight = (def: Omit<LightDef, 'id'> & { id?: string }): Promise<LightDef | null> =>
+    this.reqJson('add light', '/lights', jsonInit('POST', def));
 
   saveLight = async (def: LightDef): Promise<void> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(def),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] save light failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] save light error:', err);
-    }
+    await this.fetchOk('save light', '/lights', jsonInit('PATCH', def));
   };
 
   deleteLight = async (id: string): Promise<void> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/lights`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] delete light failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] delete light error:', err);
-    }
+    await this.fetchOk('delete light', '/lights', jsonInit('DELETE', { id }));
   };
 
-  convertToCsg = async (
+  convertToCsg = (
     objectIds: string[]
-  ): Promise<{ csgAssetName: string; tree: CsgTreeNode; primaryId: string; deletedIds: string[] } | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/csg`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ objectIds }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] convert to CSG failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] convert to CSG error:', err);
-      return null;
-    }
-  };
+  ): Promise<{ csgAssetName: string; tree: CsgTreeNode; primaryId: string; deletedIds: string[] } | null> =>
+    this.reqJson('convert to CSG', '/csg', jsonInit('POST', { objectIds }));
 
-  groupNodes = async (
-    nodeIds: string[],
-    position: [number, number, number]
-  ): Promise<ObjectGroupDef | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nodeIds, position }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] group nodes failed:', res.status, await res.text());
-        return null;
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('[LevelEditor] group nodes error:', err);
-      return null;
-    }
-  };
+  groupNodes = (nodeIds: string[], position: [number, number, number]): Promise<ObjectGroupDef | null> =>
+    this.reqJson('group nodes', '', jsonInit('PUT', { nodeIds, position }));
 
-  fetchLocations = async (): Promise<LocationsFile | null> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/locations`);
-      if (!res.ok) {
-        console.error('[LevelEditor] locations fetch failed:', res.status, await res.text());
-        return null;
-      }
-      return (await res.json()) as LocationsFile;
-    } catch (err) {
-      console.error('[LevelEditor] locations fetch error:', err);
-      return null;
-    }
-  };
+  fetchLocations = (): Promise<LocationsFile | null> => this.reqJson('locations fetch', '/locations');
 
   saveBookmark = async (bookmark: EditorBookmark): Promise<void> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}/locations`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bookmark),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] bookmark save failed:', res.status, await res.text());
-      }
-    } catch (err) {
-      console.error('[LevelEditor] bookmark save error:', err);
-    }
+    await this.fetchOk('bookmark save', '/locations', jsonInit('PUT', bookmark));
   };
 
   reparentNodes = async (
@@ -401,30 +179,21 @@ export class LevelEditorApi {
     parentId?: string,
     index?: number
   ): Promise<boolean> => {
-    try {
-      const res = await fetch(`/level_editor/${this.levelName}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type: 'reparent',
-          nodes: nodes.map(node => ({
-            id: node.id,
-            position: node.transform.position.map(round) as [number, number, number],
-            rotation: node.transform.rotation.map(round) as [number, number, number],
-            scale: node.transform.scale.map(round) as [number, number, number],
-          })),
-          parentId,
-          index,
-        }),
-      });
-      if (!res.ok) {
-        console.error('[LevelEditor] reparent failed:', res.status, await res.text());
-        return false;
-      }
-      return true;
-    } catch (err) {
-      console.error('[LevelEditor] reparent error:', err);
-      return false;
-    }
+    const res = await this.fetchOk(
+      'reparent',
+      '',
+      jsonInit('POST', {
+        type: 'reparent',
+        nodes: nodes.map(node => ({
+          id: node.id,
+          position: node.transform.position.map(round) as [number, number, number],
+          rotation: node.transform.rotation.map(round) as [number, number, number],
+          scale: node.transform.scale.map(round) as [number, number, number],
+        })),
+        parentId,
+        index,
+      })
+    );
+    return res !== null;
   };
 }
