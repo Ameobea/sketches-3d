@@ -4,7 +4,7 @@ use bitvec::prelude::*;
 
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{Arity, Channel, FaceKey, FlipXform, Interp, Vec3, VertexKey},
+  linked_mesh::{Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey},
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -511,8 +511,13 @@ fn ring_is_collapsed_dynamic(ctx: &EvalCtx, ring: &RingContext) -> Result<bool, 
 /// `tangent` (spine direction) vertex channels to a freshly-built sweep mesh, indexed by the dense
 /// `vkey(i + 1, 1)` layout `from_indexed_vertices` produces.
 fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents: &[Vec3]) {
-  let mut uv_ch = Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity);
-  let mut tan_ch = Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate);
+  let mut uv_ch = Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity);
+  let mut tan_ch = Channel::new(
+    Arity::Vec3,
+    Interp::LerpNormalize,
+    FlipXform::Negate,
+    SpatialXform::Direction,
+  );
   for (i, (uv, tan)) in uvs.iter().zip(tangents).enumerate() {
     let key = vkey(i as u32 + 1, 1);
     uv_ch.set(key, [uv[0], uv[1], 0., 0.]);

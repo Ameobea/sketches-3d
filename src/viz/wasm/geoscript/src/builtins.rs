@@ -104,6 +104,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "worley" => "worley_noise",
   "path_render" => "render_path",
   "skewer" => "subdivide_by_line",
+  "partition_mesh" => "partition_faces",
   "transform_gizmo" => "gizmo_transform",
   "giz" => "gizmo",
   "giz_tfn" => "gizmo_transform",
@@ -3916,38 +3917,32 @@ fn connected_components_impl(
     0 => {
       let mesh_handle = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       let transform = mesh_handle.transform;
-      let mesh = Rc::clone(&mesh_handle.mesh);
+      let mesh = &mesh_handle.mesh;
       let mut components: Vec<Vec<FaceKey>> = mesh.connected_components();
       components.sort_unstable_by_key(|c| Reverse(c.len()));
       let material = mesh_handle.material.clone();
-      Ok(Value::Sequence(Rc::new(IteratorSeq {
-        inner: components.into_iter().map(move |c| {
-          let mut sub_vkey_by_old_vkey: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
-          let mut sub_mesh = LinkedMesh::new(0, c.len(), None);
 
-          let mut map_vtx = |sub_mesh: &mut LinkedMesh<()>, vkey: VertexKey| {
-            *sub_vkey_by_old_vkey.entry(vkey).or_insert_with(|| {
-              sub_mesh.vertices.insert(Vertex::new(mesh.vertices[vkey].position))
-            })
-          };
-
-          for face_key in c {
-            let face = &mesh.faces[face_key];
-            let vtx0 = map_vtx(&mut sub_mesh, face.vertices[0]);
-            let vtx1 = map_vtx(&mut sub_mesh, face.vertices[1]);
-            let vtx2 = map_vtx(&mut sub_mesh, face.vertices[2]);
-            sub_mesh.add_face::<true>([vtx0, vtx1, vtx2], ());
-          }
-          Ok(Value::Mesh(Rc::new(MeshHandle {
-            mesh: Rc::new(sub_mesh),
+      let mut comp_of: FxHashMap<FaceKey, usize> = FxHashMap::default();
+      for (i, comp) in components.iter().enumerate() {
+        for &fk in comp {
+          comp_of.insert(fk, i);
+        }
+      }
+      let inner = mesh
+        .extract_face_partitions(components.len(), |fk| comp_of[&fk])
+        .into_iter()
+        .map(|sub| {
+          Value::Mesh(Rc::new(MeshHandle {
+            mesh: Rc::new(sub),
             transform,
             manifold_handle: Rc::new(ManifoldHandle::new_empty()),
             aabb: RefCell::new(None),
             trimesh: RefCell::new(None),
             material: material.clone(),
-          })))
-        }),
-      })))
+          }))
+        })
+        .collect();
+      Ok(Value::Sequence(Rc::new(EagerSeq { inner })))
     }
     _ => unimplemented!(),
   }
@@ -6000,9 +5995,7 @@ fn apply_transforms_impl(
         return Ok(val.clone());
       }
       let mut new_mesh = (*mesh.mesh).clone();
-      for vtx in new_mesh.vertices.values_mut() {
-        vtx.position = (mesh.transform * vtx.position.push(1.)).xyz();
-      }
+      new_mesh.bake_transform(mesh.transform);
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(new_mesh),
         transform: Matrix4::identity(),
@@ -6888,6 +6881,125 @@ fn flip_normals_impl(
     }
     _ => unimplemented!(),
   }
+}
+
+fn reflected_mesh(mesh: &MeshHandle, normal: Vec3, offset: f32) -> Value {
+  let mut new_mesh = (*mesh.mesh).clone();
+  new_mesh.reflect(normal, offset);
+  Value::Mesh(Rc::new(MeshHandle {
+    mesh: Rc::new(new_mesh),
+    transform: mesh.transform,
+    manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+    aabb: RefCell::new(None),
+    trimesh: RefCell::new(None),
+    material: mesh.material.clone(),
+  }))
+}
+
+fn reflect_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (normal, offset, mesh_arg) = match def_ix {
+    0 => (
+      *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap(),
+      0.,
+      &arg_refs[1],
+    ),
+    1 => (
+      *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_float().unwrap(),
+      &arg_refs[2],
+    ),
+    _ => unimplemented!(),
+  };
+
+  let len = normal.magnitude();
+  if len < 1e-9 {
+    return Err(ErrorStack::new("reflect: `normal` must be non-zero"));
+  }
+  let mesh = mesh_arg.resolve(args, kwargs).as_mesh().unwrap();
+  Ok(reflected_mesh(mesh, normal / len, offset))
+}
+
+fn reflect_axis_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  normal: Vec3,
+) -> Result<Value, ErrorStack> {
+  let (offset, mesh_arg) = match def_ix {
+    0 => (0., &arg_refs[0]),
+    1 => (
+      arg_refs[0].resolve(args, kwargs).as_float().unwrap(),
+      &arg_refs[1],
+    ),
+    _ => unimplemented!(),
+  };
+  let mesh = mesh_arg.resolve(args, kwargs).as_mesh().unwrap();
+  Ok(reflected_mesh(mesh, normal, offset))
+}
+
+fn partition_faces_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let pred = arg_refs[0].resolve(args, kwargs);
+  let cb = pred
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new("partition_faces: `predicate` must be a callable"))?;
+  let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+  let transformed = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+  let transform = mesh.transform;
+  let material = mesh.material.clone();
+
+  let to_world = |v: Vec3| (transform * v.push(1.)).xyz();
+  let submeshes = mesh.mesh.partition_faces(2, |[v0, v1, v2]| {
+    let (v0, v1, v2) = if transformed {
+      (to_world(v0), to_world(v1), to_world(v2))
+    } else {
+      (v0, v1, v2)
+    };
+    let out = ctx
+      .invoke_callable(
+        cb,
+        &[Value::Vec3(v0), Value::Vec3(v1), Value::Vec3(v2)],
+        EMPTY_KWARGS,
+      )
+      .map_err(|err| err.wrap("Error calling `predicate` in `partition_faces`"))?;
+    let idx = match out {
+      Value::Bool(true) => 1,
+      Value::Bool(false) => 0,
+      Value::Int(i) => i.clamp(0, 100_000) as usize,
+      _ => {
+        return Err(ErrorStack::new(format!(
+          "`predicate` in `partition_faces` must return a bool or int, found: {out:?}"
+        )))
+      }
+    };
+    Ok(idx)
+  })?;
+
+  let inner = submeshes
+    .into_iter()
+    .map(|sub| {
+      Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(sub),
+        transform,
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: material.clone(),
+      }))
+    })
+    .collect();
+  Ok(Value::Sequence(Rc::new(EagerSeq { inner })))
 }
 
 fn is_manifold_impl(
@@ -7877,6 +7989,21 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "flip_normals" => builtin_fn!(flip_normals, |def_ix, arg_refs, args, kwargs, _ctx| {
     flip_normals_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "reflect" => builtin_fn!(reflect, |def_ix, arg_refs, args, kwargs, _ctx| {
+    reflect_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "reflect_x" => builtin_fn!(reflect_x, |def_ix, arg_refs, args, kwargs, _ctx| {
+    reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec3::new(1., 0., 0.))
+  }),
+  "reflect_y" => builtin_fn!(reflect_y, |def_ix, arg_refs, args, kwargs, _ctx| {
+    reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec3::new(0., 1., 0.))
+  }),
+  "reflect_z" => builtin_fn!(reflect_z, |def_ix, arg_refs, args, kwargs, _ctx| {
+    reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec3::new(0., 0., 1.))
+  }),
+  "partition_faces" => builtin_fn!(partition_faces, |def_ix, arg_refs, args, kwargs, ctx| {
+    partition_faces_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "is_manifold" => builtin_fn!(is_manifold, |def_ix, arg_refs, args, kwargs, _ctx| {
     is_manifold_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -8515,5 +8642,113 @@ pub(crate) fn resolve_builtin_impl(
       }),
       None => panic!("No builtin function named `{name}` found"),
     },
+  }
+}
+
+#[cfg(test)]
+mod reflect_partition_tests {
+  use crate::parse_and_eval_program;
+
+  #[test]
+  fn test_reflect_e2e() {
+    let src = r#"
+b = box(vec3(2, 4, 6))
+rx = reflect_x(b)
+rz_off = reflect_z(3, b)
+diag = reflect(vec3(1, 0, 0), 3, b)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    // 6x the signed volume; stays positive iff the mesh is outward-oriented (winding intact).
+    let signed_volume = |m: &crate::MeshHandle| -> f32 {
+      m.mesh
+        .faces
+        .values()
+        .map(|f| {
+          let [a, b, c] = f.vertices.map(|vk| m.mesh.vertices[vk].position);
+          a.dot(&b.cross(&c))
+        })
+        .sum()
+    };
+
+    // Reflection reverses winding, so the result must stay a valid, outward-oriented 2-manifold
+    // (a positions-only reflection would leave the box inside-out / negative volume).
+    let rx = ctx.get_global("rx").unwrap();
+    let rx = rx.as_mesh().unwrap();
+    rx.mesh
+      .check_is_manifold::<true>()
+      .expect("reflect_x result is not a valid 2-manifold");
+    assert!(signed_volume(rx) > 0., "reflect_x left the mesh inside-out");
+
+    // `reflect_z(3)` mirrors z across the plane z = 3: z in [-3, 3] -> [3, 9]; x/y unchanged.
+    let rz = ctx.get_global("rz_off").unwrap();
+    let rz = rz.as_mesh().unwrap();
+    rz.mesh
+      .check_is_manifold::<true>()
+      .expect("reflect_z result is not a valid 2-manifold");
+    let (mut zmin, mut zmax, mut xmin, mut xmax) = (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+    for v in rz.mesh.vertices.values() {
+      zmin = zmin.min(v.position.z);
+      zmax = zmax.max(v.position.z);
+      xmin = xmin.min(v.position.x);
+      xmax = xmax.max(v.position.x);
+    }
+    assert!((zmin - 3.).abs() < 1e-4 && (zmax - 9.).abs() < 1e-4, "z not mirrored: {zmin}..{zmax}");
+    assert!((xmin + 1.).abs() < 1e-4 && (xmax - 1.).abs() < 1e-4, "x should be untouched");
+
+    // `reflect(vec3(1,0,0), 3)` mirrors x across x = 3, matching `reflect_x(3)`.
+    let diag = ctx.get_global("diag").unwrap();
+    let diag = diag.as_mesh().unwrap();
+    let (mut dxmin, mut dxmax) = (f32::MAX, f32::MIN);
+    for v in diag.mesh.vertices.values() {
+      dxmin = dxmin.min(v.position.x);
+      dxmax = dxmax.max(v.position.x);
+    }
+    assert!((dxmin - 5.).abs() < 1e-4 && (dxmax - 7.).abs() < 1e-4, "x not mirrored: {dxmin}..{dxmax}");
+  }
+
+  #[test]
+  fn test_partition_faces_e2e() {
+    let src = r#"
+b = box(vec3(2, 2, 2))
+moved = b | translate(vec3(10, 0, 0))
+parts = b | partition_faces(|v0, v1, v2| ((v0.x + v1.x + v2.x) / 3) > 0)
+empty = b | partition_mesh(|v0, v1, v2| v0.y > 100)
+ints = partition_faces(|v0, v1, v2| if v0.x > 0 { 2 } else { 0 }, b)
+local = moved | partition_faces(|v0, v1, v2| v0.x > 5)
+world = moved | partition_faces(|v0, v1, v2| v0.x > 5, transformed=true)
+nparts = len(parts)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    assert_eq!(ctx.get_global("nparts").unwrap().as_int().unwrap(), 2);
+
+    let face_counts = |name: &str| -> Vec<usize> {
+      let seq = ctx.get_global(name).unwrap().as_sequence().unwrap();
+      seq
+        .consume(&ctx)
+        .map(|m| m.unwrap().as_mesh().unwrap().mesh.faces.len())
+        .collect()
+    };
+
+    // Bool predicate -> exactly two meshes that together hold every original face (a cube is 12 tris).
+    let parts = face_counts("parts");
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts.iter().sum::<usize>(), 12);
+
+    // Always at least two meshes, even when one partition is empty.
+    let empty = face_counts("empty");
+    assert_eq!(empty, vec![12, 0]);
+
+    // Int predicate routes faces by index, leaving the gap partition (1) empty.
+    let ints = face_counts("ints");
+    assert_eq!(ints.len(), 3);
+    assert_eq!(ints[1], 0);
+    assert_eq!(ints.iter().sum::<usize>(), 12);
+
+    // `transformed`: with the +10 x-translation baked in, every centroid x ≈ 10 > 5 (all faces in
+    // partition 1); in local space x ∈ [-1, 1] < 5 (all in partition 0).
+    assert_eq!(face_counts("world"), vec![0, 12]);
+    assert_eq!(face_counts("local"), vec![12, 0]);
   }
 }

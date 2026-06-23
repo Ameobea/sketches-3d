@@ -10,8 +10,10 @@
 
 use std::fmt::Write as _;
 
+use nalgebra::{Matrix3, Matrix4};
+
 use mesh::linked_mesh::{
-  Arity, Channel, ChannelStore, FlipXform, Interp, LinkedMesh, Plane, Vec3, VertexKey,
+  Arity, Channel, ChannelStore, FlipXform, Interp, LinkedMesh, Plane, SpatialXform, Vec3, VertexKey,
 };
 use mesh::OwnedIndexedMesh;
 
@@ -263,10 +265,10 @@ fn set_tangent(m: &mut LinkedMesh<()>, k: VertexKey, v: [f32; 3]) {
 fn passive_channels_propagate_and_flip() {
   let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
   m.vertex_channels
-    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity));
+    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity));
   m.vertex_channels.insert(
     "tangent".into(),
-    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate),
+    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate, SpatialXform::Direction),
   );
 
   let keys: Vec<VertexKey> = m.vertices.keys().collect();
@@ -297,13 +299,96 @@ fn passive_channels_propagate_and_flip() {
   assert!(uv(&m, a).is_none() && tangent(&m, a).is_none());
 }
 
+fn with_uv_and_tangent(m: &mut LinkedMesh<()>) {
+  m.vertex_channels.insert(
+    "uv".into(),
+    Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity),
+  );
+  m.vertex_channels.insert(
+    "tangent".into(),
+    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate, SpatialXform::Direction),
+  );
+}
+
+/// `reflect` must Householder-reflect the tangent direction (a `Direction` channel), not merely
+/// apply the winding-flip negate — otherwise mirrored normal-mapped surfaces are wrong.
+#[test]
+fn reflect_mirrors_tangents_and_normals() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  with_uv_and_tangent(&mut m);
+  let a = 1.0 / 2f32.sqrt();
+  for k in m.vertices.keys().collect::<Vec<_>>() {
+    set_tangent(&mut m, k, [a, a, 0.]);
+    set_uv(&mut m, k, [3., 5.]);
+    m.set_shading_normal(k, Some(Vec3::new(0., 1., 0.)));
+  }
+
+  // Mirror across y = 0: linear part negates y.
+  m.reflect(Vec3::new(0., 1., 0.), 0.);
+  let k = m.vertices.keys().next().unwrap();
+
+  // tangent (a,a,0): Householder -> (a,-a,0), then orientation-flip negate -> (-a,a,0).
+  // A flip-only (no Householder) impl would instead give (-a,-a,0).
+  let t = tangent(&m, k).unwrap();
+  assert!((t[0] + a).abs() < TOL && (t[1] - a).abs() < TOL && t[2].abs() < TOL, "tangent {t:?}");
+
+  // shading normal mirrored to -Y; uv (Identity) untouched.
+  let n = m.shading_normal(k).unwrap();
+  assert!((n - Vec3::new(0., -1., 0.)).norm() < TOL, "normal {n:?}");
+  assert_eq!(uv(&m, k), Some([3., 5.]));
+}
+
+/// `bake_transform` (what `apply_transforms` uses) must carry normals and tangents through an
+/// orientation-preserving transform (no winding flip) by its linear part.
+#[test]
+fn bake_transform_rotation_carries_directions() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  with_uv_and_tangent(&mut m);
+  for k in m.vertices.keys().collect::<Vec<_>>() {
+    set_tangent(&mut m, k, [1., 0., 0.]);
+    m.set_shading_normal(k, Some(Vec3::new(1., 0., 0.)));
+  }
+
+  // 90° rotation about +Z: x -> y, y -> -x. Determinant +1, so no winding flip / negate.
+  let mut rot = Matrix4::identity();
+  rot
+    .fixed_view_mut::<3, 3>(0, 0)
+    .copy_from(&Matrix3::new(0., -1., 0., 1., 0., 0., 0., 0., 1.));
+  m.bake_transform(rot);
+
+  let k = m.vertices.keys().next().unwrap();
+  let t = tangent(&m, k).unwrap();
+  assert!((t[0]).abs() < TOL && (t[1] - 1.).abs() < TOL, "tangent {t:?}");
+  let n = m.shading_normal(k).unwrap();
+  assert!((n - Vec3::new(0., 1., 0.)).norm() < TOL, "normal {n:?}");
+}
+
+/// Partitioning preserves per-vertex passive channels (uv, tangent) within each sub-mesh.
+#[test]
+fn partition_preserves_channels() {
+  let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  with_uv_and_tangent(&mut m);
+  for k in m.vertices.keys().collect::<Vec<_>>() {
+    set_tangent(&mut m, k, [0., 0., 1.]);
+    set_uv(&mut m, k, [2., 4.]);
+  }
+
+  let parts = m.partition_faces(2, |_| Ok::<usize, ()>(0)).unwrap();
+  let p0 = &parts[0];
+  assert_eq!(p0.faces.len(), m.faces.len(), "all faces routed to partition 0");
+  for k in p0.vertices.keys() {
+    assert_eq!(uv(p0, k), Some([2., 4.]), "uv dropped by partition");
+    assert_eq!(tangent(p0, k), Some([0., 0., 1.]), "tangent dropped by partition");
+  }
+}
+
 /// End-to-end wiring check: the seam-split inside `separate_vertices_and_compute_normals` must
 /// route through the cloning constructor, so every split duplicate carries the channel value.
 #[test]
 fn separate_vertices_clones_passive_channels_onto_split_duplicates() {
   let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
   m.vertex_channels
-    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity));
+    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity));
   for k in m.vertices.keys().collect::<Vec<_>>() {
     set_uv(&mut m, k, [7., 9.]);
   }

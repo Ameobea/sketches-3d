@@ -3,7 +3,7 @@ use std::{f32::consts::PI, fmt::Debug, hash::Hash, marker::PhantomData, num::Non
 use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
-use nalgebra::{Matrix4, Vector3};
+use nalgebra::{Matrix3, Matrix4, Vector3};
 use parry3d::{
   bounding_volume::Aabb,
   math::Point,
@@ -368,11 +368,21 @@ pub enum Interp {
   LerpNormalize,
 }
 
-/// How a passive channel transforms when the surface is flipped/inverted.
+/// How a passive channel transforms when the surface is flipped/inverted (winding reversed).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FlipXform {
   Identity,
   Negate,
+}
+
+/// How a passive channel responds to a spatial (affine) transform baked into the mesh.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SpatialXform {
+  /// Not a spatial quantity (uv, color, …); left unchanged.
+  Identity,
+  /// A direction lying in the surface (tangent); its `xyz` lanes are multiplied by the transform's
+  /// linear part.
+  Direction,
 }
 
 /// Tight per-arity SoA storage for one passive attribute channel.
@@ -500,6 +510,31 @@ impl<K: Key> ChannelStore<K> {
       ChannelStore::Vec4(m) => m.values_mut().for_each(|v| v.iter_mut().for_each(|x| *x = -*x)),
     }
   }
+
+  /// Multiplies the `xyz` lanes of every value by `m`, renormalizing to preserve unit length. Used
+  /// to carry direction channels (tangents) through a spatial transform; no-op for scalar/vec2.
+  fn transform_directions(&mut self, m: &Matrix3<f32>) {
+    let apply = |xyz: Vec3| {
+      let out = m * xyz;
+      let n = out.norm();
+      if n > 1e-12 {
+        out / n
+      } else {
+        out
+      }
+    };
+    let write = |v: &mut [f32]| {
+      let t = apply(Vec3::new(v[0], v[1], v[2]));
+      v[0] = t.x;
+      v[1] = t.y;
+      v[2] = t.z;
+    };
+    match self {
+      ChannelStore::Scalar(_) | ChannelStore::Vec2(_) => {}
+      ChannelStore::Vec3(map) => map.values_mut().for_each(|v| write(v)),
+      ChannelStore::Vec4(map) => map.values_mut().for_each(|v| write(v)),
+    }
+  }
 }
 
 /// A passive (non-normal) attribute channel: arity-tagged SoA storage plus the rules for how it
@@ -508,15 +543,24 @@ impl<K: Key> ChannelStore<K> {
 pub struct Channel<K: Key> {
   pub interp: Interp,
   pub flip: FlipXform,
+  pub spatial: SpatialXform,
   pub store: ChannelStore<K>,
 }
 
 impl<K: Key> Channel<K> {
-  pub fn new(arity: Arity, interp: Interp, flip: FlipXform) -> Self {
+  pub fn new(arity: Arity, interp: Interp, flip: FlipXform, spatial: SpatialXform) -> Self {
     Channel {
       interp,
       flip,
+      spatial,
       store: ChannelStore::new(arity),
+    }
+  }
+
+  /// Carries a `Direction` channel through a spatial transform via its linear part; no-op otherwise.
+  pub fn transform_directions(&mut self, m: &Matrix3<f32>) {
+    if self.spatial == SpatialXform::Direction {
+      self.store.transform_directions(m);
     }
   }
 
@@ -529,6 +573,17 @@ impl<K: Key> Channel<K> {
   /// Reads `key` as a fixed-width vector; lanes above this channel's arity are zero.
   pub fn get(&self, key: K) -> Option<[f32; 4]> {
     self.store.get(key)
+  }
+
+  /// An empty channel sharing this one's arity, interp, and flip rules.
+  pub fn empty_like(&self) -> Self {
+    let store = match &self.store {
+      ChannelStore::Scalar(_) => ChannelStore::Scalar(SecondaryMap::new()),
+      ChannelStore::Vec2(_) => ChannelStore::Vec2(SecondaryMap::new()),
+      ChannelStore::Vec3(_) => ChannelStore::Vec3(SecondaryMap::new()),
+      ChannelStore::Vec4(_) => ChannelStore::Vec4(SecondaryMap::new()),
+    };
+    Channel { interp: self.interp, flip: self.flip, spatial: self.spatial, store }
   }
 }
 
@@ -3492,9 +3547,147 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     for n in self.displacement_normals.values_mut() {
       *n = -*n;
     }
+    for n in self.edge_displacement_normals.values_mut() {
+      *n = -*n;
+    }
     for ch in self.vertex_channels.values_mut() {
       ch.store.flip_all(ch.flip);
     }
+  }
+
+  /// Bakes affine transform `m` into the mesh in place: positions by `m`, shading/displacement
+  /// normals by the inverse-transpose of its linear part, and `Direction` channels (tangents) by its
+  /// linear part.  Orientation-reversing transforms (negative determinant) also reverse triangle
+  /// winding and apply each passive channel's flip rule, keeping the surface consistently oriented.
+  pub fn bake_transform(&mut self, m: Matrix4<f32>) {
+    let linear = m.fixed_view::<3, 3>(0, 0).into_owned();
+    let normal_mat = linear
+      .try_inverse()
+      .map(|inv| inv.transpose())
+      .unwrap_or(linear);
+    let renorm = |v: Vec3| {
+      let n = v.norm();
+      if n > 1e-12 {
+        v / n
+      } else {
+        v
+      }
+    };
+
+    for vtx in self.vertices.values_mut() {
+      vtx.position = (m * vtx.position.push(1.)).xyz();
+    }
+    for n in self.shading_normals.values_mut() {
+      *n = renorm(normal_mat * *n);
+    }
+    for n in self.displacement_normals.values_mut() {
+      *n = renorm(normal_mat * *n);
+    }
+    for n in self.edge_displacement_normals.values_mut() {
+      *n = renorm(normal_mat * *n);
+    }
+    for ch in self.vertex_channels.values_mut() {
+      ch.transform_directions(&linear);
+    }
+
+    if linear.determinant() < 0. {
+      for face in self.faces.values_mut() {
+        face.vertices.swap(0, 2);
+      }
+      for ch in self.vertex_channels.values_mut() {
+        ch.store.flip_all(ch.flip);
+      }
+    }
+  }
+
+  /// Mirrors the mesh in place across the plane `dot(normal, p) = offset` (`normal` must be unit).
+  /// A Householder reflection baked via `bake_transform`, so positions, normals, and tangents are
+  /// reflected and winding is reversed to keep the surface consistently oriented.
+  pub fn reflect(&mut self, normal: Vec3, offset: f32) {
+    let linear = Matrix3::identity() - 2. * normal * normal.transpose();
+    let mut m = Matrix4::identity();
+    m.fixed_view_mut::<3, 3>(0, 0).copy_from(&linear);
+    m.fixed_view_mut::<3, 1>(0, 3).copy_from(&(2. * offset * normal));
+    self.bake_transform(m);
+  }
+
+  /// Builds `num_partitions` independent sub-meshes; face `fk` is placed into mesh
+  /// `partition_of(fk)`.  Shared-vertex connectivity, per-vertex normals, and all passive vertex
+  /// channels are preserved within each partition.
+  pub fn extract_face_partitions(
+    &self,
+    num_partitions: usize,
+    partition_of: impl Fn(FaceKey) -> usize,
+  ) -> Vec<LinkedMesh<FaceData>>
+  where
+    FaceData: Clone,
+  {
+    let mut outs: Vec<LinkedMesh<FaceData>> = (0..num_partitions)
+      .map(|_| {
+        let mut out = LinkedMesh::new(0, 0, None);
+        for (name, ch) in &self.vertex_channels {
+          out.vertex_channels.insert(name.clone(), ch.empty_like());
+        }
+        out
+      })
+      .collect();
+    let mut remaps: Vec<FxHashMap<VertexKey, VertexKey>> =
+      vec![FxHashMap::default(); num_partitions];
+
+    for (face_key, face) in self.faces.iter() {
+      let idx = partition_of(face_key);
+      let verts = face.vertices;
+      let data = face.data.clone();
+      let out = &mut outs[idx];
+      let remap = &mut remaps[idx];
+      let new_verts = verts.map(|vk| {
+        *remap.entry(vk).or_insert_with(|| {
+          let nk = out.vertices.insert(Vertex::new(self.vertices[vk].position));
+          if let Some(n) = self.shading_normals.get(vk) {
+            out.shading_normals.insert(nk, *n);
+          }
+          if let Some(n) = self.displacement_normals.get(vk) {
+            out.displacement_normals.insert(nk, *n);
+          }
+          for (name, ch) in &self.vertex_channels {
+            if let Some(v) = ch.get(vk) {
+              out.vertex_channels.get_mut(name).unwrap().set(nk, v);
+            }
+          }
+          nk
+        })
+      });
+      out.add_face::<true>(new_verts, data);
+    }
+
+    outs
+  }
+
+  /// Splits the faces into independent sub-meshes keyed by `assign`'s returned index (`0..`),
+  /// evaluated once per face with its three vertex positions in CCW winding order.  At least
+  /// `min_partitions` meshes are always returned (trailing partitions may be empty).  Connectivity
+  /// and attributes are preserved per `extract_face_partitions`.
+  pub fn partition_faces<E>(
+    &self,
+    min_partitions: usize,
+    mut assign: impl FnMut([Vec3; 3]) -> Result<usize, E>,
+  ) -> Result<Vec<LinkedMesh<FaceData>>, E>
+  where
+    FaceData: Clone,
+  {
+    let mut idx_by_face: SecondaryMap<FaceKey, usize> = SecondaryMap::new();
+    let mut num_partitions = min_partitions;
+    for (face_key, face) in self.faces.iter() {
+      let [a, b, c] = face.vertices;
+      let idx = assign([
+        self.vertices[a].position,
+        self.vertices[b].position,
+        self.vertices[c].position,
+      ])?;
+      num_partitions = num_partitions.max(idx + 1);
+      idx_by_face.insert(face_key, idx);
+    }
+    Ok(self.extract_face_partitions(num_partitions, |fk| idx_by_face[fk]))
   }
 
   /// Computes the centroid of the mesh surface, weighted by triangle area.  Used as an

@@ -1121,6 +1121,209 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "reflect" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "normal",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Normal of the mirror plane (need not be normalized)."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the plane through the origin with the given `normal`, returning a new mesh.  Vertex positions and normals are reflected and triangle winding is reversed so the result stays consistently oriented (rather than turning inside-out).  Operates in the mesh's local space.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "normal",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Normal of the mirror plane (need not be normalized)."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Signed distance of the mirror plane from the origin, measured along the unit `normal`."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the plane with the given `normal`, shifted from the origin by `offset` along that normal, returning a new mesh.  Vertex positions and normals are reflected and triangle winding is reversed so the result stays consistently oriented.  Operates in the mesh's local space.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "reflect_x" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the `x = 0` plane (negating x), returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X position of the mirror plane."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the plane `x = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "reflect_y" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the `y = 0` plane (negating y), returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y position of the mirror plane."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the plane `y = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "reflect_z" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the `z = 0` plane (negating z), returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Z position of the mirror plane."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a mesh across the plane `z = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "partition_faces" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "predicate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Called once per triangle with its three vertex positions `|v0: vec3, v1: vec3, v2: vec3|` in CCW winding order and the mesh's local space.  Return a bool to sort the face into output mesh 0 (false) or 1 (true), or an int to route it into the output mesh at that index (clamped to `0..=100000`)."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, the mesh's transform is applied to the vertex positions passed to `predicate` (world space).  When false (default), positions are in the mesh's local space.  Either way, the mesh's transform is copied to every output mesh."
+          },
+        ],
+        description: "Partitions a mesh's faces into separate sub-meshes using `predicate`, returning a sequence of meshes.  Always returns at least two meshes (trailing partitions may be empty).  Shared-vertex connectivity and per-vertex attributes (normals, uv, tangent) are preserved within each partition.  This is NOT lazy; the partition is computed at the time this function is called.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
   "is_manifold" => FnDef {
     module: "mesh",
     examples: &[],
