@@ -366,6 +366,7 @@ export const ShaderOptionsJsonSchema = z.object({
   disableToneMapping: z.boolean().optional(),
   randomizeUVOffset: z.boolean().optional(),
   useNoise2: z.boolean().optional(),
+  useOrenNayarDiffuse: z.boolean().optional(),
   materialClass: z.enum(materialClassNameValues).optional(),
   pom: z
     .object({

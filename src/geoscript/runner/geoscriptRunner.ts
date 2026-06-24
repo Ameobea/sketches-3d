@@ -211,11 +211,17 @@ export const runGeoscript = async ({
           throw new Error(unwrapRes.message);
         }
 
-        const { uvs: unwrappedUVs, verts: unwrappedVerts, indices: unwrappedIndices } = unwrapRes.out;
+        const {
+          uvs: unwrappedUVs,
+          verts: unwrappedVerts,
+          indices: unwrappedIndices,
+          tangents: unwrappedTangents,
+        } = unwrapRes.out;
         uvs = unwrappedUVs;
         verts = unwrappedVerts;
         indices = unwrappedIndices;
-        tangents = null; // re-mesh invalidates the emitted tangents
+        // BFF recomputes tangents from the flattened UVs (the analytic ones are invalid post-remesh).
+        tangents = unwrappedTangents;
         didBffUnwrap = true; // re-mesh invalidates the emitted normals → recompute below
       } catch (unwrapErr) {
         const errorMessage = `Error unwrapping UVs: ${unwrapErr}`;
@@ -238,17 +244,16 @@ export const runGeoscript = async ({
     if (uvs) {
       geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     }
-    if (tangents) {
-      // Named `tangent` so three auto-enables USE_TANGENT for normal-mapped materials → analytic
-      // tangent-space normal maps along the sweep. Safe now that the color + depth-prepass shaders
-      // pin `invariant gl_Position` (so depth still bit-matches) and the shader guards the
-      // degenerate-tangent caps.
-      geometry.setAttribute('tangent', new THREE.BufferAttribute(tangents, 4));
-    }
     if (didBffUnwrap) {
       geometry.computeVertexNormals();
     } else if (normals) {
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+    }
+    if (tangents) {
+      // Named `tangent` so three auto-enables USE_TANGENT for normal-mapped materials → analytic
+      // tangent-space normal maps. Safe now that the color + depth-prepass shaders pin
+      // `invariant gl_Position` (so depth still bit-matches) and the shader guards degenerate caps.
+      geometry.setAttribute('tangent', new THREE.BufferAttribute(tangents, 4));
     }
 
     const matEntry = ((): MatEntry => {

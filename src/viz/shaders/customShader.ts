@@ -659,6 +659,40 @@ const buildRunVertexLightingFragment = (vertexLightingShininess: number) => /* g
   ${vertexLightingShininess > 0 ? 'vVertexSpecular = vtxSpecAccum;' : ''}
   `;
 
+// Qualitative Oren-Nayar diffuse factor (Fujii), as a multiplier on the Lambert term.
+// Reduces to 1.0 at roughness 0, so it composes cleanly with the stock direct-diffuse line.
+const OREN_NAYAR_DIFFUSE_HELPER = /* glsl */ `
+float orenNayarDiffuseFactor(vec3 N, vec3 V, vec3 L, float dotNL, float roughness) {
+  float dotNV = saturate(dot(N, V));
+  float s = dot(L, V) - dotNL * dotNV;
+  float t = s <= 0.0 ? 1.0 : max(max(dotNL, dotNV), 1e-3);
+  float sig2 = roughness * roughness;
+  float A = 1.0 - 0.5 * sig2 / (sig2 + 0.33);
+  float B = 0.45 * sig2 / (sig2 + 0.09);
+  return A + B * s / t;
+}
+`;
+
+const STOCK_DIRECT_DIFFUSE_LINE =
+  'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );';
+
+// Patches stock `RE_Direct_Physical` to scale only the *direct* diffuse lobe by Oren-Nayar.
+// Indirect/IBL diffuse stays Lambert. Throws loudly if a Three upgrade moves the target line.
+const buildPhysicalParsFragment = (useOrenNayarDiffuse: boolean | undefined): string => {
+  if (!useOrenNayarDiffuse) {
+    return '#include <lights_physical_pars_fragment>';
+  }
+  const chunk = THREE.ShaderChunk.lights_physical_pars_fragment;
+  if (!chunk.includes(STOCK_DIRECT_DIFFUSE_LINE)) {
+    throw new Error('Oren-Nayar patch: direct-diffuse line not found in lights_physical_pars_fragment');
+  }
+  const patched = chunk.replace(
+    STOCK_DIRECT_DIFFUSE_LINE,
+    'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ) * orenNayarDiffuseFactor( geometryNormal, geometryViewDir, directLight.direction, dotNL, material.roughness );'
+  );
+  return `${OREN_NAYAR_DIFFUSE_HELPER}\n${patched}`;
+};
+
 export const buildCustomShaderArgs = (
   {
     roughness = 0.9,
@@ -735,6 +769,7 @@ export const buildCustomShaderArgs = (
     noOcclusion,
     vertexLighting = false,
     vertexLightingShininess = 0,
+    useOrenNayarDiffuse = true,
   }: CustomShaderOptions = {}
 ) => {
   const uniforms = THREE.UniformsUtils.merge([
@@ -1275,7 +1310,7 @@ export const buildCustomShaderArgs = (
 
       if (tileBreaking)
         return /* glsl */ `
-    vec3 mapN = ${buildTileBreakSampleExpr('normalMap', 'vMapUv', tileBreaking)}.xyz;
+    vec3 mapN = ${buildTileBreakSampleExpr('normalMap', 'vNormalMapUv', tileBreaking)}.xyz;
 
     ${normalMapSuffix}
   `;
@@ -1430,6 +1465,10 @@ varying vec3 vWorldPos;
 varying vec3 vObjectNormal;
 varying vec3 vWorldNormal;
 uniform mat3 uvTransform;
+#ifdef USE_NORMALMAP
+uniform vec2 normalScale;
+varying float vTerminatorSoftenGate;
+#endif
 ${randomizeUVOffset ? 'uniform float uvOffsetSeed;' : ''}
 ${randomizeUVOffset ? hashSeedToVec2GLSL : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
@@ -1473,6 +1512,10 @@ void main() {
   #include <clipping_planes_vertex>
 
   vViewPosition = - mvPosition.xyz;
+
+#ifdef USE_NORMALMAP
+  vTerminatorSoftenGate = smoothstep(0.0, 0.5, abs(normalScale.x));
+#endif
 
   #include <worldpos_vertex>
 
@@ -1661,7 +1704,7 @@ ${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;
 ${enableFog ? '#include <fog_pars_fragment>' : ''}
 #include <lights_pars_begin>
 #include <normal_pars_fragment>
-#include <lights_physical_pars_fragment>
+${buildPhysicalParsFragment(useOrenNayarDiffuse)}
 #include <transmission_pars_fragment>
 #include <shadowmap_pars_fragment>
 // #include <bumpmap_pars_fragment>
@@ -1677,10 +1720,22 @@ uniform float curTimeSeconds;
 uniform float unitsPerPxScale;
 varying vec3 vWorldPos;
 
+#ifdef USE_NORMALMAP
+varying float vTerminatorSoftenGate;
+#endif
+
 // Bound direct light by the geometric (pre-normal-map) horizon so a normal map
 // can't illuminate micro-facets whose underlying face points away from the light.
+// Faded in by normal-map intensity (vertex-derived gate) so flat (un-perturbed) surfaces
+// keep their full terminator — nothing to sparkle there, and the dimming otherwise fights
+// Oren-Nayar.
 float softenTerminator(vec3 geoN, vec3 lightDir) {
-  return smoothstep(-0.4, 0.4, dot(geoN, lightDir));
+#ifdef USE_NORMALMAP
+  float soft = smoothstep(-0.2, 0.5, dot(geoN, lightDir));
+  return mix(1.0, soft, vTerminatorSoftenGate);
+#else
+  return 1.0;
+#endif
 }
 ${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap, !!pomSelfShadow)}
 

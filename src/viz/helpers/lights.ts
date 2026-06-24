@@ -73,7 +73,7 @@ interface DeriveShadowNormalBiasParams {
  */
 export const deriveDirectionalShadowNormalBias = (
   light: THREE.DirectionalLight,
-  { texelMultiplier = 1.5, bias }: DeriveShadowNormalBiasParams = {}
+  { texelMultiplier = 1.65, bias }: DeriveShadowNormalBiasParams = {}
 ): number => {
   const cam = light.shadow.camera;
   const texelWorld = Math.max(

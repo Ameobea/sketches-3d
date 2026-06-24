@@ -23,8 +23,8 @@ use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
 use crate::builtins::trace_path::{
-  as_path_sampler, build_segment_dicts, build_topology_samples, sample_path_subpaths, PathSubpath,
-  PathTracerCallable, SubpathsSeq,
+  as_path_sampler, build_segment_dicts, build_topology_samples, sample_path_subpaths, trim_tracer,
+  PathSubpath, PathTracerCallable, SubpathsSeq, TrimmedPathSampler,
 };
 use crate::materials::Material;
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -103,6 +103,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "sign" => "signum",
   "worley" => "worley_noise",
   "path_render" => "render_path",
+  "path_trim" => "trim_path",
   "skewer" => "subdivide_by_line",
   "partition_mesh" => "partition_faces",
   "transform_gizmo" => "gizmo_transform",
@@ -6801,6 +6802,167 @@ fn path_frame_impl(
   Ok(Value::Map(Rc::new(map)))
 }
 
+fn invoke_path_point(ctx: &EvalCtx, cb: &Rc<Callable>, t: f32) -> Result<Vec2, ErrorStack> {
+  let out = ctx
+    .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
+    .map_err(|e| e.wrap("path_len: error sampling path"))?;
+  out
+    .as_vec2()
+    .copied()
+    .ok_or_else(|| ErrorStack::new(format!("path_len: callable returned a non-Vec2 value: {out:?}")))
+}
+
+/// Sums chord lengths of `samples` uniform samples — the sampling fallback used by `path_len` and
+/// `trim_path` (distance unit) for black-box callables that don't expose segment topology.
+fn estimate_path_length(ctx: &EvalCtx, cb: &Rc<Callable>, samples: usize) -> Result<f32, ErrorStack> {
+  let n = samples.max(2);
+  let mut prev = invoke_path_point(ctx, cb, 0.0)?;
+  let mut total = 0.0;
+  for i in 1..=n {
+    let p = invoke_path_point(ctx, cb, i as f32 / n as f32)?;
+    total += (p - prev).norm();
+    prev = p;
+  }
+  Ok(total)
+}
+
+fn path_len_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let path_val = arg_refs[0].resolve(args, kwargs);
+  let cb = path_val
+    .as_callable()
+    .ok_or_else(|| ErrorStack::new(format!("path_len: expected a path callable, found: {path_val:?}")))?;
+  let apply_transform = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
+
+  if let Some(tracer) = extract_path_tracer(cb) {
+    let len = if apply_transform {
+      tracer.transformed_total_length()?
+    } else {
+      tracer.total_length
+    };
+    return Ok(Value::Float(len));
+  }
+
+  let samples = arg_refs[1].resolve(args, kwargs).as_int().unwrap_or(512).max(2) as usize;
+  Ok(Value::Float(estimate_path_length(ctx, cb, samples)?))
+}
+
+#[derive(Clone, Copy)]
+enum TrimUnit {
+  T,
+  Distance,
+}
+
+/// Resolves a trim bound against the total span. `None` -> path start (0) or end (`total`);
+/// negative values count back from the end (`total + v`); clamped to `[0, total]`.
+fn resolve_trim_bound(v: Option<f32>, total: f32, is_end: bool) -> f32 {
+  match v {
+    None => {
+      if is_end {
+        total
+      } else {
+        0.0
+      }
+    }
+    Some(v) => {
+      let p = if v < 0.0 { total + v } else { v };
+      p.clamp(0.0, total)
+    }
+  }
+}
+
+fn trim_path_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let path_val = arg_refs[0].resolve(args, kwargs);
+  let cb = path_val.as_callable().ok_or_else(|| {
+    ErrorStack::new(format!("trim_path: expected a path callable, found: {path_val:?}"))
+  })?;
+
+  let start = arg_refs[1].resolve(args, kwargs).as_float();
+  let end = arg_refs[2].resolve(args, kwargs).as_float();
+  let unit = match arg_refs[3].resolve(args, kwargs) {
+    Value::Nil => TrimUnit::T,
+    v => {
+      let s = v.as_str().ok_or_else(|| {
+        ErrorStack::new(format!("trim_path: `unit` must be a string, found: {v:?}"))
+      })?;
+      match s.to_ascii_lowercase().as_str() {
+        "t" | "normalized" | "norm" => TrimUnit::T,
+        "distance" | "dist" | "length" | "len" | "arc_length" => TrimUnit::Distance,
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "trim_path: invalid `unit` \"{s}\"; expected \"t\" or \"distance\""
+          )))
+        }
+      }
+    }
+  };
+
+  let tracer = extract_path_tracer(cb);
+
+  // Resolve start/end into a normalized sampling-`t` range. For the distance unit we divide by the
+  // total arc length, which yields the correct fraction under identity and uniform transforms.
+  let total = match unit {
+    TrimUnit::T => 1.0,
+    TrimUnit::Distance => match tracer {
+      Some(t) => t.transformed_total_length()?,
+      None => estimate_path_length(ctx, cb, 512)?,
+    },
+  };
+  if total <= 1e-5 {
+    return Err(ErrorStack::new("trim_path: path has zero length"));
+  }
+  let start_t = resolve_trim_bound(start, total, false) / total;
+  let end_t = resolve_trim_bound(end, total, true) / total;
+  if end_t - start_t <= 1e-6 {
+    return Err(ErrorStack::new(format!(
+      "trim_path: empty range after resolving bounds (start_t={start_t}, end_t={end_t}); `start` \
+       must come before `end`"
+    )));
+  }
+
+  if let Some(tracer) = tracer {
+    let trimmed = trim_tracer(tracer, start_t, end_t);
+    return Ok(Value::Callable(Rc::new(Callable::Dynamic {
+      name: "trace_path".to_owned(),
+      inner: Box::new(trimmed),
+    })));
+  }
+
+  // Non-tracer fallback: remap the inner sampler's critical points into the trimmed `[0, 1]` range.
+  let span = end_t - start_t;
+  let cached_critical_points = as_path_sampler(cb)
+    .map(|s| {
+      s.critical_t_values()
+        .into_iter()
+        .filter(|&t| t >= start_t - 1e-6 && t <= end_t + 1e-6)
+        .map(|t| ((t - start_t) / span).clamp(0.0, 1.0))
+        .collect()
+    })
+    .unwrap_or_default();
+
+  Ok(Value::Callable(Rc::new(Callable::Dynamic {
+    name: "trace_path".to_owned(),
+    inner: Box::new(TrimmedPathSampler {
+      inner: Rc::clone(cb),
+      start_t,
+      span,
+      transform: nalgebra::Matrix3::identity(),
+      cached_critical_points,
+    }),
+  })))
+}
+
 fn path_join_impl(
   ctx: &EvalCtx,
   arg_refs: &[ArgRef],
@@ -8481,6 +8643,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_segments" => builtin_fn!(path_segments, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_segments_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "path_len" => builtin_fn!(path_len, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_len_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "trim_path" => builtin_fn!(trim_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    trim_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "path_frame" => builtin_fn!(path_frame, |def_ix, arg_refs, args, kwargs, ctx| {
     path_frame_impl(ctx, def_ix, arg_refs, args, kwargs)

@@ -412,6 +412,11 @@ pub(crate) fn as_path_sampler(callable: &Callable) -> Option<&dyn PathSampler> {
         })
         .or_else(|| {
           any
+            .downcast_ref::<TrimmedPathSampler>()
+            .map(|t| t as &dyn PathSampler)
+        })
+        .or_else(|| {
+          any
             .downcast_ref::<super::catmull_rom::CatmullRomCallable2D>()
             .map(|t| t as &dyn PathSampler)
         })
@@ -454,6 +459,48 @@ impl PathSampler for TransformedCallableSampler {
       .as_vec2()
       .copied()
       .ok_or_else(|| ErrorStack::new("TransformedCallableSampler: callable did not return a Vec2"))
+  }
+}
+
+/// Restricts an arbitrary path callable to the sub-range `[start_t, start_t + span]` of its `t`
+/// domain, remapped back to `[0, 1]`. Fallback for `trim_path` on non-tracer paths (black-box
+/// `|t|: vec2` callables, `lerp_paths`, `catmull_rom`) where exact geometric slicing isn't possible.
+pub(crate) struct TrimmedPathSampler {
+  pub inner: Rc<Callable>,
+  pub start_t: f32,
+  pub span: f32,
+  pub transform: Matrix3<f32>,
+  pub cached_critical_points: Vec<f32>,
+}
+
+impl PathSampler for TrimmedPathSampler {
+  fn critical_t_values(&self) -> Vec<f32> {
+    self.cached_critical_points.clone()
+  }
+
+  fn transform(&self) -> &Matrix3<f32> {
+    &self.transform
+  }
+
+  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn DynamicCallable> {
+    Box::new(TrimmedPathSampler {
+      inner: Rc::clone(&self.inner),
+      start_t: self.start_t,
+      span: self.span,
+      transform: t * self.transform,
+      cached_critical_points: self.cached_critical_points.clone(),
+    })
+  }
+
+  fn eval_at_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
+    let g = (self.start_t + t.clamp(0.0, 1.0) * self.span).clamp(0.0, 1.0);
+    let val = ctx
+      .invoke_callable(&self.inner, &[Value::Float(g)], EMPTY_KWARGS)
+      .map_err(|e| e.wrap("Error invoking callable in TrimmedPathSampler"))?;
+    val
+      .as_vec2()
+      .copied()
+      .ok_or_else(|| ErrorStack::new("TrimmedPathSampler: callable did not return a Vec2"))
   }
 }
 
@@ -960,6 +1007,190 @@ impl PathSegment {
       }
     }
   }
+
+  /// Maps a local arc length into the segment's native curve parameter in [0, 1].
+  fn param_for_length(&self, length: f32) -> f32 {
+    match self {
+      PathSegment::Line { length: seg_len, .. } => {
+        if *seg_len <= LENGTH_EPSILON {
+          0.0
+        } else {
+          (length / *seg_len).clamp(0.0, 1.0)
+        }
+      }
+      PathSegment::Quadratic { table, .. }
+      | PathSegment::Cubic { table, .. }
+      | PathSegment::Arc { table, .. } => table.param_for_length(length),
+    }
+  }
+
+  /// Returns the sub-segment covering the native-parameter range `[u, v]` (with `0 <= u <= v <= 1`),
+  /// preserving the curve type exactly (lines stay lines, beziers stay beziers, arcs stay arcs).
+  /// `None` when the resulting piece is degenerate.
+  fn slice(&self, u: f32, v: f32) -> Option<PathSegment> {
+    if u <= LENGTH_EPSILON && v >= 1.0 - LENGTH_EPSILON {
+      return Some(self.clone());
+    }
+    match self {
+      PathSegment::Line { start, end, .. } => {
+        let s = *start + (*end - *start) * u;
+        let e = *start + (*end - *start) * v;
+        let length = (e - s).norm();
+        (length > LENGTH_EPSILON).then_some(PathSegment::Line { start: s, end: e, length })
+      }
+      PathSegment::Quadratic { start, ctrl, end, .. } => {
+        let (s, c, e) = quadratic_subsegment(*start, *ctrl, *end, u, v);
+        let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| quadratic_bezier(s, c, e, t));
+        (table.total() > LENGTH_EPSILON).then_some(PathSegment::Quadratic {
+          start: s,
+          ctrl: c,
+          end: e,
+          table,
+        })
+      }
+      PathSegment::Cubic { start, ctrl1, ctrl2, end, .. } => {
+        let (s, c1, c2, e) = cubic_subsegment(*start, *ctrl1, *ctrl2, *end, u, v);
+        let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| cubic_bezier(s, c1, c2, e, t));
+        (table.total() > LENGTH_EPSILON).then_some(PathSegment::Cubic {
+          start: s,
+          ctrl1: c1,
+          ctrl2: c2,
+          end: e,
+          table,
+        })
+      }
+      PathSegment::Arc {
+        center,
+        rx,
+        ry,
+        cos_phi,
+        sin_phi,
+        theta_start,
+        theta_delta,
+        ..
+      } => {
+        let new_theta_start = theta_start + theta_delta * u;
+        let new_theta_delta = theta_delta * (v - u);
+        let new_end = arc_point(*center, *rx, *ry, *cos_phi, *sin_phi, *theta_start, *theta_delta, v);
+        let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
+          arc_point(*center, *rx, *ry, *cos_phi, *sin_phi, new_theta_start, new_theta_delta, t)
+        });
+        (table.total() > LENGTH_EPSILON).then_some(PathSegment::Arc {
+          end: new_end,
+          center: *center,
+          rx: *rx,
+          ry: *ry,
+          cos_phi: *cos_phi,
+          sin_phi: *sin_phi,
+          theta_start: new_theta_start,
+          theta_delta: new_theta_delta,
+          table,
+        })
+      }
+    }
+  }
+}
+
+/// Returns the control points of the two halves of a quadratic bezier split at parameter `t`.
+fn split_quadratic(p0: Vec2, p1: Vec2, p2: Vec2, t: f32) -> ((Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2)) {
+  let a = p0 + (p1 - p0) * t;
+  let b = p1 + (p2 - p1) * t;
+  let m = a + (b - a) * t;
+  ((p0, a, m), (m, b, p2))
+}
+
+/// Control points of the quadratic sub-bezier on `[u, v]` (`0 <= u <= v <= 1`).
+fn quadratic_subsegment(p0: Vec2, p1: Vec2, p2: Vec2, u: f32, v: f32) -> (Vec2, Vec2, Vec2) {
+  let ((l0, l1, l2), _) = split_quadratic(p0, p1, p2, v);
+  let uu = if v > LENGTH_EPSILON { (u / v).clamp(0.0, 1.0) } else { 0.0 };
+  let (_, right) = split_quadratic(l0, l1, l2, uu);
+  right
+}
+
+fn split_cubic(
+  p0: Vec2,
+  p1: Vec2,
+  p2: Vec2,
+  p3: Vec2,
+  t: f32,
+) -> ((Vec2, Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2, Vec2)) {
+  let a = p0 + (p1 - p0) * t;
+  let b = p1 + (p2 - p1) * t;
+  let c = p2 + (p3 - p2) * t;
+  let d = a + (b - a) * t;
+  let e = b + (c - b) * t;
+  let m = d + (e - d) * t;
+  ((p0, a, d, m), (m, e, c, p3))
+}
+
+/// Control points of the cubic sub-bezier on `[u, v]` (`0 <= u <= v <= 1`).
+fn cubic_subsegment(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, u: f32, v: f32) -> (Vec2, Vec2, Vec2, Vec2) {
+  let ((l0, l1, l2, l3), _) = split_cubic(p0, p1, p2, p3, v);
+  let uu = if v > LENGTH_EPSILON { (u / v).clamp(0.0, 1.0) } else { 0.0 };
+  let (_, right) = split_cubic(l0, l1, l2, l3, uu);
+  right
+}
+
+/// Builds a new tracer covering the sampling-`t` range `[start_t, end_t]` (`0 <= start_t < end_t <= 1`)
+/// of `tracer`, slicing partial segments at the boundaries so sharp corners and curve detail are
+/// preserved exactly. Trimming runs in the global arc-length parameterization spanning all subpaths;
+/// a subpath fully inside the range keeps its `closed` flag, partially-covered ones become open.
+pub(crate) fn trim_tracer(tracer: &PathTracerCallable, start_t: f32, end_t: f32) -> PathTracerCallable {
+  // The tracer's reverse flag maps user-facing sampling-`t` to forward arc-length `t` via `1 - t`.
+  let (a_t, b_t) = if tracer.reverse {
+    (1.0 - end_t, 1.0 - start_t)
+  } else {
+    (start_t, end_t)
+  };
+  let start_len = a_t * tracer.total_length;
+  let end_len = b_t * tracer.total_length;
+
+  let mut new_subpaths: Vec<PathSubpath> = Vec::new();
+  let mut subpath_offset = 0.0f32;
+  for subpath in tracer.subpaths.iter() {
+    let sp_start = subpath_offset;
+    let sp_end = sp_start + subpath.total_length;
+    subpath_offset = sp_end;
+
+    let lo = start_len.max(sp_start);
+    let hi = end_len.min(sp_end);
+    if hi - lo <= LENGTH_EPSILON {
+      continue;
+    }
+
+    let local_lo = lo - sp_start;
+    let local_hi = hi - sp_start;
+    let fully = local_lo <= LENGTH_EPSILON && local_hi >= subpath.total_length - LENGTH_EPSILON;
+
+    let mut seg_offset = 0.0f32;
+    let mut segments = Vec::new();
+    for seg in &subpath.segments {
+      let seg_start = seg_offset;
+      let seg_end = seg_start + seg.length();
+      seg_offset = seg_end;
+
+      let s = local_lo.max(seg_start);
+      let e = local_hi.min(seg_end);
+      if e - s <= LENGTH_EPSILON {
+        continue;
+      }
+      let u = seg.param_for_length(s - seg_start);
+      let v = seg.param_for_length(e - seg_start);
+      if let Some(sliced) = seg.slice(u, v) {
+        segments.push(sliced);
+      }
+    }
+
+    if let Some(sp) = PathSubpath::new(segments, fully && subpath.closed) {
+      new_subpaths.push(sp);
+    }
+  }
+
+  let mut out = PathTracerCallable::from_subpaths(new_subpaths, tracer.interned_t_kwarg);
+  out.transform = tracer.transform;
+  out.reverse = tracer.reverse;
+  out.fill_rule = tracer.fill_rule;
+  out
 }
 
 /// Returns the analytic 2D AABB of a quadratic bezier with the given control points.
@@ -1737,6 +1968,23 @@ impl PathTracerCallable {
   /// `apply_transforms` (which converts arcs to cubic beziers) and call again.
   pub fn analytic_aabb(&self) -> Result<Option<(Vec2, Vec2)>, ErrorStack> {
     subpaths_aabb(&self.subpaths, &self.transform)
+  }
+
+  /// Total arc length of the path with its 2D affine transform applied, summed over every segment.
+  ///
+  /// Identity transforms return the precomputed `total_length` directly. Errors only if the path
+  /// contains arc segments under a non-uniform transform (matching `path_segments`).
+  pub(crate) fn transformed_total_length(&self) -> Result<f32, ErrorStack> {
+    if self.transform == Matrix3::identity() {
+      return Ok(self.total_length);
+    }
+    let mut total = 0.0;
+    for subpath in self.subpaths.iter() {
+      for seg in &subpath.segments {
+        total += transform_segment(seg, &self.transform)?.length();
+      }
+    }
+    Ok(total)
   }
 
   #[allow(dead_code)]
@@ -4344,6 +4592,87 @@ types = segs -> |s, _i| s.type
       .map(|r| r.unwrap().as_str().unwrap().to_owned())
       .collect();
     assert_eq!(collected, vec!["line".to_owned(), "line".to_owned()]);
+  }
+
+  #[test]
+  fn test_path_len_analytic_fold_and_blackbox() {
+    // Analytic tracer length matches the polyline sum; the curve case matches the explicit
+    // `path_segments | fold` equivalent the builtin replaces; a bare lambda hits the sampling
+    // fallback.
+    let src = r#"
+poly = build_path(path {
+  move(0, 0)
+  line(3, 0)
+  line(3, 4)
+})
+poly_len = path_len(poly)
+
+scaled = poly | path_scale(2)
+scaled_world = path_len(scaled)
+scaled_local = path_len(scaled, apply_transform=false)
+
+circle = build_path(path { circle(v2(0), 3) })
+fast = path_len(circle)
+slow = path_segments(circle) | fold(0, |acc, s| acc + s.length)
+
+blackbox = path_len(|t| v2(t * 10, 0))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let g = |name: &str| ctx.get_global(name).unwrap().as_float().unwrap();
+
+    assert!((g("poly_len") - 7.0).abs() < 1e-4, "poly_len = {}", g("poly_len"));
+    // Uniform 2x scale doubles the measured length; `apply_transform=false` recovers the original.
+    assert!((g("scaled_world") - 14.0).abs() < 1e-4, "scaled_world = {}", g("scaled_world"));
+    assert!((g("scaled_local") - 7.0).abs() < 1e-4, "scaled_local = {}", g("scaled_local"));
+    assert!(
+      (g("fast") - g("slow")).abs() < 1e-3,
+      "fast={} slow={}",
+      g("fast"),
+      g("slow")
+    );
+    assert!(
+      (g("fast") - 2.0 * PI * 3.0).abs() < 0.2,
+      "circle len {} not ~= circumference",
+      g("fast")
+    );
+    assert!((g("blackbox") - 10.0).abs() < 1e-3, "blackbox = {}", g("blackbox"));
+  }
+
+  #[test]
+  fn test_trim_path_preserves_corner_and_endpoints() {
+    // Path is two perpendicular line segments meeting at a sharp corner (4,0); total length 8.
+    // Trimming the middle [2, 6] by distance keeps (2,0)->(4,0)->(4,2): the corner must survive
+    // as a segment boundary, endpoints/midpoint must be exact, and length must be 4.
+    let src = r#"
+p = build_path(path {
+  move(0, 0)
+  line(4, 0)
+  line(4, 4)
+})
+t = trim_path(p, start=2, end=6, unit='distance')
+a = t(0)
+mid = t(0.5)
+b = t(1)
+tlen = path_len(t)
+types = path_segments(t) -> |s, _i| s.type
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    assert_vec2_close(*ctx.get_global("a").unwrap().as_vec2().unwrap(), Vec2::new(2.0, 0.0));
+    assert_vec2_close(*ctx.get_global("mid").unwrap().as_vec2().unwrap(), Vec2::new(4.0, 0.0));
+    assert_vec2_close(*ctx.get_global("b").unwrap().as_vec2().unwrap(), Vec2::new(4.0, 2.0));
+
+    let tlen = ctx.get_global("tlen").unwrap().as_float().unwrap();
+    assert!((tlen - 4.0).abs() < 1e-4, "trimmed length = {tlen}");
+
+    let types: Vec<String> = ctx
+      .get_global("types")
+      .unwrap()
+      .as_sequence()
+      .unwrap()
+      .consume(&ctx)
+      .map(|r| r.unwrap().as_str().unwrap().to_owned())
+      .collect();
+    assert_eq!(types, vec!["line".to_owned(), "line".to_owned()]);
   }
 
   #[test]

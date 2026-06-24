@@ -30,7 +30,12 @@ const methods = {
       return res;
     }
 
-    return Comlink.transfer(res, [res.out.uvs.buffer, res.out.verts.buffer, res.out.indices.buffer]);
+    return Comlink.transfer(res, [
+      res.out.uvs.buffer,
+      res.out.verts.buffer,
+      res.out.indices.buffer,
+      res.out.tangents.buffer,
+    ]);
   },
 };
 

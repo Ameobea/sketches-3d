@@ -79,6 +79,8 @@ export interface PhysicalMaterialDef {
   /** Defaults to 'linear' */
   pomHeightMapFilter?: TextureFilterMode;
   pom?: PomConfig;
+  /** Oren-Nayar diffuse for direct lights (matte dielectrics). See `CustomShaderOptions.useOrenNayarDiffuse`. */
+  useOrenNayarDiffuse?: boolean;
   fogMultiplier?: number;
   mapDisableDistance?: number | null;
   mapDisableTransitionThreshold?: number;
@@ -283,6 +285,7 @@ const buildPhysicalShader = (
           : undefined,
       useGeneratedUVs: false,
       pom: pomActive ? def.pom : undefined,
+      useOrenNayarDiffuse: def.useOrenNayarDiffuse,
     }
   );
 };

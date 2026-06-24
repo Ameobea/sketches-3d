@@ -30,7 +30,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 17.03999999910593, "count": 5, "codeHash": "b0979b95", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 19.4, "count": 5, "codeHash": "295c46fe", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_coil": {
       "type": "csg",
@@ -90,7 +90,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 26.684999999403953, "count": 5, "codeHash": "c7f26fd6", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 27.3, "count": 5, "codeHash": "719d813f", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "csg_capsule": {
       "type": "csg",
@@ -157,7 +157,7 @@
     "plat1": {
       "type": "geoscript",
       "file": "geo/plat1.geo",
-      "_meta": { "runtimeMs": 5.806000003218651, "count": 5, "codeHash": "c7991691", "asyncDeps": [ "cgal", "clipper2" ] }
+      "_meta": { "runtimeMs": 6, "count": 5, "codeHash": "3e2bfb5a", "asyncDeps": [ "cgal", "clipper2" ] }
     },
     "plat2": {
       "type": "geoscript",

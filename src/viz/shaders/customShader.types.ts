@@ -261,6 +261,13 @@ export interface CustomShaderOptions {
   useNoise2?: boolean;
   enableFog?: boolean;
   /**
+   * Use an Oren-Nayar diffuse BRDF for direct (analytic) lights instead of Lambert. Better models
+   * rough matte dielectrics (plaster, concrete, sand, clay): flatter terminator + slight grazing
+   * retroreflection. Driven by `roughness`; no extra params and a no-op at roughness 0. Only the
+   * direct lobe is affected — indirect/IBL and hemisphere fill stay Lambert.
+   */
+  useOrenNayarDiffuse?: boolean;
+  /**
    * If set, the provided `map` will be treated as a combined grayscale diffuse + normal map. The diffuse
    * component will be read from the R channel and the normal map will be read from the GBA channels.
    */

@@ -69,8 +69,8 @@ impl Preprocessed {
       if rewritten_pos < edit_rewritten_end {
         return edit.original_start;
       }
-      byte_offset += edit.replacement.len() as isize
-        - (edit.original_end - edit.original_start) as isize;
+      byte_offset +=
+        edit.replacement.len() as isize - (edit.original_end - edit.original_start) as isize;
     }
     (rewritten_pos as isize - byte_offset).max(0) as usize
   }
@@ -83,8 +83,8 @@ impl Preprocessed {
         break;
       }
       if edit.original_end <= original_pos {
-        byte_offset += edit.replacement.len() as isize
-          - (edit.original_end - edit.original_start) as isize;
+        byte_offset +=
+          edit.replacement.len() as isize - (edit.original_end - edit.original_start) as isize;
       } else {
         return (edit.original_start as isize + byte_offset) as usize;
       }
@@ -326,7 +326,7 @@ impl<'a> Scanner<'a> {
       .expect("pop_closure called with empty stack");
     if !entry.content_seen {
       return Err(PreprocessError::new(
-        "shorthand closure has empty body — write `|...| { }` for an explicit empty body or \
+        "shorthand closure has empty body; write `|...| { }` for an explicit empty body or \
          provide an expression",
         entry.header_close_pos,
         entry.header_close_line,
@@ -365,7 +365,12 @@ impl<'a> Scanner<'a> {
           let start_line = self.line;
           let start_col = self.col;
           let end = scan_string_literal(self.src, self.pos).ok_or_else(|| {
-            PreprocessError::new("unterminated string literal", self.pos, start_line, start_col)
+            PreprocessError::new(
+              "unterminated string literal",
+              self.pos,
+              start_line,
+              start_col,
+            )
           })?;
           self.advance_to(end);
         }
@@ -398,7 +403,7 @@ impl<'a> Scanner<'a> {
     }
     if self.pos >= self.bytes.len() {
       return Err(PreprocessError::new(
-        "shorthand closure has empty body — write `|...| { }` for an explicit empty body or \
+        "shorthand closure has empty body; write `|...| { }` for an explicit empty body or \
          provide an expression",
         self.pos,
         self.line,
@@ -416,8 +421,8 @@ impl<'a> Scanner<'a> {
     }
     if !had_type_hint && (b == b'\n' || b == b'\r') {
       return Err(PreprocessError::new(
-        "shorthand closure has empty body before newline — provide an expression on the same \
-         line as the closing `|`, or wrap the body in `{ ... }`",
+        "shorthand closure has empty body before newline; provide an expression on the same line \
+         as the closing `|`, or wrap the body in `{ ... }`",
         self.pos,
         self.line,
         self.col,
@@ -527,7 +532,12 @@ impl<'a> Scanner<'a> {
         let start_line = self.line;
         let start_col = self.col;
         let end = scan_string_literal(self.src, self.pos).ok_or_else(|| {
-          PreprocessError::new("unterminated string literal", self.pos, start_line, start_col)
+          PreprocessError::new(
+            "unterminated string literal",
+            self.pos,
+            start_line,
+            start_col,
+          )
         })?;
         self.advance_to(end);
         self.last_sig = LastSignificant::ExprEnder;
@@ -547,8 +557,7 @@ impl<'a> Scanner<'a> {
       match b {
         b',' => {
           while let Some(top) = self.closure_stack.last() {
-            if self.paren_bracket_nesting == top.base_paren
-              && self.curly_nesting == top.base_curly
+            if self.paren_bracket_nesting == top.base_paren && self.curly_nesting == top.base_curly
             {
               self.pop_closure()?;
             } else {

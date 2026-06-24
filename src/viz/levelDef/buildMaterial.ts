@@ -121,6 +121,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
     'disableToneMapping',
     'randomizeUVOffset',
     'useNoise2',
+    'useOrenNayarDiffuse',
     'pom',
   ]);
 

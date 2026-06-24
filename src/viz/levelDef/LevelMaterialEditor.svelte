@@ -324,6 +324,17 @@
           />
         </FormField>
 
+        <FormField label="useOrenNayarDiffuse">
+          <input
+            type="checkbox"
+            checked={o.useOrenNayarDiffuse ?? false}
+            onchange={e => {
+              ensureOpts().useOrenNayarDiffuse = (e.target as HTMLInputElement).checked;
+              emit();
+            }}
+          />
+        </FormField>
+
         <FormField label="materialClass">
           <select
             value={o.materialClass ?? 'default'}

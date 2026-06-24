@@ -5936,7 +5936,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "A path sampler with analytic segment topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`)."
           },
         ],
-        description: "Returns the exact axis-aligned bounding box of a 2D path as a 2-element sequence `[mins, maxs]` of Vec2 corners.\n\nThe bound is computed analytically from the path's line segments, beziers, and arcs (exact modulo floating-point rounding) — not from a polyline discretization. Any transforms applied to the path are baked in. Errors if the path is empty, or if it contains arc segments under a non-uniform transform (skew or non-uniform scale), since transformed arcs are conics with no closed-form axis-aligned bound; bake the transform with `apply_transforms` first in that case.",
+        description: "Returns the exact axis-aligned bounding box of a 2D path as a 2-element sequence `[mins, maxs]` of Vec2 corners.\n\nThe bound is computed analytically from the path's line segments, beziers, and arcs (exact modulo floating-point rounding), not from a polyline discretization. Any transforms applied to the path are baked in. Errors if the path is empty, or if it contains arc segments under a non-uniform transform (skew or non-uniform scale), since transformed arcs are conics with no closed-form axis-aligned bound; bake the transform with `apply_transforms` first in that case.",
         return_type: &[ArgType::Sequence],
       },
     ],
@@ -6556,14 +6556,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "When true, splits vertices at the profile UV seam (so textures wrap seamlessly, V: 0→1) and duplicates cap rings (so caps get planar UVs + an in-plane tangent + a sharp cap edge). Because this duplicates coincident vertices, the result is NO LONGER watertight 2-manifold — intended for final render meshes, not as input to CSG/boolean ops. Default false: shared vertices and watertight topology, at the cost of one smeared seam column and caps that inherit the body's swept UV/tangent."
+            description: "When true, splits vertices at the profile UV seam (so textures wrap seamlessly, V: 0→1) and duplicates cap rings (so caps get planar UVs + an in-plane tangent + a sharp cap edge). Because this duplicates coincident vertices, the result is NO LONGER watertight 2-manifold; intended for final render meshes, not as input to CSG/boolean ops. Default false: shared vertices and watertight topology, at the cost of one smeared seam column and caps that inherit the body's swept UV/tangent."
           },
           ArgDef {
             name: "cap_uv_scale",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
-            description: "Per-axis multiplier baked into the planar cap UVs when `split_seams` is set (the cap UV is the profile cross-section in world units). Lets the caps have a texture density independent of the swept body — e.g. set it to undo an anisotropic material `uvScale` so the cap reads isotropically instead of stretched. Default (1, 1) = raw world-unit profile coordinates. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
+            description: "Per-axis multiplier baked into the planar cap UVs when `split_seams` is set (the cap UV is the profile cross-section in world units). Lets the caps have a texture density independent of the swept body, e.g. set it to undo an anisotropic material `uvScale` so the cap reads isotropically instead of stretched. Default (1, 1) = raw world-unit profile coordinates. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
           },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
@@ -6645,7 +6645,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "When true, triangulates the open ends of a tube-like surface (exactly one of `u_closed`/`v_closed` is true).  Each end-ring is projected to its best-fit plane (via Newell's normal oriented along the axis) and triangulated with CGAL's constrained Delaunay triangulation — the same machinery rail_sweep uses, and it handles concave/non-convex ring shapes correctly.  Rings that aren't co-planar are projected as a best effort.  Cap winding follows `flip_normals` so the caps match the surface's facing direction.  No-op when both axes are closed (torus) or neither is (sheet)."
+            description: "When true, triangulates the open ends of a tube-like surface (exactly one of `u_closed`/`v_closed` is true).  Each end-ring is projected to its best-fit plane (via Newell's normal oriented along the axis) and triangulated with CGAL's constrained Delaunay triangulation (the same machinery rail_sweep uses), and it handles concave/non-convex ring shapes correctly.  Rings that aren't co-planar are projected as a best effort.  Cap winding follows `flip_normals` so the caps match the surface's facing direction.  No-op when both axes are closed (torus) or neither is (sheet)."
           },
         ],
         description: "Generates a mesh from a parametric function over a 2D domain. Handles topological wrapping via the closed flags and automatically welds coincident vertices at boundary poles to maintain manifold topology. By default, normals point outward when V increases counter-clockwise (looking down +Y); use flip_normals=true to reverse.",
@@ -6787,7 +6787,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           }
         ],
-        description: "Extrudes a 2D mesh into a shell along its per-vertex normals.  Normals are computed per connected component as the area-weighted average of adjacent face normals.\n\nUseful for adding thickness to a surface that follows a curve through space — e.g. a mesh draped over a curved surface via `warp` — where a single global `up` direction won't follow the surface curvature.\n\nLike `extrude`, designed for 2D (single-layer) meshes: the input is duplicated, displaced, the original is flipped to face the other way, and boundary edges are stitched into side walls to produce a closed 2-manifold shell.\n\nFails to produce a clean shell when the offset distance exceeds the local radius of curvature on concave regions — adjacent normals converge past their starting positions and the duplicated layer self-intersects.  For mild undulation this is a non-issue.",
+        description: "Extrudes a 2D mesh into a shell along its per-vertex normals.  Normals are computed per connected component as the area-weighted average of adjacent face normals.\n\nUseful for adding thickness to a surface that follows a curve through space, e.g. a mesh draped over a curved surface via `warp`, where a single global `up` direction won't follow the surface curvature.\n\nLike `extrude`, designed for 2D (single-layer) meshes: the input is duplicated, displaced, the original is flipped to face the other way, and boundary edges are stitched into side walls to produce a closed 2-manifold shell.\n\nFails to produce a clean shell when the offset distance exceeds the local radius of curvature on concave regions; adjacent normals converge past their starting positions and the duplicated layer self-intersects.  For mild undulation this is a non-issue.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -7573,10 +7573,10 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Lower bound (in degrees) on the smallest angle in any triangle after refinement.  Triangles with a smaller angle are split.  Range: [0, ~20.7]; 0 disables the shape criterion entirely (refinement then driven purely by `max_edge_len`).\n\nThe upper limit comes from CGAL: Delaunay refinement only provably terminates for aspect bounds up to 0.125 (squared sine), i.e. min angle ≲ 20.7°.  When this kwarg is omitted but `max_edge_len` is set, CGAL's default ~20.6° applies — narrow regions (e.g. slivers between holes) can then split well below `max_edge_len`.  Pass 0 if you want only the edge-length constraint."
+            description: "Lower bound (in degrees) on the smallest angle in any triangle after refinement.  Triangles with a smaller angle are split.  Range: [0, ~20.7]; 0 disables the shape criterion entirely (refinement then driven purely by `max_edge_len`).\n\nThe upper limit comes from CGAL: Delaunay refinement only provably terminates for aspect bounds up to 0.125 (squared sine), i.e. min angle ≲ 20.7°.  When this kwarg is omitted but `max_edge_len` is set, CGAL's default ~20.6° applies.  Narrow regions (e.g. slivers between holes) can then split well below `max_edge_len`.  Pass 0 if you want only the edge-length constraint."
           },
         ],
-        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.\n\nPath topology — subpaths and the holes they imply via nesting — is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it — a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
+        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -9438,7 +9438,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic via `Polygon_set_2` over EPECK)."
           },
         ],
-        description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers — they will treat nested subpaths as holes under their own fill rule.",
+        description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers; they will treat nested subpaths as holes under their own fill rule.",
         return_type: &[ArgType::Callable],
       }
     ]
@@ -9722,7 +9722,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Optional fill rule: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.  Consumed only by downstream operations that respect it (Clipper2 boolean ops; lyon tessellation).  The CGAL tessellation engine uses nesting-based domain identification regardless of this value.",
           },
         ],
-        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.\n\nThe resulting tracer preserves subpath identity — each `rect`, `circle`, or explicit `move`-delimited run becomes its own subpath.  Multi-subpath paths are consumed correctly by boolean ops, tessellation, and the various sampling builtins.",
+        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.\n\nThe resulting tracer preserves subpath identity; each `rect`, `circle`, or explicit `move`-delimited run becomes its own subpath.  Multi-subpath paths are consumed correctly by boolean ops, tessellation, and the various sampling builtins.",
         return_type: &[ArgType::Callable],
       },
     ],
@@ -10434,7 +10434,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Either a `rect`/`circle` draw command tagged dict (built by `rect` / `circle` inside a `path { ... }` block) or a path tracer callable (from `build_path`, `trace_svg_path`, `text_to_path`, etc.)."
           },
         ],
-        description: "Reverses the winding of a path.  For a `rect` or `circle` draw command, toggles its `reversed` flag so the shape is traced in the opposite direction (same start point, opposite orientation).  For a path tracer callable, returns a new tracer with the whole-path `reverse` flag toggled.\n\nUseful for building paths-with-holes: the standard convention is that an outer shape and its enclosed holes have opposite winding.  Under the CGAL tessellation engine, winding doesn't matter (holes are identified by nesting), but reversing is still required when feeding the path through fill rules that depend on winding (`nonzero`, `positive`, `negative`).\n\nDoes not accept bare point sequences — to reverse a `Sequence<Vec2>`, use a sequence operation directly.\n\nAliased to `reverse` inside `path { ... }` blocks.",
+        description: "Reverses the winding of a path.  For a `rect` or `circle` draw command, toggles its `reversed` flag so the shape is traced in the opposite direction (same start point, opposite orientation).  For a path tracer callable, returns a new tracer with the whole-path `reverse` flag toggled.\n\nUseful for building paths-with-holes: the standard convention is that an outer shape and its enclosed holes have opposite winding.  Under the CGAL tessellation engine, winding doesn't matter (holes are identified by nesting), but reversing is still required when feeding the path through fill rules that depend on winding (`nonzero`, `positive`, `negative`).\n\nDoes not accept bare point sequences.  To reverse a `Sequence<Vec2>`, use a sequence operation directly.\n\nAliased to `reverse` inside `path { ... }` blocks.",
         return_type: &[ArgType::Map, ArgType::Callable],
       },
     ],
@@ -10453,8 +10453,81 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Path sampler from `build_path` / `trace_svg_path` / `text_to_path` / `offset_path` / boolean ops."
           },
         ],
-        description: "Returns a sequence of tagged dicts, one per segment of the path, in subpath traversal order with the path's transform applied.\n\nEvery segment dict has these common fields:\n- `type`: `\"line\"` | `\"quad\"` | `\"cubic\"` | `\"arc\"`\n- `start`, `end`: vec2 endpoints\n- `length`: arc length of the segment\n- `subpath`: int — index of the parent subpath\n- `closed`: bool — whether the parent subpath is closed\n- `t_start`, `t_end`: floats in [0, 1] — arc-length parameters within the parent subpath\n- `t_start_global`, `t_end_global`: floats in [0, 1] — arc-length parameters across the full path\n\nPer-type extras:\n- `quad`: `ctrl: vec2`\n- `cubic`: `ctrl1: vec2`, `ctrl2: vec2`\n- `arc`: `center: vec2`, `rx: num`, `ry: num`, `x_axis_rotation: num` (radians), `large_arc: bool`, `sweep: bool`, `theta_start: num`, `theta_delta: num`\n\nThe path's `reverse` flag is a sampling-order concern and is intentionally not honoured here; segments are always emitted in their as-built order.\n\nOnly works with paths that expose segment topology (i.e. those backed by a path tracer); paths from `catmull_rom` / `lerp_paths` are not supported.",
+        description: "Returns a sequence of tagged dicts, one per segment of the path, in subpath traversal order with the path's transform applied.\n\nEvery segment dict has these common fields:\n- `type`: `\"line\"` | `\"quad\"` | `\"cubic\"` | `\"arc\"`\n- `start`, `end`: vec2 endpoints\n- `length`: arc length of the segment\n- `subpath`: int - index of the parent subpath\n- `closed`: bool - whether the parent subpath is closed\n- `t_start`, `t_end`: floats in [0, 1] - arc-length parameters within the parent subpath\n- `t_start_global`, `t_end_global`: floats in [0, 1] - arc-length parameters across the full path\n\nPer-type extras:\n- `quad`: `ctrl: vec2`\n- `cubic`: `ctrl1: vec2`, `ctrl2: vec2`\n- `arc`: `center: vec2`, `rx: num`, `ry: num`, `x_axis_rotation: num` (radians), `large_arc: bool`, `sweep: bool`, `theta_start: num`, `theta_delta: num`\n\nThe path's `reverse` flag is a sampling-order concern and is intentionally not honoured here; segments are always emitted in their as-built order.\n\nOnly works with paths that expose segment topology (i.e. those backed by a path tracer); paths from `catmull_rom` / `lerp_paths` are not supported.",
         return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "path_len" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable. Tracer-backed paths (from `build_path` / `trace_svg_path` / `text_to_path` / offset/boolean ops) get the exact analytic arc length; any other `|t: num|: vec2` callable falls back to a sampling estimate."
+          },
+          ArgDef {
+            name: "samples",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(512)),
+            description: "Number of uniform samples for the chord-length estimate used on black-box callables. Ignored for tracer-backed paths."
+          },
+          ArgDef {
+            name: "apply_transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "When true (default), the path's transform is applied before measuring. Set to false to measure the underlying pre-transform geometry. Has no effect on black-box callables, whose transform can't be separated from sampling."
+          },
+        ],
+        description: "Returns the arc length of a 2D path, with the path's transform applied (pass `apply_transform=false` to measure the underlying pre-transform geometry).\n\nFor paths backed by a path tracer this is the exact sum of segment lengths (the efficient equivalent of `path_segments(p) | fold(0, |acc, { length }| acc + length)`). For black-box `|t: num|: vec2` callables it falls back to summing the chord lengths of `samples` uniform samples.",
+        return_type: &[ArgType::Numeric],
+      },
+    ],
+  },
+  "trim_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable. Tracer-backed paths are sliced geometrically (curves and sharp corners preserved exactly); other callables are wrapped and resampled over the trimmed range."
+          },
+          ArgDef {
+            name: "start",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Start of the kept range. Negative values count back from the end. `nil` keeps from the path start."
+          },
+          ArgDef {
+            name: "end",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "End of the kept range. Negative values count back from the end. `nil` keeps to the path end."
+          },
+          ArgDef {
+            name: "unit",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("t".to_owned())),
+            description: "`\"t\"` (default) treats `start`/`end` as normalized arc-length parameters in [0, 1]; `\"distance\"` treats them as arc-length distances."
+          },
+        ],
+        description: "Returns a new path sampler covering the portion of `path` between `start` and `end`.\n\nTrimming is done in the global arc-length parameterization that spans all subpaths, so `start`/`end` cut across the concatenated subpaths; iterate `path_subpaths` first to trim an individual subpath. Negative bounds count back from the end (e.g. `trim_path(p, start=4, end=-4, unit='distance')` drops 4 units from each end).\n\nFor tracer-backed paths the result is a real sliced path: lines, beziers and arcs keep their exact geometry and every sharp corner inside the range is preserved. Black-box callables are wrapped and resampled, with `distance` bounds resolved against a sampling-based length estimate.",
+        return_type: &[ArgType::Callable],
       },
     ],
   },
@@ -10483,7 +10556,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
-            description: "When true and `t` lies inside a closed subpath whose orientation can be determined, the normal is flipped to point inward (toward the interior of the closed shape) regardless of CW/CCW winding. For open subpaths or paths without topology, has no effect — the normal is the left-perpendicular of the tangent."
+            description: "When true and `t` lies inside a closed subpath whose orientation can be determined, the normal is flipped to point inward (toward the interior of the closed shape) regardless of CW/CCW winding. For open subpaths or paths without topology, has no effect; the normal is the left-perpendicular of the tangent."
           },
         ],
         description: "Samples a path at parameter `t` and returns a frame dict `{pos: vec2, tangent: vec2, normal: vec2}`.\n\n- `pos`: the path point `p(t)`.\n- `tangent`: a unit vector along the path direction, computed via central finite difference (with one-sided fallback at t=0 and t=1).\n- `normal`: a unit vector perpendicular to the tangent. By default it's the left-perpendicular (counter-clockwise rotation by 90°). For closed subpaths whose orientation can be determined, it is flipped to consistently point inward when `inward_normal` is true.\n\nUseful for sweeps, ribbons, offset constructions, or any procedural geometry that needs to follow a path with a consistent local frame.",

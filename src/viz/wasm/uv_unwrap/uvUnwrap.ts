@@ -82,6 +82,7 @@ export type UVUnwrapRes =
         uvs: Float32Array;
         verts: Float32Array;
         indices: Uint32Array;
+        tangents: Float32Array;
       };
     }
   | { type: 'error'; message: string };
@@ -126,6 +127,7 @@ export const unwrapUVs = (
   const uvs = from_vec_f32(output.uvs).slice();
   const unwrappedVerts = from_vec_f32(output.verts).slice();
   const unwrappedIndices = from_vec_u32(output.indices).slice();
+  const tangents = from_vec_f32(output.tangents).slice();
 
   vec_verts.delete();
   vec_indices.delete();
@@ -137,6 +139,7 @@ export const unwrapUVs = (
       uvs,
       verts: unwrappedVerts,
       indices: unwrappedIndices,
+      tangents,
     },
   };
 };

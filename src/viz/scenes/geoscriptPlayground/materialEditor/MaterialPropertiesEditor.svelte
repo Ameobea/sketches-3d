@@ -93,6 +93,12 @@
       <input type="range" min="0" max="1" step="0.01" bind:value={material.metalness} />
       <span>{material.metalness.toFixed(2)}</span>
     </FormField>
+    <FormField
+      label="oren-nayar diffuse"
+      help="Rough-matte diffuse for direct lights (plaster, concrete, sand, clay): flatter terminator, slight grazing retroreflection. Driven by roughness; no-op at roughness 0. Indirect/ambient fill stays Lambert."
+    >
+      <input type="checkbox" bind:checked={material.useOrenNayarDiffuse} />
+    </FormField>
     <FormField label="env intensity">
       <input
         type="range"

@@ -20,8 +20,10 @@ const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
 };
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
-  viz.scene.add(ambientLight);
+  // const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+  // viz.scene.add(ambientLight);
+  const hemiLight = new THREE.HemisphereLight(0xffffff, 0xa4a4a4, 0.4);
+  viz.scene.add(hemiLight);
 
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.7);
   sunLight.position.set(190, 280, 10);
