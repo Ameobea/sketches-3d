@@ -264,7 +264,7 @@ export interface CustomShaderOptions {
    * Use an Oren-Nayar diffuse BRDF for direct (analytic) lights instead of Lambert. Better models
    * rough matte dielectrics (plaster, concrete, sand, clay): flatter terminator + slight grazing
    * retroreflection. Driven by `roughness`; no extra params and a no-op at roughness 0. Only the
-   * direct lobe is affected — indirect/IBL and hemisphere fill stay Lambert.
+   * direct lobe is affected — indirect/IBL and hemisphere fill stay Lambert. Default = true
    */
   useOrenNayarDiffuse?: boolean;
   /**

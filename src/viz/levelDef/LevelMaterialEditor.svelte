@@ -177,7 +177,7 @@
 
       <div class="mat-form">
         {#if localDef}
-          <MaterialForm material={localDef} {host} bind:showAdvanced {textureSlot} />
+          <MaterialForm bind:material={localDef} {host} bind:showAdvanced {textureSlot} />
         {:else}
           <div class="placeholder">select a material</div>
         {/if}

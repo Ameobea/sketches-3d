@@ -30,16 +30,10 @@ const config = defineConfig({
       },
     },
     watch: {
-      ignored: [
-        '**/node_modules/**',
-        '**/dist/**',
-        '**/build/**',
-        'src/viz/wasm/**',
-        'backend/**',
-        '**/.svelte-kit/**',
-        '**/.git/**',
-        'geoscript_backend/**',
-      ],
+      ignored: p =>
+        /[\\/](?:node_modules|\.git|\.svelte-kit|dist|build)(?:[\\/]|$)/.test(p) ||
+        /[\\/](?:backend|geoscript_backend)(?:[\\/]|$)/.test(p) ||
+        /[\\/]src[\\/]viz[\\/]wasm(?:[\\/]|$)/.test(p),
     },
   },
   optimizeDeps: {

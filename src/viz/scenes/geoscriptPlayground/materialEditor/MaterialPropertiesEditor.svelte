@@ -26,8 +26,6 @@
     me: User | undefined | null;
   } = $props();
 
-  // Non-destructive: flip the discriminant, keeping all fields (ignored by the inactive type, restored
-  // on toggle-back). For →physical, ensure props/options exist so MaterialForm binds safely.
   const convertType = (to: 'customShader' | 'customBasicShader') => {
     if (to === material.type) return;
     if (to === 'customBasicShader') {
@@ -60,4 +58,4 @@
   />
 {/snippet}
 
-<MaterialForm {material} {host} bind:showAdvanced {textureSlot} />
+<MaterialForm bind:material {host} bind:showAdvanced {textureSlot} />

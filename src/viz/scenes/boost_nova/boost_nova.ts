@@ -11,6 +11,7 @@ import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { initWebSynth } from 'src/viz/webSynth';
 import { delay } from 'src/viz/util/util';
+import { gradientBackground, HorizonMode, SkyStack } from 'src/viz/SkyStack';
 
 const locations = {
   spawn: {
@@ -36,8 +37,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   dashToken.add(dashTokenCore, dashTokenRing);
   loadedWorld.add(dashToken);
 
-  const playerHeight = 2.2;
-  const playerRadius = 0.5;
+  const playerHeight = 2.5;
+  const playerRadius = 0.7;
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     buildCustomShader({
@@ -103,31 +104,35 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     'jump_pad_speedup_test',
     true,
     {
-      gravity: 80,
+      gravity: 200,
       gravityShaping: {
         riseMultiplier: 1.0,
-        apexMultiplier: 1.4,
-        fallMultiplier: 1.5,
+        apexMultiplier: 0.6,
+        fallMultiplier: 1.2,
         apexThreshold: 4.0,
         kneeWidth: 0.1,
       },
       player: {
         playerColliderShape: 'capsule',
         mesh: playerMesh,
-        moveSpeed: { onGround: 15, inAir: 20 },
-        jumpVelocity: 30,
-        terminalVelocity: 80,
+        colliderSize: { height: playerHeight, radius: playerRadius },
+        playerShadow: { radius: playerRadius, intensity: 0.85 },
+        moveSpeed: { onGround: 18.9, inAir: 21.6 },
+        jumpVelocity: 66,
+        terminalVelocity: 180,
         dashConfig: {
           enable: true,
           chargeConfig: { curCharges: rwritable(Infinity) },
-          dashMagnitude: 40,
+          dashMagnitude: 60,
           useExternalVelocity: true,
           minDashDelaySeconds: 0.3,
           directionMode: 'vertical-up',
           cancelFallVelocity: true,
           verticalUseJump: false,
         },
-        coyoteTimeSeconds: 0.1,
+        coyoteTimeSeconds: 0.125,
+        externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
+        maxSlopeRadians: 1.4,
         boostArmLeniencySeconds: 0.1,
         externalVelocityAirIdleDampingFactor: new THREE.Vector3(0.92, 0.92, 0.92),
       },
@@ -166,10 +171,45 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     }
   });
 
+  const skyStack = new SkyStack(
+    viz,
+    {
+      horizonOffset: -0.038,
+      horizonBlend: 0.03,
+      layers: [],
+      background: gradientBackground({
+        stops: [
+          { position: 0.0, color: 0x8c9db1 },
+          { position: 0.489, color: 0xaabac9 },
+          { position: 0.676, color: 0xbfc4c6 },
+          { position: 0.768, color: 0xc8c2bb },
+          { position: 0.856, color: 0xcbb5a5 },
+          { position: 0.905, color: 0xc5a597 },
+          { position: 0.944, color: 0xb29790 },
+          { position: 1.0, color: 0x828283 },
+        ]
+          .map(({ position, color }) => ({ position: 1 - position, color }))
+          .reverse(),
+        horizonMode: HorizonMode.SolidBelow,
+        belowColor: 0x060301,
+        lutResolution: {
+          [GraphicsQuality.Low]: 32,
+          [GraphicsQuality.Medium]: 64,
+          [GraphicsQuality.High]: 128,
+        }[vizConf.graphics.quality],
+      }),
+    },
+    viz.renderer.domElement.width,
+    viz.renderer.domElement.height
+  );
+
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
+    emissiveBloom: {},
+    emissiveBypass: true,
     // autoUpdateShadowMap: true,
+    skyStack,
     pomExitBuffers: true,
     addMiddlePasses: (composer, viz, quality) => {
       let n8aoPass: typeof N8AOPostPass | null = null;

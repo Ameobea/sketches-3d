@@ -39,7 +39,7 @@
           "material": "__ASSETS__/materials/parkour/boost_strip_active",
           "parkour": {
             "boostSurface": {
-              "targetSpeed": 32,
+              "targetSpeed": 38,
               "jumpRetention": 0.8,
               "rampUpSeconds": 0.07
             }

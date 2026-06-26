@@ -9,7 +9,7 @@
   import type { MaterialEditorHost, PhysicalMaterialTextureField } from './host';
 
   let {
-    material,
+    material = $bindable(),
     host,
     showAdvanced = $bindable(),
     textureSlot,
@@ -126,7 +126,11 @@
       label="oren-nayar diffuse"
       help="Rough-matte diffuse for direct lights (plaster, concrete, sand, clay): flatter terminator, slight grazing retroreflection. Driven by roughness; no-op at roughness 0. Indirect/ambient fill stays Lambert."
     >
-      <input type="checkbox" bind:checked={cs.options.useOrenNayarDiffuse} />
+      <input
+        type="checkbox"
+        checked={cs.options.useOrenNayarDiffuse ?? true}
+        onchange={e => (cs.options.useOrenNayarDiffuse = (e.target as HTMLInputElement).checked)}
+      />
     </FormField>
     <FormField label="env intensity">
       <input
