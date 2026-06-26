@@ -13,14 +13,19 @@ import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './type
 import type {
   GeotoyCompositionAssetDef,
   GeotoyCompositionAssetDefRaw,
+  GeotoyMaterialDefRaw,
   LevelDef,
+  MaterialDef,
   ObjectDef,
   ObjectGroupDef,
+  TextureDef,
 } from './types';
 import {
   getCompositionLatest,
   getCompositionVersion,
   getGeotoyAPIBaseURL,
+  getMaterial,
+  getMultipleTextures,
   isTreeDefV1,
 } from 'src/geoscript/geotoyAPIClient';
 
@@ -127,6 +132,87 @@ const resolveCompositionAsset = async (
   return resolved;
 };
 
+/** Texture-bearing slots of a customShader def + their sampler semantics. Geotoy handles in these
+ *  slots are texture ids; everything else (base color is the only sRGB slot) samples linearly. */
+const GEOTOY_TEXTURE_SLOTS: Record<string, Partial<TextureDef>> = {
+  map: { colorSpace: 'srgb' },
+  normalMap: {},
+  roughnessMap: {},
+  metalnessMap: {},
+  clearcoatNormalMap: {},
+  pomHeightMap: { format: 'red' },
+};
+
+const geotoyTextureKey = (texId: number, cfg: Partial<TextureDef>): string =>
+  `__geotoy__/${texId}${cfg.colorSpace === 'srgb' ? '/srgb' : ''}${cfg.format ? `/${cfg.format}` : ''}`;
+
+/**
+ * Resolves a `geotoyMaterial` ref by fetching its def from the geotoy backend and inlining it, so
+ * the client receives a fully level-native material. Geotoy texture-id handles are resolved to CDN
+ * URLs and registered as synthesized level `textures` entries (slot-aware colorSpace/format); the
+ * material's handles are rewritten to those keys. Private materials resolve via `GEOTOY_ADMIN_TOKEN`.
+ */
+const resolveGeotoyMaterial = async (
+  matId: string,
+  ref: GeotoyMaterialDefRaw,
+  synthesized: Record<string, TextureDef>
+): Promise<MaterialDef> => {
+  const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
+  const baseUrl = getGeotoyAPIBaseURL();
+  let def: MaterialDef;
+  try {
+    def = (await getMaterial(ref.materialId, globalThis.fetch, adminToken, baseUrl)).materialDefinition;
+  } catch (err) {
+    throw new Error(
+      `[loadLevelData] Failed to resolve geotoyMaterial "${matId}" (material ${ref.materialId}): ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const storedType: string = def.type;
+  if (storedType === 'customBasicShader') return def;
+  if (storedType !== 'customShader') {
+    throw new Error(
+      `[loadLevelData] geotoyMaterial "${matId}" (material ${ref.materialId}) has unsupported stored type "${storedType}" — expected the unified customShader/customBasicShader shape`
+    );
+  }
+
+  const props: Record<string, unknown> = { ...(def.props ?? {}) };
+  const slotRefs: { slot: string; texId: number; cfg: Partial<TextureDef> }[] = [];
+  for (const [slot, cfg] of Object.entries(GEOTOY_TEXTURE_SLOTS)) {
+    const handle = props[slot];
+    if (typeof handle === 'string' && handle !== '') slotRefs.push({ slot, texId: Number(handle), cfg });
+  }
+  if (slotRefs.length === 0) return def;
+
+  let descriptors;
+  try {
+    const ids = [...new Set(slotRefs.map(r => r.texId))];
+    descriptors = await getMultipleTextures(ids, globalThis.fetch, adminToken, baseUrl);
+  } catch (err) {
+    throw new Error(
+      `[loadLevelData] geotoyMaterial "${matId}" (material ${ref.materialId}) texture resolution failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+  const byId = new Map(descriptors.map(d => [d.id, d]));
+  for (const { slot, texId, cfg } of slotRefs) {
+    const tex = byId.get(texId);
+    if (!tex) {
+      throw new Error(
+        `[loadLevelData] geotoyMaterial "${matId}" (material ${ref.materialId}) references missing texture id ${texId} (slot "${slot}")`
+      );
+    }
+    const key = geotoyTextureKey(texId, cfg);
+    synthesized[key] = {
+      url: tex.url,
+      magFilter: 'linear',
+      minFilter: 'linearMipLinear',
+      anisotropy: 16,
+      ...cfg,
+    };
+    props[slot] = key;
+  }
+  return { ...def, props } as MaterialDef;
+};
+
 /**
  * Reads a level definition from `<levelsDir>/<name>/def.json`, merges any
  * optional `materials.json` and `objects.json` sidecar files, auto-discovers
@@ -198,8 +284,10 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     ? flattenMaterialExtends(withLibrary.materials)
     : withLibrary.materials;
 
-  const resolvedAssets = Object.fromEntries(
-    await Promise.all(
+  // Asset + material resolution are independent and both make geotoy-backend round-trips; overlap them.
+  const synthesizedTextures: Record<string, TextureDef> = {};
+  const [resolvedAssets, resolvedMaterials] = await Promise.all([
+    Promise.all(
       Object.entries(withLibrary.assets).map(async ([assetId, assetDef]) => {
         if (assetDef.type === 'geoscript' && 'file' in assetDef) {
           const codePath = assetDef.file.startsWith('__ASSETS__/')
@@ -214,26 +302,35 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
         }
         return [assetId, assetDef];
       })
-    )
-  );
-
-  const resolvedMaterials = flatMaterials
-    ? Object.fromEntries(
-        Object.entries(flatMaterials).map(([matId, matDef]) => {
-          if (matDef.type !== 'customShader' || !matDef.shaders) return [matId, matDef];
-          const shaders = { ...matDef.shaders };
-          for (const field of SHADER_GLSL_FIELDS) {
-            const val = shaders[field];
-            if (val !== null && typeof val === 'object' && 'file' in val) {
-              shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
+    ).then(Object.fromEntries),
+    flatMaterials
+      ? Promise.all(
+          Object.entries(flatMaterials).map(async ([matId, matDef]) => {
+            if (matDef.type === 'geotoyMaterial')
+              return [matId, await resolveGeotoyMaterial(matId, matDef, synthesizedTextures)];
+            if (matDef.type !== 'customShader' || !matDef.shaders) return [matId, matDef];
+            const shaders = { ...matDef.shaders };
+            for (const field of SHADER_GLSL_FIELDS) {
+              const val = shaders[field];
+              if (val !== null && typeof val === 'object' && 'file' in val) {
+                shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
+              }
             }
-          }
-          return [matId, { ...matDef, shaders }];
-        })
-      )
-    : flatMaterials;
+            return [matId, { ...matDef, shaders }];
+          })
+        ).then(Object.fromEntries)
+      : Promise.resolve(flatMaterials),
+  ]);
 
-  const inlinedDef = { ...withLibrary, assets: resolvedAssets, materials: resolvedMaterials };
+  const mergedTextures = Object.keys(synthesizedTextures).length
+    ? { ...withLibrary.textures, ...synthesizedTextures }
+    : withLibrary.textures;
+  const inlinedDef = {
+    ...withLibrary,
+    assets: resolvedAssets,
+    materials: resolvedMaterials,
+    textures: mergedTextures,
+  };
 
   const result = LevelDefSchema.safeParse(inlinedDef);
   if (!result.success) {

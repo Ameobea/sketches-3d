@@ -41,7 +41,7 @@ import { replaceLeafInstance } from './editorStructuralOps';
 import { buildCompositionChild } from './editorNodeFactory';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
-import { buildMaterial, stampMaterialMetaUserData } from './buildMaterial';
+import { buildMaterial, stampMaterialMetaUserData } from 'src/viz/materials';
 import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
 import { generateGradientEnvironment, loadEnvironment } from 'src/viz/textureLoading';
 import { extractHullInputVertices, type CollisionMeshOverride } from '../collisionShapes';

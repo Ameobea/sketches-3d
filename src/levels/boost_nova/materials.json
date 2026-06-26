@@ -27,6 +27,10 @@
     }
   },
   "materials": {
+    "geotoy_slate": {
+      "type": "geotoyMaterial",
+      "materialId": 7
+    },
     "plain_strip_mat": {
       "type": "customShader",
       "props": {

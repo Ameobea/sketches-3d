@@ -90,19 +90,11 @@ export const saveTreeToLocal = (tree: TreeDef, userData: GeoscriptPlaygroundUser
 export const getServerTree = (userData: GeoscriptPlaygroundUserData | undefined): TreeDef | null =>
   userData?.initialComposition?.version.tree ?? null;
 
-const patchMaterials = (materials: MaterialDefinitions): MaterialDefinitions => {
-  const patchedMats: typeof materials.materials = {};
-  let hadMatPatches = false;
-  for (const [key, mat] of Object.entries(materials.materials)) {
-    if (mat.textureMapping?.type === 'uv' && mat.textureMapping.enableUVIslandRotation === undefined) {
-      patchedMats[key] = { ...mat, textureMapping: { ...mat.textureMapping, enableUVIslandRotation: true } };
-      hadMatPatches = true;
-    } else {
-      patchedMats[key] = mat;
-    }
-  }
-  return hadMatPatches ? { ...materials, materials: patchedMats } : materials;
-};
+/** Pre-unification `physical`/`basic` drafts can't be read by the shared build path; discard them. */
+const isLegacyMaterials = (m: MaterialDefinitions): boolean =>
+  Object.values(m?.materials ?? {}).some(
+    d => (d as { type?: string }).type === 'physical' || (d as { type?: string }).type === 'basic'
+  );
 
 export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
   const suffix = getLocalStorageKeySuffix(userData);
@@ -126,7 +118,8 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   let materials: MaterialDefinitions;
   if (savedMaterialsRaw) {
     try {
-      materials = JSON.parse(savedMaterialsRaw);
+      const parsed = JSON.parse(savedMaterialsRaw);
+      materials = isLegacyMaterials(parsed) ? (serverMaterials ?? buildDefaultMaterialDefinitions()) : parsed;
     } catch (err) {
       console.warn('Error parsing saved material definitions:', err);
       materials = serverMaterials ?? buildDefaultMaterialDefinitions();
@@ -134,7 +127,6 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   } else {
     materials = serverMaterials ?? buildDefaultMaterialDefinitions();
   }
-  materials = patchMaterials(materials);
 
   let view: CompositionVersionMetadata['view'] = serverView ?? DefaultView;
   if (savedView) {

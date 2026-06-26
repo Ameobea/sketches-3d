@@ -62,7 +62,8 @@ export const buildCustomMaterials = (
     onError(msgs.length ? msgs.join('\n\n') : null);
   };
   const recordError = (def: MaterialDef, e: unknown) => {
-    errorsById[def.name] = `Material "${def.name}": ${e instanceof Error ? e.message : String(e)}`;
+    const name = def.name ?? 'material';
+    errorsById[name] = `Material "${name}": ${e instanceof Error ? e.message : String(e)}`;
   };
 
   // TODO: needs hashing to avoid re-building materials that haven't changed
@@ -80,17 +81,18 @@ export const buildCustomMaterials = (
     };
 
     const maybeRegisterBeforeRenderCb = (mat: THREE.Material) => {
-      if (
-        !(mat instanceof CustomShaderMaterial || mat instanceof CustomBasicShaderMaterial) ||
-        !def.shaders
-      ) {
+      if (!(mat instanceof CustomShaderMaterial || mat instanceof CustomBasicShaderMaterial)) {
+        return;
+      }
+      if (def.type !== 'customShader' || !def.shaders) {
         return;
       }
 
       if (
-        def.shaders.color ||
-        (def.type === 'physical' &&
-          (def.shaders.iridescence || def.shaders.metalness || def.shaders.roughness))
+        def.shaders.colorShader ||
+        def.shaders.iridescenceShader ||
+        def.shaders.metalnessShader ||
+        def.shaders.roughnessShader
       ) {
         const beforeRenderCb = (curTimeSeconds: number) => mat.setCurTimeSeconds(curTimeSeconds);
         viz.registerBeforeRenderCb(beforeRenderCb);
@@ -122,27 +124,21 @@ export const buildCustomMaterials = (
 export const getReferencedTextureIDs = (materials: Record<string, MaterialDef>): TextureID[] => {
   const textureIDs: TextureID[] = [];
   for (const mat of Object.values(materials)) {
-    if (mat.type === 'basic') {
+    if (mat.type !== 'customShader' || !mat.props) {
       continue;
     }
-
-    if (mat.map) {
-      textureIDs.push(mat.map);
-    }
-    if (mat.normalMap) {
-      textureIDs.push(mat.normalMap);
-    }
-    if (mat.roughnessMap) {
-      textureIDs.push(mat.roughnessMap);
-    }
-    if (mat.metalnessMap) {
-      textureIDs.push(mat.metalnessMap);
-    }
-    if (mat.clearcoatNormalMap) {
-      textureIDs.push(mat.clearcoatNormalMap);
-    }
-    if (mat.pomHeightMap) {
-      textureIDs.push(mat.pomHeightMap);
+    const p = mat.props;
+    for (const handle of [
+      p.map,
+      p.normalMap,
+      p.roughnessMap,
+      p.metalnessMap,
+      p.clearcoatNormalMap,
+      p.pomHeightMap,
+    ]) {
+      if (handle != null) {
+        textureIDs.push(Number(handle));
+      }
     }
   }
   return textureIDs;

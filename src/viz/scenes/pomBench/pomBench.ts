@@ -17,7 +17,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
-import { buildMaterial } from 'src/viz/levelDef/buildMaterial';
+import { buildMaterial } from 'src/viz/materials';
 import type { MaterialDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
 import boostNovaMaterials from 'src/levels/boost_nova/materials.json';

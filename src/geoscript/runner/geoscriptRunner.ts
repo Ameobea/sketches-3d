@@ -189,15 +189,16 @@ export const runGeoscript = async ({
     const { def: matDef, mat: mat } = matLookup;
 
     const uvUnwrapParams = (() => {
-      if (!!overrideMat || matDef?.textureMapping?.type !== 'uv') {
+      const unwrap = matDef?.type === 'customShader' ? matDef.meshUvUnwrap : undefined;
+      if (!!overrideMat || !unwrap) {
         return null;
       }
 
       return {
-        nCones: matDef.textureMapping.numCones,
-        flattenToDisk: matDef.textureMapping.flattenToDisk,
-        mapToSphere: matDef.textureMapping.mapToSphere,
-        enableUVIslandRotation: matDef.textureMapping.enableUVIslandRotation,
+        nCones: unwrap.numCones,
+        flattenToDisk: unwrap.flattenToDisk,
+        mapToSphere: unwrap.mapToSphere,
+        enableUVIslandRotation: unwrap.enableUVIslandRotation,
       };
     })();
 

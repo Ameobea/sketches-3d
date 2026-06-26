@@ -87,6 +87,9 @@
                 "type": "string",
                 "const": "customShader"
               },
+              "name": {
+                "type": "string"
+              },
               "props": {
                 "type": "object",
                 "properties": {
@@ -363,6 +366,9 @@
                   "useNoise2": {
                     "type": "boolean"
                   },
+                  "useOrenNayarDiffuse": {
+                    "type": "boolean"
+                  },
                   "materialClass": {
                     "type": "string",
                     "enum": [
@@ -506,8 +512,7 @@
                       }
                     },
                     "required": [
-                      "depth",
-                      "steps"
+                      "depth"
                     ],
                     "additionalProperties": false
                   }
@@ -1337,6 +1342,32 @@
                 },
                 "additionalProperties": false
               },
+              "meshUvUnwrap": {
+                "type": "object",
+                "properties": {
+                  "numCones": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "flattenToDisk": {
+                    "type": "boolean"
+                  },
+                  "mapToSphere": {
+                    "type": "boolean"
+                  },
+                  "enableUVIslandRotation": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "numCones",
+                  "flattenToDisk",
+                  "mapToSphere",
+                  "enableUVIslandRotation"
+                ],
+                "additionalProperties": false
+              },
               "externalVelocityAirDampingFactor": {
                 "type": "array",
                 "items": [
@@ -1380,6 +1411,9 @@
               "type": {
                 "type": "string",
                 "const": "customBasicShader"
+              },
+              "name": {
+                "type": "string"
               },
               "props": {
                 "type": "object",
@@ -1558,6 +1592,25 @@
             },
             "required": [
               "type"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "const": "geotoyMaterial"
+              },
+              "materialId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "type",
+              "materialId"
             ],
             "additionalProperties": false
           }

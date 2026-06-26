@@ -478,7 +478,8 @@ export const createTextureFromURL = (
 export const getMultipleTextures = (
   ids: TextureID[],
   fetch: typeof globalThis.fetch = globalThis.fetch,
-  adminToken?: string
+  adminToken?: string,
+  baseUrl?: string
 ): Promise<TextureDescriptor[]> => {
   const searchParams = new URLSearchParams();
   for (const id of ids) {
@@ -487,7 +488,13 @@ export const getMultipleTextures = (
   if (adminToken) {
     searchParams.set('admin_token', adminToken);
   }
-  return apiFetch<TextureDescriptor[]>(`/textures/multiple?${searchParams.toString()}`, {}, fetch);
+  return apiFetch<TextureDescriptor[]>(
+    `/textures/multiple?${searchParams.toString()}`,
+    {},
+    fetch,
+    false,
+    baseUrl
+  );
 };
 
 export const listMaterials = (
@@ -516,12 +523,15 @@ export const createMaterial = (
 export const getMaterial = (
   id: number,
   fetch: typeof globalThis.fetch = globalThis.fetch,
-  adminToken?: string
+  adminToken?: string,
+  baseUrl?: string
 ): Promise<MaterialDescriptor> =>
   apiFetch<MaterialDescriptor>(
     `/materials/${id}${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
     {},
-    fetch
+    fetch,
+    false,
+    baseUrl
   );
 
 export const updateMaterial = (

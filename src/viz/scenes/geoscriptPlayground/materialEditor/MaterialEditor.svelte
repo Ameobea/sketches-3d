@@ -5,16 +5,16 @@
 
   import MaterialPropertiesEditor from './MaterialPropertiesEditor.svelte';
   import {
-    type BasicMaterialDef,
     buildDefaultMaterial,
+    type CustomShaderMatDef,
     type MaterialDefinitions,
     type MaterialID,
-    type PhysicalMaterialDef,
     type PhysicalMaterialTextureField,
   } from 'src/geoscript/materials';
   import TexturePicker from './TexturePicker.svelte';
   import TextureUploader from './TextureUploader.svelte';
-  import ShaderEditor from './ShaderEditor.svelte';
+  import ShaderEditor from 'src/viz/materials/ui/ShaderEditor.svelte';
+  import { type ShaderSlots, sharedToSlots, slotsToShared } from 'src/viz/materials/ui/shaderSlots';
   import { makeDraggable, uuidv4 } from './util';
   import UvViewer from './UVViewer.svelte';
 
@@ -204,13 +204,13 @@
         {/if}
       {:else if selectedMaterialID !== null && !!materials.materials[selectedMaterialID]}
         {#if view.type === 'texture_picker'}
-          {#if materials.materials[selectedMaterialID].type === 'physical'}
-            {@const mat = materials.materials[selectedMaterialID] as PhysicalMaterialDef}
+          {#if materials.materials[selectedMaterialID].type === 'customShader'}
+            {@const mat = materials.materials[selectedMaterialID] as CustomShaderMatDef}
             {@const field = view.field}
             <TexturePicker
-              selectedTextureId={mat[field]}
+              selectedTextureId={mat.props?.[field] != null ? Number(mat.props[field]) : undefined}
               onselect={newTextureID => {
-                mat[field] = newTextureID ?? undefined;
+                (mat.props ??= {})[field] = newTextureID != null ? String(newTextureID) : undefined;
               }}
               onclose={() => {
                 view = { type: 'properties' };
@@ -222,8 +222,8 @@
             />
           {/if}
         {:else if view.type === 'texture_uploader'}
-          {#if materials.materials[selectedMaterialID].type === 'physical'}
-            {@const mat = materials.materials[selectedMaterialID] as PhysicalMaterialDef}
+          {#if materials.materials[selectedMaterialID].type === 'customShader'}
+            {@const mat = materials.materials[selectedMaterialID] as CustomShaderMatDef}
             {@const field = view.field}
             <TextureUploader
               onclose={() => {
@@ -233,50 +233,41 @@
                 if (selectedMaterialID === null) {
                   return;
                 }
-
-                if (materials.materials[selectedMaterialID].type === 'physical') {
-                  mat[field] = texture.id;
-                }
+                (mat.props ??= {})[field] = String(texture.id);
                 view = { type: 'properties' };
               }}
             />
           {/if}
         {:else if view.type === 'shader_editor'}
-          {@const state =
-            materials.materials[selectedMaterialID].type === 'physical'
-              ? {
-                  type: 'physical' as const,
-                  shaders: (materials.materials[selectedMaterialID] as PhysicalMaterialDef).shaders,
-                }
-              : {
-                  type: 'basic' as const,
-                  shaders: (materials.materials[selectedMaterialID] as BasicMaterialDef).shaders,
-                }}
-          {@const onchange = (newState: typeof state) => {
+          {@const mat = materials.materials[selectedMaterialID] as CustomShaderMatDef}
+          {@const state = { type: 'physical' as const, shaders: sharedToSlots(mat.shaders) }}
+          {@const onchange = (newState: { type: 'physical' | 'basic'; shaders: ShaderSlots }) => {
             if (selectedMaterialID === null) {
               return;
             }
-
-            materials.materials[selectedMaterialID].shaders = newState.shaders;
+            const m = materials.materials[selectedMaterialID];
+            if (m.type !== 'customShader') {
+              return;
+            }
+            m.shaders = slotsToShared(m.shaders, newState.shaders);
           }}
           <ShaderEditor
             {state}
             {onchange}
-            pomEnabled={materials.materials[selectedMaterialID].type === 'physical' &&
-              !!(materials.materials[selectedMaterialID] as PhysicalMaterialDef).pom}
+            pomEnabled={!!mat.options?.pom}
             onclose={() => {
               view = { type: 'properties' };
             }}
           />
         {:else if ctxPtr !== null && view.type === 'uv_viewer'}
-          {#if materials.materials[selectedMaterialID]?.type === 'physical' && materials.materials[selectedMaterialID].textureMapping?.type === 'uv'}
+          {#if materials.materials[selectedMaterialID]?.type === 'customShader' && !!(materials.materials[selectedMaterialID] as CustomShaderMatDef).meshUvUnwrap}
             <UvViewer
               onclose={() => {
                 view = { type: 'properties' };
               }}
               {repl}
               {ctxPtr}
-              matDef={materials.materials[selectedMaterialID] as PhysicalMaterialDef}
+              matDef={materials.materials[selectedMaterialID] as CustomShaderMatDef}
               {rerun}
             />
           {:else}

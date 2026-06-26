@@ -4,15 +4,10 @@
   import type { KeyBinding } from '@codemirror/view';
   import { untrack } from 'svelte';
   import { buildEditor, buildGLSLLanguage } from 'src/geoscript/editor';
-  import {
-    buildDefaultShaders,
-    type BasicMaterialDef,
-    type PhysicalMaterialDef,
-  } from 'src/geoscript/materials';
+  import { buildDefaultShaders } from 'src/geoscript/geotoyMaterialConvert';
+  import type { ShaderSlots } from './shaderSlots';
 
-  type State =
-    | { type: 'physical'; shaders: PhysicalMaterialDef['shaders'] }
-    | { type: 'basic'; shaders: BasicMaterialDef['shaders'] };
+  type State = { type: 'physical' | 'basic'; shaders: ShaderSlots };
 
   let {
     state: shaderState,
@@ -29,15 +24,7 @@
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
 
-  type ShaderName =
-    | 'color'
-    | 'common'
-    | 'lightAttenuation'
-    | 'roughness'
-    | 'metalness'
-    | 'iridescence'
-    | 'pomHeight'
-    | 'pomNormal';
+  type ShaderName = keyof ShaderSlots;
 
   const shaderList = $derived<readonly ShaderName[]>(
     shaderState.type === 'basic'

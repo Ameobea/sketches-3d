@@ -4,8 +4,8 @@
 
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
   import { buildUVUnwrapDistortionSVG, initUVUnwrap } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
-  import type { MaterialDef } from 'src/geoscript/materials';
-  import UvPropertiesEditor from './UVPropertiesEditor.svelte';
+  import type { CustomShaderMatDef } from 'src/geoscript/materials';
+  import UvPropertiesEditor from 'src/viz/materials/ui/UvPropertiesEditor.svelte';
 
   let {
     onclose,
@@ -17,7 +17,7 @@
     onclose: () => void;
     repl: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number;
-    matDef: Extract<MaterialDef, { type: 'physical' }>;
+    matDef: CustomShaderMatDef;
     rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => Promise<void>;
   } = $props();
 
@@ -36,7 +36,7 @@
     try {
       errorMessage = null;
       // check to see if meshes have been removed
-      meshIndices = await repl.getRenderedMeshIndicesWithMaterial(ctxPtr, matDef.name);
+      meshIndices = await repl.getRenderedMeshIndicesWithMaterial(ctxPtr, matDef.name ?? '');
       if (meshIndices.length === 0) {
         selectedMeshIx = null;
         return;
@@ -54,10 +54,10 @@
         return;
       }
 
-      if (matDef.textureMapping?.type !== 'uv') {
+      if (!matDef.meshUvUnwrap) {
         throw new Error('material passed here should always have a uv texture mapping');
       }
-      const { numCones: nCones, flattenToDisk, mapToSphere, enableUVIslandRotation } = matDef.textureMapping;
+      const { numCones: nCones, flattenToDisk, mapToSphere, enableUVIslandRotation } = matDef.meshUvUnwrap;
 
       const { verts, indices } = await repl.getRenderedMesh(ctxPtr, selectedMeshIx);
 

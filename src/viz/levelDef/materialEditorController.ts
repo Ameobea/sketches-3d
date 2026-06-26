@@ -4,7 +4,7 @@ import { mount, unmount } from 'svelte';
 import type { LevelDef, MaterialDef } from './types';
 import type { LevelObject } from './loadLevelDef';
 import type { LevelEditorApi } from './levelEditorApi';
-import { buildMaterial } from './buildMaterial';
+import { buildMaterial } from 'src/viz/materials';
 import { LEVEL_PLACEHOLDER_MAT, assignMaterial } from './levelObjectUtils';
 import LevelMaterialEditor from './LevelMaterialEditor.svelte';
 

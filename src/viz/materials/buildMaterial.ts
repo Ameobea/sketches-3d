@@ -16,7 +16,7 @@ import type {
   ShaderPropsJson,
   ShaderOptionsJson,
   ShaderShadersJson,
-} from './types';
+} from './schema';
 
 const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
   front: THREE.FrontSide,

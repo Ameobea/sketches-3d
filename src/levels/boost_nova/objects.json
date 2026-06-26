@@ -104,6 +104,14 @@
           "scale": [1, 1, 1]
         },
         {
+          "id": "geotoy_slate_test_pad",
+          "asset": "plat",
+          "material": "geotoy_slate",
+          "position": [105, -2.563, 5.225],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
           "id": "chevron_strips_test_pad",
           "asset": "plat",
           "material": "__ASSETS__/materials/procedural/chevron_strips",

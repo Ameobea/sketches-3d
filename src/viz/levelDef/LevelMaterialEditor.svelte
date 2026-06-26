@@ -1,8 +1,10 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import type { MaterialDef, ShaderPropsJson, ShaderOptionsJson } from './types';
-  import { hexIntToStr, hexStrToInt } from './colorUtils';
-  import FormField from 'src/viz/scenes/geoscriptPlayground/materialEditor/FormField.svelte';
+  import type { MaterialDef } from './types';
+  import MaterialForm from 'src/viz/materials/ui/MaterialForm.svelte';
+  import ShaderEditor from 'src/viz/materials/ui/ShaderEditor.svelte';
+  import { sharedToSlots, slotsToShared } from 'src/viz/materials/ui/shaderSlots';
+  import type { MaterialEditorHost, PhysicalMaterialTextureField } from 'src/viz/materials/ui/host';
 
   interface Props {
     materials: Record<string, MaterialDef>;
@@ -20,50 +22,74 @@
   export const setSelectedId = (id: string | null) => {
     selectedId = id;
   };
+
+  let view = $state<'properties' | 'shader_editor'>('properties');
+  let showAdvanced = $state(false);
   let nameInputMode = $state<'none' | 'new' | 'clone'>('none');
   let nameInputValue = $state('');
-  let advancedOpen = $state(false);
+
   let localDef = $state<MaterialDef | null>(null);
+  let suppressEmit = false;
 
   $effect(() => {
     if (selectedId && materials[selectedId]) {
-      localDef = structuredClone(materials[selectedId]) as MaterialDef;
+      suppressEmit = true;
+      // Ensure the shape MaterialForm binds against exists before it mounts (avoids a render-time
+      // crash on materials lacking props/options) — done here under suppressEmit so it's not a save.
+      const snap = $state.snapshot(materials[selectedId]) as MaterialDef;
+      if (snap.type === 'customShader') {
+        snap.props ??= {};
+        snap.options ??= {};
+        snap.props.uvScale ??= [1, 1];
+      }
+      localDef = snap;
     } else {
       localDef = null;
     }
   });
 
-  const emit = () => {
-    if (selectedId && localDef) {
-      onchange(selectedId, $state.snapshot(localDef) as MaterialDef);
+  $effect(() => {
+    const snap = $state.snapshot(localDef);
+    if (!localDef || !selectedId) return;
+    if (suppressEmit) {
+      suppressEmit = false;
+      return;
+    }
+    onchange(selectedId, snap as MaterialDef);
+  });
+
+  const convertType = (to: 'customShader' | 'customBasicShader') => {
+    const cur = localDef;
+    if (!cur || cur.type === 'generated' || to === cur.type) return;
+    if (to === 'customBasicShader') {
+      localDef = { ...cur, type: 'customBasicShader' } as MaterialDef;
+    } else {
+      const props: Record<string, unknown> = { ...(cur.props ?? {}) };
+      props.uvScale ??= [1, 1];
+      localDef = { ...cur, type: 'customShader', props, options: cur.options ?? {} } as MaterialDef;
     }
   };
 
-  const ensureProps = (): ShaderPropsJson => {
-    if (!localDef || localDef.type !== 'customShader') throw new Error('unreachable');
-    if (!localDef.props) localDef.props = {};
-    return localDef.props;
-  };
-
-  const ensureOpts = (): ShaderOptionsJson => {
-    if (!localDef || localDef.type !== 'customShader') throw new Error('unreachable');
-    if (!localDef.options) localDef.options = {};
-    return localDef.options;
-  };
-
-  const colorStr = (c: number | undefined): string => (c !== undefined ? hexIntToStr(c) : '#808080');
+  let host = $derived<MaterialEditorHost>({
+    showName: false,
+    showSaveToLibrary: false,
+    showUvUnwrap: false,
+    showLevelProps: true,
+    onpicktexture: () => {},
+    onconverttype: convertType,
+    oneditshaders: () => (view = 'shader_editor'),
+    onviewuvmappings: () => {},
+    onsavetolibrary: () => {},
+    rerun: () => {},
+  });
 
   const confirmName = () => {
     const name = nameInputValue.trim();
     if (!name || materials[name]) return;
-
-    let newDef: MaterialDef;
-    if (nameInputMode === 'clone' && selectedId && materials[selectedId]) {
-      newDef = structuredClone(materials[selectedId]) as MaterialDef;
-    } else {
-      newDef = { type: 'customShader' };
-    }
-
+    const newDef: MaterialDef =
+      nameInputMode === 'clone' && selectedId && materials[selectedId]
+        ? ($state.snapshot(materials[selectedId]) as MaterialDef)
+        : { type: 'customShader' };
     nameInputMode = 'none';
     nameInputValue = '';
     onadd(name, newDef);
@@ -85,423 +111,91 @@
     nameInputMode = 'clone';
   };
 
-  const handleDelete = () => {
-    if (!selectedId) return;
-    ondelete(selectedId);
-  };
-
   const handleKeyDown = (e: KeyboardEvent) => {
     if (e.key === 'Enter') confirmName();
     else if (e.key === 'Escape') cancelName();
   };
-
-  // Texture select helper
-  const setTexture = (key: keyof ShaderPropsJson, val: string) => {
-    (ensureProps() as any)[key] = val === '' ? undefined : val;
-    emit();
-  };
-
-  // Tile breaking type
-  const tileBreakingType = (o: ShaderOptionsJson): string => {
-    if (!o.tileBreaking) return '';
-    return o.tileBreaking.type;
-  };
-
-  const setTileBreaking = (val: string) => {
-    const o = ensureOpts();
-    if (val === '') {
-      o.tileBreaking = undefined;
-    } else {
-      o.tileBreaking = { type: 'neyret', patchScale: 1.0 };
-    }
-    emit();
-  };
 </script>
+
+{#snippet textureSlot({
+  handle,
+  set,
+}: {
+  field: PhysicalMaterialTextureField;
+  handle: string | undefined;
+  set: (h: string | undefined) => void;
+})}
+  <select value={handle ?? ''} onchange={e => set((e.target as HTMLSelectElement).value || undefined)}>
+    <option value="">(none)</option>
+    {#each textureKeys as k}
+      <option value={k}>{k}</option>
+    {/each}
+  </select>
+{/snippet}
 
 <div class="mat-editor">
   <div class="header">■ MATERIAL EDITOR</div>
 
-  <div class="body">
-    <!-- Left column: material list -->
-    <div class="mat-list">
-      {#each Object.keys(materials) as id (id)}
-        <button class="mat-item" class:active={id === selectedId} onclick={() => (selectedId = id)}>
-          {id}
-        </button>
-      {/each}
-
-      {#if nameInputMode !== 'none'}
-        <div class="name-input-row">
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="name-input"
-            type="text"
-            bind:value={nameInputValue}
-            onkeydown={handleKeyDown}
-            placeholder={nameInputMode === 'clone' ? 'clone name...' : 'new name...'}
-            autofocus
-          />
-          <button class="confirm-btn" onclick={confirmName} title="Confirm">✓</button>
-          <button class="cancel-btn" onclick={cancelName} title="Cancel">✕</button>
-        </div>
-      {/if}
+  {#if view === 'shader_editor' && localDef?.type === 'customShader'}
+    {@const def = localDef}
+    <div class="shader-view">
+      <ShaderEditor
+        state={{ type: 'physical', shaders: sharedToSlots(def.shaders) }}
+        pomEnabled={!!def.options?.pom}
+        onchange={ns => {
+          if (localDef?.type === 'customShader')
+            localDef.shaders = slotsToShared(localDef.shaders, ns.shaders);
+        }}
+        onclose={() => (view = 'properties')}
+      />
     </div>
+  {:else}
+    <div class="body">
+      <div class="mat-list">
+        {#each Object.keys(materials) as id (id)}
+          <button class="mat-item" class:active={id === selectedId} onclick={() => (selectedId = id)}>
+            {id}
+          </button>
+        {/each}
 
-    <!-- Right column: form -->
-    <div class="mat-form">
-      {#if localDef?.type === 'customShader'}
-        {@const p = localDef.props ?? {}}
-        {@const o = localDef.options ?? {}}
-
-        {#snippet rangeField(key: keyof ShaderPropsJson, max: number, dflt: number)}
-          <FormField label={key}>
+        {#if nameInputMode !== 'none'}
+          <div class="name-input-row">
+            <!-- svelte-ignore a11y_autofocus -->
             <input
-              type="range"
-              min="0"
-              {max}
-              step="0.01"
-              value={(p[key] as number | undefined) ?? dflt}
-              oninput={e => {
-                (ensureProps() as any)[key] = Number((e.target as HTMLInputElement).value);
-                emit();
-              }}
+              class="name-input"
+              type="text"
+              bind:value={nameInputValue}
+              onkeydown={handleKeyDown}
+              placeholder={nameInputMode === 'clone' ? 'clone name...' : 'new name...'}
+              autofocus
             />
-            <span class="val">{((p[key] as number | undefined) ?? dflt).toFixed(2)}</span>
-          </FormField>
-        {/snippet}
-
-        <!-- Core section -->
-        <FormField label="color">
-          <input
-            type="color"
-            value={colorStr(p.color)}
-            oninput={e => {
-              ensureProps().color = hexStrToInt((e.target as HTMLInputElement).value);
-              emit();
-            }}
-          />
-        </FormField>
-
-        {@render rangeField('roughness', 1, 0.5)}
-        {@render rangeField('metalness', 1, 0)}
-        {@render rangeField('normalScale', 5, 1)}
-        {@render rangeField('iridescence', 1, 0)}
-
-        <FormField label="map">
-          <select
-            value={p.map ?? ''}
-            onchange={e => setTexture('map', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="">(none)</option>
-            {#each textureKeys as k}
-              <option value={k}>{k}</option>
-            {/each}
-          </select>
-        </FormField>
-
-        <FormField label="normalMap">
-          <select
-            value={p.normalMap ?? ''}
-            onchange={e => setTexture('normalMap', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="">(none)</option>
-            {#each textureKeys as k}
-              <option value={k}>{k}</option>
-            {/each}
-          </select>
-        </FormField>
-
-        <FormField label="roughnessMap">
-          <select
-            value={p.roughnessMap ?? ''}
-            onchange={e => setTexture('roughnessMap', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="">(none)</option>
-            {#each textureKeys as k}
-              <option value={k}>{k}</option>
-            {/each}
-          </select>
-        </FormField>
-
-        <FormField label="metalnessMap">
-          <select
-            value={p.metalnessMap ?? ''}
-            onchange={e => setTexture('metalnessMap', (e.target as HTMLSelectElement).value)}
-          >
-            <option value="">(none)</option>
-            {#each textureKeys as k}
-              <option value={k}>{k}</option>
-            {/each}
-          </select>
-        </FormField>
-
-        <FormField label="uvScale">
-          <input
-            type="number"
-            step="0.1"
-            style="width:80px"
-            value={p.uvScale?.[0] ?? 1}
-            onchange={e => {
-              const pr = ensureProps();
-              pr.uvScale = [Number((e.target as HTMLInputElement).value), pr.uvScale?.[1] ?? 1];
-              emit();
-            }}
-          />
-          <input
-            type="number"
-            step="0.1"
-            style="width:80px"
-            value={p.uvScale?.[1] ?? 1}
-            onchange={e => {
-              const pr = ensureProps();
-              pr.uvScale = [pr.uvScale?.[0] ?? 1, Number((e.target as HTMLInputElement).value)];
-              emit();
-            }}
-          />
-        </FormField>
-
-        <!-- Options section -->
-        <div class="section-divider"></div>
-
-        <FormField label="useGeneratedUVs">
-          <input
-            type="checkbox"
-            checked={o.useGeneratedUVs ?? false}
-            onchange={e => {
-              ensureOpts().useGeneratedUVs = (e.target as HTMLInputElement).checked;
-              emit();
-            }}
-          />
-        </FormField>
-
-        <FormField label="useTriplanarMapping">
-          <input
-            type="checkbox"
-            checked={!!o.useTriplanarMapping}
-            onchange={e => {
-              ensureOpts().useTriplanarMapping = (e.target as HTMLInputElement).checked;
-              emit();
-            }}
-          />
-        </FormField>
-
-        <FormField label="tileBreaking">
-          <select
-            value={tileBreakingType(o)}
-            onchange={e => setTileBreaking((e.target as HTMLSelectElement).value)}
-          >
-            <option value="">(none)</option>
-            <option value="neyret">neyret</option>
-          </select>
-        </FormField>
-
-        {#if o.tileBreaking?.type === 'neyret'}
-          <FormField label="patchScale">
-            <input
-              type="number"
-              step="0.1"
-              style="width:80px"
-              value={o.tileBreaking.patchScale ?? 1}
-              onchange={e => {
-                const opts = ensureOpts();
-                if (opts.tileBreaking?.type === 'neyret') {
-                  opts.tileBreaking.patchScale = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }
-              }}
-            />
-          </FormField>
-        {/if}
-
-        <FormField label="randomizeUVOffset">
-          <input
-            type="checkbox"
-            checked={o.randomizeUVOffset ?? false}
-            onchange={e => {
-              ensureOpts().randomizeUVOffset = (e.target as HTMLInputElement).checked;
-              emit();
-            }}
-          />
-        </FormField>
-
-        <FormField label="useOrenNayarDiffuse">
-          <input
-            type="checkbox"
-            checked={o.useOrenNayarDiffuse ?? false}
-            onchange={e => {
-              ensureOpts().useOrenNayarDiffuse = (e.target as HTMLInputElement).checked;
-              emit();
-            }}
-          />
-        </FormField>
-
-        <FormField label="materialClass">
-          <select
-            value={o.materialClass ?? 'default'}
-            onchange={e => {
-              ensureOpts().materialClass = (e.target as HTMLSelectElement).value as any;
-              emit();
-            }}
-          >
-            <option value="default">default</option>
-            <option value="rock">rock</option>
-            <option value="crystal">crystal</option>
-            <option value="metalplate">metalplate</option>
-          </select>
-        </FormField>
-
-        <!-- Advanced section -->
-        <div class="section-divider"></div>
-
-        <button class="adv-toggle" onclick={() => (advancedOpen = !advancedOpen)}>
-          {advancedOpen ? '▼' : '▶'} advanced
-        </button>
-
-        {#if advancedOpen}
-          <div class="advanced-content">
-            {@render rangeField('clearcoat', 1, 0)}
-            {@render rangeField('clearcoatRoughness', 1, 0)}
-            {@render rangeField('clearcoatNormalScale', 5, 0)}
-
-            <FormField label="clearcoatNormalMap">
-              <select
-                value={p.clearcoatNormalMap ?? ''}
-                onchange={e => setTexture('clearcoatNormalMap', (e.target as HTMLSelectElement).value)}
-              >
-                <option value="">(none)</option>
-                {#each textureKeys as k}
-                  <option value={k}>{k}</option>
-                {/each}
-              </select>
-            </FormField>
-
-            {@render rangeField('sheen', 1, 0)}
-            {@render rangeField('sheenRoughness', 1, 0)}
-
-            <FormField label="sheenColor">
-              <input
-                type="color"
-                value={colorStr(p.sheenColor)}
-                oninput={e => {
-                  ensureProps().sheenColor = hexStrToInt((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
-
-            <FormField label="fogMultiplier">
-              <input
-                type="number"
-                step="0.1"
-                style="width:80px"
-                value={p.fogMultiplier ?? 1}
-                onchange={e => {
-                  ensureProps().fogMultiplier = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
-
-            <FormField label="ambientLightScale">
-              <input
-                type="number"
-                step="0.1"
-                style="width:80px"
-                value={p.ambientLightScale ?? 1}
-                onchange={e => {
-                  ensureProps().ambientLightScale = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
-
-            <FormField label="mapDisableDistance">
-              <input
-                type="checkbox"
-                checked={p.mapDisableDistance != null}
-                onchange={e => {
-                  ensureProps().mapDisableDistance = (e.target as HTMLInputElement).checked ? 100 : undefined;
-                  emit();
-                }}
-              />
-              {#if p.mapDisableDistance != null}
-                <input
-                  type="number"
-                  step="1"
-                  style="width:80px"
-                  value={p.mapDisableDistance}
-                  onchange={e => {
-                    ensureProps().mapDisableDistance = Number((e.target as HTMLInputElement).value);
-                    emit();
-                  }}
-                />
-              {/if}
-            </FormField>
-
-            <FormField label="opacity">
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                style="width:80px"
-                value={p.opacity ?? 1}
-                onchange={e => {
-                  ensureProps().opacity = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
-
-            <FormField label="transmission">
-              <input
-                type="number"
-                min="0"
-                max="1"
-                step="0.01"
-                style="width:80px"
-                value={p.transmission ?? 0}
-                onchange={e => {
-                  ensureProps().transmission = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
-
-            <FormField label="ior">
-              <input
-                type="number"
-                min="1"
-                max="2.5"
-                step="0.01"
-                style="width:80px"
-                value={p.ior ?? 1.5}
-                onchange={e => {
-                  ensureProps().ior = Number((e.target as HTMLInputElement).value);
-                  emit();
-                }}
-              />
-            </FormField>
+            <button class="confirm-btn" onclick={confirmName} title="Confirm">✓</button>
+            <button class="cancel-btn" onclick={cancelName} title="Cancel">✕</button>
           </div>
         {/if}
-      {:else if localDef?.type === 'customBasicShader'}
-        <div class="placeholder">customBasicShader — no live editor</div>
-      {:else}
-        <div class="placeholder">select a material</div>
-      {/if}
-    </div>
-  </div>
+      </div>
 
-  <!-- Footer -->
-  <div class="footer">
-    <div class="footer-left">
-      <button onclick={startNew}>+ New</button>
-      <button onclick={startClone} disabled={!selectedId}>⧉ Clone</button>
+      <div class="mat-form">
+        {#if localDef}
+          <MaterialForm material={localDef} {host} bind:showAdvanced {textureSlot} />
+        {:else}
+          <div class="placeholder">select a material</div>
+        {/if}
+      </div>
     </div>
-    <div class="footer-right">
-      <button class="delete-btn" onclick={handleDelete} disabled={!selectedId}>✕ Delete</button>
+
+    <div class="footer">
+      <div class="footer-left">
+        <button onclick={startNew}>+ New</button>
+        <button onclick={startClone} disabled={!selectedId}>⧉ Clone</button>
+      </div>
+      <div class="footer-right">
+        <button class="delete-btn" onclick={() => selectedId && ondelete(selectedId)} disabled={!selectedId}>
+          ✕ Delete
+        </button>
+      </div>
     </div>
-  </div>
+  {/if}
 </div>
 
 <style>
@@ -536,6 +230,14 @@
     display: flex;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
+  }
+
+  .shader-view {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 420px;
     overflow: hidden;
   }
 
@@ -611,49 +313,13 @@
   .mat-form {
     flex: 1;
     overflow-y: auto;
-    padding: 10px 12px;
-    font:
-      12px 'IBM Plex Mono',
-      monospace;
+    min-width: 0;
   }
 
   .placeholder {
     color: #666;
-    padding: 12px 0;
+    padding: 12px;
     font-style: italic;
-  }
-
-  .section-divider {
-    border-top: 1px solid #333;
-    margin: 10px 0;
-  }
-
-  .val {
-    color: #aaa;
-    width: 36px;
-    flex-shrink: 0;
-    text-align: right;
-    font-size: 11px;
-  }
-
-  .adv-toggle {
-    background: none;
-    border: none;
-    color: #888;
-    cursor: pointer;
-    font:
-      11px 'IBM Plex Mono',
-      monospace;
-    padding: 2px 0;
-    margin-bottom: 8px;
-  }
-
-  .adv-toggle:hover {
-    color: #bbb;
-  }
-
-  .advanced-content {
-    padding-left: 8px;
   }
 
   .footer {
@@ -672,9 +338,7 @@
     gap: 4px;
   }
 
-  .footer button,
-  .footer-left button,
-  .footer-right button {
+  .footer button {
     background: #1a1a1a;
     border: 1px solid #555;
     color: #e8e8e8;
@@ -703,13 +367,12 @@
     background: #2a1a1a !important;
   }
 
-  /* Input styles for controls not covered by FormField's :global() selectors */
-  :global(.control input[type='range']) {
+  :global(.mat-form .control input[type='range']) {
     flex-grow: 1;
     accent-color: #7ec8e3;
   }
 
-  :global(.control input[type='number']) {
+  :global(.mat-form .control input[type='number']) {
     background-color: #1a1a1a;
     color: #eee;
     border: 1px solid #444;
@@ -719,7 +382,7 @@
     box-sizing: border-box;
   }
 
-  :global(.control input[type='color']) {
+  :global(.mat-form .control input[type='color']) {
     width: 40px;
     height: 22px;
     border: 1px solid #444;
@@ -728,7 +391,7 @@
     cursor: pointer;
   }
 
-  :global(.control input[type='checkbox']) {
+  :global(.mat-form .control input[type='checkbox']) {
     width: 14px;
     height: 14px;
     cursor: pointer;
