@@ -87,8 +87,7 @@ impl GeoscriptReplCtx {
             .borrow()
             .to_radians(),
         );
-        // Consuming finalize: computes normals + exports in one shot; the throwaway clone's
-        // intermediate inconsistent topology never escapes.
+        // `mesh` is a throwaway clone, so the consuming finalize's inconsistent topology never escapes.
         mesh.separate_normals_and_finalize(true, false, false)
       } else {
         mesh.to_raw_indexed(true, false, false)
