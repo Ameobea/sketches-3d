@@ -32,7 +32,7 @@ fn build_snapshot() -> String {
   {
     let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
     m.mark_edge_sharpness(0.8);
-    m.separate_vertices_and_compute_normals();
+    m.separate_vertices_and_compute_normals_with_displacement();
     serialize_case("box_sharp", &m.to_raw_indexed(true, true, false), &mut out);
   }
 
@@ -45,7 +45,7 @@ fn build_snapshot() -> String {
       w: 0.,
     });
     m.mark_edge_sharpness(0.8);
-    m.separate_vertices_and_compute_normals();
+    m.separate_vertices_and_compute_normals_with_displacement();
     serialize_case("box_subdivided", &m.to_raw_indexed(true, true, false), &mut out);
   }
 
@@ -54,7 +54,7 @@ fn build_snapshot() -> String {
   {
     let mut m: LinkedMesh<()> = LinkedMesh::new_icosphere(1., 1);
     m.mark_edge_sharpness(0.8);
-    m.separate_vertices_and_compute_normals();
+    m.separate_vertices_and_compute_normals_with_displacement();
     serialize_case("icosphere_smooth", &m.to_raw_indexed(true, true, false), &mut out);
   }
 
@@ -62,7 +62,7 @@ fn build_snapshot() -> String {
   {
     let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
     m.mark_edge_sharpness(0.8);
-    m.separate_vertices_and_compute_normals();
+    m.separate_vertices_and_compute_normals_with_displacement();
     m.flip_normals();
     serialize_case("box_flipped", &m.to_raw_indexed(true, true, false), &mut out);
   }

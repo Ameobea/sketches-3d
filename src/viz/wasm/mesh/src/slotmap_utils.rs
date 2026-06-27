@@ -45,6 +45,11 @@ pub fn ekey_ix(key: &EdgeKey) -> u32 {
   key.idx
 }
 
+pub fn fkey_ix(key: &crate::linked_mesh::FaceKey) -> u32 {
+  let key: &LocalKeyData = unsafe { std::mem::transmute(key) };
+  key.idx
+}
+
 #[allow(dead_code)]
 pub struct LocalKeyData {
   pub idx: u32,

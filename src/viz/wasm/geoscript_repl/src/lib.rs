@@ -75,7 +75,7 @@ impl GeoscriptReplCtx {
       // merge + auto-smooth recompute below would destroy). Leave those finalized meshes untouched.
       let normals_finalized =
         !mesh.shading_normals.is_empty() && mesh.shading_normals.len() == mesh.vertices.len();
-      if !normals_finalized {
+      let mut owned_mesh = if !normals_finalized {
         let merged_count = mesh.merge_vertices_by_distance(0.0001);
         if merged_count > 0 {
           ::log::info!("Merged {merged_count} vertices in mesh");
@@ -87,10 +87,12 @@ impl GeoscriptReplCtx {
             .borrow()
             .to_radians(),
         );
-        mesh.separate_vertices_and_compute_normals();
-      }
-
-      let mut owned_mesh = mesh.to_raw_indexed(true, false, false);
+        // Consuming finalize: computes normals + exports in one shot; the throwaway clone's
+        // intermediate inconsistent topology never escapes.
+        mesh.separate_normals_and_finalize(true, false, false)
+      } else {
+        mesh.to_raw_indexed(true, false, false)
+      };
       owned_mesh.transform = Some(mesh_handle.transform);
       self.output_meshes.push(OutputMesh {
         mesh: owned_mesh,

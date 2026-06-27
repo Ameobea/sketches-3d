@@ -18,9 +18,9 @@ use crate::{
     utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
   },
   slotmap_utils::{
-    build_slotmap_from_iter, build_slotmap_from_iter_with_key, ekey_ix, slotmap_insert_dense,
-    slotmap_insert_dense_with_key, vkey, vkey_ix, vkey_ix_mut, vkey_version, LocalKeyData,
-    LocalSlotMap,
+    build_slotmap_from_iter, build_slotmap_from_iter_with_key, ekey_ix, fkey_ix,
+    slotmap_insert_dense, slotmap_insert_dense_with_key, vkey, vkey_ix, vkey_ix_mut, vkey_version,
+    LocalKeyData, LocalSlotMap,
   },
   OwnedIndexedMesh, OwnedIndexedMeshBuilder, OwnedMesh, Triangle,
 };
@@ -226,6 +226,22 @@ impl Edge {
 
 fn distance(p0: Vec3, p1: Vec3) -> f32 {
   (p0 - p1).magnitude()
+}
+
+/// Fast `acos` for `x` in `[-1, 1]` (Abramowitz & Stegun 4.4.45). Max abs error ~6.7e-5 rad
+/// (~0.004°), far below any visual threshold for shading-normal weights, and much cheaper than the
+/// libm `acos` (no hardware acos on wasm). Used for corner-angle weighting in `precompute_face_shading`.
+#[inline]
+fn fast_acos(x: f32) -> f32 {
+  let neg = if x < 0. { 1.0f32 } else { 0.0 };
+  let x = x.abs();
+  let mut ret = -0.0187293;
+  ret = ret * x + 0.074261;
+  ret = ret * x - 0.2121144;
+  ret = ret * x + 1.5707288;
+  ret *= (1.0 - x).sqrt();
+  ret -= 2. * neg * ret;
+  neg * PI + ret
 }
 
 /// Mesh representation that maintains topological information between vertices,
@@ -629,52 +645,44 @@ fn sort_edge_inplace<const DENSE: bool>(vtxs: &mut [VertexKey; 2]) {
   }
 }
 
+/// Per-face shading data precomputed once before fan-walking, replacing the redundant per-visit
+/// (cross + normalize + 3 acos) that `add_face` used to do ~3x per face. Indexed by face key index
+/// (`fkey_ix`). A degenerate face is flagged by `normal == zeros` (a valid face normal is unit).
+#[derive(Clone, Default)]
+struct FaceShading {
+  /// The face's vertex keys at precompute time (topology is stable until the split phase).
+  verts: [VertexKey; 3],
+  /// Normalized face normal; all-zero iff the face is degenerate (the `Default` sentinel).
+  normal: Vec3,
+  /// Corner angle at `verts[i]`, used as the normal's accumulation weight.
+  angles: [f32; 3],
+}
+
 #[derive(Debug)]
 struct NormalAcc {
   pub accumulated_normal: Vec3,
 }
 
 impl NormalAcc {
-  pub fn add_face<FaceData>(
+  #[inline]
+  pub fn add_face(
     &mut self,
     fan_center_vtx_key: VertexKey,
     face_key: FaceKey,
-    verts: &SlotMap<VertexKey, Vertex>,
-    faces: &SlotMap<FaceKey, Face<FaceData>>,
+    face_data: &[FaceShading],
   ) -> Option<Vec3> {
-    let face = &faces[face_key];
-    // TODO: this filtering is too aggressive and creates black triangles if they're small enough.
-    //
-    // Maybe need a smaller `EPSILON` or more intelligent filtering method (leaning towards the
-    // latter)
-
-    // Filter out sliver triangles that can destabilize the average normal.
-    // if face.area(verts) < EPSILON {
-    //   return None;
-    // }
-
-    let face_normal = face.normal(verts);
-    if face_normal.x.is_nan() || face_normal.y.is_nan() || face_normal.z.is_nan() {
-      // panic!(
-      //   "Face normal is NaN: {:?}; is_degen={}",
-      //   face.to_triangle(verts),
-      //   face.is_degenerate(verts)
-      // );
-      log::warn!(
-        "Face normal is NaN: {:?}; is_degen={}; face_key={face_key:?}",
-        face.to_triangle(verts),
-        face.is_degenerate(verts)
-      );
+    let fs = &face_data[fkey_ix(&face_key) as usize];
+    if fs.normal == Vec3::zeros() {
       return None;
     }
-
-    let angle_at_vtx = face.compute_angle_at_vertex_key(fan_center_vtx_key, verts);
-    if angle_at_vtx.is_nan() {
-      ::log::error!("NaN angle: {:?}", face.to_triangle(verts));
-      return None;
-    }
-
-    let weighted_normal = face_normal * angle_at_vtx;
+    let corner = if fs.verts[0] == fan_center_vtx_key {
+      0
+    } else if fs.verts[1] == fan_center_vtx_key {
+      1
+    } else {
+      2
+    };
+    let weighted_normal = fs.normal * fs.angles[corner];
     self.accumulated_normal += weighted_normal;
     Some(weighted_normal)
   }
@@ -1907,6 +1915,56 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  /// Precomputes, once per face, the data the fan walk needs per visit: the normalized face normal
+  /// and the three corner angles. Replaces the redundant per-visit (cross + normalize + acos) that
+  /// ran ~3x per face (once per incident fan-center vertex). Indexed by `fkey_ix`.
+  fn precompute_face_shading(&self) -> Vec<FaceShading> {
+    let slot_count = self
+      .faces
+      .keys()
+      .map(|k| fkey_ix(&k))
+      .max()
+      .map_or(0, |m| m as usize + 1);
+    let mut data = vec![FaceShading::default(); slot_count];
+
+    for (face_key, face) in self.faces.iter() {
+      let [a, b, c] = unsafe {
+        [
+          self.vertices.get_unchecked(face.vertices[0]).position,
+          self.vertices.get_unchecked(face.vertices[1]).position,
+          self.vertices.get_unchecked(face.vertices[2]).position,
+        ]
+      };
+      let cross = (b - a).cross(&(c - a));
+      let mag = cross.magnitude();
+      if !(mag > 0.) {
+        // degenerate (collinear / repeated vertex); leave the `Default` zero-normal sentinel
+        continue;
+      }
+      let normal = cross / mag;
+      // Corner angles via fast acos of the normalized edge dots; the third is derived from the
+      // planar-triangle identity (angles sum to PI), saving a third acos.
+      let ab = b - a;
+      let ac = c - a;
+      let bc = c - b;
+      let l_ab2 = ab.dot(&ab);
+      let l_ac2 = ac.dot(&ac);
+      let l_bc2 = bc.dot(&bc);
+      let cos0 = (ab.dot(&ac) / (l_ab2 * l_ac2).sqrt()).clamp(-1., 1.);
+      let cos1 = (-ab.dot(&bc) / (l_ab2 * l_bc2).sqrt()).clamp(-1., 1.);
+      let a0 = fast_acos(cos0);
+      let a1 = fast_acos(cos1);
+      let a2 = (PI - a0 - a1).max(0.);
+      data[fkey_ix(&face_key) as usize] = FaceShading {
+        verts: face.vertices,
+        normal,
+        angles: [a0, a1, a2],
+      };
+    }
+
+    data
+  }
+
   /// Accumulates faces that are part of a single smooth fan around `vtx_key`
   /// into `smooth_fan_faces`.
   ///
@@ -1915,18 +1973,20 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   fn walk_one_smooth_fan(
     &mut self,
     vtx_key: VertexKey,
+    face_data: &[FaceShading],
     visited_edges: &mut BitSlice,
     visited_faces: &mut SmallVec<[FaceKey; 16]>,
     smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
     vtx_normal_acc: &mut NormalAcc,
   ) -> Option<Vec3> {
-    let vtx = &self.vertices[vtx_key];
+    let vtx = unsafe { self.vertices.get_unchecked(vtx_key) };
 
     let mut fan_normal_acc = NormalAcc::new();
 
     // Walks around the smooth fan in one direction, recording visited edges and
     // faces into the respective buffers, until a sharp or border edge is
-    // encountered.
+    // encountered. All face/edge keys come from the (frozen-until-split) topology, so unchecked
+    // slotmap access is sound.
     let walk = |visited_edges: &mut BitSlice,
                 visited_faces: &mut SmallVec<[FaceKey; 16]>,
                 smooth_fan_faces: &mut SmallVec<[FaceKey; 16]>,
@@ -1936,8 +1996,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
                 vtx_normal_acc: &mut NormalAcc| loop {
       smooth_fan_faces.push(*cur_face_key);
       visited_faces.push(*cur_face_key);
-      let weighted_normal =
-        fan_normal_acc.add_face(vtx_key, *cur_face_key, &self.vertices, &self.faces);
+      let weighted_normal = fan_normal_acc.add_face(vtx_key, *cur_face_key, face_data);
       if let Some(weighted_normal) = weighted_normal {
         vtx_normal_acc.accumulated_normal += weighted_normal;
       }
@@ -1945,12 +2004,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       visited_edges.set(cur_edge_ix, true);
 
       // Try to walk to the next face in the smooth fan that shares the current edge
-      let next_edge_key = self.faces[*cur_face_key]
+      let next_edge_key = unsafe { self.faces.get_unchecked(*cur_face_key) }
         .edges
         .iter()
         .find(|&&edge_key| edge_key != *cur_edge_key && vtx.edges.contains(&edge_key));
       let (next_edge_key, next_edge) = match next_edge_key {
-        Some(&edge_key) => (edge_key, &self.edges[edge_key]),
+        Some(&edge_key) => (edge_key, unsafe { self.edges.get_unchecked(edge_key) }),
         None => {
           // We've reached the end of the smooth fan
           break;
@@ -1987,16 +2046,19 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     };
 
     let start_edge_key = vtx.edges[start_edge_ix];
-    let start_face_key = self.edges[start_edge_key].faces.iter().find(|&&face_key| {
+    let start_face_key = unsafe { self.edges.get_unchecked(start_edge_key) }
+      .faces
+      .iter()
+      .find(|&&face_key| {
       if visited_faces.contains(&face_key) {
         return false;
       }
 
-      let face = &self.faces[face_key];
+      let face = unsafe { self.faces.get_unchecked(face_key) };
       // Find the edges that include the vertex
       let [mut edge_key_0, mut edge_key_1] = [EdgeKey::null(), EdgeKey::null()];
       for &edge_key in &face.edges {
-        if !self.edges[edge_key].vertices.contains(&vtx_key) {
+        if !unsafe { self.edges.get_unchecked(edge_key) }.vertices.contains(&vtx_key) {
           continue;
         }
         if edge_key_0.is_null() {
@@ -2022,7 +2084,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
     // If the starting edge is smooth, we have to walk the other way once we hit a
     // sharp edge.
-    let needs_walk_the_other_way = !self.edges[start_edge_key].sharp;
+    let needs_walk_the_other_way = !unsafe { self.edges.get_unchecked(start_edge_key) }.sharp;
 
     let mut cur_edge_key = start_edge_key;
     let mut cur_face_key = start_face_key;
@@ -2041,10 +2103,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       return fan_normal_acc.get();
     }
 
-    let first_other_way_face_key = self.edges[start_edge_key].faces.iter().find(|&&face_key| {
-      let face = &self.faces[face_key];
-      face.vertices.contains(&vtx_key) && !visited_faces.contains(&face_key)
-    });
+    let first_other_way_face_key =
+      unsafe { self.edges.get_unchecked(start_edge_key) }.faces.iter().find(|&&face_key| {
+        let face = unsafe { self.faces.get_unchecked(face_key) };
+        face.vertices.contains(&vtx_key) && !visited_faces.contains(&face_key)
+      });
     let Some(first_other_way_face_key) = first_other_way_face_key else {
       return fan_normal_acc.get();
     };
@@ -2072,6 +2135,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   fn separate_and_compute_normals_for_vertex(
     &mut self,
     smooth_fans_acc: &mut Vec<SmoothFan>,
+    face_data: &[FaceShading],
     vtx_key: VertexKey,
   ) -> Option<Vec3> {
     let mut visited_edges = bitarr![0; 1024*8];
@@ -2096,7 +2160,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
           }
           seen_face_keys.push(face_key);
 
-          vtx_normal_acc.add_face(vtx_key, face_key, &self.vertices, &self.faces);
+          vtx_normal_acc.add_face(vtx_key, face_key, face_data);
         }
       }
       let computed_normal = vtx_normal_acc.get();
@@ -2111,6 +2175,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
       let computed_fan_normal = self.walk_one_smooth_fan(
         vtx_key,
+        face_data,
         visited_edges_slice,
         &mut visited_faces,
         &mut smooth_fan_faces,
@@ -2149,7 +2214,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     vtx_normal_acc.get()
   }
 
-  fn compute_displacement_normal(&mut self, vtx_key: VertexKey) -> Option<Vec3> {
+  fn compute_displacement_normal(
+    &mut self,
+    face_data: &[FaceShading],
+    vtx_key: VertexKey,
+  ) -> Option<Vec3> {
     let mut visited_edges = bitarr![0; 1024*8];
     // TODO: should re-use these buffers and pass them in from outer
     let mut visited_faces = SmallVec::<[_; 16]>::new();
@@ -2162,6 +2231,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
 
       self.walk_one_smooth_fan(
         vtx_key,
+        face_data,
         visited_edges,
         &mut visited_faces,
         &mut smooth_fan_faces,
@@ -2193,9 +2263,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   /// Computes displacement normals for all vertices, replacing any existing
   /// values.
   pub fn compute_vertex_displacement_normals(&mut self) {
+    let face_data = self.precompute_face_shading();
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     for vtx_key in all_vtx_keys {
-      let displacement_normal = self.compute_displacement_normal(vtx_key);
+      let displacement_normal = self.compute_displacement_normal(&face_data, vtx_key);
       self.set_displacement_normal(vtx_key, displacement_normal);
     }
   }
@@ -2211,6 +2282,51 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   /// Heavily inspired by the Blender implementation:
   /// https://github.com/blender/blender/blob/a4aa5faa2008472413403600382f419280ac8b20/source/blender/bmesh/intern/bmesh_mesh_normals.cc#L1081
   pub fn separate_vertices_and_compute_normals(&mut self) {
+    self.separate_vertices_and_compute_normals_impl::<true, false>();
+  }
+
+  /// Legacy variant that additionally stores per-vertex *displacement* normals (each split vertex
+  /// inheriting its source vertex's full-fan normal). Displacement normals are an old, largely
+  /// unused feature, so the default no longer computes them; prefer
+  /// [`Self::compute_vertex_displacement_normals`] on the pre-split mesh if you need them.
+  #[doc(hidden)]
+  pub fn separate_vertices_and_compute_normals_with_displacement(&mut self) {
+    self.separate_vertices_and_compute_normals_impl::<true, true>();
+  }
+
+  /// In-place finalized split that leaves the mesh topologically inconsistent (`edges` /
+  /// `Vertex::edges` no longer match `faces`). Exposed only so the benchmark harness can time the
+  /// split phase in isolation — production code should use the self-consuming
+  /// [`Self::separate_normals_and_finalize`], which makes the inconsistent state unobservable.
+  #[doc(hidden)]
+  pub fn separate_vertices_and_compute_normals_finalized(&mut self) {
+    self.separate_vertices_and_compute_normals_impl::<false, false>();
+  }
+
+  /// Separates fan vertices, computes shading normals, and exports to an indexed mesh in one shot,
+  /// consuming `self`. Uses the fast no-edge-rebuild split: the intermediate mesh is left
+  /// topologically inconsistent, but because `self` is consumed and dropped here that state can
+  /// never be observed. Equivalent output to `separate_vertices_and_compute_normals` +
+  /// `to_raw_indexed`, and considerably faster on meshes with many sharp edges. This is the
+  /// preferred finalize-then-render path.
+  pub fn separate_normals_and_finalize(
+    mut self,
+    include_shading_normals: bool,
+    include_displacement_normals: bool,
+    include_degenerate_faces: bool,
+  ) -> OwnedIndexedMesh {
+    self.separate_vertices_and_compute_normals_impl::<false, false>();
+    self.to_raw_indexed(
+      include_shading_normals,
+      include_displacement_normals,
+      include_degenerate_faces,
+    )
+  }
+
+  fn separate_vertices_and_compute_normals_impl<
+    const REBUILD_EDGES: bool,
+    const STORE_DISPLACEMENT: bool,
+  >(&mut self) {
     let all_vtx_keys = self.vertices.keys().collect::<Vec<_>>();
     // For each vertex in the mesh, we partition its edges into "smooth fans"
     // (as Blender calls them).  These are group of edges that all share the
@@ -2222,10 +2338,14 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     // For each smooth fan, a duplicate vertex is created which gets a normal
     // computed by a weighted average of the face normals of all faces in the
     // fan.
+    let face_data = self.precompute_face_shading();
     let mut smooth_fans = Vec::new();
     for vtx_key in all_vtx_keys {
-      let computed_normal = self.separate_and_compute_normals_for_vertex(&mut smooth_fans, vtx_key);
-      self.set_displacement_normal(vtx_key, computed_normal);
+      let computed_normal =
+        self.separate_and_compute_normals_for_vertex(&mut smooth_fans, &face_data, vtx_key);
+      if STORE_DISPLACEMENT {
+        self.set_displacement_normal(vtx_key, computed_normal);
+      }
     }
 
     // We have to wait until we've walked all the fans for the mesh before splitting
@@ -2240,13 +2360,27 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       // We have to create a new vertex for the faces that are part of the
       // smooth fan so that it can have a distinct normal
       let position = self.vertices[old_key].position;
-      let displacement_normal = self.displacement_normal(old_key);
       let new_vtx_key = self.add_vertex_cloned_from(old_key, position);
       self.set_shading_normal(new_vtx_key, Some(normal));
-      self.set_displacement_normal(new_vtx_key, displacement_normal);
+      if STORE_DISPLACEMENT {
+        let displacement_normal = self.displacement_normal(old_key);
+        self.set_displacement_normal(new_vtx_key, displacement_normal);
+      }
 
-      for face_key in face_keys {
-        self.replace_vertex_in_face(face_key, old_key, new_vtx_key);
+      if REBUILD_EDGES {
+        for face_key in face_keys {
+          self.replace_vertex_in_face(face_key, old_key, new_vtx_key);
+        }
+      } else {
+        // Finalized fast path: repoint the face's vertex without maintaining edges.
+        for face_key in face_keys {
+          let face = &mut self.faces[face_key];
+          for v in &mut face.vertices {
+            if *v == old_key {
+              *v = new_vtx_key;
+            }
+          }
+        }
       }
     }
   }
@@ -4016,9 +4150,11 @@ mod tests {
     assert_eq!(visited_edges.len(), 3);
     let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
     let mut visited_faces = SmallVec::<[_; 16]>::new();
+    let face_data = mesh.precompute_face_shading();
 
     mesh.walk_one_smooth_fan(
       vtx_key,
+      &face_data,
       visited_edges,
       &mut visited_faces,
       &mut smooth_fan_faces,
@@ -4039,11 +4175,13 @@ mod tests {
     let visited_edges = &mut visited_edges[..center_vtx_edge_count];
     let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
     let mut visited_faces = SmallVec::<[_; 16]>::new();
+    let face_data = mesh.precompute_face_shading();
 
     let mut smooth_fans = Vec::new();
     loop {
       mesh.walk_one_smooth_fan(
         center_vtx_key,
+        &face_data,
         visited_edges,
         &mut visited_faces,
         &mut smooth_fan_faces,
@@ -4099,11 +4237,13 @@ mod tests {
       let visited_edges = &mut visited_edges[..mesh.vertices[vtx_key].edges.len()];
       let mut smooth_fan_faces = SmallVec::<[_; 16]>::new();
       let mut visited_faces = SmallVec::<[_; 16]>::new();
+      let face_data = mesh.precompute_face_shading();
 
       let mut smooth_fans = Vec::new();
       loop {
         mesh.walk_one_smooth_fan(
           vtx_key,
+          &face_data,
           visited_edges,
           &mut visited_faces,
           &mut smooth_fan_faces,
