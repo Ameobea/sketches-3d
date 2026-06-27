@@ -211,7 +211,8 @@ const methods = {
   getRenderedPath: (ctxPtr: number, pathIx: number) => {
     const verts = Geoscript.geoscript_get_rendered_path(ctxPtr, pathIx);
     const pathId = Geoscript.geoscript_get_rendered_path_id(ctxPtr, pathIx);
-    return Comlink.transfer({ verts, pathId }, [verts.buffer]);
+    const sourceModule = Geoscript.geoscript_get_rendered_path_source_module(ctxPtr, pathIx);
+    return Comlink.transfer({ verts, pathId, sourceModule }, [verts.buffer]);
   },
   getRenderedLightCount: (ctxPtr: number) => {
     return Geoscript.geoscript_get_rendered_light_count(ctxPtr);

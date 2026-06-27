@@ -17,45 +17,10 @@
       "code": "export mesh = cylinder(radius=1, height=1, radial_segments=64)",
       "_meta": { "runtimeMs": 0.6, "count": 5, "codeHash": "53940ed0" }
     },
-    "arch_deck": {
-      "type": "geoscript",
-      "file": "geo/arch_deck.geo",
-      "_meta": { "runtimeMs": 38.7, "count": 5, "codeHash": "df68592a", "asyncDeps": [ "cgal" ] }
-    },
-    "swept_tube": {
-      "type": "geoscript",
-      "file": "geo/swept_tube.geo",
-      "_meta": { "runtimeMs": 97.2, "count": 5, "codeHash": "ab337134", "asyncDeps": [ "cgal" ] }
-    },
     "plat": {
       "type": "geoscript",
       "code": "export mesh = box(20, 0.5, 20)",
       "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "f62d2760" }
-    },
-    "csg_plat": {
-      "type": "csg",
-      "tree": {
-        "op": "difference",
-        "children": [
-          {
-            "asset": "plat",
-            "scale": [5.7575, 183.9949, 2.7639]
-          },
-          {
-            "asset": "cyl",
-            "position": [49.3398, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [11.6366, 100.8851, 11.6366]
-          },
-          {
-            "asset": "cyl",
-            "position": [28.3691, 0, 0],
-            "rotation": [0, 0, 0],
-            "scale": [11.6366, 100.8851, 11.6366]
-          }
-        ]
-      },
-      "_meta": { "runtimeMs": 32.5, "count": 5, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
     },
     "planter": {
       "type": "geotoyComposition",

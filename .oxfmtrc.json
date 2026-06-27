@@ -20,6 +20,7 @@
     "src/viz/wasm/geodesics",
     "src/viz/wasm/uv_unwrap",
     "src/viz/wasm/cgal",
+    "src/viz/wasm/normals_bench",
     "src/api",
     "src/geoscript/parser",
     "static",

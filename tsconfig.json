@@ -28,6 +28,7 @@
     "src/viz/wasm/uv_unwrap/**",
     "src/viz/wasm/geodesics/**",
     "src/viz/wasm/clipper2/**",
+    "src/viz/wasm/normals_bench/**",
     "src/viz/wasmComp/**",
     "src/ammojs/**",
     "src/geodesics/geodesics.js"

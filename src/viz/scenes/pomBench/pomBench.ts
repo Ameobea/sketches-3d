@@ -20,11 +20,15 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { buildMaterial } from 'src/viz/materials';
 import type { MaterialDef } from 'src/viz/levelDef/types';
 import type { SceneConfig } from '..';
-import boostNovaMaterials from 'src/levels/boost_nova/materials.json';
 import raisedTilesAsset from 'src/assets/materials/procedural/raised_tiles/raised_tiles.json';
 import chevronStripsAsset from 'src/assets/materials/procedural/chevron_strips/chevron_strips.json';
 import pitGridAsset from 'src/assets/materials/procedural/pit_grid/pit_grid.json';
 import sparseSeamsAsset from 'src/assets/materials/procedural/sparse_seams/sparse_seams.json';
+import triangleGridAsset from 'src/assets/materials/procedural/triangle_grid/triangle_grid.json';
+import groovedPlasticAsset from 'src/assets/materials/procedural/grooved_plastic/grooved_plastic.json';
+import panelSeamsAsset from 'src/assets/materials/procedural/panel_seams/panel_seams.json';
+import superellipseTilesAsset from 'src/assets/materials/procedural/superellipse_tiles/superellipse_tiles.json';
+import grateTrenchAsset from 'src/assets/materials/procedural/grate_trench/grate_trench.json';
 
 const RT_W = 1280;
 const RT_H = 720;
@@ -95,11 +99,15 @@ const PRESETS: Record<string, Preset> = {
 
 const glslModules = import.meta.glob(
   [
-    '/src/levels/boost_nova/*.glsl',
     '/src/assets/materials/procedural/raised_tiles/*.glsl',
     '/src/assets/materials/procedural/chevron_strips/*.glsl',
     '/src/assets/materials/procedural/pit_grid/*.glsl',
     '/src/assets/materials/procedural/sparse_seams/*.glsl',
+    '/src/assets/materials/procedural/triangle_grid/*.glsl',
+    '/src/assets/materials/procedural/grooved_plastic/*.glsl',
+    '/src/assets/materials/procedural/panel_seams/*.glsl',
+    '/src/assets/materials/procedural/superellipse_tiles/*.glsl',
+    '/src/assets/materials/procedural/grate_trench/*.glsl',
   ],
   { query: '?raw', import: 'default', eager: true }
 ) as Record<string, string>;
@@ -139,6 +147,15 @@ const PIT_GRID_CONSTANTS: Record<string, Record<string, unknown>> = {
   pit_grid_stagger: { PG_STAGGER: { type: 'int', value: 1 }, PG_SHAPE: { type: 'int', value: 1 } },
 };
 
+// Passthrough library materials benched as-is (no per-bench constants/ablation).
+const LIBRARY_ASSETS: Record<string, { material: any }> = {
+  triangle_grid: triangleGridAsset,
+  grooved_plastic: groovedPlasticAsset,
+  panel_seams: panelSeamsAsset,
+  superellipse_tiles: superellipseTilesAsset,
+  grate_trench: grateTrenchAsset,
+};
+
 const getRawDef = (name: string): unknown => {
   if (RT_VARIANTS.has(name)) {
     return (raisedTilesAsset as { material: unknown }).material;
@@ -165,11 +182,11 @@ const getRawDef = (name: string): unknown => {
     }
     return base;
   }
-  const raw = (boostNovaMaterials.materials as Record<string, unknown>)[name];
-  if (!raw) {
-    throw new Error(`pomBench: material "${name}" not in boost_nova/materials.json`);
+  const asset = LIBRARY_ASSETS[name];
+  if (!asset) {
+    throw new Error(`pomBench: unknown bench material "${name}"`);
   }
-  return raw;
+  return asset.material;
 };
 
 // Clone the raw def, numericize "#rrggbb" colors (the level loader's Zod transform

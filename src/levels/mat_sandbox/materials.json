@@ -1,0 +1,110 @@
+{
+  "$schema": "../materials-schema.json",
+  "textures": {
+    "shiny_patchwork_stone_diffuse": {
+      "url": "https://geotoy.b-cdn.net/textures/1/20165df3-fe44-49dd-84a7-9e8112e0d94b.avif",
+      "colorSpace": "srgb"
+    },
+    "shiny_patchwork_stone_normal": {
+      "url": "https://geotoy.b-cdn.net/textures/1/74ac0b42-56d5-4999-ab1d-397e8fef2173.avif"
+    }
+  },
+  "materials": {
+    "geotoy_slate": {
+      "type": "geotoyMaterial",
+      "materialId": 7
+    },
+    "triangle_grid": {"type": "customShader", "extends": "__ASSETS__/materials/procedural/triangle_grid"},
+    "chevron_strips_wide": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/chevron_strips",
+      "props": {
+        "roughness": 0.3,
+        "metalness": 0.6
+      },
+      "shaders": {
+        "constants": {
+          "CH_AMP": {
+            "type": "float",
+            "value": 2.4
+          },
+          "CH_WPITCH": {
+            "type": "float",
+            "value": 6.5
+          },
+          "CH_COLOR_A": {
+            "type": "vec3",
+            "value": [0.05, 0.06, 0.08]
+          },
+          "CH_COLOR_B": {
+            "type": "vec3",
+            "value": [0.62, 0.5, 0.16]
+          }
+        }
+      }
+    },
+    "pit_grid_diamond": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "shaders": {
+        "constants": {
+          "PG_SHAPE": {
+            "type": "int",
+            "value": 1
+          }
+        }
+      }
+    },
+    "pit_grid_triangle": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "shaders": {
+        "constants": {
+          "PG_SHAPE": {
+            "type": "int",
+            "value": 2
+          }
+        }
+      }
+    },
+    "pit_grid_trapezoid": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "shaders": {
+        "constants": {
+          "PG_SHAPE": {
+            "type": "int",
+            "value": 3
+          }
+        }
+      }
+    },
+    "pit_grid_stagger": {
+      "type": "customShader",
+      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "shaders": {
+        "constants": {
+          "PG_STAGGER": {
+            "type": "int",
+            "value": 1
+          }
+        }
+      }
+    },
+    "tube_texture": {
+      "type": "customShader",
+      "props": {
+        "color": "#aaaaaa",
+        "roughness": 0.3,
+        "metalness": 0.1,
+        "uvScale": [0.1, 1],
+        "map": "shiny_patchwork_stone_diffuse",
+        "normalMap": "shiny_patchwork_stone_normal"
+      },
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false
+      }
+    }
+  }
+}

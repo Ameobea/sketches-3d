@@ -290,7 +290,7 @@ export const runGeoscript = async ({
 
   stats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
   for (let i = 0; i < stats.renderedPathCount; i += 1) {
-    const { verts: pathVerts, pathId } = await repl.getRenderedPath(ctxPtr, i);
+    const { verts: pathVerts, pathId, sourceModule } = await repl.getRenderedPath(ctxPtr, i);
     stats.totalVtxCount += pathVerts.length / 3;
     stats.totalFaceCount += pathVerts.length / 3 - 1;
 
@@ -304,6 +304,7 @@ export const runGeoscript = async ({
       castShadow: false,
       receiveShadow: false,
       pathId,
+      sourceModule,
     });
   }
 
@@ -476,10 +477,13 @@ export const populateScene = (
       if (!baseGeomConsumed) obj.geometry.dispose();
     } else if (obj.type === 'path') {
       const reuseKey = String(obj.pathId);
+      const sourceNodeId =
+        tree && moduleNameToNodeId && obj.sourceModule ? moduleNameToNodeId[obj.sourceModule] : undefined;
       const existing = prev?.get(reuseKey);
       if (existing instanceof THREE.Line && !reusedKeys.has(reuseKey)) {
         obj.geometry.dispose();
         existing.userData.reuseKey = reuseKey;
+        existing.userData.sourceNodeId = sourceNodeId;
         reusedKeys.add(reuseKey);
         newRenderedObjects.push(existing);
         continue;
@@ -488,6 +492,7 @@ export const populateScene = (
       line.castShadow = obj.castShadow;
       line.receiveShadow = obj.receiveShadow;
       line.userData.reuseKey = reuseKey;
+      line.userData.sourceNodeId = sourceNodeId;
       scene.add(line);
       newRenderedObjects.push(line);
     } else if (obj.type === 'light') {

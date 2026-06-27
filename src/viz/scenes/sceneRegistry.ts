@@ -379,4 +379,12 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     legacyLights: false,
     useSceneDef: true,
   },
+  mat_sandbox: {
+    modulePath: 'src/viz/scenes/mat_sandbox/mat_sandbox',
+    sceneName: null,
+    gltfName: null,
+    metadata: { title: 'mat sandbox' },
+    legacyLights: false,
+    useSceneDef: true,
+  },
 };

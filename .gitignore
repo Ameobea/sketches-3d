@@ -34,3 +34,4 @@ rustc-ice-*.txt
 .codex
 design
 !src/viz/wasmComp/wasmAssetURLs.ts
+src/viz/wasm/normals_bench

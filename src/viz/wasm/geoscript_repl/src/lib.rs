@@ -546,6 +546,18 @@ pub fn geoscript_get_rendered_path_id(ctx: *const GeoscriptReplCtx, path_ix: usi
 }
 
 #[wasm_bindgen]
+pub fn geoscript_get_rendered_path_source_module(
+  ctx: *const GeoscriptReplCtx,
+  path_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix]
+    .source_module
+    .clone()
+    .unwrap_or_default()
+}
+
+#[wasm_bindgen]
 pub fn geoscript_get_rendered_light_count(ctx: *const GeoscriptReplCtx) -> usize {
   let ctx = unsafe { &*ctx };
   ctx.geo_ctx.rendered_lights.len()

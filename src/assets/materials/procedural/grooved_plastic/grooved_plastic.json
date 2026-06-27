@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#5d5e60",
+      "roughness": 0.6,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "grid",
+        "cellPitch": 4,
+        "cellType": "GpCell",
+        "intersect": "safeStep",
+        "minFeatureWidth": 0.06,
+        "depth": 0.07,
+        "steps": 8,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 8,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "groovedPlastic.common.glsl" },
+      "colorShader": { "file": "groovedPlastic.color.glsl" },
+      "lightAttenuationShader": { "file": "groovedPlastic.attenuation.glsl" },
+      "pomHeightShader": { "file": "groovedPlastic.height.glsl" },
+      "pomNormalShader": { "file": "groovedPlastic.normal.glsl" }
+    }
+  }
+}

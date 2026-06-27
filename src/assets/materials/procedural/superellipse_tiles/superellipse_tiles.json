@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#7d796f",
+      "roughness": 0.5,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "projectedField",
+        "hitType": "SeHit",
+        "depth": 0.16,
+        "steps": 10,
+        "lodFadeStart": 16,
+        "lodFadeRange": 40,
+        "refinement": "binary",
+        "refinementSteps": 4,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "superellipseTiles.common.glsl" },
+      "colorShader": { "file": "superellipseTiles.color.glsl" },
+      "lightAttenuationShader": { "file": "superellipseTiles.attenuation.glsl" },
+      "pomHeightShader": { "file": "superellipseTiles.height.glsl" },
+      "pomNormalShader": { "file": "superellipseTiles.normal.glsl" }
+    }
+  }
+}

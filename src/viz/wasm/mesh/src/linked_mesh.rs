@@ -2369,14 +2369,14 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Variant that also stores per-vertex displacement normals (a largely unused legacy feature the
-  /// default no longer computes); prefer [`Self::compute_vertex_displacement_normals`] if you need them.
+  /// default no longer computes); prefer compute_vertex_displacement_normals` if you need them.
   #[doc(hidden)]
   pub fn separate_vertices_and_compute_normals_with_displacement(&mut self) {
     self.separate_vertices_and_compute_normals_impl::<true, true>();
   }
 
   /// In-place finalized split, leaving the mesh topologically inconsistent (`edges`/`Vertex::edges`
-  /// no longer match `faces`). Bench-only; production should use [`Self::separate_normals_and_finalize`].
+  /// no longer match `faces`). Bench-only; production should use separate_normals_and_finalize`.
   #[doc(hidden)]
   pub fn separate_vertices_and_compute_normals_finalized(&mut self) {
     self.separate_vertices_and_compute_normals_impl::<false, false>();

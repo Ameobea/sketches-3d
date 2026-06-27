@@ -159,18 +159,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
 
   viz.levelLoadHandle?.setSceneRuntime(pkManager.runtime, 'jump_pad_speedup_test');
 
-  viz.levelLoadHandle?.complete.then(() => {
-    const mat = viz.levelLoadHandle?.builtMaterials.get('__ASSETS__/materials/procedural/raised_tiles');
-    if (mat instanceof THREE.ShaderMaterial && mat.uniforms.u_heightPhase) {
-      let heightPhase = 0;
-      viz.registerBeforeRenderCb((curTimeSeconds, tDiffSeconds) => {
-        const rate = THREE.MathUtils.smoothstep(Math.sin(curTimeSeconds * 4), 0.4, 1);
-        heightPhase += rate * 2 * tDiffSeconds;
-        mat.uniforms.u_heightPhase.value = heightPhase;
-      });
-    }
-  });
-
   const skyStack = new SkyStack(
     viz,
     {

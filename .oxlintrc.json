@@ -874,6 +874,7 @@
     "src/viz/wasm/uv_unwrap",
     "src/viz/wasm/cgal",
     "src/viz/wasm/clipper2",
+    "src/viz/wasm/normals_bench",
     "src/api",
     "src/geoscript/parser",
     "static",

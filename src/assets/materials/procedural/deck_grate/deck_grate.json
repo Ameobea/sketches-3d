@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#5d5e60",
+      "roughness": 0.55,
+      "metalness": 0.1,
+      "uvScale": [1, 1]
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.2,
+        "steps": 12,
+        "tangentSpace": true,
+        "applyReliefNormal": true,
+        "refinement": "binary",
+        "refinementSteps": 6,
+        "boundedSilhouette": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "deckGrate.common.glsl" },
+      "colorShader": { "file": "deckGrate.color.glsl" },
+      "lightAttenuationShader": { "file": "deckGrate.attenuation.glsl" },
+      "pomHeightShader": { "file": "deckGrate.height.glsl" }
+    }
+  }
+}

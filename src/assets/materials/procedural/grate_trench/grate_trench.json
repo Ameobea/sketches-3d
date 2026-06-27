@@ -1,0 +1,35 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#5d5e60",
+      "roughness": 0.6,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "projectedField",
+        "intersect": "analytic",
+        "minFeatureWidth": 0.1,
+        "lateralDist": true,
+        "depth": 0.12,
+        "steps": 10,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 8,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "grateTrench.common.glsl" },
+      "colorShader": { "file": "grateTrench.color.glsl" },
+      "lightAttenuationShader": { "file": "grateTrench.attenuation.glsl" },
+      "pomHeightShader": { "file": "grateTrench.height.glsl" },
+      "pomNormalShader": { "file": "grateTrench.normal.glsl" }
+    }
+  }
+}

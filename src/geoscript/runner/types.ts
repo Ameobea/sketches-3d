@@ -41,6 +41,8 @@ export interface GeneratedPath {
   castShadow: boolean;
   receiveShadow: boolean;
   pathId: number;
+  /** Module that rendered this path; resolved to a tree node so subtree framing includes it. Empty string for ambient/global paths. */
+  sourceModule: string;
 }
 
 export interface GeneratedLight {
