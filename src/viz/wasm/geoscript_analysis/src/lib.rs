@@ -332,6 +332,17 @@ box(1, 2, 3)
   }
 
   #[test]
+  fn test_recursive_closure_binding_in_scope() {
+    // A closure's own name is visible inside its body for recursive calls.
+    let result = analyze("fact = |n| if n <= 0 { 1 } else { n * fact(n - 1) }");
+    assert!(
+      result.diagnostics.is_empty(),
+      "Expected no diagnostics for recursive closure, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_block_scoping() {
     let result = analyze(
       r#"

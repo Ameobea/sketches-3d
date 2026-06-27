@@ -427,6 +427,8 @@ impl Callable {
           name,
           "print"
             | "render"
+            | "render_path"
+            | "set_default_material"
             | "call"
             | "randv"
             | "randf"
@@ -3925,6 +3927,48 @@ b = [1, 2]"#;
   };
   assert!(Rc::ptr_eq(&seq1, &seq2));
   assert_eq!(ctx.resolve_loc(loc2), (3, 5));
+}
+
+/// `path_render` pushes to `rendered_paths` as a side effect, so it must not be const-folded.
+/// Folding bakes the effect away after the first run (the repl reuses the ctx + const-eval
+/// cache while clearing rendered paths each run), making the path vanish on re-runs.
+#[test]
+fn test_render_path_survives_rerun() {
+  let ctx = EvalCtx::default();
+  let src = "build_path(path { rect(v2(10), v2(10)) }) | path_render";
+  let mut ast = parse_program_src(&ctx, src).unwrap();
+
+  for run in 1..=2 {
+    ctx.rendered_paths.inner.borrow_mut().clear();
+    optimize_ast(&ctx, &mut ast).unwrap();
+    eval_program_with_ctx(&ctx, &ast).unwrap();
+    assert_eq!(
+      ctx.rendered_paths.len(),
+      1,
+      "expected a rendered path on run {run}"
+    );
+  }
+}
+
+/// `set_default_material` mutates `ctx.default_material`, so it must not be const-folded — folding
+/// applies the effect once at optimize time and skips it on every later eval of the same program.
+#[test]
+fn test_set_default_material_survives_rerun() {
+  let mut ctx = EvalCtx::default();
+  ctx
+    .materials
+    .insert("mat".to_owned(), Rc::new(Material::External("mat".to_owned())));
+  let mut ast = parse_program_src(&ctx, r#"set_default_material("mat")"#).unwrap();
+
+  for run in 1..=2 {
+    ctx.default_material.replace(None);
+    optimize_ast(&ctx, &mut ast).unwrap();
+    eval_program_with_ctx(&ctx, &ast).unwrap();
+    assert!(
+      ctx.default_material.borrow().is_some(),
+      "expected default material to be set on run {run}"
+    );
+  }
 }
 
 /// Pest/Lezer parser parity cases. Mirror in `src/geoscript/parser/parser.test.ts`;

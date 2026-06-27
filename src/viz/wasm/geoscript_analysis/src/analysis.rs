@@ -96,6 +96,9 @@ struct AnalysisWalker<'a> {
   /// Stack of in-progress closure bodies; populated while walking a closure body and read by
   /// `Statement::Return` to record exit types and validate against a declared return type.
   closure_return_stack: Vec<ClosureReturnContext>,
+  /// Set just before walking a `name = |..| { .. }` binding's RHS so the closure can make its
+  /// own name visible inside its body for recursive calls, mirroring `eval_expr`'s `binding_name`.
+  pending_recursive_binding: Option<Sym>,
 }
 
 impl<'a> AnalysisWalker<'a> {
@@ -128,6 +131,7 @@ impl<'a> AnalysisWalker<'a> {
       diagnostics: Vec::new(),
       builtin_syms,
       closure_return_stack: Vec::new(),
+      pending_recursive_binding: None,
     }
   }
 
@@ -208,6 +212,15 @@ impl<'a> AnalysisWalker<'a> {
     }
   }
 
+  /// Walk a `name = expr` binding's RHS.  When the RHS is a closure literal, arm it so the
+  /// closure makes its own name visible inside its body for recursive calls (as the runtime does).
+  fn walk_binding_value(&mut self, name: Sym, expr: &Expr) -> AbstractType {
+    if matches!(expr, Expr::Closure { .. }) {
+      self.pending_recursive_binding = Some(name);
+    }
+    self.walk_expr(expr)
+  }
+
   fn walk_top_level_statement(&mut self, stmt: &TopLevelStatement) {
     match stmt {
       TopLevelStatement::Statement(inner) => self.walk_statement(inner),
@@ -217,7 +230,7 @@ impl<'a> AnalysisWalker<'a> {
         expr,
         type_hint,
       } => {
-        let inferred = self.walk_expr(expr);
+        let inferred = self.walk_binding_value(*name, expr);
         let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
         self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
       }
@@ -243,7 +256,7 @@ impl<'a> AnalysisWalker<'a> {
         expr,
         type_hint,
       } => {
-        let inferred = self.walk_expr(expr);
+        let inferred = self.walk_binding_value(*name, expr);
         let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
         self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
       }
@@ -399,6 +412,7 @@ impl<'a> AnalysisWalker<'a> {
         loc,
         ..
       } => {
+        let recursive_binding = self.pending_recursive_binding.take();
         self.push_scope();
         let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
         for param in params.iter() {
@@ -414,6 +428,16 @@ impl<'a> AnalysisWalker<'a> {
           self.define_destructure_pattern(&param.ident, *loc, SymbolKind::ClosureParam, ty);
           if let Some(default) = &param.default_val {
             self.walk_expr(default);
+          }
+        }
+
+        if let Some(bind_name) = recursive_binding {
+          let self_ty = AbstractType::Callable(CallableType {
+            params: callable_params.clone(),
+            return_type: Box::new(AbstractType::Unknown),
+          });
+          if let Some(frame) = self.scope_stack.last_mut() {
+            frame.types.insert(bind_name, self_ty);
           }
         }
 
