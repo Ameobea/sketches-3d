@@ -51,8 +51,13 @@ import { generateCsgCode } from './csgCodeGen';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
 
-/** Shared geometry for asset-less dash-token markers (hidden positional anchors; never rendered). */
-const MARKER_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+/**
+ * Empty geometry for dash-token marker anchors: the marker mesh draws nothing but stays a valid,
+ * `visible` parent so the animated token visual (attached as a child) renders and inherits its
+ * transform. A manual bounding sphere avoids a NaN from `computeBoundingSphere` on empty geometry.
+ */
+const MARKER_GEOMETRY = new THREE.BufferGeometry();
+MARKER_GEOMETRY.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
 
 export interface LevelLoadHandle {
   /** Resolves once every asset is resolved and placed in the scene. Materials may still be streaming. */
@@ -91,6 +96,12 @@ export interface LevelLoadHandle {
    * and physics is ready. `sceneName` resolves level-local behaviors (e.g. `holes__myBehavior`).
    */
   setSceneRuntime(runtime: SceneRuntime, sceneName: string): void;
+  /**
+   * Editor-only (dev): register a dynamically-spawned visual (e.g. an animated dash token) as the
+   * click/selection proxy for the level-def node named in its `userData.levelDefId`. Buffered until
+   * the editor exists; a no-op in production builds.
+   */
+  registerEditorSelectable(visual: THREE.Object3D): void;
 }
 
 /**
@@ -786,13 +797,12 @@ export const loadLevelDef = (
     }
   };
 
-  // Place an asset-less dash-token marker: an invisible positional anchor that surfaces via
-  // `parkourObjects` (and the editor) but creates no static mesh/collision. The animated token
-  // visual + physics ghost are spawned at its world position by the dash-token subsystem.
+  // Place an asset-less dash-token marker: a positional anchor that surfaces via `parkourObjects`
+  // (and the editor) but creates no static mesh/collision. The dash-token subsystem attaches the
+  // animated token visual + physics ghost under this anchor, so it follows the marker's transform.
   const placeMarker = (objDef: ObjectDef) => {
     const marker = new THREE.Mesh(MARKER_GEOMETRY, LEVEL_PLACEHOLDER_MAT);
     marker.name = objDef.id;
-    marker.visible = false;
     applyTransform(marker, objDef);
     marker.userData = { ...(objDef.userData ?? {}), levelDefId: objDef.id };
     (parentMap.get(objDef.id) ?? viz.scene).add(marker);
@@ -1128,6 +1138,16 @@ export const loadLevelDef = (
     () => void 0
   );
 
+  // Editor-selectable bridge: visuals registered before the (dev-only) editor exists are buffered,
+  // then drained once it's created. No-op in production.
+  let forwardEditorSelectable: ((visual: THREE.Object3D) => void) | null = null;
+  const pendingEditorSelectables: THREE.Object3D[] = [];
+  const registerEditorSelectable = (visual: THREE.Object3D) => {
+    if (!dev) return;
+    if (forwardEditorSelectable) forwardEditorSelectable(visual);
+    else pendingEditorSelectables.push(visual);
+  };
+
   if (dev) {
     // Mutable shadow of levelDef.assets, kept current as geo files are hot-reloaded.
     const mutableAssets: Record<string, AssetDef> = { ...levelDef.assets };
@@ -1149,6 +1169,10 @@ export const loadLevelDef = (
           resolveAssetPrototype,
           compositionBaked,
         });
+
+        forwardEditorSelectable = visual => editor.registerExternalSelectable(visual);
+        for (const visual of pendingEditorSelectables) editor.registerExternalSelectable(visual);
+        pendingEditorSelectables.length = 0;
 
         // Subscribe to geo file changes for in-place hot reload.
         const sse = new EventSource(`/level_editor/${viz.sceneName}/geo-watch`);
@@ -1207,16 +1231,19 @@ export const loadLevelDef = (
   );
 
   const emissiveBypassMeshesPromise = completePromise.then(() => {
-    const meshes: THREE.Mesh[] = [];
-    for (const levelObj of allLevelObjects) {
-      const matName = levelObj.def.material;
-      if (!matName) continue;
-      const matDef = levelDef.materials?.[matName];
-      if (!matDef?.emissiveBypass) continue;
-      levelObj.object.traverse(child => {
-        if (child instanceof THREE.Mesh) meshes.push(child);
-      });
-    }
+    const collectMeshes = (pred: (matDef: NonNullable<LevelDef['materials']>[string]) => boolean) => {
+      const out: THREE.Mesh[] = [];
+      for (const levelObj of allLevelObjects) {
+        const matName = levelObj.def.material;
+        if (!matName) continue;
+        const matDef = levelDef.materials?.[matName];
+        if (!matDef || !pred(matDef)) continue;
+        forEachMesh(levelObj.object, mesh => out.push(mesh));
+      }
+      return out;
+    };
+
+    const meshes = collectMeshes(matDef => !!matDef.emissiveBypass);
     if (meshes.length > 0) {
       const bypassPass = viz.postprocessingController?.emissiveBypassPass;
       if (bypassPass) {
@@ -1231,16 +1258,9 @@ export const loadLevelDef = (
       }
     }
 
-    const inlineMeshes: THREE.Mesh[] = [];
-    for (const levelObj of allLevelObjects) {
-      const matName = levelObj.def.material;
-      if (!matName) continue;
-      const matDef = levelDef.materials?.[matName];
-      if (matDef?.type !== 'customShader' || !matDef.inlineEmissiveBypass) continue;
-      levelObj.object.traverse(child => {
-        if (child instanceof THREE.Mesh) inlineMeshes.push(child);
-      });
-    }
+    const inlineMeshes = collectMeshes(
+      matDef => matDef.type === 'customShader' && !!matDef.inlineEmissiveBypass
+    );
     if (inlineMeshes.length > 0) {
       const inlinePass = viz.postprocessingController?.inlineEmissivePass;
       if (inlinePass) {
@@ -1376,5 +1396,6 @@ export const loadLevelDef = (
     emissiveBypassMeshes: emissiveBypassMeshesPromise,
     setMaterialFactories,
     setSceneRuntime,
+    registerEditorSelectable,
   };
 };

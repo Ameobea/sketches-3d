@@ -98,9 +98,15 @@
       "scale": [1.8, 1.8, 1.8]
     },
     {
-      "id": "dash_token_example",
-      "position": [0, 6, -12],
-      "parkour": { "dashToken": { "checkpointIx": 1 } }
+      "id": "dash_token_1",
+      "position": [8.0278, 79.6416, 20.8062],
+      "parkour": {
+        "dashToken": {
+          "checkpointIx": 1
+        }
+      },
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     },
     {
       "id": "zag_wall",

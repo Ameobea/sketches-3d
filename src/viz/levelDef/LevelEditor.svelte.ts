@@ -237,6 +237,24 @@ export class LevelEditor {
     });
   }
 
+  /**
+   * Register an externally-spawned visual's meshes as selectable for the node named in its
+   * `userData.levelDefId`. Parkour visuals (dash tokens) are parented under their marker node after
+   * the editor's initial mesh scan, so their meshes need registering once they attach; transform,
+   * highlight, and cleanup then ride the marker's object subtree natively.
+   */
+  registerExternalSelectable(visual: THREE.Object3D) {
+    const id = visual.userData?.levelDefId as string | undefined;
+    const node = id ? this.nodeById.get(id) : undefined;
+    if (!node || isLevelGroup(node)) return;
+    visual.traverse(child => {
+      if (child instanceof THREE.Mesh) {
+        this.selectableMeshes.push(child);
+        this.meshToLevelObject.set(child, node);
+      }
+    });
+  }
+
   /** Stores per-mesh original materials while selection highlight is active. */
   private originalMeshMaterials = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   private mutationController: EditorMutationController;
@@ -1443,6 +1461,8 @@ export class LevelEditor {
   syncPhysics(levelObj: LevelObject) {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
     if (!fpCtx) return;
+    // Asset-less dash-token markers have no collision (and no real geometry) — mirror loadLevelDef's skip.
+    if (levelObj.def.asset === undefined) return;
 
     // The entity's `object` may have been swapped by `replaceLeafInstance`; re-point it
     // at the current scene-graph node before re-adding any physics bodies.

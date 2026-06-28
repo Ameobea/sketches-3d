@@ -335,8 +335,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   });
 
   handle.parkourObjects.then(parkourObjs => {
-    const { checkpointMeshes, dashTokenPositions } = partitionParkourObjects(parkourObjs);
-    pkManager.setMaterials(undefined, { checkpointMeshes, dashTokenPositions });
+    const { checkpointMeshes, dashTokens } = partitionParkourObjects(parkourObjs);
+    pkManager.setMaterials(undefined, { checkpointMeshes, dashTokens });
   });
 
   return pkManager.buildSceneConfig();

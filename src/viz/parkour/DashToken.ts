@@ -8,6 +8,17 @@ import { clearPhysicsBindings, withPhysicsContext } from '../util/physics';
 import type { BulletPhysics } from '../collision';
 import type { DashTokenMaterials } from './dashTokenMaterials';
 
+/**
+ * A dash token to spawn. The visual is added under `parent` (a level-def marker anchor, so it
+ * inherits the marker's transform — or `viz.scene` for legacy Blender markers) at `localPosition`.
+ * `id` is the source level-def marker id; set it to wire editor selection.
+ */
+export interface DashTokenSpawn {
+  parent: THREE.Object3D;
+  localPosition?: THREE.Vector3;
+  id?: string;
+}
+
 export class DashToken extends THREE.Object3D {
   private viz: Viz;
   private base: THREE.Object3D;
@@ -19,7 +30,10 @@ export class DashToken extends THREE.Object3D {
     this.viz = viz;
     this.base = base;
 
-    this.scale.setScalar(0.9);
+    // Bob/spin live on an inner group so `this` stays a clean transform anchor the editor can drive.
+    const inner = new THREE.Group();
+    inner.scale.setScalar(0.9);
+    this.add(inner);
 
     // Only clear physics on the base once — clones share the same base object.
     if (!DashToken.clearedBases.has(base)) {
@@ -66,7 +80,7 @@ export class DashToken extends THREE.Object3D {
       rotationSpeeds.push(0.5 * baseRotationSpeed + baseRotationSpeed * Math.random());
     });
 
-    this.add(core, ...rings);
+    inner.add(core, ...rings);
 
     let lastBobPhase = 0;
     const bobHeight = 0.2;
@@ -78,7 +92,7 @@ export class DashToken extends THREE.Object3D {
       lastBobPhase = bobPhase;
 
       // bob up and down
-      this.position.y += bobDelta * bobHeight;
+      inner.position.y += bobDelta * bobHeight;
 
       rings.forEach((ring, index) => {
         // spin the ring around its plane's normal
@@ -173,8 +187,8 @@ export const loadDefaultDashTokenBase = (): Promise<THREE.Object3D> => {
 };
 
 /**
- * Spawns animated dash-token visuals + physics ghost tokens. Pass `positions` (level-def path) to
- * place tokens at explicit world positions using the on-demand default mesh; otherwise the legacy
+ * Spawns animated dash-token visuals + physics ghost tokens. Pass `markers` (level-def path) to
+ * attach tokens under explicit anchor objects using the on-demand default mesh; otherwise the legacy
  * Blender path places one per `dash_token_loc` marker found in `loadedWorld`. Constructs nothing
  * when there are no tokens to place. `getMaterials` is invoked lazily — only once tokens are
  * confirmed — so a scene with no dash tokens never builds/fetches the default materials.
@@ -184,7 +198,7 @@ export const initDashTokens = (
   loadedWorld: THREE.Group,
   getMaterials: () => DashTokenMaterials | Promise<DashTokenMaterials>,
   dashCharges = rwritable(0),
-  positions?: THREE.Vector3[]
+  markers?: DashTokenSpawn[]
 ) => {
   const entries: { token: BtDashToken | null; visual: THREE.Object3D; halfExtents: THREE.Vector3 }[] = [];
 
@@ -230,7 +244,11 @@ export const initDashTokens = (
         continue;
       }
       const tokenEntry = fpCtx.addDashToken(
-        { type: 'box', halfExtents: entry.halfExtents, pos: entry.visual.position },
+        {
+          type: 'box',
+          halfExtents: entry.halfExtents,
+          pos: entry.visual.getWorldPosition(new THREE.Vector3()),
+        },
         { chargesGranted: 1 },
         () => {
           entry.visual.visible = false;
@@ -245,39 +263,44 @@ export const initDashTokens = (
     syncFromController();
   };
 
-  const placeTokens = (base: THREE.Object3D, tokenPositions: THREE.Vector3[]) => {
-    for (const pos of tokenPositions) {
+  const placeTokens = (base: THREE.Object3D, spawns: DashTokenSpawn[]) => {
+    for (const spawn of spawns) {
       const visual = new DashToken(viz, base);
       visual.name = `dash_token_${entries.length}`;
-      visual.position.copy(pos);
-      viz.scene.add(visual);
+      if (spawn.localPosition) visual.position.copy(spawn.localPosition);
+      spawn.parent.add(visual);
+      // Parented under its marker, the token is selectable + transformable as that node in the editor.
+      if (spawn.id) {
+        visual.userData.levelDefId = spawn.id;
+        viz.levelLoadHandle?.registerEditorSelectable(visual);
+      }
       entries.push({ token: null, visual, halfExtents: computeHalfExtents(visual) });
     }
     withPhysicsContext(viz, registerTokens);
   };
 
-  if (positions && positions.length > 0) {
+  if (markers && markers.length > 0) {
     Promise.all([loadDefaultDashTokenBase(), Promise.resolve(getMaterials())])
       .then(([proto, { core, ring }]) => {
         const base = proto.clone();
         base.visible = false;
         applyDashTokenMaterials(base, core, ring);
-        placeTokens(base, positions);
+        placeTokens(base, markers);
       })
       .catch(err => console.error('[DashToken] failed to load default dash-token mesh:', err));
   } else {
-    const locPositions: THREE.Vector3[] = [];
+    const locMarkers: DashTokenSpawn[] = [];
     loadedWorld.traverse(obj => {
       if (obj.name.includes('dash_token_loc')) {
-        locPositions.push(obj.position.clone());
+        locMarkers.push({ parent: viz.scene, localPosition: obj.position.clone() });
       }
     });
-    if (locPositions.length > 0) {
+    if (locMarkers.length > 0) {
       Promise.resolve(getMaterials())
         .then(({ core, ring }) => {
           const base =
             initDashTokenGraphics(loadedWorld, core, ring) ?? buildFallbackDashTokenBase(core, ring);
-          placeTokens(base, locPositions);
+          placeTokens(base, locMarkers);
         })
         .catch(err => console.error('[DashToken] failed to build dash-token materials:', err));
     }

@@ -10,7 +10,7 @@
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(1, 1, 1)",
-      "_meta": { "runtimeMs": 0.1, "count": 4, "codeHash": "9da9713c" }
+      "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "9da9713c" }
     },
     "boost_strip": {
       "type": "geoscript",
@@ -91,7 +91,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 11.3, "count": 2, "codeHash": "778ea384", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 15.1, "count": 5, "codeHash": "778ea384", "asyncDeps": [ "cgal" ] }
     },
     "csg_box_1": {
       "type": "csg",
@@ -111,7 +111,7 @@
           }
         ]
       },
-      "_meta": { "runtimeMs": 1.5, "count": 2, "codeHash": "26dae5ed", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 2.1, "count": 5, "codeHash": "26dae5ed", "asyncDeps": [ "cgal" ] }
     }
   },
   "environment": {

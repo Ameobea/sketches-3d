@@ -138,12 +138,12 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   viz.levelLoadHandle?.setSceneRuntime(pkManager.runtime, 'jump_pad_speedup_test');
 
   viz.levelLoadHandle?.parkourObjects.then(parkourObjs => {
-    const { checkpointMeshes, dashTokenPositions } = partitionParkourObjects(parkourObjs);
+    const { checkpointMeshes, dashTokens } = partitionParkourObjects(parkourObjs);
     pkManager.setMaterials(
       {
         checkpoint: new THREE.MeshStandardMaterial({ color: 0x80f0ff, emissive: 0x173845, roughness: 0.32 }),
       },
-      { checkpointMeshes, dashTokenPositions }
+      { checkpointMeshes, dashTokens }
     );
   });
 
