@@ -325,6 +325,20 @@ export const SpawnerDefSchema = z.object({
 });
 export type SpawnerDef = z.infer<typeof SpawnerDefSchema>;
 
+/**
+ * Marks an object as a dash-token spawn point. The object is a position-only marker:
+ * the animated default token (or a scene-overridden one) is spawned at its world position
+ * and no static mesh/collision is created for it, so `asset` may be omitted.
+ */
+export const DashTokenMetaSchema = z.object({
+  /**
+   * Checkpoint index this token belongs to. Currently metadata only — dash-token respawn
+   * is driven by the controller's per-checkpoint state snapshot, not this field.
+   */
+  checkpointIx: z.number().int().optional(),
+});
+export type DashTokenMeta = z.infer<typeof DashTokenMetaSchema>;
+
 export const ParkourObjectMetaSchema = z.object({
   /** Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint. */
   checkpoint: z.number().optional(),
@@ -332,14 +346,16 @@ export const ParkourObjectMetaSchema = z.object({
   win: z.boolean().optional(),
   /** Per-object boost-surface config; overrides any material-level config on the same object. */
   boostSurface: BoostSurfaceConfigSchema.optional(),
+  /** Marks this object as a dash-token spawn point (position-only marker). */
+  dashToken: DashTokenMetaSchema.optional(),
 });
 export type ParkourObjectMeta = z.infer<typeof ParkourObjectMetaSchema>;
 
 export const ObjectDefSchema = z
   .object({
     id: z.string(),
-    /** Key into the top-level `assets` registry */
-    asset: z.string(),
+    /** Key into the top-level `assets` registry. Optional only for dash-token markers (`parkour.dashToken`). */
+    asset: z.string().optional(),
     /** World-space position. Default: [0, 0, 0] */
     position: Vec3.optional(),
     /** Euler rotation in radians, YXZ order. Default: [0, 0, 0] */
@@ -374,6 +390,10 @@ export const ObjectDefSchema = z
   .refine(def => !(def.behaviors && def.spawner), {
     message: '"behaviors" and "spawner" are mutually exclusive on an object',
     path: ['spawner'],
+  })
+  .refine(def => def.asset !== undefined || def.parkour?.dashToken !== undefined, {
+    message: '"asset" is required unless the object is a dash-token marker ("parkour.dashToken")',
+    path: ['asset'],
   });
 
 export type ObjectDef = z.infer<typeof ObjectDefSchema>;
@@ -736,7 +756,7 @@ export const LevelDefSchema = z
     // Each object's asset and material must reference existing registry entries
     const allObjectDefs = collectObjectDefs(def.objects, ['objects']);
     for (const { obj, path } of allObjectDefs) {
-      if (!assetKeys.has(obj.asset)) {
+      if (obj.asset !== undefined && !assetKeys.has(obj.asset)) {
         ctx.addIssue({
           code: 'custom',
           path: [...path, 'asset'],

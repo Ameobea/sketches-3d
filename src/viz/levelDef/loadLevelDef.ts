@@ -51,6 +51,9 @@ import { generateCsgCode } from './csgCodeGen';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
 
+/** Shared geometry for asset-less dash-token markers (hidden positional anchors; never rendered). */
+const MARKER_GEOMETRY = new THREE.BoxGeometry(0.2, 0.2, 0.2);
+
 export interface LevelLoadHandle {
   /** Resolves once every asset is resolved and placed in the scene. Materials may still be streaming. */
   objects: Promise<LevelObject[]>;
@@ -453,9 +456,11 @@ export const loadLevelDef = (
   // Flatten all leaf ObjectDefs for asset/material bookkeeping.
   const allLeafDefs = flattenLeaves(levelDef.objects);
 
-  // Map from assetId → list of ObjectDefs that use it
+  // Map from assetId → list of ObjectDefs that use it. Asset-less leaves are dash-token
+  // markers (no mesh/asset); they're placed separately in `placeMarker`.
   const assetToObjDefs = new Map<string, ObjectDef[]>();
   for (const objDef of allLeafDefs) {
+    if (objDef.asset === undefined) continue;
     const list = assetToObjDefs.get(objDef.asset) ?? [];
     list.push(objDef);
     assetToObjDefs.set(objDef.asset, list);
@@ -599,7 +604,7 @@ export const loadLevelDef = (
     for (let childIx = 0; childIx < nodes.length; childIx += 1) {
       const node = nodes[childIx];
       if (parentGroup) inputChildIndex.set(node.id, childIx);
-      if (!isObjectGroup(node) && isCompositionAsset(node.asset)) {
+      if (!isObjectGroup(node) && node.asset !== undefined && isCompositionAsset(node.asset)) {
         const group = new THREE.Group();
         applyTransform(group, node);
         parent.add(group);
@@ -709,6 +714,7 @@ export const loadLevelDef = (
   const maybeRegisterPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
     if (
       registeredPhysicsObjects.has(levelObj.id) ||
+      levelObj.def.asset === undefined ||
       levelObj.def.nocollide ||
       levelObj.def.userData?.nocollide
     ) {
@@ -749,6 +755,51 @@ export const loadLevelDef = (
     }
   };
 
+  // Register a placed leaf into the scene-node bookkeeping (allLevelObjects / placedObjects /
+  // nodeById) and splice it into its parent group's children (or rootNodes) at the input-def index.
+  const registerLeafNode = (levelObj: LevelObject) => {
+    allLevelObjects.push(levelObj);
+    placedObjects.set(levelObj.id, levelObj);
+    nodeById.set(levelObj.id, levelObj);
+    const parentGroupEntry = parentGroupForLeaf.get(levelObj.id);
+    if (parentGroupEntry) {
+      const insertAt = parentGroupEntry.group.children.findIndex(existingChild => {
+        const existingIx = inputChildIndex.get(existingChild.id) ?? -1;
+        return existingIx > parentGroupEntry.index;
+      });
+      if (insertAt === -1) {
+        parentGroupEntry.group.children.push(levelObj);
+      } else {
+        parentGroupEntry.group.children.splice(insertAt, 0, levelObj);
+      }
+    } else if ((parentMap.get(levelObj.id) ?? viz.scene) === viz.scene) {
+      const levelObjRootIndex = levelDef.objects.findIndex(rootNode => rootNode.id === levelObj.id);
+      const insertAt = rootNodes.findIndex(existingRootNode => {
+        const existingRootIx = levelDef.objects.findIndex(rootNode => rootNode.id === existingRootNode.id);
+        return existingRootIx > levelObjRootIndex;
+      });
+      if (insertAt === -1) {
+        rootNodes.push(levelObj);
+      } else {
+        rootNodes.splice(insertAt, 0, levelObj);
+      }
+    }
+  };
+
+  // Place an asset-less dash-token marker: an invisible positional anchor that surfaces via
+  // `parkourObjects` (and the editor) but creates no static mesh/collision. The animated token
+  // visual + physics ghost are spawned at its world position by the dash-token subsystem.
+  const placeMarker = (objDef: ObjectDef) => {
+    const marker = new THREE.Mesh(MARKER_GEOMETRY, LEVEL_PLACEHOLDER_MAT);
+    marker.name = objDef.id;
+    marker.visible = false;
+    applyTransform(marker, objDef);
+    marker.userData = { ...(objDef.userData ?? {}), levelDefId: objDef.id };
+    (parentMap.get(objDef.id) ?? viz.scene).add(marker);
+    const entity = new Entity(viz, objDef.id, marker);
+    registerLeafNode({ id: objDef.id, assetId: '', object: marker, def: objDef, generated: false, entity });
+  };
+
   const placeObject = (assetId: string, prototype: THREE.Mesh, objDef: ObjectDef) => {
     const clone = instantiateLevelObject(prototype, objDef, {
       builtMaterials,
@@ -785,32 +836,7 @@ export const loadLevelDef = (
       generated: isGeneratedDef(objDef),
       entity,
     };
-    allLevelObjects.push(levelObj);
-    placedObjects.set(objDef.id, levelObj);
-    nodeById.set(objDef.id, levelObj);
-    const parentGroupEntry = parentGroupForLeaf.get(objDef.id);
-    if (parentGroupEntry) {
-      const insertAt = parentGroupEntry.group.children.findIndex(existingChild => {
-        const existingIx = inputChildIndex.get(existingChild.id) ?? -1;
-        return existingIx > parentGroupEntry.index;
-      });
-      if (insertAt === -1) {
-        parentGroupEntry.group.children.push(levelObj);
-      } else {
-        parentGroupEntry.group.children.splice(insertAt, 0, levelObj);
-      }
-    } else if (parent === viz.scene) {
-      const levelObjRootIndex = levelDef.objects.findIndex(rootNode => rootNode.id === levelObj.id);
-      const insertAt = rootNodes.findIndex(existingRootNode => {
-        const existingRootIx = levelDef.objects.findIndex(rootNode => rootNode.id === existingRootNode.id);
-        return existingRootIx > levelObjRootIndex;
-      });
-      if (insertAt === -1) {
-        rootNodes.push(levelObj);
-      } else {
-        rootNodes.splice(insertAt, 0, levelObj);
-      }
-    }
+    registerLeafNode(levelObj);
 
     // Fire onAssigned callback if the material factory registered one.
     if (objDef.material) {
@@ -823,6 +849,14 @@ export const loadLevelDef = (
       maybeRegisterPhysics(viz.fpCtx!, levelObj);
     }
   };
+
+  // Place asset-less markers synchronously so they're present in `parkourObjects`/the editor
+  // before async asset resolution begins.
+  for (const objDef of allLeafDefs) {
+    if (objDef.asset === undefined) {
+      placeMarker(objDef);
+    }
+  }
 
   // Tracks every initial-load placement chain so the completion barrier can await both
   // the geoscript run *and* the post-resolution hull/placement steps.

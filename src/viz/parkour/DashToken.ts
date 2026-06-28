@@ -1,10 +1,12 @@
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
 import type { Viz } from 'src/viz';
 import type { BtDashToken } from 'src/ammojs/ammoTypes';
 import { rwritable } from '../util/TransparentWritable';
 import { clearPhysicsBindings, withPhysicsContext } from '../util/physics';
 import type { BulletPhysics } from '../collision';
+import type { DashTokenMaterials } from './dashTokenMaterials';
 
 export class DashToken extends THREE.Object3D {
   private viz: Viz;
@@ -104,46 +106,86 @@ export const initDashTokenGraphics = (
   coreMaterial: THREE.Material,
   ringMaterial: THREE.Material
 ): THREE.Object3D | undefined => {
-  const base = loadedWorld.getObjectByName('dash_token')!;
+  const base = loadedWorld.getObjectByName('dash_token');
   if (!base) {
     return;
   }
 
   base.visible = false;
+  applyDashTokenMaterials(base, coreMaterial, ringMaterial);
+  return base;
+};
+
+const applyDashTokenMaterials = (
+  base: THREE.Object3D,
+  coreMaterial: THREE.Material,
+  ringMaterial: THREE.Material
+) =>
   base.traverse(obj => {
     if (!(obj instanceof THREE.Mesh)) {
       return;
     }
-
     if (obj.name.includes('ring')) {
       obj.material = ringMaterial;
     } else if (obj.name.includes('core')) {
       obj.material = coreMaterial;
     }
   });
+
+const buildFallbackDashTokenBase = (
+  coreMaterial: THREE.Material,
+  ringMaterial: THREE.Material
+): THREE.Object3D => {
+  const base = new THREE.Group();
+  const core = new THREE.Mesh(new THREE.SphereGeometry(0.5), coreMaterial);
+  core.name = 'core';
+  base.add(core);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.1, 8, 24), ringMaterial);
+  ring.name = 'ring';
+  base.add(ring);
   return base;
 };
 
+/** The reusable default dash-token mesh (core + rings), extracted from `plats.glb`. */
+const DEFAULT_DASH_TOKEN_URL = 'dash_token.glb';
+let defaultDashTokenBase: Promise<THREE.Object3D> | null = null;
+
+/** Loads the shared default dash-token base mesh on demand (memoized across the page). */
+export const loadDefaultDashTokenBase = (): Promise<THREE.Object3D> => {
+  if (!defaultDashTokenBase) {
+    defaultDashTokenBase = new Promise((resolve, reject) => {
+      new GLTFLoader().setPath('/').load(
+        DEFAULT_DASH_TOKEN_URL,
+        gltf => {
+          const base = gltf.scene.getObjectByName('dash_token');
+          if (!base) {
+            reject(new Error(`"dash_token" not found in ${DEFAULT_DASH_TOKEN_URL}`));
+            return;
+          }
+          resolve(base);
+        },
+        undefined,
+        reject
+      );
+    });
+  }
+  return defaultDashTokenBase;
+};
+
+/**
+ * Spawns animated dash-token visuals + physics ghost tokens. Pass `positions` (level-def path) to
+ * place tokens at explicit world positions using the on-demand default mesh; otherwise the legacy
+ * Blender path places one per `dash_token_loc` marker found in `loadedWorld`. Constructs nothing
+ * when there are no tokens to place. `getMaterials` is invoked lazily — only once tokens are
+ * confirmed — so a scene with no dash tokens never builds/fetches the default materials.
+ */
 export const initDashTokens = (
   viz: Viz,
   loadedWorld: THREE.Group,
-  coreMaterial: THREE.Material,
-  ringMaterial: THREE.Material,
-  dashCharges = rwritable(0)
+  getMaterials: () => DashTokenMaterials | Promise<DashTokenMaterials>,
+  dashCharges = rwritable(0),
+  positions?: THREE.Vector3[]
 ) => {
-  let base = initDashTokenGraphics(loadedWorld, coreMaterial, ringMaterial);
-  if (!base) {
-    base = new THREE.Group();
-    const core = new THREE.Mesh(new THREE.SphereGeometry(0.5), coreMaterial);
-    core.name = 'core';
-    base.add(core);
-
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.1, 8, 24), ringMaterial);
-    ring.name = 'ring';
-    base.add(ring);
-  }
-
-  const dashTokenBase = new DashToken(viz, base);
   const entries: { token: BtDashToken | null; visual: THREE.Object3D; halfExtents: THREE.Vector3 }[] = [];
 
   const computeHalfExtents = (obj: THREE.Object3D): THREE.Vector3 => {
@@ -159,22 +201,6 @@ export const initDashTokens = (
     });
     return halfExtents;
   };
-
-  loadedWorld.traverse(obj => {
-    if (!obj.name.includes('dash_token_loc')) {
-      return;
-    }
-
-    const visual = dashTokenBase.clone();
-    visual.name = `clone_${obj.name}`;
-    visual.position.copy(obj.position);
-    viz.scene.add(visual);
-    entries.push({
-      token: null,
-      visual,
-      halfExtents: computeHalfExtents(visual),
-    });
-  });
 
   const syncFromController = () => {
     const fpCtx = viz.fpCtx;
@@ -200,12 +226,11 @@ export const initDashTokens = (
   const registerTokens = (fpCtx: BulletPhysics) => {
     fpCtx.playerController.setDashCharges(dashCharges.current);
     for (const entry of entries) {
+      if (entry.token) {
+        continue;
+      }
       const tokenEntry = fpCtx.addDashToken(
-        {
-          type: 'box',
-          halfExtents: entry.halfExtents,
-          pos: entry.visual.position,
-        },
+        { type: 'box', halfExtents: entry.halfExtents, pos: entry.visual.position },
         { chargesGranted: 1 },
         () => {
           entry.visual.visible = false;
@@ -219,12 +244,48 @@ export const initDashTokens = (
     fpCtx.saveDashCheckpointState();
     syncFromController();
   };
-  withPhysicsContext(viz, registerTokens);
+
+  const placeTokens = (base: THREE.Object3D, tokenPositions: THREE.Vector3[]) => {
+    for (const pos of tokenPositions) {
+      const visual = new DashToken(viz, base);
+      visual.name = `dash_token_${entries.length}`;
+      visual.position.copy(pos);
+      viz.scene.add(visual);
+      entries.push({ token: null, visual, halfExtents: computeHalfExtents(visual) });
+    }
+    withPhysicsContext(viz, registerTokens);
+  };
+
+  if (positions && positions.length > 0) {
+    Promise.all([loadDefaultDashTokenBase(), Promise.resolve(getMaterials())])
+      .then(([proto, { core, ring }]) => {
+        const base = proto.clone();
+        base.visible = false;
+        applyDashTokenMaterials(base, core, ring);
+        placeTokens(base, positions);
+      })
+      .catch(err => console.error('[DashToken] failed to load default dash-token mesh:', err));
+  } else {
+    const locPositions: THREE.Vector3[] = [];
+    loadedWorld.traverse(obj => {
+      if (obj.name.includes('dash_token_loc')) {
+        locPositions.push(obj.position.clone());
+      }
+    });
+    if (locPositions.length > 0) {
+      Promise.resolve(getMaterials())
+        .then(({ core, ring }) => {
+          const base =
+            initDashTokenGraphics(loadedWorld, core, ring) ?? buildFallbackDashTokenBase(core, ring);
+          placeTokens(base, locPositions);
+        })
+        .catch(err => console.error('[DashToken] failed to build dash-token materials:', err));
+    }
+  }
+
   viz.registerBeforeRenderCb(() => {
     syncFromController();
   });
 
-  return {
-    syncFromController,
-  };
+  return { syncFromController };
 };

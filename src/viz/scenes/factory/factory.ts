@@ -4,23 +4,13 @@ import { N8AOPostPass } from 'n8ao';
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
-import { ParkourManager } from 'src/viz/parkour/ParkourManager.svelte';
+import { ParkourManager, partitionParkourObjects } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { buildFactorySkyStack } from './skyStack';
-
-const collectMeshes = (obj: THREE.Object3D): THREE.Mesh[] => {
-  const out: THREE.Mesh[] = [];
-  obj.traverse(child => {
-    if (child instanceof THREE.Mesh) {
-      out.push(child);
-    }
-  });
-  return out;
-};
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   viz.camera.near = 0.2;
@@ -43,22 +33,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   );
   playerMesh.castShadow = false;
   playerMesh.receiveShadow = true;
-
-  const dashToken = new THREE.Group();
-  dashToken.name = 'dash_token';
-  dashToken.visible = false;
-  const dashTokenCore = new THREE.Mesh(
-    new THREE.SphereGeometry(0.45, 12, 12),
-    new THREE.MeshStandardMaterial()
-  );
-  dashTokenCore.name = 'core';
-  const dashTokenRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.72, 0.1, 8, 24),
-    new THREE.MeshStandardMaterial()
-  );
-  dashTokenRing.name = 'ring';
-  dashToken.add(dashTokenCore, dashTokenRing);
-  loadedWorld.add(dashToken);
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: 75,
@@ -187,16 +161,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   });
 
   handle.parkourObjects.then(parkourObjs => {
-    const checkpointMeshes = parkourObjs.flatMap(obj => collectMeshes(obj.object));
-    pkManager.setMaterials(
-      {
-        dashToken: {
-          core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
-          ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
-        },
-      },
-      { checkpointMeshes }
-    );
+    const { checkpointMeshes, dashTokenPositions } = partitionParkourObjects(parkourObjs);
+    pkManager.setMaterials(undefined, { checkpointMeshes, dashTokenPositions });
   });
 
   return pkManager.buildSceneConfig();

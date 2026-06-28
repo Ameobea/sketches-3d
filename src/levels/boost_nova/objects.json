@@ -96,6 +96,11 @@
       "position": [-0.7304, 1.3651, -66.2764],
       "rotation": [0, 0, 0],
       "scale": [1.8, 1.8, 1.8]
+    },
+    {
+      "id": "dash_token_example",
+      "position": [0, 6, -12],
+      "parkour": { "dashToken": { "checkpointIx": 1 } }
     }
   ]
 }

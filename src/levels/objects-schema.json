@@ -112,6 +112,17 @@
                       "jumpRetention"
                     ],
                     "additionalProperties": false
+                  },
+                  "dashToken": {
+                    "type": "object",
+                    "properties": {
+                      "checkpointIx": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -205,8 +216,7 @@
               }
             },
             "required": [
-              "id",
-              "asset"
+              "id"
             ],
             "additionalProperties": false
           },
@@ -338,6 +348,17 @@
                           "jumpRetention"
                         ],
                         "additionalProperties": false
+                      },
+                      "dashToken": {
+                        "type": "object",
+                        "properties": {
+                          "checkpointIx": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        },
+                        "additionalProperties": false
                       }
                     },
                     "additionalProperties": false
@@ -431,8 +452,7 @@
                   }
                 },
                 "required": [
-                  "id",
-                  "asset"
+                  "id"
                 ],
                 "additionalProperties": false
               },

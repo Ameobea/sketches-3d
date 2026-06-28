@@ -27,7 +27,7 @@ export const processLoadedScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
   viz.scene.add(ambientLight);
 
-  const { checkpointMat, greenMosaic2Material, goldMaterial } = await buildPylonsMaterials(viz, loadedWorld);
+  const { checkpointMat } = await buildPylonsMaterials(viz, loadedWorld);
 
   const sunPos = new THREE.Vector3(200, 290, -135);
   const sunLight = new THREE.DirectionalLight(0xffffff, 1.6);
@@ -47,10 +47,7 @@ export const processLoadedScene = async (
     vizConf,
     locations,
     scoreThresholds,
-    {
-      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-      checkpoint: checkpointMat,
-    },
+    { checkpoint: checkpointMat },
     'pk_pylons',
     false
   );

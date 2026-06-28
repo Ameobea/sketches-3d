@@ -209,7 +209,7 @@ export class EditorMutationController {
     if (isLevelGroup(node) && node.compositionDef) {
       return {
         kind: 'composition',
-        assetId: node.compositionDef.asset,
+        assetId: node.compositionDef.asset ?? '',
         def: JSON.parse(JSON.stringify(node.compositionDef)),
         parent,
         worldTransform,
@@ -275,6 +275,7 @@ export class EditorMutationController {
       }
     } else {
       for (const leaf of flattenLeaves([entry.def])) {
+        if (leaf.asset === undefined) continue; // dash-token marker — no prototype needed
         const known =
           this.ctx.prototypes.has(leaf.asset) || (this.ctx.compositionBaked?.has(leaf.asset) ?? false);
         if (!known) {

@@ -23,22 +23,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   playerMesh.castShadow = false;
   playerMesh.receiveShadow = true;
 
-  const dashToken = new THREE.Group();
-  dashToken.name = 'dash_token';
-  dashToken.visible = false;
-  const dashTokenCore = new THREE.Mesh(
-    new THREE.SphereGeometry(0.45, 12, 12),
-    new THREE.MeshStandardMaterial()
-  );
-  dashTokenCore.name = 'core';
-  const dashTokenRing = new THREE.Mesh(
-    new THREE.TorusGeometry(0.72, 0.1, 8, 24),
-    new THREE.MeshStandardMaterial()
-  );
-  dashTokenRing.name = 'ring';
-  dashToken.add(dashTokenCore, dashTokenRing);
-  loadedWorld.add(dashToken);
-
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
     [Score.S]: Infinity,
@@ -56,13 +40,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       },
     },
     scoreThresholds,
-    {
-      dashToken: {
-        core: new THREE.MeshStandardMaterial({ color: 0x9effe1, emissive: 0x1a322e, roughness: 0.4 }),
-        ring: new THREE.MeshStandardMaterial({ color: 0xffd464, emissive: 0x36290a, roughness: 0.3 }),
-      },
-      checkpoint: new THREE.MeshStandardMaterial({ color: 0x80f0ff, emissive: 0x173845, roughness: 0.32 }),
-    },
+    { checkpoint: new THREE.MeshStandardMaterial({ color: 0x80f0ff, emissive: 0x173845, roughness: 0.32 }) },
     'jump_pad_speedup_test',
     true,
     {

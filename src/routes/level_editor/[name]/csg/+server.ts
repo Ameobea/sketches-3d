@@ -60,6 +60,8 @@ export const POST: RequestHandler = async ({ params, request }) => {
     }
     if (isObjectGroup(found.node)) error(400, `Object "${id}" is a group, not a leaf object`);
     const objDef = found.node;
+    if (objDef.asset === undefined)
+      error(400, `Object "${id}" is a marker with no asset; cannot convert to CSG`);
     const assetDef = level.def.assets[objDef.asset];
     if (!assetDef || (assetDef.type !== 'geoscript' && (assetDef as any).type !== 'csg')) {
       error(400, `Asset "${objDef.asset}" must be a geoscript or csg asset`);
@@ -77,6 +79,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 
   const primary = resolved[0];
   const primaryDef = primary.def;
+  if (primaryDef.asset === undefined) error(400, 'Primary object is a marker with no asset');
 
   // Generate unique CSG asset name based on primary object's asset. The asset
   // ID may include slash-separated subdirs (e.g. `dir/leaf`); use only the

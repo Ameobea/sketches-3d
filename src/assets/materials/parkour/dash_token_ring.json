@@ -1,0 +1,23 @@
+{
+  "$schema": "../../library-material-schema.json",
+  "textures": {
+    "goldAlbedo": { "url": "https://i.ameo.link/be0.jpg", "colorSpace": "srgb" },
+    "goldNormal": { "url": "https://i.ameo.link/be2.jpg" },
+    "goldRoughness": { "url": "https://i.ameo.link/bdz.jpg" }
+  },
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#aaaaaa",
+      "map": "goldAlbedo",
+      "normalMap": "goldNormal",
+      "roughnessMap": "goldRoughness",
+      "uvScale": [0.6, 0.6],
+      "normalScale": 4,
+      "roughness": 0.2
+    },
+    "options": {
+      "useTriplanarMapping": true
+    }
+  }
+}

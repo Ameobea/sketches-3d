@@ -4,6 +4,9 @@ import { mount, unmount } from 'svelte';
 import type { Viz } from 'src/viz';
 import type { VizConfig } from 'src/viz/conf';
 import { initDashTokens } from './DashToken';
+import { buildDefaultDashTokenMaterials, type DashTokenMaterials } from './dashTokenMaterials';
+import type { LevelObject } from '../levelDef/loadLevelDef';
+import { forEachMesh } from '../levelDef/levelObjectUtils';
 import { initCheckpoints } from './checkpoints';
 import TimerDisplay from './TimerDisplay.svelte';
 import TimeDisplay from './TimeDisplay.svelte';
@@ -17,10 +20,8 @@ import { SceneRuntime } from '../sceneRuntime';
 import { RecorderEventType } from '../flightRecorder';
 
 export interface ParkourMaterials {
-  dashToken: {
-    core: THREE.Material;
-    ring: THREE.Material;
-  };
+  /** Core/ring materials for dash tokens. Omit to use the default library pair (green-mosaic + gold). */
+  dashToken?: DashTokenMaterials;
   /**
    * Material for checkpoint / win-zone meshes.
    * Optional when `checkpointMeshes` is provided to `setMaterials` and the meshes
@@ -28,6 +29,27 @@ export interface ParkourMaterials {
    */
   checkpoint?: THREE.Material | (() => THREE.Material);
 }
+
+/**
+ * Splits placed level-def parkour objects into checkpoint/win meshes (for collectables) and
+ * dash-token spawn positions (world-space). Dash-token markers carry no real mesh, so they're
+ * excluded from `checkpointMeshes`.
+ */
+export const partitionParkourObjects = (
+  objs: LevelObject[]
+): { checkpointMeshes: THREE.Mesh[]; dashTokenPositions: THREE.Vector3[] } => {
+  const checkpointMeshes: THREE.Mesh[] = [];
+  const dashTokenPositions: THREE.Vector3[] = [];
+  for (const obj of objs) {
+    if (obj.def.parkour?.dashToken) {
+      obj.object.updateWorldMatrix(true, false);
+      dashTokenPositions.push(obj.object.getWorldPosition(new THREE.Vector3()));
+    } else if (obj.def.parkour?.checkpoint != null || obj.def.parkour?.win) {
+      forEachMesh(obj.object, mesh => checkpointMeshes.push(mesh));
+    }
+  }
+  return { checkpointMeshes, dashTokenPositions };
+};
 
 export class ParkourManager {
   private viz: Viz;
@@ -103,18 +125,23 @@ export class ParkourManager {
     this.runtime.registerDestroyCb(() => this.onRuntimeDestroy());
   }
 
-  public setMaterials = (materials: ParkourMaterials, opts: { checkpointMeshes?: THREE.Mesh[] } = {}) => {
+  public setMaterials = (
+    materials: ParkourMaterials | undefined,
+    opts: { checkpointMeshes?: THREE.Mesh[]; dashTokenPositions?: THREE.Vector3[] } = {}
+  ) => {
+    const dashMatOverride = materials?.dashToken;
+    const getDashMats = dashMatOverride ? () => dashMatOverride : buildDefaultDashTokenMaterials;
     const { syncFromController } = initDashTokens(
       this.viz,
       this.loadedWorld,
-      materials.dashToken.core,
-      materials.dashToken.ring,
-      this.curDashCharges
+      getDashMats,
+      this.curDashCharges,
+      opts.dashTokenPositions
     );
     this.resetCheckpoints = initCheckpoints(
       this.viz,
       this.loadedWorld,
-      materials.checkpoint,
+      materials?.checkpoint,
       syncFromController,
       this.onWin,
       opts.checkpointMeshes

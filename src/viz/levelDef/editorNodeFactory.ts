@@ -66,6 +66,9 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
       const child = buildGroupSubtree(ctx, childDef);
       groupObj.add(child.object);
       levelGroup.children.push(child);
+    } else if (childDef.asset === undefined) {
+      // dash-token marker — editor subtree cloning of markers is not supported yet
+      continue;
     } else if (ctx.compositionBaked?.has(childDef.asset)) {
       const child = buildCompositionGroupFromCtx(ctx, childDef);
       if (child) {
@@ -118,7 +121,7 @@ export function buildCompositionChild(
   };
   const entity = new Entity(ctx.viz, childId, mesh);
   if (objDef.nonPermeable !== undefined) entity.nonPermeable = objDef.nonPermeable;
-  return { id: childId, assetId: objDef.asset, object: mesh, def: childDef, generated: true, entity };
+  return { id: childId, assetId: objDef.asset ?? '', object: mesh, def: childDef, generated: true, entity };
 }
 
 /**
@@ -161,12 +164,14 @@ export function buildCompositionGroup(
  * meshes and the asset's material-name map. Returns null if the asset has no baked meshes.
  */
 export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): LevelGroup | null {
-  const baked = ctx.compositionBaked?.get(objDef.asset);
+  const assetId = objDef.asset;
+  if (assetId === undefined) return null;
+  const baked = ctx.compositionBaked?.get(assetId);
   if (!baked) {
-    console.warn(`[editorNodeFactory] No baked meshes for composition asset "${objDef.asset}"`);
+    console.warn(`[editorNodeFactory] No baked meshes for composition asset "${assetId}"`);
     return null;
   }
-  const asset = ctx.levelDef?.assets[objDef.asset];
+  const asset = ctx.levelDef?.assets[assetId];
   const materialMap = asset?.type === 'geotoyComposition' ? asset.materialMap : undefined;
   const names = new Set(Object.keys(ctx.levelDef?.materials ?? {}));
   return buildCompositionGroup(

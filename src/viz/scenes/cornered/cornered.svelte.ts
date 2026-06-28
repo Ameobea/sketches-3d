@@ -79,10 +79,10 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const [
-    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial },
-    { buildingTexture },
-  ] = await Promise.all([buildPylonsMaterials(viz, loadedWorld), loadLevelMats()]);
+  const [{ checkpointMat, shinyPatchworkStoneMaterial }, { buildingTexture }] = await Promise.all([
+    buildPylonsMaterials(viz, loadedWorld),
+    loadLevelMats(),
+  ]);
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: 30.5,
@@ -142,10 +142,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     vizConf,
     locations,
     scoreThresholds,
-    {
-      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-      checkpoint: checkpointMat,
-    },
+    { checkpoint: checkpointMat },
     'cornered',
     true
   );

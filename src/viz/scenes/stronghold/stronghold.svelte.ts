@@ -94,12 +94,11 @@ const setupScene = async (
 ) => {
   const loader = new THREE.ImageBitmapLoader();
   const [
-    { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial },
+    { checkpointMat, shinyPatchworkStoneMaterial },
     { towerMat, towerTrimMat, plinthArchMat, blockerInteriorMaterial },
   ] = await Promise.all([buildPylonsMaterials(viz, loadedWorld, loader), loadCustomMats(loader)]);
 
   const pkMaterials: ParkourMaterials = {
-    dashToken: { core: greenMosaic2Material, ring: goldMaterial },
     checkpoint: checkpointMat,
   };
   pkManager.setMaterials(pkMaterials);

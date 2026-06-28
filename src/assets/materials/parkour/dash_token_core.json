@@ -1,0 +1,23 @@
+{
+  "$schema": "../../library-material-schema.json",
+  "textures": {
+    "greenMosaic2Albedo": { "url": "https://i.ameo.link/ccn.avif", "colorSpace": "srgb" },
+    "greenMosaic2Normal": { "url": "https://i.ameo.link/cwb.avif" },
+    "greenMosaic2Roughness": { "url": "https://i.ameo.link/cwc.avif" }
+  },
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#ffffff",
+      "metalness": 0.5,
+      "roughness": 0.5,
+      "map": "greenMosaic2Albedo",
+      "normalMap": "greenMosaic2Normal",
+      "roughnessMap": "greenMosaic2Roughness",
+      "uvScale": [7.8, 7.8],
+      "normalScale": 2.2,
+      "ambientLightScale": 2,
+      "mapDisableDistance": null
+    }
+  }
+}

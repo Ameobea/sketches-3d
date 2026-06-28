@@ -201,7 +201,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
   if (body.type === 'group_paste') {
     // Validate all referenced assets exist
     for (const leaf of flattenLeaves([body.def])) {
-      if (!level.def.assets[leaf.asset]) error(400, `Unknown asset "${leaf.asset}" in pasted group`);
+      if (leaf.asset !== undefined && !level.def.assets[leaf.asset]) {
+        error(400, `Unknown asset "${leaf.asset}" in pasted group`);
+      }
     }
 
     // Assign fresh IDs to every node in the subtree. We build the set of used IDs
@@ -209,7 +211,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
     const allIds = new Set(flattenAllNodes(level.def.objects).map(n => n.id));
 
     const withFreshIds = (node: ObjectDef | ObjectGroupDef): ObjectDef | ObjectGroupDef => {
-      const stem = isObjectGroup(node) ? node.id : assetIdToNodeStem((node as ObjectDef).asset);
+      const stem = isObjectGroup(node)
+        ? node.id
+        : assetIdToNodeStem((node as ObjectDef).asset ?? 'dash_token');
       const prefix = `${stem}_`;
       let maxN = -1;
       for (const id of allIds) {
@@ -272,7 +276,9 @@ export const POST: RequestHandler = async ({ params, request }) => {
     }
 
     for (const leaf of flattenLeaves([body.def])) {
-      if (!level.def.assets[leaf.asset]) error(400, `Unknown asset "${leaf.asset}" in restored subtree`);
+      if (leaf.asset !== undefined && !level.def.assets[leaf.asset]) {
+        error(400, `Unknown asset "${leaf.asset}" in restored subtree`);
+      }
       if (leaf.material && !level.def.materials?.[leaf.material]) {
         error(400, `Unknown material "${leaf.material}" in restored subtree`);
       }

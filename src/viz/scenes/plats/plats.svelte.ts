@@ -78,8 +78,7 @@ export const processLoadedScene = async (
   loadedWorld: THREE.Group,
   vizConf: VizConfig
 ): Promise<SceneConfig> => {
-  const { checkpointMat, greenMosaic2Material, goldMaterial, shinyPatchworkStoneMaterial } =
-    await buildPylonsMaterials(viz, loadedWorld);
+  const { checkpointMat, shinyPatchworkStoneMaterial } = await buildPylonsMaterials(viz, loadedWorld);
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: 39,
@@ -94,10 +93,7 @@ export const processLoadedScene = async (
     vizConf,
     locations,
     scoreThresholds,
-    {
-      dashToken: { core: greenMosaic2Material, ring: goldMaterial },
-      checkpoint: checkpointMat,
-    },
+    { checkpoint: checkpointMat },
     'plats',
     true
   );
