@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { LevelGroup, LevelSceneNode } from './levelSceneTypes';
-import { isLevelGroup } from './levelSceneTypes';
+import { isLevelGroup, isEditable, isCompositionNode } from './levelSceneTypes';
 import type { ObjectDef, ObjectGroupDef } from './types';
 import type { StructuralCtx, RuntimeSubtree, StructuralOp, ParentRef } from './editorStructuralTypes';
 import type { BuildCtx } from './editorNodeFactory';
@@ -21,7 +21,7 @@ import {
 } from './editorStructuralOps';
 import type { TransformSnapshot } from './TransformHandler';
 import { snapshotTransform, worldToLocalSnapshot } from './TransformHandler';
-import { flattenLeaves } from './levelDefTreeUtils';
+import { flattenLeaves, hasAsset } from './levelDefTreeUtils';
 import { round } from './mathUtils';
 
 export type StructuralUndoEntry = {
@@ -206,7 +206,7 @@ export class EditorMutationController {
    */
   captureClipboardEntry(node: LevelSceneNode, worldTransform: TransformSnapshot): ClipboardEntry {
     const parent = capturePlacement(this.ctx, node).parent;
-    if (isLevelGroup(node) && node.compositionDef) {
+    if (isCompositionNode(node)) {
       return {
         kind: 'composition',
         assetId: node.compositionDef.asset ?? '',
@@ -275,7 +275,7 @@ export class EditorMutationController {
       }
     } else {
       for (const leaf of flattenLeaves([entry.def])) {
-        if (leaf.asset === undefined) continue; // dash-token marker — no prototype needed
+        if (!hasAsset(leaf)) continue; // dash-token marker — no prototype needed
         const known =
           this.ctx.prototypes.has(leaf.asset) || (this.ctx.compositionBaked?.has(leaf.asset) ?? false);
         if (!known) {
@@ -291,7 +291,7 @@ export class EditorMutationController {
     let targetChildren: LevelSceneNode[] = this.ctx.rootNodes;
     if (parentRef.type === 'group') {
       const parentNode = this.ctx.nodeById.get(parentRef.groupId);
-      if (parentNode && isLevelGroup(parentNode) && !parentNode.generated) {
+      if (parentNode && isLevelGroup(parentNode) && isEditable(parentNode)) {
         targetParentObj = parentNode.object;
         targetChildren = parentNode.children;
       } else {
@@ -357,7 +357,7 @@ export class EditorMutationController {
     const deletedIds: string[] = [];
 
     for (const node of nodes) {
-      if (node.generated) continue;
+      if (!isEditable(node)) continue;
       const subtree = detachSubtree(this.ctx, node);
       undoOps.push({ type: 'attach_subtree', subtree });
       redoOps.push({ type: 'detach_subtree', subtree });

@@ -361,7 +361,7 @@ export class CsgEditController {
     const { csgAssetName, tree, primaryId, deletedIds } = result;
     this.editor.levelDef.assets[csgAssetName] = { type: 'csg', tree } as any;
 
-    const primary = this.editor.allLevelObjects.find((o: LevelObject) => o.id === primaryId);
+    const primary = this.editor.allLevelObjects.get(primaryId);
     if (!primary) return;
 
     // Detach the deleted (non-primary) objects from the editor's scene/physics/tracking.

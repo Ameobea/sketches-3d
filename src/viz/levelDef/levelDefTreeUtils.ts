@@ -7,6 +7,11 @@ export const isObjectGroup = (n: ObjectDef | ObjectGroupDef): n is ObjectGroupDe
 export const isGeneratedDef = (n: { userData?: Record<string, unknown> }) =>
   n.userData?.[GENERATED_NODE_USERDATA_KEY] === true;
 
+/** True for an asset-bearing leaf def; `!hasAsset` identifies a dash-token marker (an asset-less
+ *  positional anchor with no mesh or collision). A type guard so callers that skip markers narrow
+ *  `asset` to a defined string. */
+export const hasAsset = (def: ObjectDef): def is ObjectDef & { asset: string } => def.asset !== undefined;
+
 /** Recursive DFS search by id. Returns null if not found. */
 export const findNodeById = (
   nodes: (ObjectDef | ObjectGroupDef)[],

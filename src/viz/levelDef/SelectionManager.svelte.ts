@@ -1,6 +1,6 @@
 import type { LightDef } from './types';
 import type { LevelGroup, LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
-import { isLevelGroup } from './levelSceneTypes';
+import { isLevelGroup, isEditable } from './levelSceneTypes';
 import type { AssetLibFolder } from './assetLibTypes';
 
 /**
@@ -70,7 +70,7 @@ export class SelectionManager {
     nodeById: Map<string, import('./levelSceneTypes').LevelSceneNode>,
     rootNodes: import('./levelSceneTypes').LevelSceneNode[]
   ): boolean {
-    const editable = this._selectedNodes.filter(n => !n.generated);
+    const editable = this._selectedNodes.filter(isEditable);
     if (editable.length < 2) return false;
     return this.haveSharedParent(nodeById, rootNodes);
   }

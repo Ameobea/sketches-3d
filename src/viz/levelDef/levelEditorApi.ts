@@ -13,8 +13,7 @@ import type { LevelSceneNode } from './loadLevelDef';
 import type { RuntimeSubtree } from './editorStructuralTypes';
 import type { TransformSnapshot } from './TransformHandler';
 import { round } from './mathUtils';
-import { isLevelGroup } from './levelSceneTypes';
-import { serializeGroup, compositionPointerDef } from './editorNodeFactory';
+import { nodeToDef } from './editorNodeFactory';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
@@ -100,14 +99,7 @@ export class LevelEditorApi {
   };
 
   restoreSubtree = async (subtree: RuntimeSubtree): Promise<void> => {
-    // Composition groups round-trip as their leaf pointer (never the expanded children); other
-    // groups materialize the full subtree; leaves serialize from their own def.
-    const sourceDef = isLevelGroup(subtree.root)
-      ? subtree.root.compositionDef
-        ? compositionPointerDef(subtree.root)
-        : serializeGroup(subtree.root)
-      : subtree.root.def;
-    const def = JSON.parse(JSON.stringify(sourceDef)) as ObjectDef | ObjectGroupDef;
+    const def = JSON.parse(JSON.stringify(nodeToDef(subtree.root))) as ObjectDef | ObjectGroupDef;
     def.position = subtree.transform.position.map(round) as [number, number, number];
     def.rotation = subtree.transform.rotation.map(round) as [number, number, number];
     def.scale = subtree.transform.scale.map(round) as [number, number, number];

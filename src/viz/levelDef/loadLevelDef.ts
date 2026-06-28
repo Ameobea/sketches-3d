@@ -35,8 +35,14 @@ import {
 import type { GraphicsQuality } from 'src/viz/conf';
 import type { SceneRuntime } from '../sceneRuntime';
 import type { BehaviorFn } from '../sceneRuntime/types';
-import { isObjectGroup, flattenLeaves, isGeneratedDef } from './levelDefTreeUtils';
-import { type LevelObject, type LevelGroup, type LevelSceneNode, type LevelLight } from './levelSceneTypes';
+import { isObjectGroup, flattenLeaves, isGeneratedDef, hasAsset } from './levelDefTreeUtils';
+import {
+  type LevelObject,
+  type LevelGroup,
+  type LevelSceneNode,
+  type LevelLight,
+  isCompositionNode,
+} from './levelSceneTypes';
 import { replaceLeafInstance } from './editorStructuralOps';
 import { buildCompositionChild } from './editorNodeFactory';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
@@ -58,6 +64,14 @@ type PhysicsContext = NonNullable<Viz['fpCtx']>;
  */
 const MARKER_GEOMETRY = new THREE.BufferGeometry();
 MARKER_GEOMETRY.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
+
+/** Splice `item` into `arr` before the first element whose order key exceeds its own (else append). */
+const insertByOrder = <T extends { id: string }>(arr: T[], item: T, orderOf: (x: T) => number): void => {
+  const key = orderOf(item);
+  const at = arr.findIndex(x => orderOf(x) > key);
+  if (at === -1) arr.push(item);
+  else arr.splice(at, 0, item);
+};
 
 export interface LevelLoadHandle {
   /** Resolves once every asset is resolved and placed in the scene. Materials may still be streaming. */
@@ -471,7 +485,7 @@ export const loadLevelDef = (
   // markers (no mesh/asset); they're placed separately in `placeMarker`.
   const assetToObjDefs = new Map<string, ObjectDef[]>();
   for (const objDef of allLeafDefs) {
-    if (objDef.asset === undefined) continue;
+    if (!hasAsset(objDef)) continue;
     const list = assetToObjDefs.get(objDef.asset) ?? [];
     list.push(objDef);
     assetToObjDefs.set(objDef.asset, list);
@@ -499,14 +513,15 @@ export const loadLevelDef = (
     }
   }
 
-  const placedObjects = new Map<string, LevelObject>();
   // Baked mesh prototypes per composition asset, retained so the editor can re-expand a
   // placement (add-from-library / clone) without re-running the geoscript worker.
   const compositionBaked = new Map<string, BakedCompositionMesh[]>();
   const builtMaterials = new Map<string, THREE.Material>();
   const loadedTextures = new Map<string, THREE.Texture>();
   const assetPrototypes = new Map<string, THREE.Mesh>();
-  const allLevelObjects: LevelObject[] = [];
+  // Every placed leaf (incl. composition opaque parts), keyed by id — the single id-lookup +
+  // iteration source for load, hot-reload, and the editor (which mutates it via structural ops).
+  const allLevelObjects = new Map<string, LevelObject>();
   const registeredPhysicsObjects = new Set<string>();
 
   // Per-asset collision-hull mesh.  Populated by `resolveAssetPrototype` for assets with
@@ -592,18 +607,17 @@ export const loadLevelDef = (
   };
 
   // Pre-create the group hierarchy synchronously before async asset resolution.
-  // Each leaf def gets mapped to its parent Object3D so placeObject can add to the right parent.
-  const parentMap = new Map<string, THREE.Object3D>(); // objectId → parent container
-  const parentGroupForLeaf = new Map<string, { group: LevelGroup; index: number }>();
-  // For every node that's a child of some group in the input def, its sibling index
-  // within that group. Lets async leaf placement find the right insertion slot
-  // without consulting the runtime def (whose `children` is intentionally omitted).
+  // Group-parented leaves → their parent `LevelGroup` (unset for root leaves, which parent to the
+  // scene); the THREE parent is `group.object`. Async placement reads this to add + splice the leaf.
+  const leafParentGroup = new Map<string, LevelGroup>();
+  const leafParentObject = (id: string): THREE.Object3D => leafParentGroup.get(id)?.object ?? viz.scene;
+  // Sibling index within the parent group, for every group-child node. Lets async leaf placement
+  // find the right insertion slot without consulting the runtime def (whose `children` is omitted).
   const inputChildIndex = new Map<string, number>();
   const nodeById = new Map<string, LevelSceneNode>();
   const rootNodes: LevelSceneNode[] = [];
-  // Composition placements: each referencing ObjectDef pre-creates an (initially empty)
-  // editable LevelGroup; its read-only children are filled once the tree is baked.
-  const compositionGroups = new Map<string, { group: LevelGroup; objDef: ObjectDef }>();
+  // Composition placements pre-create an (initially empty) `LevelGroup`; its opaque parts are
+  // filled once the tree is baked. The pre-created group is recovered from `nodeById`.
   const isCompositionAsset = (assetKey: string): boolean =>
     levelDef.assets[assetKey]?.type === 'geotoyComposition';
 
@@ -615,7 +629,7 @@ export const loadLevelDef = (
     for (let childIx = 0; childIx < nodes.length; childIx += 1) {
       const node = nodes[childIx];
       if (parentGroup) inputChildIndex.set(node.id, childIx);
-      if (!isObjectGroup(node) && node.asset !== undefined && isCompositionAsset(node.asset)) {
+      if (!isObjectGroup(node) && hasAsset(node) && isCompositionAsset(node.asset)) {
         const group = new THREE.Group();
         applyTransform(group, node);
         parent.add(group);
@@ -632,10 +646,10 @@ export const loadLevelDef = (
           children: [],
           generated: isGeneratedDef(node),
           compositionDef: node,
+          opaqueParts: [],
         };
         nodeById.set(node.id, levelGroup);
         if (parent === viz.scene) rootNodes.push(levelGroup);
-        compositionGroups.set(node.id, { group: levelGroup, objDef: node });
       } else if (isObjectGroup(node)) {
         const group = new THREE.Group();
         applyTransform(group, node);
@@ -657,10 +671,7 @@ export const loadLevelDef = (
           if (childNode) levelGroup.children.push(childNode);
         }
       } else {
-        parentMap.set(node.id, parent);
-        if (parentGroup) {
-          parentGroupForLeaf.set(node.id, { group: parentGroup, index: childIx });
-        }
+        if (parentGroup) leafParentGroup.set(node.id, parentGroup);
         // Leaf nodes are added to rootNodes/nodeById when placed (onAssetResolved)
       }
     }
@@ -725,7 +736,7 @@ export const loadLevelDef = (
   const maybeRegisterPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
     if (
       registeredPhysicsObjects.has(levelObj.id) ||
-      levelObj.def.asset === undefined ||
+      !hasAsset(levelObj.def) ||
       levelObj.def.nocollide ||
       levelObj.def.userData?.nocollide
     ) {
@@ -744,7 +755,7 @@ export const loadLevelDef = (
   viz.collisionWorldLoadedCbs.push(fpCtx => {
     physicsReady = true;
     resolvePhysicsWorldReady(fpCtx);
-    for (const levelObj of allLevelObjects) {
+    for (const levelObj of allLevelObjects.values()) {
       maybeRegisterPhysics(fpCtx, levelObj);
     }
   });
@@ -766,34 +777,16 @@ export const loadLevelDef = (
     }
   };
 
-  // Register a placed leaf into the scene-node bookkeeping (allLevelObjects / placedObjects /
-  // nodeById) and splice it into its parent group's children (or rootNodes) at the input-def index.
+  // Register a placed leaf into the scene-node bookkeeping (allLevelObjects / nodeById) and splice
+  // it into its parent group's children (or rootNodes) at the input-def index.
   const registerLeafNode = (levelObj: LevelObject) => {
-    allLevelObjects.push(levelObj);
-    placedObjects.set(levelObj.id, levelObj);
+    allLevelObjects.set(levelObj.id, levelObj);
     nodeById.set(levelObj.id, levelObj);
-    const parentGroupEntry = parentGroupForLeaf.get(levelObj.id);
-    if (parentGroupEntry) {
-      const insertAt = parentGroupEntry.group.children.findIndex(existingChild => {
-        const existingIx = inputChildIndex.get(existingChild.id) ?? -1;
-        return existingIx > parentGroupEntry.index;
-      });
-      if (insertAt === -1) {
-        parentGroupEntry.group.children.push(levelObj);
-      } else {
-        parentGroupEntry.group.children.splice(insertAt, 0, levelObj);
-      }
-    } else if ((parentMap.get(levelObj.id) ?? viz.scene) === viz.scene) {
-      const levelObjRootIndex = levelDef.objects.findIndex(rootNode => rootNode.id === levelObj.id);
-      const insertAt = rootNodes.findIndex(existingRootNode => {
-        const existingRootIx = levelDef.objects.findIndex(rootNode => rootNode.id === existingRootNode.id);
-        return existingRootIx > levelObjRootIndex;
-      });
-      if (insertAt === -1) {
-        rootNodes.push(levelObj);
-      } else {
-        rootNodes.splice(insertAt, 0, levelObj);
-      }
+    const parentGroup = leafParentGroup.get(levelObj.id);
+    if (parentGroup) {
+      insertByOrder(parentGroup.children, levelObj, x => inputChildIndex.get(x.id) ?? -1);
+    } else {
+      insertByOrder(rootNodes, levelObj, x => levelDef.objects.findIndex(o => o.id === x.id));
     }
   };
 
@@ -805,7 +798,7 @@ export const loadLevelDef = (
     marker.name = objDef.id;
     applyTransform(marker, objDef);
     marker.userData = { ...(objDef.userData ?? {}), levelDefId: objDef.id };
-    (parentMap.get(objDef.id) ?? viz.scene).add(marker);
+    leafParentObject(objDef.id).add(marker);
     const entity = new Entity(viz, objDef.id, marker);
     registerLeafNode({ id: objDef.id, assetId: '', object: marker, def: objDef, generated: false, entity });
   };
@@ -816,7 +809,7 @@ export const loadLevelDef = (
       fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
     });
 
-    const parent = parentMap.get(objDef.id) ?? viz.scene;
+    const parent = leafParentObject(objDef.id);
     parent.add(clone);
 
     const entity = new Entity(viz, objDef.id, clone);
@@ -833,7 +826,7 @@ export const loadLevelDef = (
       entity.externalVelocityGroundDampingFactor = objDef.externalVelocityGroundDampingFactor;
     }
     // Texture-less materials build before any placement, so tryBuildMaterial's post-build
-    // propagation runs against an empty placedObjects map; cover the already-built case here.
+    // propagation runs against an empty allLevelObjects map; cover the already-built case here.
     const earlyMat = objDef.material ? builtMaterials.get(objDef.material) : undefined;
     if (earlyMat) {
       propagateMatUserDataToEntity(earlyMat, entity);
@@ -863,7 +856,7 @@ export const loadLevelDef = (
   // Place asset-less markers synchronously so they're present in `parkourObjects`/the editor
   // before async asset resolution begins.
   for (const objDef of allLeafDefs) {
-    if (objDef.asset === undefined) {
+    if (!hasAsset(objDef)) {
       placeMarker(objDef);
     }
   }
@@ -920,16 +913,15 @@ export const loadLevelDef = (
     const levelObj = buildCompositionChild({ viz, builtMaterials }, objDef, baked, childIndex, g =>
       resolveChildMaterial(def, objDef, g, assetId)
     );
+    levelObj.owner = group;
     group.object.add(levelObj.object);
 
     const matName = levelObj.def.material;
     const builtMat = matName ? builtMaterials.get(matName) : undefined;
     if (builtMat) propagateMatUserDataToEntity(builtMat, levelObj.entity);
 
-    allLevelObjects.push(levelObj);
-    placedObjects.set(levelObj.id, levelObj);
-    nodeById.set(levelObj.id, levelObj);
-    group.children.push(levelObj);
+    allLevelObjects.set(levelObj.id, levelObj);
+    (group.opaqueParts ??= []).push(levelObj);
 
     // Register for the post-texture material build, or fire the assigned-cb if already built.
     if (matName) {
@@ -996,9 +988,9 @@ export const loadLevelDef = (
           compositionBaked.set(id, baked);
           if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
           for (const objDef of assetToObjDefs.get(id) ?? []) {
-            const entry = compositionGroups.get(objDef.id);
-            if (!entry) continue;
-            baked.forEach((bm, i) => placeCompositionChild(entry.group, objDef, id, def, bm, i));
+            const group = nodeById.get(objDef.id);
+            if (!group || !isCompositionNode(group)) continue;
+            baked.forEach((bm, i) => placeCompositionChild(group, objDef, id, def, bm, i));
           }
         })
       )
@@ -1016,7 +1008,7 @@ export const loadLevelDef = (
 
     // Assign to any already-placed objects
     for (const objId of matToObjIds.get(matName) ?? []) {
-      const levelObj = placedObjects.get(objId);
+      const levelObj = allLevelObjects.get(objId);
       if (levelObj) {
         assignMaterial(levelObj.object, mat);
 
@@ -1124,7 +1116,7 @@ export const loadLevelDef = (
   // gives us "all assets resolved + all hulls computed + all objects placed".
   const objectsPromise: Promise<LevelObject[]> = Promise.all([geoscriptDone, compositionsDone])
     .then(() => Promise.all(initialPlacementPromises))
-    .then(() => allLevelObjects);
+    .then(() => Array.from(allLevelObjects.values()));
   const physicsRegistrationComplete = Promise.all([objectsPromise, physicsWorldReady]).then(
     ([levelObjects, fpCtx]) => {
       for (const levelObj of levelObjects) {
@@ -1152,11 +1144,11 @@ export const loadLevelDef = (
     // Mutable shadow of levelDef.assets, kept current as geo files are hot-reloaded.
     const mutableAssets: Record<string, AssetDef> = { ...levelDef.assets };
 
-    objectsPromise.then(objects =>
+    objectsPromise.then(() =>
       import('./LevelEditor.svelte').then(({ initLevelEditor }) => {
         const editor = initLevelEditor({
           viz,
-          objects,
+          objects: allLevelObjects,
           levelName: viz.sceneName,
           prototypes: assetPrototypes,
           builtMaterials,
@@ -1205,7 +1197,7 @@ export const loadLevelDef = (
               // Adopt the new prototype + recompute its hull (if any) before swapping
               // instances so syncPhysics picks up the new hull rather than a stale one.
               resolveAssetPrototype(id, newPrototype, mutableAssets).then(() => {
-                for (const levelObj of allLevelObjects) {
+                for (const levelObj of allLevelObjects.values()) {
                   if (levelObj.assetId !== id) continue;
 
                   const clone = instantiateLevelObject(newPrototype, levelObj.def, {
@@ -1233,7 +1225,7 @@ export const loadLevelDef = (
   const emissiveBypassMeshesPromise = completePromise.then(() => {
     const collectMeshes = (pred: (matDef: NonNullable<LevelDef['materials']>[string]) => boolean) => {
       const out: THREE.Mesh[] = [];
-      for (const levelObj of allLevelObjects) {
+      for (const levelObj of allLevelObjects.values()) {
         const matName = levelObj.def.material;
         if (!matName) continue;
         const matDef = levelDef.materials?.[matName];
@@ -1296,7 +1288,7 @@ export const loadLevelDef = (
       builtMaterials.set(matName, mat);
       // Assign to any already-placed objects referencing this material
       for (const objId of matToObjIds.get(matName) ?? []) {
-        const levelObj = placedObjects.get(objId);
+        const levelObj = allLevelObjects.get(objId);
         if (levelObj) {
           assignMaterial(levelObj.object, mat);
           propagateMatUserDataToEntity(mat, levelObj.entity);
@@ -1344,7 +1336,7 @@ export const loadLevelDef = (
         };
 
         for (const objDef of behaviorDefs) {
-          const levelObj = placedObjects.get(objDef.id);
+          const levelObj = allLevelObjects.get(objDef.id);
           if (!levelObj) {
             console.warn(`[loadLevelDef] Object "${objDef.id}" has behaviors but was not placed — skipping`);
             continue;

@@ -4,9 +4,9 @@ import type { Viz } from 'src/viz';
 import type { BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
 import { resolveCompositionMaterial } from 'src/geoscript/runner/bakeComposition';
 import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
-import type { LevelObject, LevelGroup } from './levelSceneTypes';
-import { isLevelGroup } from './levelSceneTypes';
-import { isObjectGroup, isGeneratedDef, GENERATED_NODE_USERDATA_KEY } from './levelDefTreeUtils';
+import type { LevelObject, LevelGroup, LevelSceneNode, CompositionNode } from './levelSceneTypes';
+import { isLevelGroup, isCompositionNode } from './levelSceneTypes';
+import { isObjectGroup, isGeneratedDef, hasAsset } from './levelDefTreeUtils';
 import { LEVEL_PLACEHOLDER_MAT, applyTransform, instantiateLevelObject } from './levelObjectUtils';
 import { Entity } from '../sceneRuntime/Entity';
 
@@ -66,8 +66,9 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
       const child = buildGroupSubtree(ctx, childDef);
       groupObj.add(child.object);
       levelGroup.children.push(child);
-    } else if (childDef.asset === undefined) {
-      // dash-token marker — editor subtree cloning of markers is not supported yet
+    } else if (!hasAsset(childDef)) {
+      // dash-token marker: the clone serializes its def + reload re-materializes it; only live
+      // in-editor spawn (token visual + physics ghost, from the parkour subsystem) is skipped.
       continue;
     } else if (ctx.compositionBaked?.has(childDef.asset)) {
       const child = buildCompositionGroupFromCtx(ctx, childDef);
@@ -92,9 +93,10 @@ export interface CompositionCtx {
 }
 
 /**
- * Build one read-only (`generated`) child LevelObject of a composition placement from a baked
- * mesh. Material is assigned from `builtMaterials` (placeholder until built); callers layer on
- * any post-build material wiring / scene registration. Does NOT parent the mesh or register it.
+ * Build one opaque part (a baked composition mesh) as a `LevelObject`. It is NOT a node — the
+ * caller parks it on `owner.opaqueParts` and sets `.owner`; it reuses leaf plumbing for
+ * physics/materials. Material is assigned from `builtMaterials` (placeholder until built); callers
+ * layer on any post-build material wiring. Does NOT parent the mesh or register it.
  */
 export function buildCompositionChild(
   ctx: CompositionCtx,
@@ -117,17 +119,17 @@ export function buildCompositionChild(
     asset: objDef.asset,
     material: matName,
     nocollide: objDef.nocollide,
-    userData: { [GENERATED_NODE_USERDATA_KEY]: true },
+    userData: objDef.userData,
   };
   const entity = new Entity(ctx.viz, childId, mesh);
   if (objDef.nonPermeable !== undefined) entity.nonPermeable = objDef.nonPermeable;
-  return { id: childId, assetId: objDef.asset ?? '', object: mesh, def: childDef, generated: true, entity };
+  return { id: childId, assetId: objDef.asset ?? '', object: mesh, def: childDef, generated: false, entity };
 }
 
 /**
- * Build a composition placement as an editable `LevelGroup` (transform container) holding one
- * read-only child per baked mesh. Does NOT add to the scene/editor tracking — call `attachSubtree`.
- * The `LevelGroup.compositionDef` marker keeps the placement pointer recoverable for clone/restore.
+ * Build a composition placement as a `LevelGroup` (transform container) whose baked meshes are
+ * opaque parts (`opaqueParts`), not editable child nodes. Does NOT add to the scene/editor tracking
+ * — call `attachSubtree`. The `compositionDef` marker keeps the placement pointer recoverable.
  */
 export function buildCompositionGroup(
   ctx: CompositionCtx,
@@ -151,10 +153,11 @@ export function buildCompositionGroup(
     generated: isGeneratedDef(objDef),
     compositionDef: objDef,
   };
-  baked.forEach((bm, i) => {
-    const child = buildCompositionChild(ctx, objDef, bm, i, resolveMaterialName);
-    groupObj.add(child.object);
-    levelGroup.children.push(child);
+  levelGroup.opaqueParts = baked.map((bm, i) => {
+    const part = buildCompositionChild(ctx, objDef, bm, i, resolveMaterialName);
+    part.owner = levelGroup;
+    groupObj.add(part.object);
+    return part;
   });
   return levelGroup;
 }
@@ -183,12 +186,12 @@ export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): 
 }
 
 /**
- * The persisted leaf-pointer `ObjectDef` for a composition group (asset/material/etc.), with the
- * live group transform. The def must only ever round-trip this pointer — never the expanded,
- * generated children (which would re-expand recursively on reload).
+ * The persisted leaf-pointer `ObjectDef` for a composition node (asset/material/etc.), with the live
+ * group transform. The def must only ever round-trip this pointer — never the expanded opaque parts
+ * (which would re-expand recursively on reload).
  */
-export function compositionPointerDef(group: LevelGroup): ObjectDef {
-  const src = group.compositionDef!;
+export function compositionPointerDef(group: CompositionNode): ObjectDef {
+  const src = group.compositionDef;
   return {
     ...src,
     position: group.def.position ?? src.position,
@@ -198,19 +201,18 @@ export function compositionPointerDef(group: LevelGroup): ObjectDef {
 }
 
 /**
- * Project a runtime group subtree into a fresh `ObjectGroupDef`. The result is
- * safe to send over the wire or stash on the clipboard; descendant defs are
- * shallow-cloned (callers that need a fully detached snapshot should JSON-clone
- * the result). Composition child groups collapse back to their leaf pointer.
+ * The persisted def for a node — the only projection ever serialized / cloned / restored:
+ * composition → its leaf pointer (expanded content dropped), group → a recursive `ObjectGroupDef`,
+ * leaf → a shallow copy of its def. Descendant defs are shallow-cloned (callers needing a fully
+ * detached snapshot should JSON-clone the result).
  */
+export function nodeToDef(node: LevelSceneNode): ObjectDef | ObjectGroupDef {
+  if (isCompositionNode(node)) return compositionPointerDef(node);
+  if (isLevelGroup(node)) return serializeGroup(node);
+  return { ...node.def };
+}
+
+/** A runtime group subtree as a fresh `ObjectGroupDef` (children projected via `nodeToDef`). */
 export function serializeGroup(group: LevelGroup): ObjectGroupDef {
-  return {
-    ...group.def,
-    children: group.children.map(child => {
-      if (isLevelGroup(child)) {
-        return child.compositionDef ? compositionPointerDef(child) : serializeGroup(child);
-      }
-      return { ...child.def };
-    }),
-  };
+  return { ...group.def, children: group.children.map(nodeToDef) };
 }

@@ -134,7 +134,7 @@ export class CsgAssetResolver {
     const editingLevelObj = this.editingLevelObj;
     const selectedNodePath = this.selectedNodePath;
 
-    for (const levelObj of this.editor.allLevelObjects) {
+    for (const levelObj of this.editor.allLevelObjects.values()) {
       if (levelObj.assetId !== assetId) continue;
 
       const clone = instantiateLevelObject(newPrototype, levelObj.def, {

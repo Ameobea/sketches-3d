@@ -4,6 +4,7 @@ import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
 import { Object3DTarget, PivotTarget } from 'src/viz/gizmos/targets';
 
 import type { LevelSceneNode } from './levelSceneTypes';
+import { isEditable } from './levelSceneTypes';
 import {
   applySnapshot,
   snapshotTransform,
@@ -246,7 +247,7 @@ export class TransformHandler {
 
   /** Shift+R: re-applies the last delta to `node`.  Returns null when there's nothing to replay. */
   replayLastAction(node: LevelSceneNode): { before: TransformSnapshot; after: TransformSnapshot } | null {
-    if (!this.lastReplayableAction || node.generated) return null;
+    if (!this.lastReplayableAction || !isEditable(node)) return null;
 
     const delta = this.lastReplayableAction;
     const obj = node.object;

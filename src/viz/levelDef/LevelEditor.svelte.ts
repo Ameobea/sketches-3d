@@ -8,7 +8,8 @@ import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
 import type { BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
 import type { AmbientLightDef, EditorBookmark, HemisphereLightDef, LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
-import { isLevelGroup } from './levelSceneTypes';
+import { isLevelGroup, isEditable } from './levelSceneTypes';
+import { hasAsset } from './levelDefTreeUtils';
 import { SelectionManager } from './SelectionManager.svelte';
 import {
   TransformHandler,
@@ -57,7 +58,7 @@ type UndoEntry =
 
 export interface LevelEditorInit {
   viz: Viz;
-  objects: LevelObject[];
+  objects: Map<string, LevelObject>;
   levelName: string;
   prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
@@ -136,8 +137,8 @@ export class LevelEditor {
   }
 
   private selectableMeshes: THREE.Mesh[] = [];
-  private meshToLevelObject = new Map<THREE.Mesh, LevelObject>();
-  allLevelObjects: LevelObject[];
+  private meshToOwner = new Map<THREE.Mesh, LevelSceneNode>();
+  allLevelObjects: Map<string, LevelObject>;
   rootNodes: LevelSceneNode[];
   nodeById: Map<string, LevelSceneNode>;
 
@@ -203,7 +204,7 @@ export class LevelEditor {
       pred => this.undoSystem.purge(pred)
     );
 
-    for (const levelObj of init.objects) {
+    for (const levelObj of init.objects.values()) {
       this.registerMeshes(levelObj);
     }
 
@@ -219,10 +220,11 @@ export class LevelEditor {
   }
 
   registerMeshes(levelObj: LevelObject) {
+    const owner = levelObj.owner ?? levelObj;
     levelObj.object.traverse(child => {
       if (child instanceof THREE.Mesh) {
         this.selectableMeshes.push(child);
-        this.meshToLevelObject.set(child, levelObj);
+        this.meshToOwner.set(child, owner);
       }
     });
   }
@@ -232,7 +234,7 @@ export class LevelEditor {
       if (child instanceof THREE.Mesh) {
         const idx = this.selectableMeshes.indexOf(child);
         if (idx !== -1) this.selectableMeshes.splice(idx, 1);
-        this.meshToLevelObject.delete(child);
+        this.meshToOwner.delete(child);
       }
     });
   }
@@ -250,7 +252,7 @@ export class LevelEditor {
     visual.traverse(child => {
       if (child instanceof THREE.Mesh) {
         this.selectableMeshes.push(child);
-        this.meshToLevelObject.set(child, node);
+        this.meshToOwner.set(child, node);
       }
     });
   }
@@ -268,9 +270,7 @@ export class LevelEditor {
 
   private applySelectionHighlights() {
     for (const node of this.selection.selectedNodes) {
-      const leaves = isLevelGroup(node)
-        ? collectSubtreeLeaves(node)
-        : [node as import('./levelSceneTypes').LevelObject];
+      const leaves = collectSubtreeLeaves(node);
       for (const leaf of leaves) {
         leaf.object.traverse(child => {
           if (child instanceof THREE.Mesh && !this.originalMeshMaterials.has(child)) {
@@ -327,7 +327,7 @@ export class LevelEditor {
       if (this.csgController.isActive) {
         this.csgController.copySelectedNode();
       } else {
-        const nodes = this.selection.selectedNodes.filter(n => !n.generated);
+        const nodes = this.selection.selectedNodes.filter(isEditable);
         if (nodes.length > 0) {
           this.clipboard = nodes.map(node =>
             this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
@@ -604,7 +604,7 @@ export class LevelEditor {
         void state.treeVersion;
         void state.selectedNodeIds;
         const node = self.selectedNode;
-        return !!node && isLevelGroup(node) && !node.generated && node.children.length > 0;
+        return !!node && isLevelGroup(node) && isEditable(node) && node.children.length > 0;
       },
     };
     const actions: LevelEditorPanelActions = {
@@ -623,7 +623,7 @@ export class LevelEditor {
       addLibraryObject: (libPath, materialId) => void this.onAddLibraryClick(libPath, materialId),
       addGroup: () => void this.onAddGroupClick(),
       rename: newId => {
-        if (this.selectedNode && !this.selectedNode.generated) {
+        if (this.selectedNode && isEditable(this.selectedNode)) {
           void this.renameNode(this.selectedNode, newId);
         }
       },
@@ -687,7 +687,7 @@ export class LevelEditor {
    *  Applies the new value to the Three.js object, pushes undo, and saves to disk. */
   applyTransformInput(snap: Partial<TransformSnapshot>) {
     const node = this.selectedNode;
-    if (!node || node.generated) return;
+    if (!node || !isEditable(node)) return;
     const obj = node.object;
     const before = snapshotTransform(obj);
 
@@ -737,26 +737,16 @@ export class LevelEditor {
 
     const hits = raycaster.intersectObjects(this.selectableMeshes, false);
     if (hits.length > 0) {
-      const levelObj = this.meshToLevelObject.get(hits[0].object as THREE.Mesh);
-      if (levelObj) {
-        const target = this.compositionSelectionTarget(levelObj);
-        if (isToggle) this.toggleSelect(target);
-        else this.select(target);
+      const owner = this.meshToOwner.get(hits[0].object as THREE.Mesh);
+      if (owner) {
+        if (isToggle) this.toggleSelect(owner);
+        else this.select(owner);
         return;
       }
     }
 
     this.deselect();
   };
-
-  // Redirect a click on a read-only composition child to its owning editable group.
-  private compositionSelectionTarget(levelObj: LevelObject): LevelSceneNode {
-    if (!levelObj.generated) return levelObj;
-    const sep = levelObj.id.lastIndexOf('::');
-    if (sep === -1) return levelObj;
-    const group = this.nodeById.get(levelObj.id.slice(0, sep));
-    return group && isLevelGroup(group) && group.compositionDef ? group : levelObj;
-  }
 
   private installSafePointerCapture(canvas: HTMLCanvasElement) {
     if (this.originalSetPointerCapture || this.originalReleasePointerCapture) {
@@ -848,7 +838,7 @@ export class LevelEditor {
         this.transformHandler.setMode('translate');
       }
       // Filter out generated nodes for transform attachment
-      const editableNodes = nodes.filter(n => !n.generated);
+      const editableNodes = nodes.filter(isEditable);
       if (editableNodes.length > 0) {
         this.transformHandler?.attachToSelection([...editableNodes]);
       } else {
@@ -862,7 +852,7 @@ export class LevelEditor {
     const node = primary!;
 
     if (isLevelGroup(node)) {
-      if (node.generated) this.transformHandler?.detach();
+      if (!isEditable(node)) this.transformHandler?.detach();
       else this.transformHandler?.attachToSelection([node]);
       this.csgController.closeEditor();
       this.updateSelectionState();
@@ -875,7 +865,7 @@ export class LevelEditor {
     }
 
     const assetDef = this.levelDef.assets[levelObj.assetId];
-    if (levelObj.generated) {
+    if (!isEditable(levelObj)) {
       this.transformHandler?.detach();
       this.csgController.closeEditor();
     } else if (assetDef?.type === 'csg') {
@@ -1157,7 +1147,7 @@ export class LevelEditor {
    */
   private async groupSelected() {
     if (!this.selection.canGroupWith(this.nodeById, this.rootNodes)) return;
-    const editableNodes = [...this.selection.selectedNodes].filter(n => !n.generated);
+    const editableNodes = [...this.selection.selectedNodes].filter(isEditable);
     // Deselect before mutations so highlight state is clean.
     this.deselect();
     const group = await this.mutationController.groupNodes(editableNodes);
@@ -1174,7 +1164,7 @@ export class LevelEditor {
    */
   private recenterSelectedGroupOrigin() {
     const node = this.selectedNode;
-    if (!node || !isLevelGroup(node) || node.generated) return;
+    if (!node || !isLevelGroup(node) || !isEditable(node)) return;
     if (node.children.length === 0) return;
 
     const groupObj = node.object;
@@ -1271,7 +1261,7 @@ export class LevelEditor {
     const nodes = this.selection.selectedNodes;
     if (nodes.length === 0) return false;
     for (const n of nodes) {
-      if (n.generated) return false;
+      if (!isEditable(n)) return false;
       if (isLevelGroup(n)) return false;
       const assetDef = this.levelDef.assets[n.assetId];
       if (!assetDef) return false;
@@ -1315,7 +1305,7 @@ export class LevelEditor {
     const nodes = [...this.selection.selectedNodes];
     if (nodes.length === 0) return;
 
-    if (nodes.every(n => n.generated)) {
+    if (nodes.every(n => !isEditable(n))) {
       console.info('[LevelEditor] Generated nodes are read-only in the editor.');
       return;
     }
@@ -1326,7 +1316,7 @@ export class LevelEditor {
   }
 
   private async reparentSelected(targetParentId: string | null) {
-    const nodes = [...this.selection.selectedNodes].filter(n => !n.generated);
+    const nodes = [...this.selection.selectedNodes].filter(isEditable);
     if (nodes.length === 0) return;
 
     // Reject reparents into self or a descendant of self.
@@ -1339,7 +1329,7 @@ export class LevelEditor {
     if (validNodes.length === 0) return;
 
     const targetParent = targetParentId ? this.nodeById.get(targetParentId) : null;
-    if (targetParentId && (!targetParent || !isLevelGroup(targetParent) || targetParent.generated)) return;
+    if (targetParentId && (!targetParent || !isLevelGroup(targetParent) || !isEditable(targetParent))) return;
 
     await this.mutationController.reparentNodes(validNodes, targetParentId);
     this.selectionState.treeVersion++;
@@ -1432,7 +1422,7 @@ export class LevelEditor {
   private async onObjectMaterialChange(matId: string | null) {
     const levelObj = this.selectedObject;
     if (!levelObj) return;
-    if (levelObj.generated) {
+    if (!isEditable(levelObj)) {
       console.info('[LevelEditor] Generated objects are read-only in the editor.');
       return;
     }
@@ -1462,7 +1452,7 @@ export class LevelEditor {
     const fpCtx: BulletPhysics | undefined = this.viz.fpCtx;
     if (!fpCtx) return;
     // Asset-less dash-token markers have no collision (and no real geometry) — mirror loadLevelDef's skip.
-    if (levelObj.def.asset === undefined) return;
+    if (!hasAsset(levelObj.def)) return;
 
     // The entity's `object` may have been swapped by `replaceLeafInstance`; re-point it
     // at the current scene-graph node before re-adding any physics bodies.
@@ -1479,14 +1469,7 @@ export class LevelEditor {
   }
 
   private syncSceneNodePhysics(node: LevelSceneNode) {
-    if (isLevelGroup(node)) {
-      for (const child of node.children) {
-        this.syncSceneNodePhysics(child);
-      }
-      return;
-    }
-
-    this.syncPhysics(node);
+    for (const leaf of collectSubtreeLeaves(node)) this.syncPhysics(leaf);
   }
 
   removePhysics(levelObj: LevelObject) {

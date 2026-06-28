@@ -10,7 +10,7 @@ export interface StructuralCtx {
   viz: Viz;
   rootNodes: LevelSceneNode[];
   nodeById: Map<string, LevelSceneNode>;
-  allLevelObjects: LevelObject[];
+  allLevelObjects: Map<string, LevelObject>;
 
   registerMeshes(levelObj: LevelObject): void;
   unregisterMeshes(levelObj: LevelObject): void;

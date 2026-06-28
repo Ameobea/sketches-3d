@@ -19,7 +19,7 @@ export class MaterialEditorController {
     private levelDef: LevelDef,
     private builtMaterials: Map<string, THREE.Material>,
     private loadedTextures: Map<string, THREE.Texture>,
-    private allLevelObjects: LevelObject[],
+    private allLevelObjects: Map<string, LevelObject>,
     private api: LevelEditorApi
   ) {}
 
@@ -73,7 +73,7 @@ export class MaterialEditorController {
     this.builtMaterials.get(id)?.dispose();
     this.builtMaterials.set(id, newMat);
 
-    for (const levelObj of this.allLevelObjects) {
+    for (const levelObj of this.allLevelObjects.values()) {
       if (levelObj.def.material === id) {
         assignMaterial(levelObj.object, newMat);
       }
@@ -111,7 +111,7 @@ export class MaterialEditorController {
     this.builtMaterials.get(id)?.dispose();
     this.builtMaterials.delete(id);
 
-    for (const levelObj of this.allLevelObjects) {
+    for (const levelObj of this.allLevelObjects.values()) {
       if (levelObj.def.material === id) {
         delete levelObj.def.material;
         assignMaterial(levelObj.object, LEVEL_PLACEHOLDER_MAT);

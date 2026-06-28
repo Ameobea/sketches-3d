@@ -62,13 +62,15 @@ export function groupContainsDescendantId(group: LevelGroup, id: string): boolea
   return false;
 }
 
-/** Collect all LevelObjects that are leaves of this subtree. */
+/** Collect all LevelObjects that are leaves of this subtree, including opaque parts (composition
+ *  baked meshes) — they share leaf plumbing (allLevelObjects / physics / mesh registration). */
 export function collectSubtreeLeaves(node: LevelSceneNode): LevelObject[] {
   if (!isLevelGroup(node)) return [node];
   const leaves: LevelObject[] = [];
   for (const child of node.children) {
     leaves.push(...collectSubtreeLeaves(child));
   }
+  if (node.opaqueParts) leaves.push(...node.opaqueParts);
   return leaves;
 }
 
@@ -124,8 +126,7 @@ export function detachSubtree(ctx: StructuralCtx, node: LevelSceneNode): Runtime
   (node.object.parent ?? ctx.viz.scene).remove(node.object);
 
   for (const leaf of leaves) {
-    const idx = ctx.allLevelObjects.indexOf(leaf);
-    if (idx !== -1) ctx.allLevelObjects.splice(idx, 1);
+    ctx.allLevelObjects.delete(leaf.id);
     ctx.unregisterMeshes(leaf);
     ctx.removePhysics(leaf);
   }
@@ -174,7 +175,7 @@ export function attachSubtree(ctx: StructuralCtx, subtree: RuntimeSubtree): void
   }
 
   for (const leaf of leaves) {
-    ctx.allLevelObjects.push(leaf);
+    ctx.allLevelObjects.set(leaf.id, leaf);
     ctx.registerMeshes(leaf);
     ctx.syncPhysics(leaf);
   }

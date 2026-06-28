@@ -3,7 +3,7 @@
 
   import 'src/viz/hierarchyPanel.css';
   import type { LevelLight, LevelSceneNode } from './levelSceneTypes';
-  import { isLevelGroup } from './levelSceneTypes';
+  import { isLevelGroup, isEditable, isCompositionNode } from './levelSceneTypes';
   import { isGeneratedDef } from './levelDefTreeUtils';
 
   interface Props {
@@ -71,9 +71,9 @@
 
   const isValidDropTarget = (target: LevelSceneNode | 'root') => {
     if (target === 'root') return true;
-    if (target.generated) return false;
+    if (!isEditable(target)) return false;
     // Composition groups own baked, read-only children — nothing can be reparented into them.
-    if (isLevelGroup(target) && target.compositionDef) return false;
+    if (isCompositionNode(target)) return false;
     if (draggedNodeId === target.id) return false;
 
     const ancestors = findAncestorGroupIds(rootNodes, target.id);
@@ -81,7 +81,7 @@
   };
 
   const handleDragStart = (e: DragEvent, node: LevelSceneNode) => {
-    if (node.generated) {
+    if (!isEditable(node)) {
       e.preventDefault();
       return;
     }
@@ -168,7 +168,7 @@
   {#if isLevelGroup(node)}
     <!-- A composition placement is an editable group whose baked children are hidden (read-only),
          so it has no chevron and rejects drops. -->
-    {@const isComp = !!node.compositionDef}
+    {@const isComp = isCompositionNode(node)}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       class="row group-row"
@@ -177,7 +177,7 @@
       style:padding-left="{4 + depth * 12}px"
       role="button"
       tabindex="0"
-      draggable={!node.generated}
+      draggable={isEditable(node)}
       ondragstart={e => handleDragStart(e, node)}
       ondragover={isComp ? undefined : e => handleDragOver(e, node)}
       ondragleave={isComp ? undefined : handleDragLeave}
@@ -223,7 +223,7 @@
       style:padding-left="{4 + depth * 12}px"
       role="button"
       tabindex="0"
-      draggable={!node.generated}
+      draggable={isEditable(node)}
       ondragstart={e => handleDragStart(e, node)}
       onclick={e => onselectnode(node, e.ctrlKey || e.metaKey)}
       onkeydown={e => {
