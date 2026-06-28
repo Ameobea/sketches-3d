@@ -28,6 +28,7 @@ export interface LevelEditorPanelViewState {
   assetIds: string[];
   materialIds: string[];
   libFolders: AssetLibFolder[];
+  materialLibFolders: AssetLibFolder[];
   rootNodes: LevelSceneNode[];
   lights: LevelLight[];
   selectedNodeIds: string[];

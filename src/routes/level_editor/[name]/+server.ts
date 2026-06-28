@@ -1,6 +1,7 @@
 import { error, json, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
+import { libraryMaterialExists } from 'src/viz/levelDef/libraryMaterials.server';
 import type { ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
 import {
   findNodeById,
@@ -279,7 +280,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
       if (leaf.asset !== undefined && !level.def.assets[leaf.asset]) {
         error(400, `Unknown asset "${leaf.asset}" in restored subtree`);
       }
-      if (leaf.material && !level.def.materials?.[leaf.material]) {
+      if (leaf.material && !level.def.materials?.[leaf.material] && !libraryMaterialExists(leaf.material)) {
         error(400, `Unknown material "${leaf.material}" in restored subtree`);
       }
     }
@@ -384,7 +385,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
   if (!level.def.assets[body.asset]) {
     error(400, `Unknown asset "${body.asset}"`);
   }
-  if (body.material && !level.def.materials?.[body.material]) {
+  if (body.material && !level.def.materials?.[body.material] && !libraryMaterialExists(body.material)) {
     error(400, `Unknown material "${body.material}"`);
   }
 

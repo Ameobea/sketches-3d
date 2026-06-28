@@ -33,6 +33,7 @@ export class SelectionManager {
     /** Incremented when a new asset is added — triggers asset list re-render. */
     assetsVersion: 0,
     libFolders: [] as AssetLibFolder[],
+    materialLibFolders: [] as AssetLibFolder[],
   });
 
   get selectedNodes(): readonly LevelSceneNode[] {

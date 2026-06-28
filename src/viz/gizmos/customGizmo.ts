@@ -94,6 +94,7 @@ export class CustomGizmo extends THREE.Object3D {
 
   private _raycaster = new THREE.Raycaster();
   private _ndc = new THREE.Vector2();
+  private _viewport = { width: 1, height: 1 };
   private _renderMatrix = new THREE.Matrix4();
   private _parentWorld = new THREE.Matrix4();
   private _scratchTransform = makeTransform3();
@@ -512,6 +513,8 @@ export class CustomGizmo extends THREE.Object3D {
 
   private setRaycaster(e: PointerEvent) {
     const rect = this.domElement.getBoundingClientRect();
+    this._viewport.width = rect.width;
+    this._viewport.height = rect.height;
     this._ndc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1
@@ -646,7 +649,7 @@ export class CustomGizmo extends THREE.Object3D {
         break;
       }
       case 'scale-uniform': {
-        const f = projectUniformScale(this.camera, ds.worldOrigin, ds.ndcStart, ndcNow);
+        const f = projectUniformScale(this.camera, ds.worldOrigin, ds.ndcStart, ndcNow, this._viewport);
         newLocal.scale[0] = ds.localStart.scale[0] * f;
         newLocal.scale[1] = ds.localStart.scale[1] * f;
         newLocal.scale[2] = ds.localStart.scale[2] * f;

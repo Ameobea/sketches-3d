@@ -156,6 +156,7 @@
           if (e.key === 'Enter' || e.key === ' ') onselectlight(light);
         }}
       >
+        <span class="chevron-spacer"></span>
         <span class="node-id">{light.id}</span>
         <span class="badge light-type-badge">{light.def.type}</span>
       </div>
@@ -229,6 +230,7 @@
         if (e.key === 'Enter' || e.key === ' ') onselectnode(node, e.ctrlKey || e.metaKey);
       }}
     >
+      <span class="chevron-spacer"></span>
       <span class="node-id">{node.id}</span>
       {#if isGeneratedDef(node.def)}
         <span class="badge generated-badge">gen</span>
@@ -278,7 +280,7 @@
   }
 
   .leaf-row {
-    padding-left: 20px;
+    padding-left: 4px;
   }
 
   .generated-badge {
@@ -291,7 +293,7 @@
     border: 1px solid #5a4078;
   }
 
-  /* Keeps a composition row's id aligned with expandable groups (no chevron). */
+  /* Reserves the chevron column so chevron-less rows (comps, leaves) align with groups. */
   .chevron-spacer {
     width: 12px;
     flex-shrink: 0;

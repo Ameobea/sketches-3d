@@ -28,7 +28,7 @@
 #define PG_DEPTH 0.85 // floor carve as a fraction of pom.depth
 #endif
 #ifndef PG_TRAP_TOP
-#define PG_TRAP_TOP 0.45 // trapezoid top/bottom width ratio (PG_SHAPE == 3)
+#define PG_TRAP_TOP 0.65 // trapezoid top/bottom width ratio (PG_SHAPE == 3)
 #endif
 #ifndef PG_TOP_COLOR
 #define PG_TOP_COLOR vec3(0.30, 0.31, 0.33)

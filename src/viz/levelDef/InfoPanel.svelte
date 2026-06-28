@@ -2,6 +2,7 @@
   import AssetTreePicker from './AssetTreePicker.svelte';
   import TransformInputs from './TransformInputs.svelte';
   import type { TransformSnapshot } from './LevelEditor.svelte';
+  import type { AssetLibFolder } from './assetLibTypes';
 
   interface Props {
     nodeId: string | null;
@@ -9,6 +10,7 @@
     isGenerated: boolean;
     materialId: string | null;
     materialIds: string[];
+    materialLibFolders: AssetLibFolder[];
     isCsgAsset: boolean;
     position: [number, number, number];
     rotation: [number, number, number];
@@ -28,6 +30,7 @@
     isGenerated,
     materialId,
     materialIds,
+    materialLibFolders,
     isCsgAsset,
     position,
     rotation,
@@ -105,6 +108,7 @@
           <div class="mat-picker-wrap">
             <AssetTreePicker
               localItems={materialIds}
+              libFolders={materialLibFolders}
               selected={materialId}
               allowNone={true}
               onselect={v => onmaterialchange(v)}

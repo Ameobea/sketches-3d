@@ -34,8 +34,8 @@
           "id": "ramp1",
           "asset": "ramp1",
           "position": [27.9297, -2.3549, -12.5155],
-          "rotation": [0, 3.1416, 0],
-          "scale": [2.9845, 2.7193, 0.6664],
+          "rotation": [0, -3.1416, 0],
+          "scale": [2.9845, 2.7193, 0.9317],
           "material": "__ASSETS__/materials/parkour/boost_strip_active",
           "parkour": {
             "boostSurface": {
@@ -58,7 +58,7 @@
         {
           "id": "cyl",
           "asset": "cyl",
-          "position": [-41.5724, 7.1759, 13.312],
+          "position": [-38.334, 12.2009, 13.312],
           "rotation": [0, 0, 0],
           "scale": [3.6213, 0.4817, 3.6213],
           "material": "goal"
@@ -69,7 +69,7 @@
       "scale": [1, 1, 1]
     },
     {
-      "id": "group",
+      "id": "palms",
       "children": [
         {
           "id": "planter",
@@ -89,7 +89,7 @@
           "id": "palm_tree_1",
           "asset": "palm_tree",
           "position": [4.9104, 1.6777, 0.2803],
-          "rotation": [0.0763, 2.0271, 0.0374],
+          "rotation": [0.0763, 1.1147, 0.0374],
           "scale": [1.6686, 1.6686, 1.6686]
         }
       ],
@@ -101,6 +101,116 @@
       "id": "dash_token_example",
       "position": [0, 6, -12],
       "parkour": { "dashToken": { "checkpointIx": 1 } }
+    },
+    {
+      "id": "zag_wall",
+      "children": [
+        {
+          "id": "zag_ramp_1",
+          "asset": "zag_ramp_1",
+          "position": [22.5638, -16.7433, -2.0268],
+          "rotation": [0, 3.1416, 0],
+          "scale": [1.9964, 1.8622, 2.8661],
+          "material": "__ASSETS__/materials/parkour/boost_strip_active",
+          "parkour": {
+            "boostSurface": {
+              "targetSpeed": 38,
+              "jumpRetention": 0.8,
+              "rampUpSeconds": 0.07
+            }
+          },
+          "behaviors": [
+            {
+              "fn": "boostSurfaceVisual",
+              "params": {
+                "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+                "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+                "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "zag_ramp_2",
+          "asset": "zag_ramp_2",
+          "position": [30.0528, 9.3501, -2.0268],
+          "rotation": [0, -3.1416, -0.25],
+          "scale": [1.9964, 1.8622, 2.8661],
+          "material": "__ASSETS__/materials/parkour/boost_strip_active",
+          "parkour": {
+            "boostSurface": {
+              "targetSpeed": 38,
+              "jumpRetention": 0.8,
+              "rampUpSeconds": 0.07
+            }
+          },
+          "behaviors": [
+            {
+              "fn": "boostSurfaceVisual",
+              "params": {
+                "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+                "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+                "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+              }
+            }
+          ]
+        },
+        {
+          "id": "wall_1",
+          "asset": "wall",
+          "position": [-60.7131, 39.0846, 23.1651],
+          "rotation": [0, 0, 0],
+          "scale": [21.9585, 13.4275, 7.493],
+          "material": "grate_trench"
+        },
+        {
+          "id": "cut_pill_plat",
+          "asset": "cut_pill_plat",
+          "position": [75.0875, 41.9258, 4.087],
+          "rotation": [0, 1.5708, 0],
+          "scale": [0.6644, 0.5619, 0.6644]
+        },
+        {
+          "id": "wall",
+          "asset": "wall",
+          "position": [-60.7131, 39.0846, 4.3688],
+          "rotation": [0, 0, 0],
+          "scale": [21.9585, 13.4277, 7.4928],
+          "material": "grate_trench"
+        },
+        {
+          "id": "zag_ramp_3_1",
+          "asset": "zag_ramp_3",
+          "position": [-97.7909, -19.5811, -2.0268],
+          "rotation": [0, -3.1416, 0],
+          "scale": [1.9964, 1.8622, 2.8661],
+          "material": "__ASSETS__/materials/parkour/boost_strip_active"
+        },
+        {
+          "id": "pillar",
+          "asset": "csg_box_1",
+          "position": [-100.5938, 74.1312, 13.7467],
+          "material": "panel_seams"
+        },
+        {
+          "id": "plat_1",
+          "asset": "plat",
+          "position": [-100.6757, 15.1648, -1.2675],
+          "rotation": [0, 0, 0],
+          "scale": [1.4556, 5.5872, 0.6057]
+        },
+        {
+          "id": "box",
+          "asset": "csg_box",
+          "position": [-13.48, 66.7673, 12.9156],
+          "rotation": [0, 0.0005, 0],
+          "scale": [1, 1, 1],
+          "material": "panel_seams"
+        }
+      ],
+      "position": [-66.0946, 33.4923, 10.3521],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

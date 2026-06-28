@@ -104,16 +104,21 @@ test('projectAxisScaleFactor: doubling cursor distance from origin doubles scale
   assert.ok(f !== null && close(f!, 2, 1e-3), `expected 2, got ${f}`);
 });
 
-test('projectUniformScale: cursor-from-centre distance ratio drives factor', () => {
+test('projectUniformScale: exponential in radial pixel drag, gentle and symmetric', () => {
   const cam = makeCamera([0, 0, 10], [0, 0, 0]);
-  const origin = new THREE.Vector3(0, 0, 0);
-  const f = projectUniformScale(cam, origin, { x: 0.1, y: 0 }, { x: 0.2, y: 0 });
-  assert.ok(close(f, 2, 1e-3));
-  const f2 = projectUniformScale(
-    cam,
-    origin,
-    { x: 0.1, y: 0 },
-    { x: Math.SQRT1_2 * 0.1, y: Math.SQRT1_2 * 0.1 }
-  );
-  assert.ok(close(f2, 1, 1e-3));
+  const origin = new THREE.Vector3(0, 0, 0); // projects to NDC centre (0,0)
+  const vp = { width: 1000, height: 1000 }; // 500 px / NDC unit; ×2 every 300 px
+
+  assert.ok(close(projectUniformScale(cam, origin, { x: 0.2, y: 0 }, { x: 0.2, y: 0 }, vp), 1, 1e-6));
+
+  // Off-centre grab: outward radial is +x.  +0.6 NDC = +300 px ⇒ ×2; −0.6 ⇒ ÷2.
+  const grow = projectUniformScale(cam, origin, { x: 0.2, y: 0 }, { x: 0.8, y: 0 }, vp);
+  assert.ok(close(grow, 2, 1e-3), `expected 2, got ${grow}`);
+  const shrink = projectUniformScale(cam, origin, { x: 0.2, y: 0 }, { x: -0.4, y: 0 }, vp);
+  assert.ok(close(shrink, 0.5, 1e-3), `expected 0.5, got ${shrink}`);
+
+  // Dead-centre grab falls back to the up-right diagonal.
+  const a = 300 / (500 * Math.SQRT2);
+  const diag = projectUniformScale(cam, origin, { x: 0, y: 0 }, { x: a, y: a }, vp);
+  assert.ok(close(diag, 2, 1e-3), `expected 2, got ${diag}`);
 });

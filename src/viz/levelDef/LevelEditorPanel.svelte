@@ -29,8 +29,9 @@
     if (selectedAsset === null && view.assetIds.length > 0) selectedAsset = view.assetIds[0];
   });
 
-  let selectedMaterial = $state('');
+  let selectedMaterial = $state<string | null>(null);
   let assetPickerExpanded = $state(false);
+  let materialPickerExpanded = $state(false);
 
   const selectedAssetLabel = $derived(
     selectedAsset
@@ -43,12 +44,16 @@
       : '(none)'
   );
 
+  const selectedMaterialLabel = $derived(
+    selectedMaterial ? (selectedMaterial.split('/').pop() ?? selectedMaterial) : '(none)'
+  );
+
   const handleAdd = () => {
     if (!selectedAsset) return;
     if (selectedAsset.startsWith('__ASSETS__/')) {
-      actions.addLibraryObject(selectedAsset, selectedMaterial || undefined);
+      actions.addLibraryObject(selectedAsset, selectedMaterial ?? undefined);
     } else {
-      actions.addObject(selectedAsset, selectedMaterial || undefined);
+      actions.addObject(selectedAsset, selectedMaterial ?? undefined);
     }
   };
 </script>
@@ -80,15 +85,31 @@
       />
     {/if}
 
-    <div class="row">
-      <span class="field-label">material:</span>
-      <select class="field-select" bind:value={selectedMaterial}>
-        <option value="">(none)</option>
-        {#each view.materialIds as id (id)}
-          <option value={id}>{id}</option>
-        {/each}
-      </select>
+    <div
+      class="asset-picker-header"
+      role="button"
+      tabindex="0"
+      onclick={() => {
+        materialPickerExpanded = !materialPickerExpanded;
+      }}
+      onkeydown={e => {
+        if (e.key === 'Enter' || e.key === ' ') materialPickerExpanded = !materialPickerExpanded;
+      }}
+    >
+      <span class="picker-arrow">{materialPickerExpanded ? '▾' : '▸'}</span>
+      <span class="picker-selected">mat: {selectedMaterialLabel}</span>
     </div>
+    {#if materialPickerExpanded}
+      <AssetTreePicker
+        localItems={view.materialIds}
+        libFolders={view.materialLibFolders}
+        selected={selectedMaterial}
+        allowNone={true}
+        onselect={v => {
+          selectedMaterial = v;
+        }}
+      />
+    {/if}
 
     <div class="row add-btns">
       <button class="add-btn" onclick={handleAdd}>add object</button>
@@ -155,6 +176,7 @@
       isGenerated={view.isGeneratedSelected}
       materialId={view.selectedMaterialId}
       materialIds={view.materialIds}
+      materialLibFolders={view.materialLibFolders}
       isCsgAsset={view.isCsgAsset}
       position={view.position}
       rotation={view.rotation}
@@ -248,11 +270,6 @@
 
   .light-type-select {
     flex: 1;
-  }
-
-  .field-label {
-    width: 70px;
-    flex-shrink: 0;
   }
 
   .field-select {

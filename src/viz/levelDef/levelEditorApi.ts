@@ -4,8 +4,10 @@ import type {
   EditorBookmark,
   LightDef,
   LocationsFile,
+  MaterialDef,
   ObjectDef,
   ObjectGroupDef,
+  TextureDef,
 } from './types';
 import type { LevelSceneNode } from './loadLevelDef';
 import type { RuntimeSubtree } from './editorStructuralTypes';
@@ -144,6 +146,19 @@ export class LevelEditorApi {
 
   registerLibraryAsset = (file: string): Promise<{ id: string; code: string } | null> =>
     this.reqJson('register library asset', '/assets', jsonInit('POST', { file }));
+
+  fetchMaterialLibrary = async (): Promise<AssetLibFolder[]> => {
+    const data = await this.reqJson<{ folders: AssetLibFolder[] }>(
+      'material library fetch',
+      '/material-library'
+    );
+    return data?.folders ?? [];
+  };
+
+  resolveLibraryMaterial = (
+    libRef: string
+  ): Promise<{ material: MaterialDef; textures: Record<string, TextureDef> } | null> =>
+    this.reqJson('resolve library material', '/materials', jsonInit('POST', { libRef }));
 
   saveCsgTree = (assetName: string, tree: CsgTreeNode) => {
     void this.fetchOk('CSG tree save', '/csg', jsonInit('PATCH', { assetName, tree }));

@@ -2,10 +2,20 @@
   "$schema": "../schema.json",
   "version": 1,
   "assets": {
+    "wall": {
+      "type": "geoscript",
+      "code": "export mesh = box(10, 10, 1)",
+      "_meta": { "runtimeMs": 6.5, "count": 5, "codeHash": "82fcdb7c" }
+    },
+    "box": {
+      "type": "geoscript",
+      "code": "export mesh = box(1, 1, 1)",
+      "_meta": { "runtimeMs": 0.1, "count": 4, "codeHash": "9da9713c" }
+    },
     "boost_strip": {
       "type": "geoscript",
       "code": "export mesh = box(28, 0.2, 4)",
-      "_meta": { "runtimeMs": 5.100000005960465, "count": 5, "codeHash": "3717dc17" }
+      "_meta": { "runtimeMs": 5.1, "count": 5, "codeHash": "3717dc17" }
     },
     "ramp1": {
       "type": "geoscript",
@@ -21,6 +31,29 @@
       "type": "geoscript",
       "code": "export mesh = box(20, 0.5, 20)",
       "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "f62d2760" }
+    },
+    "zag_ramp_1": {
+      "type": "geoscript",
+      "file": "geo/zag_ramp_1.geo",
+      "_meta": { "runtimeMs": 2, "count": 5, "codeHash": "4b802d56" }
+    },
+    "zag_ramp_2": {
+      "type": "geoscript",
+      "file": "geo/zag_ramp_2.geo",
+      "_meta": { "runtimeMs": 0.2, "count": 5, "codeHash": "103d369b" }
+    },
+    "zag_ramp_3": {
+      "type": "geoscript",
+      "file": "geo/zag_ramp_3.geo",
+      "_meta": { "runtimeMs": 0.2, "count": 5, "codeHash": "f91ae9d6" }
+    },
+    "cut_pill_plat": {
+      "type": "geotoyComposition",
+      "compositionId": 112,
+      "materialMap": {
+        "default": "panel_seams",
+        "inner": "pit_grid_trapezoid"
+      }
     },
     "planter": {
       "type": "geotoyComposition",
@@ -39,6 +72,46 @@
         "default": "palm_trunk",
         "coconut": "palm_coconut"
       }
+    },
+    "csg_box": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "rotation": [-0.0458, -0.1547, -0.2799],
+            "scale": [120.8703, 3.2626, 5.3004]
+          },
+          {
+            "asset": "box",
+            "position": [0, 0, 0],
+            "rotation": [0, 0, 0],
+            "scale": [15.653, 9.1803, 9.1803]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 11.3, "count": 2, "codeHash": "778ea384", "asyncDeps": [ "cgal" ] }
+    },
+    "csg_box_1": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "rotation": [-0.2285, 0.3619, -0.2007],
+            "scale": [61.1206, 3.2626, 6.5846]
+          },
+          {
+            "asset": "box",
+            "position": [-0.133, 0.0021, -0.4457],
+            "rotation": [0.0081, 0.3199, -0.1992],
+            "scale": [28.3609, 11.237, 3.9318]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 1.5, "count": 2, "codeHash": "26dae5ed", "asyncDeps": [ "cgal" ] }
     }
   },
   "environment": {

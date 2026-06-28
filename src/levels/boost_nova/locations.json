@@ -1,0 +1,23 @@
+{
+  "$schema": "../locations-schema.json",
+  "editor_bookmarks": [
+    {
+      "slot": 1,
+      "mode": "play",
+      "playerPos": [-33.8227, 16.749, -1.9581],
+      "cameraAngles": {
+        "phi": 1.2731971740722656,
+        "theta": 1.8619202375411987
+      }
+    },
+    {
+      "slot": 2,
+      "mode": "play",
+      "playerPos": [6.0938, 85.2856, 17.4535],
+      "cameraAngles": {
+        "phi": 0.8726758360862732,
+        "theta": 1.7093992233276367
+      }
+    }
+  ]
+}

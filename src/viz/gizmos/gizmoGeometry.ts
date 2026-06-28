@@ -147,8 +147,8 @@ export const buildPlaneHandlePickerGeometry = (opts: PlaneHandleOpts = {}): THRE
   new THREE.PlaneGeometry((opts.size ?? 0.22) * 1.05, (opts.size ?? 0.22) * 1.05);
 
 /** Centre handle for uniform scale.  `detail=0` so faces stay flat for the edgeOutline shader. */
-export const buildUniformScaleGeometry = (radius = 0.06): THREE.BufferGeometry =>
+export const buildUniformScaleGeometry = (radius = 0.1): THREE.BufferGeometry =>
   new THREE.OctahedronGeometry(radius, 0);
 
-export const buildUniformScalePickerGeometry = (radius = 0.06): THREE.BufferGeometry =>
+export const buildUniformScalePickerGeometry = (radius = 0.1): THREE.BufferGeometry =>
   new THREE.OctahedronGeometry(radius * 1.8, 0);

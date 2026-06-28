@@ -166,22 +166,37 @@ export const projectAxisScaleFactor = (
   return sNow / sStart;
 };
 
-/** Uniform-scale factor from screen-space distance ratio around the origin. */
+const UNIFORM_SCALE_GAIN = Math.LN2 / 300; // 300 px of radial drag ⇒ ×2 (or ÷2)
+
+/**
+ * Uniform-scale factor for a centre-handle drag: exponential in the radial
+ * pixel displacement from the grab point (outward = grow).  Decoupled from the
+ * old distance ratio, which blew up when grabbing near the pivot — this stays
+ * gentle and unbounded in range no matter where the handle is grabbed.
+ */
 export const projectUniformScale = (
   camera: THREE.Camera,
   origin: THREE.Vector3,
   ndcStart: { x: number; y: number },
-  ndcNow: { x: number; y: number }
+  ndcNow: { x: number; y: number },
+  viewport: { width: number; height: number }
 ): number => {
   const center = _scratchVecA.copy(origin).project(camera);
-  const dxStart = ndcStart.x - center.x;
-  const dyStart = ndcStart.y - center.y;
-  const dxNow = ndcNow.x - center.x;
-  const dyNow = ndcNow.y - center.y;
-  const rStart = Math.hypot(dxStart, dyStart);
-  const rNow = Math.hypot(dxNow, dyNow);
-  if (rStart < EPS) return 1;
-  return rNow / rStart;
+  const hw = viewport.width / 2;
+  const hh = viewport.height / 2;
+  // Outward radial dir at the grab point; dead-centre grabs fall back to the
+  // up-right diagonal (drag up/right grows, down/left shrinks).
+  let dirX = (ndcStart.x - center.x) * hw;
+  let dirY = (ndcStart.y - center.y) * hh;
+  const len = Math.hypot(dirX, dirY);
+  if (len < 1) {
+    dirX = dirY = Math.SQRT1_2;
+  } else {
+    dirX /= len;
+    dirY /= len;
+  }
+  const signedPx = (ndcNow.x - ndcStart.x) * hw * dirX + (ndcNow.y - ndcStart.y) * hh * dirY;
+  return Math.exp(UNIFORM_SCALE_GAIN * signedPx);
 };
 
 const _scratchRayA = new THREE.Ray();

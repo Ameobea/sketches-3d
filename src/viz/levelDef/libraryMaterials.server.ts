@@ -2,12 +2,15 @@ import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 
 import { getAssetsDir } from './levelPaths.server';
+import { flattenMaterialExtends } from './materialExtends.server';
 import { resolveGlslPath, SHADER_GLSL_FIELDS } from './shaderFiles.server';
 import {
   LibraryMaterialFileSchema,
+  MaterialDefSchema,
   normalizeRawDefColors,
   TEXTURE_SLOTS,
   type LevelDefRaw,
+  type MaterialDef,
   type MaterialDefRaw,
   type TextureDef,
 } from './types';
@@ -127,4 +130,26 @@ export const resolveLibraryMaterials = (def: LevelDefRaw): LevelDefRaw => {
   }
 
   return { ...def, materials, textures };
+};
+
+export const libraryMaterialExists = (ref: string): boolean =>
+  isLibraryRef(ref) && existsSync(resolveLibraryFilePath(ref));
+
+/**
+ * Resolves a single `__ASSETS__/materials/…` ref into a build-ready material def plus its textures,
+ * applying the same GLSL-inlining, texture-prefixing, and `extends`-flattening the full-level load
+ * does. Used by the editor to live-build a library material the moment it's assigned.
+ */
+export const resolveLibraryMaterial = (
+  ref: string
+): { material: MaterialDef; textures: Record<string, TextureDef> } => {
+  const probe = { version: 1, assets: {}, objects: [{ material: ref }] } as unknown as LevelDefRaw;
+  const withLib = resolveLibraryMaterials(probe);
+  const flat = flattenMaterialExtends(withLib.materials ?? {});
+  const parsed = MaterialDefSchema.safeParse(flat[ref]);
+  if (!parsed.success) {
+    const msg = parsed.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
+    throw new Error(`[resolveLibraryMaterial] Invalid library material "${ref}":\n${msg}`);
+  }
+  return { material: parsed.data, textures: withLib.textures ?? {} };
 };

@@ -20,6 +20,8 @@ import {
 import type { TransformSnapshot, TransformMode } from './TransformHandler';
 import { LEVEL_PLACEHOLDER_MAT, SELECTION_HIGHLIGHT_MAT, assignMaterial } from './levelObjectUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
+import { buildMaterial } from 'src/viz/materials';
+import { TextureFetchPool } from './texturePool';
 import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
 import { UndoSystem } from '../util/undoSystem';
@@ -75,6 +77,7 @@ export class LevelEditor {
   levelDef: LevelDef;
   prototypes: Map<string, THREE.Mesh>;
   builtMaterials: Map<string, THREE.Material>;
+  loadedTextures: Map<string, THREE.Texture>;
   /** Baked mesh prototypes per `geotoyComposition` asset, for add-from-library / clone. */
   compositionBaked: Map<string, BakedCompositionMesh[]>;
   /** Shared with `loadLevelDef`: precomputed collision-hull data for `convexHull` assets. */
@@ -175,6 +178,7 @@ export class LevelEditor {
     this.levelDef = init.levelDef;
     this.prototypes = init.prototypes;
     this.builtMaterials = init.builtMaterials;
+    this.loadedTextures = init.loadedTextures;
     this.compositionBaked = init.compositionBaked;
     this.assetCollisionMeshes = init.assetCollisionMeshes;
     this.resolveAssetPrototype = init.resolveAssetPrototype;
@@ -452,9 +456,12 @@ export class LevelEditor {
     this.createLightProxies();
     this.createPanel();
 
-    // Fetch the asset library tree in the background; update the panel once it arrives.
+    // Fetch the asset + material library trees in the background; update the panel as they arrive.
     this.api.fetchAssetLibrary().then(folders => {
       this.selectionState.libFolders = folders;
+    });
+    this.api.fetchMaterialLibrary().then(folders => {
+      this.selectionState.materialLibFolders = folders;
     });
   }
 
@@ -512,6 +519,9 @@ export class LevelEditor {
       },
       get libFolders() {
         return state.libFolders;
+      },
+      get materialLibFolders() {
+        return state.materialLibFolders;
       },
       get rootNodes() {
         void state.treeVersion;
@@ -599,7 +609,7 @@ export class LevelEditor {
           void this.renameNode(this.selectedNode, newId);
         }
       },
-      changeMaterial: matId => this.onObjectMaterialChange(matId),
+      changeMaterial: matId => void this.onObjectMaterialChange(matId),
       applyTransform: snap => this.applyTransformInput(snap),
       deleteSelection: () => this.deleteSelected(),
       toggleMaterialEditor: () => {
@@ -1340,11 +1350,47 @@ export class LevelEditor {
   }
 
   private async onAddClick(assetId: string, materialId: string | undefined) {
+    await this.ensureMaterialBuilt(materialId);
     const leaf = await this.mutationController.spawnLeaf(assetId, materialId, this.getOrbitPosition());
     if (leaf) {
       this.selectionState.treeVersion++;
       this.select(leaf);
     }
+  }
+
+  /** Resolve + build a library material on demand so it renders before being assigned/placed. */
+  private async ensureMaterialBuilt(materialId: string | undefined): Promise<boolean> {
+    if (!materialId || !materialId.startsWith('__ASSETS__/') || this.builtMaterials.has(materialId)) {
+      return true;
+    }
+    const resolved = await this.api.resolveLibraryMaterial(materialId);
+    if (!resolved) {
+      console.error(`[LevelEditor] Failed to resolve library material "${materialId}"`);
+      return false;
+    }
+    const { material, textures } = resolved;
+
+    const newTextures = Object.entries(textures).filter(([key]) => !this.loadedTextures.has(key));
+    if (newTextures.length > 0) {
+      const pool = new TextureFetchPool();
+      await Promise.all(
+        newTextures.map(([key, def]) =>
+          pool.load(def).then(
+            tex => {
+              this.viz.renderer.initTexture(tex);
+              this.loadedTextures.set(key, tex);
+            },
+            err => console.error(`[LevelEditor] library texture "${key}" failed:`, err)
+          )
+        )
+      );
+      this.levelDef.textures = { ...(this.levelDef.textures ?? {}), ...textures };
+    }
+
+    this.levelDef.materials ??= {};
+    this.levelDef.materials[materialId] = material;
+    this.builtMaterials.set(materialId, buildMaterial(material, this.loadedTextures));
+    return true;
   }
 
   private async pasteObject() {
@@ -1365,13 +1411,17 @@ export class LevelEditor {
     }
   }
 
-  private onObjectMaterialChange(matId: string | null) {
+  private async onObjectMaterialChange(matId: string | null) {
     const levelObj = this.selectedObject;
     if (!levelObj) return;
     if (levelObj.generated) {
       console.info('[LevelEditor] Generated objects are read-only in the editor.');
       return;
     }
+
+    if (!(await this.ensureMaterialBuilt(matId ?? undefined))) return;
+    // Selection may have changed while resolving the library material.
+    if (this.selectedObject !== levelObj) return;
 
     // Clear highlight before modifying materials, then re-apply with new base.
     this.clearSelectionHighlights();
