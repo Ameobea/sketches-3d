@@ -71,7 +71,22 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       filter: { type: 'hp', freq: [5000, 6000], q: 1 },
       gain: 0.3,
     },
+    waves: {
+      url: 'https://i.ameo.link/dun.ogg',
+      gain: 0.3,
+      filter: { type: 'hp', freq: 200, q: 1 },
+    },
   });
+  viz.sfxManager.loadSfx('engage');
+  viz.sfxManager.loadSfx('disengage');
+  viz.sfxManager.loadSfx('ceramic_click');
+  viz.sfxManager.loadSfx('ceramic_click_reverse');
+  viz.sfxManager.loadSfx('boosted_jump');
+  viz.sfxManager.loadSfx('waves').then(() => {
+    // TODO: this should be a custom attenuation pattern which just works off of y position
+    viz.sfxManager.playSpatialLoop('waves', { pos: [0, 0, 0], rolloff: 0.5, refDistance: 1000, xfade: 0.05 });
+  });
+
   const pkManager = new ParkourManager(
     viz,
     loadedWorld,

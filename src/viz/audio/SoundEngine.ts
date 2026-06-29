@@ -363,7 +363,7 @@ export class SoundEngine {
     return id;
   }
 
-  public loadSfx(name: string) {
+  public async loadSfx(name: string) {
     if (!this.enabled) return;
     if (this.requestedSamples.has(name)) return;
     const def = this.sfxDefs[name];
@@ -374,11 +374,14 @@ export class SoundEngine {
     this.requestedSamples.add(name);
     const id = this.getOrAllocSampleId(name);
 
-    fetch(def.url)
+    const p = fetch(def.url)
       .then(r => r.arrayBuffer())
       .then(buf => this.ctx!.decodeAudioData(buf))
-      .then(audioBuf => this.uploadDecoded(name, id, audioBuf))
-      .catch(err => console.error(`Failed to load sfx "${name}":`, err));
+      .then(audioBuf => this.uploadDecoded(name, id, audioBuf));
+
+    p.catch(err => console.error(`Failed to load sfx "${name}":`, err));
+
+    return p;
   }
 
   private uploadDecoded(name: string, id: number, audioBuf: AudioBuffer) {
