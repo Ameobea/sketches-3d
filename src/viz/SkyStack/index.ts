@@ -7,6 +7,7 @@ export { cloudsLayer, type CloudsLayerConfig } from './layers/clouds';
 export { buildingsLayer, type BuildingsLayerConfig } from './layers/buildings';
 export { groundLayer, type GroundLayerConfig } from './layers/ground';
 export { voxelGroundLayer, type VoxelGroundLayerConfig } from './layers/voxelGround';
+export { waveOceanLayer, type WaveOceanLayerConfig } from './layers/waveOcean';
 export { customLayer, type CustomLayerConfig } from './layers/custom';
 
 export {

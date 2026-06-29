@@ -11,7 +11,7 @@ import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { initWebSynth } from 'src/viz/webSynth';
 import { delay } from 'src/viz/util/util';
-import { gradientBackground, HorizonMode, SkyStack } from 'src/viz/SkyStack';
+import { gradientBackground, HorizonMode, SkyStack, waveOceanLayer } from 'src/viz/SkyStack';
 
 const locations = {
   spawn: {
@@ -152,7 +152,24 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     {
       horizonOffset: -0.038,
       horizonBlend: 0.03,
-      layers: [],
+      layers: [
+        waveOceanLayer({
+          // debugMode: 1,
+          id: 'waveOcean',
+          zIndex: 5,
+          maxSteps: {
+            [GraphicsQuality.Low]: 24,
+            [GraphicsQuality.Medium]: 36,
+            [GraphicsQuality.High]: 58,
+          }[vizConf.graphics.quality],
+          lodBias: {
+            [GraphicsQuality.Low]: 1.2,
+            [GraphicsQuality.Medium]: 0.6,
+            [GraphicsQuality.High]: 0.2,
+          }[vizConf.graphics.quality],
+          oversample: vizConf.graphics.quality > GraphicsQuality.Medium ? 3 : false,
+        }),
+      ],
       background: gradientBackground({
         stops: [
           { position: 0.0, color: 0x8c9db1 },
@@ -167,7 +184,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           .map(({ position, color }) => ({ position: 1 - position, color }))
           .reverse(),
         horizonMode: HorizonMode.SolidBelow,
-        belowColor: 0x060301,
+        belowColor: 0x1f5a66,
         lutResolution: {
           [GraphicsQuality.Low]: 32,
           [GraphicsQuality.Medium]: 64,
@@ -178,6 +195,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     viz.renderer.domElement.width,
     viz.renderer.domElement.height
   );
+  viz.registerBeforeRenderCb(curTimeSeconds => skyStack.setTime(curTimeSeconds));
 
   configureDefaultPostprocessingPipeline({
     viz,
