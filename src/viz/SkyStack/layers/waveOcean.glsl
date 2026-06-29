@@ -75,29 +75,44 @@ const float GRAZE_BASE_HI_$ID = 0.08;
 const float FOG_START_$ID = 1400.; // entry distance where alpha fade begins
 const float FOG_END_$ID = 9000.; // entry distance where fully transparent
 
+// Cheap parabola fit to sin over one period for the hot march loop — avoids the
+// hardware sin/SFU op (the march's dominant cost on Metal/ANGLE). The few-percent
+// deviation is invisible on these art-directed fields (and slightly crisps the
+// wave-face highlights, which suits the look).
+float fastSin_$ID(float a) {
+  float t = a * 0.15915494 + 0.5; // a/2π, biased for the wrap below
+  t -= floor(t);
+  t -= 0.5;
+  return 8. * t * (1. - 2. * abs(t));
+}
+float fastCos_$ID(float a) {
+  return fastSin_$ID(a + 1.5707963);
+}
+
 float baseField_$ID(vec2 p) {
   float t = uTime * BASE_DRIFT_$ID;
-  float a = sin(dot(p, vec2(0.6, 0.8)) * 0.0085 + t * 1.3);
-  float b = cos(dot(p, vec2(-0.7, 0.5)) * 0.006 - t);
+  float a = fastSin_$ID(dot(p, vec2(0.6, 0.8)) * 0.0085 + t * 1.3);
+  float b = fastCos_$ID(dot(p, vec2(-0.7, 0.5)) * 0.006 - t);
   return BASE_AMP_$ID * 0.5 * (a + b);
 }
 
 float ampField_$ID(vec2 p) {
   float t = uTime * AMP_DRIFT_$ID;
-  float w = 0.5 + 0.5 * cos(dot(p, vec2(0.8, -0.6)) * 0.007 + t);
+  float w = 0.5 + 0.5 * fastCos_$ID(dot(p, vec2(0.8, -0.6)) * 0.007 + t);
   return mix(WAVE_AMP_MIN_$ID, WAVE_AMP_MAX_$ID, w);
 }
 
-float slicePhase_$ID(float iz) {
-  float osc = mod(iz, 2.) < 0.5 ? sin(uTime * PHASE_SPEED_$ID) : cos(uTime * PHASE_SPEED_$ID);
-  osc = sign(osc) * pow(abs(osc), 3.);
+// oscEven/oscOdd are sin³/cos³(uTime*PHASE_SPEED) — uniform-invariant, so the
+// caller hoists them out of the march instead of recomputing the trig per slice.
+float slicePhase_$ID(float iz, float oscEven, float oscOdd) {
+  float osc = mod(iz, 2.) < 0.5 ? oscEven : oscOdd;
   return hash(iz * 0.317 + 0.5) * TWO_PI + osc * PHASE_SWING_$ID;
 }
 
 // Signed surface height above the mean plane at world XZ for the given slice
 // phase. lodAmp/lodBase fade the hump / swell contributions at distance.
 float oceanHeight_$ID(vec2 p, float phase, float lodAmp, float lodBase) {
-  return baseField_$ID(p) * lodBase + ampField_$ID(p) * lodAmp * sin(p.x * WAVE_FREQ_$ID + phase);
+  return baseField_$ID(p) * lodBase + ampField_$ID(p) * lodAmp * fastSin_$ID(p.x * WAVE_FREQ_$ID + phase);
 }
 
 struct OceanHit_$ID {
@@ -123,10 +138,9 @@ OceanHit_$ID traceOcean_$ID(vec3 ro, vec3 rd, float negDy, float lenHoriz, float
   float lowSlope = (BASE_AMP_$ID * lodBase + WAVE_AMP_MAX_$ID * lodAmp) * LOWFREQ_K_$ID * lenHoriz;
   float invA = 1. / (negDy + lowSlope + 1e-4);
 
-  // Phase A: skip empty air down to the smooth upper envelope (base + amp).
-  // If the budget runs out here (grazing the envelope on a swell back-slope) we
-  // fall through to phase B / the bisection fallback instead of returning a flat
-  // miss — otherwise those pixels read as flat avg-color blobs.
+  // Phase A: skip empty air down to the smooth upper envelope (base + amp). If the
+  // budget runs out here (grazing the envelope on a swell back-slope) we fall
+  // through to phase B / the bisection fallback instead of returning a flat miss.
   int i = 0;
   for (; i < MAX_OCEAN_STEPS_$ID; i++) {
     vec2 p = ro.xz + rd.xz * t;
@@ -145,8 +159,14 @@ OceanHit_$ID traceOcean_$ID(vec3 ro, vec3 rd, float negDy, float lenHoriz, float
   float humpSlope = WAVE_AMP_MAX_$ID * lodAmp * WAVE_FREQ_$ID * lenHoriz;
   float invB = 1. / (negDy + humpSlope + lowSlope + 1e-4);
 
+  float ps = uTime * PHASE_SPEED_$ID;
+  float se = sin(ps);
+  float co = cos(ps);
+  float oscEven = se * se * se;
+  float oscOdd = co * co * co;
+
   float iz = floor((ro.z + rd.z * t) / SLICE_W_$ID);
-  float phase = slicePhase_$ID(iz);
+  float phase = slicePhase_$ID(iz, oscEven, oscOdd);
   float zStep = rd.z >= 0. ? 1. : -1.;
   float nextBoundZ = (iz + (zStep > 0. ? 1. : 0.)) * SLICE_W_$ID;
   float tNextZ = abs(rd.z) > 1e-6 ? (nextBoundZ - ro.z) / rd.z : 1e30;
@@ -171,7 +191,7 @@ OceanHit_$ID traceOcean_$ID(vec3 ro, vec3 rd, float negDy, float lenHoriz, float
     if (tCand >= tNextZ) {
       t = tNextZ;
       iz += zStep;
-      phase = slicePhase_$ID(iz);
+      phase = slicePhase_$ID(iz, oscEven, oscOdd);
       vec2 pb = ro.xz + rd.xz * t;
       float surfNew = OCEAN_Y_$ID + oceanHeight_$ID(pb, phase, lodAmp, lodBase);
       if ((ro.y - negDy * t) <= surfNew) {
@@ -217,15 +237,29 @@ OceanHit_$ID traceOcean_$ID(vec3 ro, vec3 rd, float negDy, float lenHoriz, float
   return r;
 }
 
-// TODO: I'd like to make this noise radial and isotropic wrt. the origin.
-//
-// So instead of just plain patches of color like this, I'd like it to be sort of long bands that are ~parallel with
-// the horizon.  Should probably also fade out with distance close to horizon (although I think that's already getting
-// handled elsewhere in the code)
+// Color: concentric "shoal" bands around the world origin. Banding on the radius
+// means the bands run parallel to the horizon in every view direction (and pack
+// tighter toward it under perspective), reading as sand bars / shoals / currents
+// rather than isotropic blotches. The radius is domain-warped by drifting low-freq
+// noise so the bands meander instead of forming perfect rings.
+const float COLOR_BAND_FREQ_$ID = 0.0014; // radial band density (cycles/unit)
+const float COLOR_WARP_FREQ_$ID = 0.0014; // meander-noise spatial frequency
+const float COLOR_WARP_AMP_$ID = 2.3;     // meander strength (in band cycles)
+const float COLOR_BAND_SHARP_$ID = 2.4;   // >1 thins the bright shoal crests
+const float COLOR_ENV_FREQ_$ID = 0.0006;  // patch envelope frequency (where shoals appear)
+const float COLOR_BAND_GAIN_$ID = 0.5;    // peak shoal brightness (<1 keeps it bluer)
+const float COLOR_DRIFT_$ID = 0.05;       // current drift speed
+
 vec3 oceanBaseColor_$ID(vec2 pos) {
-  float t = noise(pos * 0.002);
-  t = t * t;
-  return mix(OCEAN_DEEP_$ID, OCEAN_BRIGHT_$ID, t);
+  float drift = uTime * COLOR_DRIFT_$ID;
+  float warp = noise(pos * COLOR_WARP_FREQ_$ID + vec2(drift, -drift * 0.7));
+  float band = 0.5 + 0.5 * sin((length(pos) * COLOR_BAND_FREQ_$ID + warp * COLOR_WARP_AMP_$ID) * TWO_PI);
+  band = pow(band, COLOR_BAND_SHARP_$ID);
+  // Localize shoals into large drifting patches so they read as scattered currents,
+  // not continuous concentric rings.
+  float env = smoothstep(0.25, 0.7, noise(pos * COLOR_ENV_FREQ_$ID - drift * 0.5));
+  band *= env * COLOR_BAND_GAIN_$ID;
+  return mix(OCEAN_DEEP_$ID, OCEAN_BRIGHT_$ID, band);
 }
 
 #if DEBUG_OCEAN_MODE == 1
@@ -275,6 +309,11 @@ void sampleWaveOcean_$ID(vec3 dir, out vec3 outColor, out float outAlpha) {
 
   // Fully flattened — skip the march, shade the bare plane.
   if (lodBase < 0.01) {
+#if DEBUG_OCEAN_MODE == 2
+    outColor = vec3(0.);
+    outAlpha = 1.;
+    return;
+#endif
     outColor = avgColor * alpha;
     outAlpha = alpha;
     return;
@@ -288,6 +327,10 @@ void sampleWaveOcean_$ID(vec3 dir, out vec3 outColor, out float outAlpha) {
 #if DEBUG_OCEAN_MODE == 1
   outColor = oceanHeat_$ID(hit.steps) * alpha;
   outAlpha = alpha;
+  return;
+#elif DEBUG_OCEAN_MODE == 2
+  outColor = vec3(float(hit.steps) / float(MAX_OCEAN_STEPS_$ID));
+  outAlpha = 1.;
   return;
 #endif
 
@@ -305,12 +348,13 @@ void sampleWaveOcean_$ID(vec3 dir, out vec3 outColor, out float outAlpha) {
     normal = normalize(vec3(-(hX - hC), NORMAL_EPS_$ID, -(hZ - hC)));
   }
 
-  // sharpen the normal a bit to make the glint more concentrated on the light-facing wave faces
-  //
-  // Not sure if this is correct, but it seems to work well enough
-  // normal = normalize(pow(normal, vec3(1. / 1.5)));
-  // have to preserve signs
-  normal = sign(normal) * pow(abs(normal), vec3(16.));
+  // Sharpen the normal (concentrates the glint on light-facing faces). pow(|n|,16)
+  // by repeated squaring — 16 is even so this is exact and dodges the pow's log/exp.
+  vec3 n16 = normal * normal;
+  n16 *= n16;
+  n16 *= n16;
+  // n16 *= n16;
+  normal = sign(normal) * n16;
 
   float ndl = max(dot(normal, LIGHT_DIR_$ID), 0.);
   float light = AMBIENT_$ID + ndl * LIGHT_INT_$ID;

@@ -151,21 +151,21 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     viz,
     {
       horizonOffset: -0.038,
-      horizonBlend: 0.03,
+      horizonBlend: 0.02,
       layers: [
         waveOceanLayer({
           // debugMode: 1,
           id: 'waveOcean',
           zIndex: 5,
           maxSteps: {
-            [GraphicsQuality.Low]: 24,
-            [GraphicsQuality.Medium]: 36,
-            [GraphicsQuality.High]: 58,
+            [GraphicsQuality.Low]: 16,
+            [GraphicsQuality.Medium]: 21,
+            [GraphicsQuality.High]: 36,
           }[vizConf.graphics.quality],
           lodBias: {
             [GraphicsQuality.Low]: 1.2,
-            [GraphicsQuality.Medium]: 0.6,
-            [GraphicsQuality.High]: 0.2,
+            [GraphicsQuality.Medium]: 0.5,
+            [GraphicsQuality.High]: 0.22,
           }[vizConf.graphics.quality],
           oversample: vizConf.graphics.quality > GraphicsQuality.Medium ? 3 : false,
         }),

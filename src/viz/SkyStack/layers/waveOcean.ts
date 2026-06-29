@@ -16,6 +16,7 @@ export interface WaveOceanLayerConfig {
   /**
    * Debug render mode (default 0 = off).
    *   1 = march step-count heatmap (dim blue = cheap, red = full budget).
+   *   2 = linear march step fraction (numeric eval-proxy readback).
    */
   debugMode?: number;
   /** @see Layer.oversample */
