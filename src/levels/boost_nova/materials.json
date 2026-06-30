@@ -57,6 +57,22 @@
           "PG_SHAPE": {
             "type": "int",
             "value": 3
+          },
+          "PG_STAGGER": {
+            "type": "int",
+            "value": 1
+          },
+          "PG_PITCH": {
+            "type": "vec2",
+            "value": [0.5, 0.5]
+          },
+          "PG_RADIUS": {
+            "type": "float",
+            "value": 0.15
+          },
+          "PG_DUTY": {
+            "type": "float",
+            "value": 0.5
           }
         }
       },

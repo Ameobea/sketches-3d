@@ -73,6 +73,14 @@
         "coconut": "palm_coconut"
       }
     },
+    "trapezoid_plat": {
+      "type": "geotoyComposition",
+      "compositionId": 114,
+      "materialMap": {
+        "default": "panel_seams",
+        "inner": "pit_grid_trapezoid"
+      }
+    },
     "csg_box": {
       "type": "csg",
       "tree": {

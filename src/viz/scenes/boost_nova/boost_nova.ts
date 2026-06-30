@@ -187,14 +187,16 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       ],
       background: gradientBackground({
         stops: [
-          { position: 0.0, color: 0x8c9db1 },
-          { position: 0.489, color: 0xaabac9 },
-          { position: 0.676, color: 0xbfc4c6 },
-          { position: 0.768, color: 0xc8c2bb },
-          { position: 0.856, color: 0xcbb5a5 },
-          { position: 0.905, color: 0xc5a597 },
-          { position: 0.944, color: 0xb29790 },
-          { position: 1.0, color: 0x828283 },
+          ...[
+            { col: [3, 137, 237], t: 0 },
+            { col: [6, 165, 245], t: 0.464151 },
+            { col: [22, 188, 245], t: 0.732075 },
+            { col: [48, 193, 245], t: 0.860377 },
+            { col: [63, 185, 248], t: 1.0 },
+          ].map(({ t, col }) => ({
+            position: t,
+            color: new THREE.Color(col[0] / 255, col[1] / 255, col[2] / 255),
+          })),
         ]
           .map(({ position, color }) => ({ position: 1 - position, color }))
           .reverse(),

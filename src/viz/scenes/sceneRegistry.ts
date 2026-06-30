@@ -191,14 +191,6 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     legacyLights: false,
     audio: false,
   },
-  waveBench: {
-    modulePath: 'src/viz/scenes/waveBench/waveBench',
-    sceneName: null,
-    gltfName: null,
-    metadata: { title: 'wave ocean benchmark' },
-    legacyLights: false,
-    audio: false,
-  },
   runeGenTest: {
     modulePath: 'src/viz/scenes/experiments/runeGen/runeGen',
     sceneName: 'Scene',
