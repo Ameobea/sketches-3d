@@ -250,12 +250,18 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     },
   });
 
-  initWebSynth({ compositionIDToLoad: 184 }).then(async ctx => {
-    await delay(1200);
+  const startMusic = () =>
+    initWebSynth({ compositionIDToLoad: 184 }).then(async ctx => {
+      await delay(1200);
 
-    ctx.setGlobalBpm(180);
-    ctx.startAll();
-  });
+      ctx.setGlobalBpm(180);
+      ctx.startAll();
+    });
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(startMusic, { timeout: 3000 });
+  } else {
+    setTimeout(startMusic, 2000);
+  }
 
   return sceneConfig;
 };

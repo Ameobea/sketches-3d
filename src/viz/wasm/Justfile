@@ -26,21 +26,21 @@ bindgen:
 
 opt:
   #!/usr/bin/env -S parallel --shebang --ungroup --jobs 6
-  wasm-opt ./build/bridge2_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/bridge2_bg.wasm --enable-bulk-memory
-  wasm-opt ./build/conduit_particles_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/conduit_particles_bg.wasm --enable-bulk-memory
-  wasm-opt ./build2/normal_map_gen.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/normal_map_gen.wasm --enable-bulk-memory
-  wasm-opt ./build2/texture_crossfade.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/texture_crossfade.wasm --enable-bulk-memory
-  wasm-opt ./build/cave_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/cave_bg.wasm --enable-bulk-memory
-  wasm-opt ./build2/terrain.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/terrain.wasm --enable-bulk-memory
-  wasm-opt ./build/stone_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/stone_bg.wasm --enable-bulk-memory
-  wasm-opt ./geodesics/build/bin/geodesics.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./geodesics/build/bin/geodesics.wasm --enable-bulk-memory
-  wasm-opt ./build/tessellation_sandbox_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/tessellation_sandbox_bg.wasm --enable-bulk-memory
-  wasm-opt ./build/basalt_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/basalt_bg.wasm --enable-bulk-memory
-  wasm-opt ./build/csg_sandbox_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/csg_sandbox_bg.wasm --enable-bulk-memory
-  wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
-  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
-  wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
-  wasm-opt ./build2/sound_engine.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/sound_engine.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build/bridge2_bg.wasm
+  ./optimize-wasm.sh ./build/conduit_particles_bg.wasm
+  ./optimize-wasm.sh ./build2/normal_map_gen.wasm
+  ./optimize-wasm.sh ./build2/texture_crossfade.wasm
+  ./optimize-wasm.sh ./build/cave_bg.wasm
+  ./optimize-wasm.sh ./build2/terrain.wasm
+  ./optimize-wasm.sh ./build/stone_bg.wasm
+  ./optimize-wasm.sh ./geodesics/build/bin/geodesics.wasm
+  ./optimize-wasm.sh ./build/tessellation_sandbox_bg.wasm
+  ./optimize-wasm.sh ./build/basalt_bg.wasm
+  ./optimize-wasm.sh ./build/csg_sandbox_bg.wasm
+  ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
+  ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
+  ./optimize-wasm.sh ./build2/flight_recorder.wasm
+  ./optimize-wasm.sh ./build2/sound_engine.wasm
 
 build:
   #!/bin/bash
@@ -105,25 +105,25 @@ build-csg-sandbox:
 build-geoscript-repl:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
-  wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
   cp ./build/geoscript_repl* ../wasmComp
 
 build-geoscript-repl-release:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package geoscript_repl
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
-  wasm-opt ./build/geoscript_repl_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_repl_bg.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
   cp ./build/geoscript_repl* ../wasmComp
 
 build-geoscript-analysis:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_analysis_wasm
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
-  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
   cp ./build/geoscript_analysis_wasm* ../wasmComp
 
 build-geoscript-analysis-release:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package geoscript_analysis_wasm
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
-  wasm-opt ./build/geoscript_analysis_wasm_bg.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build/geoscript_analysis_wasm_bg.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
   cp ./build/geoscript_analysis_wasm* ../wasmComp
 
 build-geoscript:
@@ -133,11 +133,11 @@ build-geoscript:
 build-flight-recorder:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder
   cp ./target/wasm32-unknown-unknown/release/flight_recorder.wasm ./build2
-  wasm-opt ./build2/flight_recorder.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/flight_recorder.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build2/flight_recorder.wasm
   cp ./build2/flight_recorder.wasm ../wasmComp
 
 build-sound-engine:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package sound_engine
   cp ./target/wasm32-unknown-unknown/release/sound_engine.wasm ./build2
-  wasm-opt ./build2/sound_engine.wasm -g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int --precompute-propagate --strip-dwarf -c -o ./build2/sound_engine.wasm --enable-bulk-memory
+  ./optimize-wasm.sh ./build2/sound_engine.wasm
   cp ./build2/sound_engine.wasm ../wasmComp

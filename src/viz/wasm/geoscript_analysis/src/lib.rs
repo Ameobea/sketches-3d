@@ -650,6 +650,51 @@ out = (walls)
   }
 
   #[test]
+  fn test_pipeline_into_fully_applied_call_is_bitor_error() {
+    // `box(..) | v3(x, y, 10)`: `v3(...)` is fully applied → a concrete `vec3`, so `|` degrades to
+    // `bit_or`, and `mesh | vec3` matches no overload.  This must surface as an inline error.
+    let src = "x = 1\ny = 2\nm = box(0.8, 0.8, 20) | v3(x, y, 10)";
+    let result = analyze(src);
+    assert!(
+      result.diagnostics.iter().any(|d| d.message.contains("bit_or")
+        && d.message.contains("mesh")
+        && d.message.contains("vec3")),
+      "expected a bit_or no-overload error for `mesh | vec3`, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_pipeline_into_fully_applied_call_with_unknown_args() {
+    // The v3 coords are closure params of unknown type, but `v3(x, y, 10)` is still statically a
+    // complete `vec3` (matched by arity), so the `mesh | vec3` error must still surface.
+    let src = "f = |x, y| box(0.8, 0.8, 20) | v3(x, y, 10)";
+    let result = analyze(src);
+    assert!(
+      result.diagnostics.iter().any(|d| d.message.contains("bit_or")),
+      "expected bit_or error even with unknown v3 args, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_pipeline_into_partial_application_no_error() {
+    // A partial-application rhs (a callable) is a valid pipe target — no diagnostics.
+    for src in [
+      "m = box() | translate(vec3(0, 1, 0))",
+      "m = box() | scale(2)",
+      "a = box()\nb = box()\nc = a | b",
+    ] {
+      let result = analyze(src);
+      assert!(
+        result.diagnostics.is_empty(),
+        "expected no diagnostics for `{src}`, got: {:?}",
+        result.diagnostics
+      );
+    }
+  }
+
+  #[test]
   fn test_hover_binop_int_addition() {
     let ctx = AnalysisCtx::new();
     let hover = ctx.hover("x = 1 + 2", 1, 1, false, "").expect("hover for `x`");

@@ -5,8 +5,8 @@ import type { Viz } from 'src/viz';
 import { setSceneEnvironment } from 'src/viz/shaders/customShader';
 import { generateGradientEnvironment, loadEnvironment, type SceneEnvironment } from 'src/viz/textureLoading';
 
-// Cache the built env so geoscript re-runs don't re-run PMREM. Keyed on the source
-// fields only; intensity/`setBackground` apply per-call without a rebuild.
+// Cache the built env so geoscript re-runs don't re-run PMREM.
+let cachedRenderer: THREE.WebGLRenderer | null = null;
 let cachedKey: string | null = null;
 let cachedEnv: SceneEnvironment | null = null;
 
@@ -25,6 +25,13 @@ export const applyGeoscriptSceneEnvironment = async (
   env: EnvironmentConfig | undefined,
   resolveTextureUrl: (id: number) => string | undefined
 ): Promise<void> => {
+  if (cachedRenderer !== viz.renderer) {
+    cachedRenderer = viz.renderer;
+    cachedKey = null;
+    cachedEnv = null;
+    capturedOriginalBackground = false;
+  }
+
   if (!capturedOriginalBackground) {
     originalBackground = viz.scene.background;
     capturedOriginalBackground = true;

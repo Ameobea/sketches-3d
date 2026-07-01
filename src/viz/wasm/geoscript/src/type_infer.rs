@@ -13,7 +13,7 @@ use crate::{
     Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, Statement,
   },
   builtins::{
-    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, FnSignature},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, DefaultValue, FnSignature},
     FUNCTION_ALIASES,
   },
   match_binop_by_arg_types, match_signature_by_arg_types, match_unop_by_arg_types,
@@ -302,6 +302,139 @@ pub fn is_valid_partial_prefix(
     }
   }
   false
+}
+
+/// How a standalone builtin call `f(args)` resolves, used to model the pipeline operator `lhs | rhs`.
+///
+/// The runtime evaluates `rhs` to a value *before* deciding how `|` behaves: when `f(args)` is a
+/// partial application the value is a callable and the pipeline invokes it with `lhs`; when
+/// `f(args)` is complete the value is concrete and `|` degrades to `bit_or(lhs, value)`.  Non-
+/// concrete arg types act as wildcards so e.g. `v3(x, y, 10)` with unknown `x`/`y` still classifies
+/// as a complete `vec3`.
+pub enum PipeRhsKind {
+  /// `f(args)` fully binds a signature → a concrete value of this type (and the matched def index).
+  Complete { ty: AbstractType, def_ix: usize },
+  /// No signature fully binds but the args are a valid prefix → a callable to pipe into.
+  Partial,
+  /// Concrete args fit no signature, neither complete nor as a prefix → the call itself is invalid.
+  NoMatch,
+  /// Not a resolvable builtin, or it has dynamic signatures we can't reason about.
+  Indeterminate,
+}
+
+/// True if an abstract arg type is compatible with a parameter's `valid_types` bitflags.  Non-
+/// concrete types (Union / partial application / Unknown) act as wildcards since we can't prove a
+/// mismatch.
+fn arg_ty_fits(valid_types: u16, ty: &AbstractType) -> bool {
+  match ty.as_single_arg_type() {
+    Some(c) => valid_types & c.as_bitflags() != 0,
+    None => true,
+  }
+}
+
+/// Whether `sig` is fully satisfied by the given args (all required params bound, types
+/// compatible) — i.e. the call would produce a concrete value rather than a partial application.
+fn sig_fully_binds(
+  sig: &FnSignature,
+  positional: &[AbstractType],
+  kwargs: &[(Sym, AbstractType)],
+) -> bool {
+  for (kw, _) in kwargs {
+    if !sig.arg_defs.iter().any(|d| d.interned_name == *kw) {
+      return false;
+    }
+  }
+  let mut pos_ix = 0;
+  for arg_def in sig.arg_defs {
+    if let Some((_, ty)) = kwargs.iter().find(|(s, _)| *s == arg_def.interned_name) {
+      if !arg_ty_fits(arg_def.valid_types, ty) {
+        return false;
+      }
+    } else if pos_ix < positional.len() {
+      if !arg_ty_fits(arg_def.valid_types, &positional[pos_ix]) {
+        return false;
+      }
+      pos_ix += 1;
+    } else if matches!(arg_def.default_value, DefaultValue::Required) {
+      return false;
+    }
+  }
+  true
+}
+
+/// Whether the given args are a valid *prefix* of `sig` (could be completed by supplying more) —
+/// i.e. the call would yield a partial application.
+fn sig_valid_prefix(
+  sig: &FnSignature,
+  positional: &[AbstractType],
+  kwargs: &[(Sym, AbstractType)],
+) -> bool {
+  if positional.len() > sig.arg_defs.len() {
+    return false;
+  }
+  for (i, ty) in positional.iter().enumerate() {
+    if !arg_ty_fits(sig.arg_defs[i].valid_types, ty) {
+      return false;
+    }
+  }
+  for (kw, kty) in kwargs {
+    match sig.arg_defs.iter().find(|d| d.interned_name == *kw) {
+      Some(d) if arg_ty_fits(d.valid_types, kty) => {}
+      _ => return false,
+    }
+  }
+  true
+}
+
+/// Classify the rhs of a pipeline when it's a written-out call `f(args)`, mirroring the runtime's
+/// complete-vs-partial decision (see [`PipeRhsKind`]).  The runtime prefers a complete signature
+/// match, falling back to a partial application only when no signature fully binds.
+pub fn classify_pipe_rhs_call(
+  ctx: &EvalCtx,
+  name: Sym,
+  arg_types: &[AbstractType],
+  kwarg_types: &[(Sym, AbstractType)],
+) -> PipeRhsKind {
+  let Some(name_str) = ctx.interned_symbols.with_resolved(name, |s| s.to_string()) else {
+    return PipeRhsKind::Indeterminate;
+  };
+  let sigs = if let Some(def) = fn_sigs().get(name_str.as_str()) {
+    def.signatures
+  } else if let Some(&real) = FUNCTION_ALIASES.get(name_str.as_str()) {
+    match fn_sigs().get(real) {
+      Some(def) => def.signatures,
+      None => return PipeRhsKind::Indeterminate,
+    }
+  } else {
+    return PipeRhsKind::Indeterminate;
+  };
+
+  // Dynamic signatures (empty first arg name) accept anything — can't reason about completeness.
+  if sigs
+    .first()
+    .and_then(|s| s.arg_defs.first())
+    .map_or(true, |d| d.name.is_empty())
+  {
+    return PipeRhsKind::Indeterminate;
+  }
+
+  for (def_ix, sig) in sigs.iter().enumerate() {
+    if sig_fully_binds(sig, arg_types, kwarg_types) {
+      return PipeRhsKind::Complete {
+        ty: AbstractType::from_return_type(sig.return_type),
+        def_ix,
+      };
+    }
+  }
+  // The runtime only treats a call as a partial application when at least one arg was supplied.
+  if !arg_types.is_empty() || !kwarg_types.is_empty() {
+    for sig in sigs {
+      if sig_valid_prefix(sig, arg_types, kwarg_types) {
+        return PipeRhsKind::Partial;
+      }
+    }
+  }
+  PipeRhsKind::NoMatch
 }
 
 /// Infer the abstract type of an expression in the given environment.  Mutates `env`

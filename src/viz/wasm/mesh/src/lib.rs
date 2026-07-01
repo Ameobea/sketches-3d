@@ -1,3 +1,5 @@
+#![feature(likely_unlikely)]
+
 use fxhash::{FxBuildHasher, FxHashMap};
 use linked_mesh::{Mat4, Vec3, VertexKey};
 use nalgebra::Vector3;

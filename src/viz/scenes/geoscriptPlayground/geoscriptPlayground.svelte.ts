@@ -60,7 +60,7 @@ export const processLoadedScene = async (
 ): Promise<SceneConfig> => {
   const workerManager: WorkerManager = userData?.workerManager ?? (await new WorkerManager());
 
-  const quality = vizConf.graphics.quality;
+  const quality = userData?.renderMode ? GraphicsQuality.High : vizConf.graphics.quality;
 
   let ctx = $state<ReplCtx | null>(null);
 

@@ -16,7 +16,9 @@ const config = {
     },
     adapter: adapter({
       out: 'build',
-      precompress: false,
+      // Emit brotli-q11 + gzip-9 sidecars; nginx serves them via `brotli_static`/`gzip_static`
+      // instead of its low-quality dynamic brotli (~30% larger on the big wasm/JS blobs).
+      precompress: true,
     }),
   },
   viteOptions: {

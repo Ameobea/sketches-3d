@@ -11,8 +11,8 @@ use geoscript::{
   match_binop_by_arg_types, match_unop_by_arg_types,
   ty::{merge_types, AbstractType, CallableParam, CallableType, PartialApplication},
   type_infer::{
-    infer_bitor_op_result_type, infer_map_op_result_type, infer_reduce_fold_result,
-    resolve_builtin_call, resolve_paf_call, CallResolution,
+    classify_pipe_rhs_call, infer_bitor_op_result_type, infer_map_op_result_type,
+    infer_reduce_fold_result, resolve_builtin_call, resolve_paf_call, CallResolution, PipeRhsKind,
   },
   ArgType, EvalCtx, Program, Sym,
 };
@@ -607,9 +607,10 @@ impl<'a> AnalysisWalker<'a> {
     }
   }
 
-  /// Pipeline operator `lhs | rhs` evaluates rhs as a callable and invokes it with lhs prepended
-  /// to its arguments.  We model this for type inference by treating `lhs | f(args)` as
-  /// `f(lhs, args)` and `lhs | f` as `f(lhs)` for builtin-name targets.
+  /// Pipeline operator `lhs | rhs`.  At runtime the rhs is evaluated to a value first: a callable
+  /// (closure / partial application) is invoked with lhs appended, otherwise `|` degrades to
+  /// `bit_or(lhs, rhs)`.  We mirror that here — `lhs | f(args)` is a call append only when `f(args)`
+  /// is a partial application; a fully-applied `f(args)` makes it a `bit_or` instead.
   fn walk_pipeline(&mut self, lhs: &Expr, rhs: &Expr) -> AbstractType {
     let lhs_ty = self.walk_expr(lhs);
 
@@ -628,33 +629,8 @@ impl<'a> AnalysisWalker<'a> {
             self.reference_symbol(*name, *loc);
           }
 
-          // Pipeline semantics match `PartiallyAppliedFn::invoke`: the lhs is appended after
-          // the already-provided positional args.  So `lhs | f(a, b)` becomes `f(a, b, lhs)`.
-          let mut piped: Vec<AbstractType> = Vec::with_capacity(arg_types.len() + 1);
-          piped.extend(arg_types);
-          piped.push(lhs_ty);
-
-          let (return_ty, matched_sig_ix) = if is_shadowed {
-            // Shadowing local — try resolving as a PAF or typed-callable user var.
-            let var_ty = self.lookup_type(*name).cloned();
-            match var_ty {
-              Some(AbstractType::PartiallyApplied(paf)) => (
-                self.resolve_paf_call_with_diagnostics(&paf, &piped, &kwarg_types, *loc),
-                None,
-              ),
-              Some(AbstractType::Callable(ct)) => ((*ct.return_type).clone(), None),
-              _ => (AbstractType::Unknown, None),
-            }
-          } else {
-            self.resolve_builtin_call_with_diagnostics(*name, &piped, &kwarg_types, *loc)
-          };
-
-          let return_ty = if is_shadowed {
-            return_ty
-          } else {
-            infer_reduce_fold_result(self.ctx, call, &piped, piped.len(), |s| self.is_defined(s))
-              .unwrap_or(return_ty)
-          };
+          let (return_ty, matched_sig_ix) =
+            self.walk_pipeline_call(*name, is_shadowed, call, &arg_types, &kwarg_types, lhs_ty, *loc);
 
           self.function_calls.push(FunctionCallInfo {
             name: *name,
@@ -694,6 +670,103 @@ impl<'a> AnalysisWalker<'a> {
         infer_bitor_op_result_type(&lhs_ty, &rhs_ty)
       }
     }
+  }
+
+  /// Resolve `lhs | f(args)` where the rhs is a written-out call.  Returns the pipeline result
+  /// type and the matched signature index (for hover).  Mirrors the runtime: a partial-application
+  /// rhs is invoked with `lhs` appended; a fully-applied rhs degrades the `|` to `bit_or`.
+  fn walk_pipeline_call(
+    &mut self,
+    name: Sym,
+    is_shadowed: bool,
+    call: &FunctionCall,
+    arg_types: &[AbstractType],
+    kwarg_types: &[(Sym, AbstractType)],
+    lhs_ty: AbstractType,
+    loc: SourceLoc,
+  ) -> (AbstractType, Option<usize>) {
+    if is_shadowed {
+      // Shadowing local — invoke it with lhs appended, resolving as a PAF or typed callable.
+      let mut piped: Vec<AbstractType> = arg_types.to_vec();
+      piped.push(lhs_ty);
+      let return_ty = match self.lookup_type(name).cloned() {
+        Some(AbstractType::PartiallyApplied(paf)) => {
+          self.resolve_paf_call_with_diagnostics(&paf, &piped, kwarg_types, loc)
+        }
+        Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
+        _ => AbstractType::Unknown,
+      };
+      return (return_ty, None);
+    }
+
+    match classify_pipe_rhs_call(self.ctx, name, arg_types, kwarg_types) {
+      PipeRhsKind::Complete { ty: rhs_ty, def_ix } => {
+        // `f(args)` is fully applied → a concrete value; `|` is a `bit_or(lhs, value)`.
+        let result = self.infer_pipeline_bitor(&lhs_ty, &rhs_ty, name, loc);
+        (result, Some(def_ix))
+      }
+      PipeRhsKind::Partial => {
+        // `f(args)` is a callable → invoke it with lhs appended.
+        let mut piped: Vec<AbstractType> = arg_types.to_vec();
+        piped.push(lhs_ty);
+        let (return_ty, matched_sig_ix) =
+          self.resolve_builtin_call_with_diagnostics(name, &piped, kwarg_types, loc);
+        let return_ty =
+          infer_reduce_fold_result(self.ctx, call, &piped, piped.len(), |s| self.is_defined(s))
+            .unwrap_or(return_ty);
+        (return_ty, matched_sig_ix)
+      }
+      PipeRhsKind::NoMatch | PipeRhsKind::Indeterminate => {
+        // The rhs call itself is invalid or unreasonable — resolve it standalone so any
+        // no-overload diagnostic anchors on the call, and give up on the pipeline result type.
+        let (_, matched_sig_ix) =
+          self.resolve_builtin_call_with_diagnostics(name, arg_types, kwarg_types, loc);
+        (AbstractType::Unknown, matched_sig_ix)
+      }
+    }
+  }
+
+  /// Result type of `lhs | rhs` when the rhs reduces to a concrete (non-callable) value, where `|`
+  /// degrades to `bit_or`.  Emits a no-overload diagnostic (anchored on the rhs callee `name`) when
+  /// both sides are concrete but no `bit_or` overload accepts them.
+  fn infer_pipeline_bitor(
+    &mut self,
+    lhs_ty: &AbstractType,
+    rhs_ty: &AbstractType,
+    name: Sym,
+    loc: SourceLoc,
+  ) -> AbstractType {
+    let result = infer_bitor_op_result_type(lhs_ty, rhs_ty);
+    if !matches!(result, AbstractType::Unknown) {
+      return result;
+    }
+    let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type())
+    else {
+      return AbstractType::Unknown;
+    };
+    let (line, col) = self.ctx.resolve_loc(loc);
+    if line == 0 && col == 0 {
+      return AbstractType::Unknown;
+    }
+    let name_str = self
+      .ctx
+      .interned_symbols
+      .with_resolved(name, |s| s.to_string())
+      .unwrap_or_default();
+    self.diagnostics.push(AnalysisDiagnostic {
+      start_line: line,
+      start_col: col,
+      end_line: line,
+      end_col: col + name_str.len().max(1) as u32,
+      severity: DiagnosticSeverity::Error,
+      message: format!(
+        "no valid `|` operation: `{name_str}` is fully applied (not a callable to pipe into), \
+         and `bit_or` has no overload for ({}, {})",
+        lhs_c.as_str(),
+        rhs_c.as_str()
+      ),
+    });
+    AbstractType::Unknown
   }
 
   fn walk_function_call(&mut self, call: &FunctionCall, loc: SourceLoc) -> AbstractType {
