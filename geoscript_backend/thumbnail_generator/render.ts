@@ -49,6 +49,8 @@ interface TransientRenderOptions {
   dev?: boolean;
   /** Readiness timeout in ms before failing with captured diagnostics. */
   timeoutMs?: number;
+  /** Debug material applied to all meshes before capture: 'normal' | 'wireframe' | 'wireframe-xray'. */
+  materialOverride?: 'normal' | 'wireframe' | 'wireframe-xray';
 }
 
 interface TransientRenderBody {
@@ -371,7 +373,7 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
   });
 
   try {
-    const payload = { tree, metadata };
+    const payload = { tree, metadata, materialOverride: options.materialOverride };
     const image = await render(url, abortController, {
       encode,
       width,

@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import type { GizmoMode } from './transformGizmo';
 
+/** Debug material override for all rendered meshes (matches the `n` / `w` / `shift+w` keybinds). */
+export type MaterialOverrideMode = 'wireframe' | 'wireframe-xray' | 'normal';
+
 export interface ReplCtx {
   centerView: () => void;
   toggleWireframe: () => void;

@@ -524,6 +524,9 @@ impl<'a> Scanner<'a> {
         continue;
       }
       if b == b'/' && self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'/' {
+        while !self.closure_stack.is_empty() {
+          self.pop_closure()?;
+        }
         let end = scan_line_comment(self.src, self.pos);
         self.advance_to(end);
         continue;
@@ -694,6 +697,13 @@ mod tests {
   fn original_bug_case() {
     let src = "x = { 1 }\n[1, 2, 3]";
     assert_eq!(rewritten(src), "x = { 1 }\n;[1, 2, 3]");
+  }
+
+  #[test]
+  fn shorthand_closure_body_with_trailing_line_comment() {
+    // The `}` must close the body before the `// comment`, not get swallowed by it.
+    let src = "print(\n  || 1 // comment\n)";
+    assert_eq!(rewritten(src), "print(\n  || {1 }// comment\n)");
   }
 
   #[test]

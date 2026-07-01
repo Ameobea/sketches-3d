@@ -1391,13 +1391,13 @@ pub fn match_signature_by_arg_types(
         .iter()
         .find(|(sym, _)| *sym == arg_def.interned_name)
       {
-        if arg_def.valid_types & ty.as_bitflags() == 0 {
+        if !arg_type_covered(ty.as_bitflags(), arg_def.valid_types) {
           continue 'sig;
         }
         arg_refs.push(ArgRef::Keyword(kwarg_sym));
       } else if pos_ix < positional_types.len() {
         let ty = positional_types[pos_ix];
-        if arg_def.valid_types & ty.as_bitflags() == 0 {
+        if !arg_type_covered(ty.as_bitflags(), arg_def.valid_types) {
           continue 'sig;
         }
         arg_refs.push(ArgRef::Positional(pos_ix));
@@ -1430,6 +1430,15 @@ pub fn match_signature_by_arg_types(
 
 /// Type-level binary operator signature matching.  Each signature is assumed to have exactly two
 /// arg defs.
+/// A statically-inferred arg type may only be pre-resolved to an overload that covers *every*
+/// runtime type it could still be. Mere overlap is unsound: a `num` arg overlaps an `int`-only
+/// overload, but the baked-in def_ix then panics (`as_int().unwrap()`) when the value turns out to
+/// be a float at runtime. Ambiguous types that aren't fully covered fall back to runtime dispatch.
+#[inline]
+fn arg_type_covered(arg_flags: u16, param_valid: u16) -> bool {
+  arg_flags & !param_valid == 0
+}
+
 pub fn match_binop_by_arg_types(
   fn_entry_ix: usize,
   lhs_ty: ArgType,
@@ -1443,7 +1452,9 @@ pub fn match_binop_by_arg_types(
   for (sig_ix, sig) in sigs.iter().enumerate() {
     let lhs_def = &sig.arg_defs[0];
     let rhs_def = &sig.arg_defs[1];
-    if lhs_def.valid_types & lhs_flags != 0 && rhs_def.valid_types & rhs_flags != 0 {
+    if arg_type_covered(lhs_flags, lhs_def.valid_types)
+      && arg_type_covered(rhs_flags, rhs_def.valid_types)
+    {
       return Some((sig_ix, sig.return_type));
     }
   }
@@ -1460,7 +1471,7 @@ pub fn match_unop_by_arg_types(fn_entry_ix: usize, arg_ty: ArgType) -> Option<&'
 
   for sig in sigs {
     let arg_def = &sig.arg_defs[0];
-    if arg_def.valid_types & arg_flags != 0 {
+    if arg_type_covered(arg_flags, arg_def.valid_types) {
       return Some(sig.return_type);
     }
   }
@@ -3856,6 +3867,13 @@ fn(1)
 }
 
 #[test]
+fn test_shorthand_closure_trailing_comment_parses() {
+  // Regression: the inserted body-closing `}` used to land inside the trailing line comment.
+  let src = "print(\n  || 1 // comment\n)";
+  assert!(parse_and_eval_program(src).is_ok());
+}
+
+#[test]
 fn test_error_loc_nested_closure() {
   let src = r#"outer = || {
   inner = || {
@@ -4289,6 +4307,24 @@ print(result, asdf=result, x=4.2)
   let result = result.as_int().expect("Expected result to be an Int");
   // (0+1) + (1+1) + (2+1) + (3+1) + (4+1) = 15
   assert_eq!(result, 15);
+}
+
+#[test]
+fn test_numeric_builtins_on_num_typed_float() {
+  // Regression: a `num`-typed value that is a float at runtime must not pre-resolve numeric
+  // builtins/operators to their int-only overload (which panics via `as_int().unwrap()`).
+  // Covers comparison (`<`), unary neg, and `abs`.
+  let src = r#"
+f = |h: num| {
+  ah = if h < 0 { -h } else { h }
+  ah + abs(h)
+}
+neg = f(-2.5)
+pos = f(1.5)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("neg").unwrap().as_float().unwrap(), 5.0);
+  assert_eq!(ctx.get_global("pos").unwrap().as_float().unwrap(), 3.0);
 }
 
 #[test]

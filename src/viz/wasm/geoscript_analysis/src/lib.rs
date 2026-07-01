@@ -285,6 +285,21 @@ mod tests {
   }
 
   #[test]
+  fn test_pipe_into_partial_overload_with_unknown_args_no_error() {
+    // `path_trans` has a 2-arg `(vec2, path)` overload and a 3-arg `(x, y, path)` overload.  With
+    // untyped (Unknown) coords the shorter overload would wildcard-bind and wrongly classify the
+    // rhs as fully applied; but the pipe appends the path, so it resolves to the 3-arg overload as
+    // a partial application — no false `bit_or` error.
+    let src = "f = |spine| {\n  p = spine(0)\n  build_path(path { move(0, 0) line(1, 1) }) | path_trans(p.x, p.y)\n}";
+    let result = analyze(src);
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_variable_used_after_definition() {
     let result = analyze(
       r#"

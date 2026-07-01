@@ -23,11 +23,13 @@
     DefaultCameraPos,
     DefaultCameraTarget,
     DefaultCameraZoom,
+    type MaterialOverrideMode,
   } from 'src/viz/scenes/geoscriptPlayground/types';
 
   interface TransientPayload {
     tree?: TreeDef;
     metadata?: Partial<CompositionVersionMetadata>;
+    materialOverride?: MaterialOverrideMode;
   }
 
   LoadOrbitControls.getter = async () => OrbitControls;
@@ -90,6 +92,7 @@
         initialComposition: { comp, version },
         renderMode: true,
         transientAutoFrame: autoFrame,
+        renderMaterialOverride: payload.materialOverride,
         me: null,
         workerManager: browser ? new WorkerManager() : null,
       },

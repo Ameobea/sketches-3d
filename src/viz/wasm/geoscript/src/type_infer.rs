@@ -322,22 +322,25 @@ pub enum PipeRhsKind {
   Indeterminate,
 }
 
-/// True if an abstract arg type is compatible with a parameter's `valid_types` bitflags.  Non-
-/// concrete types (Union / partial application / Unknown) act as wildcards since we can't prove a
-/// mismatch.
-fn arg_ty_fits(valid_types: u16, ty: &AbstractType) -> bool {
+/// True if an abstract arg type is compatible with a parameter's `valid_types` bitflags.  A non-
+/// concrete type (Union / partial application / Unknown) fits any param when `require_concrete` is
+/// false (wildcard), but fits none when true (we can't prove a match).
+fn arg_ty_fits(valid_types: u16, ty: &AbstractType, require_concrete: bool) -> bool {
   match ty.as_single_arg_type() {
     Some(c) => valid_types & c.as_bitflags() != 0,
-    None => true,
+    None => !require_concrete,
   }
 }
 
 /// Whether `sig` is fully satisfied by the given args (all required params bound, types
 /// compatible) — i.e. the call would produce a concrete value rather than a partial application.
+/// With `require_concrete`, a wildcard arg is *not* allowed to satisfy a param, so this reports
+/// only binds the runtime would definitely make regardless of what the wildcards resolve to.
 fn sig_fully_binds(
   sig: &FnSignature,
   positional: &[AbstractType],
   kwargs: &[(Sym, AbstractType)],
+  require_concrete: bool,
 ) -> bool {
   for (kw, _) in kwargs {
     if !sig.arg_defs.iter().any(|d| d.interned_name == *kw) {
@@ -347,11 +350,11 @@ fn sig_fully_binds(
   let mut pos_ix = 0;
   for arg_def in sig.arg_defs {
     if let Some((_, ty)) = kwargs.iter().find(|(s, _)| *s == arg_def.interned_name) {
-      if !arg_ty_fits(arg_def.valid_types, ty) {
+      if !arg_ty_fits(arg_def.valid_types, ty, require_concrete) {
         return false;
       }
     } else if pos_ix < positional.len() {
-      if !arg_ty_fits(arg_def.valid_types, &positional[pos_ix]) {
+      if !arg_ty_fits(arg_def.valid_types, &positional[pos_ix], require_concrete) {
         return false;
       }
       pos_ix += 1;
@@ -373,13 +376,13 @@ fn sig_valid_prefix(
     return false;
   }
   for (i, ty) in positional.iter().enumerate() {
-    if !arg_ty_fits(sig.arg_defs[i].valid_types, ty) {
+    if !arg_ty_fits(sig.arg_defs[i].valid_types, ty, false) {
       return false;
     }
   }
   for (kw, kty) in kwargs {
     match sig.arg_defs.iter().find(|d| d.interned_name == *kw) {
-      Some(d) if arg_ty_fits(d.valid_types, kty) => {}
+      Some(d) if arg_ty_fits(d.valid_types, kty, false) => {}
       _ => return false,
     }
   }
@@ -418,20 +421,36 @@ pub fn classify_pipe_rhs_call(
     return PipeRhsKind::Indeterminate;
   }
 
+  // A signature bound entirely by concrete args is authoritative: the runtime produces a value
+  // here regardless of any longer overload, so `|` degrades to `bit_or`.
   for (def_ix, sig) in sigs.iter().enumerate() {
-    if sig_fully_binds(sig, arg_types, kwarg_types) {
+    if sig_fully_binds(sig, arg_types, kwarg_types, true) {
       return PipeRhsKind::Complete {
         ty: AbstractType::from_return_type(sig.return_type),
         def_ix,
       };
     }
   }
-  // The runtime only treats a call as a partial application when at least one arg was supplied.
+  // The pipe appends `lhs` as one more positional arg.  When some overload accepts the current
+  // args as a prefix with a still-unbound param (room for that piped arg), the rhs is a partial
+  // application to pipe into — even if a shorter overload would *wildcard*-bind.  Mirrors the
+  // runtime, which with concrete arg types leaves the longer overload partially applied.
   if !arg_types.is_empty() || !kwarg_types.is_empty() {
     for sig in sigs {
-      if sig_valid_prefix(sig, arg_types, kwarg_types) {
+      if sig_valid_prefix(sig, arg_types, kwarg_types)
+        && !sig_fully_binds(sig, arg_types, kwarg_types, false)
+      {
         return PipeRhsKind::Partial;
       }
+    }
+  }
+  // No pipe-fillable overload — fall back to a wildcard-permissive full bind.
+  for (def_ix, sig) in sigs.iter().enumerate() {
+    if sig_fully_binds(sig, arg_types, kwarg_types, false) {
+      return PipeRhsKind::Complete {
+        ty: AbstractType::from_return_type(sig.return_type),
+        def_ix,
+      };
     }
   }
   PipeRhsKind::NoMatch

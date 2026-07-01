@@ -41,6 +41,8 @@ interface ViewDef {
   zoom?: number;
 }
 
+type MaterialOverride = 'normal' | 'wireframe' | 'wireframe-xray';
+
 interface RenderOptions {
   format?: 'png' | 'avif' | 'jpeg';
   width?: number;
@@ -48,6 +50,8 @@ interface RenderOptions {
   quality?: number;
   dev?: boolean;
   timeoutMs?: number;
+  /** Override all mesh materials with a debug material (mirrors the app's n / w / shift+w keybinds). */
+  materialOverride?: MaterialOverride;
 }
 
 interface TransientPayload {
@@ -82,6 +86,7 @@ Options:
   --height <n>         Render height in px (default 800)
   --format <fmt>       png (default) | avif | jpeg
   --quality <n>        Quality 0-100 for avif/jpeg
+  --material <mode>    Debug material for all meshes: normal | wireframe | wireframe-xray
   --no-prelude         Skip the standard geoscript prelude (default: included)
   --timeout <seconds>  Render timeout before failing with diagnostics (default 10)
   --stdout             Write image to stdout (suppresses progress)
@@ -264,6 +269,9 @@ const parseArgs = (argv: string[]) => {
       case '--quality':
         i = val('quality', i);
         break;
+      case '--material':
+        i = val('material', i);
+        break;
       case '--no-prelude':
         flag('no-prelude');
         break;
@@ -306,9 +314,14 @@ const main = async () => {
   if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) die(`Invalid --timeout ${opts.timeout}`);
   const timeoutMs = Math.round(timeoutSec * 1000);
 
+  const materialOverride = opts.material as MaterialOverride | undefined;
+  if (materialOverride && !['normal', 'wireframe', 'wireframe-xray'].includes(materialOverride)) {
+    die(`Invalid --material ${materialOverride}. Must be normal, wireframe, or wireframe-xray.`);
+  }
+
   const payload = buildPayload(input);
   if (opts['no-prelude']) payload.metadata.preludeEjected = true;
-  payload.options = { format, dev, width, height, quality, timeoutMs };
+  payload.options = { format, dev, width, height, quality, timeoutMs, materialOverride };
 
   const toStdout = !!opts.stdout;
   const baseName = isDir(input)

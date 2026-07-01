@@ -192,6 +192,7 @@ Options:
   --height <n>         Render height in px (default 800)
   --format <fmt>       png (default) | avif | jpeg
   --quality <n>        Quality 0-100 for avif/jpeg
+  --material <mode>    Debug material for all meshes: normal | wireframe | wireframe-xray
   --no-prelude         Skip the standard geoscript prelude (default: included)
   --stdout             Write image to stdout (suppresses progress)
 ```
@@ -200,6 +201,12 @@ The standard prelude (default lights, camera, helpers) is included on every
 render unless you pass `--no-prelude` or drop a `.prelude_ejected` marker in the
 composition directory. Without it, a bare `box(8) | render` has no lights and
 renders black.
+
+`--material` swaps every rendered mesh to a debug material right before capture —
+the headless equivalent of the app's `n` (normal material), `w` (wireframe), and
+`shift+w` (wireframe x-ray) keybinds. Great for inspecting shading normals (e.g.
+whether a bevel is smooth) without lighting/material noise. `materials.json` is
+ignored for the overridden meshes while this is set.
 
 ### Defaults & overrides
 

@@ -11,7 +11,7 @@ import {
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import ReplUi from './ReplUI.svelte';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
-import type { ReplCtx } from './types';
+import type { MaterialOverrideMode, ReplCtx } from './types';
 import { buildGeotoyKeymap } from './keymap';
 import { WorkerManager } from 'src/geoscript/workerManager';
 
@@ -49,6 +49,8 @@ export interface GeoscriptPlaygroundUserData {
   renderMode?: boolean;
   /** Transient render only: auto-frame the camera to fit all rendered geometry before capturing. */
   transientAutoFrame?: boolean;
+  /** Transient render only: swap all meshes to a debug material (normal / wireframe) before capturing. */
+  renderMaterialOverride?: MaterialOverrideMode;
   me?: User | null | undefined;
 }
 
@@ -103,6 +105,14 @@ export const processLoadedScene = async (
 
       if (userData.transientAutoFrame) {
         ctx.autoFrameForRender();
+      }
+
+      if (userData.renderMaterialOverride) {
+        ({
+          normal: ctx.toggleNormalMat,
+          wireframe: ctx.toggleWireframe,
+          'wireframe-xray': ctx.toggleWireframeXray,
+        })[userData.renderMaterialOverride]();
       }
 
       viz.renderer.shadowMap.needsUpdate = true;
