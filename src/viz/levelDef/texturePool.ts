@@ -32,7 +32,7 @@ const FORMAT_MAP = {
   red: THREE.RedFormat,
 } as const;
 
-const toTextureArgs = (def: TextureDef) => ({
+const toTextureArgs = (def: TextureDef, name: string) => ({
   wrapS: WRAPPING_MAP[def.wrapS ?? 'repeat'],
   wrapT: WRAPPING_MAP[def.wrapT ?? 'repeat'],
   magFilter: MAG_FILTER_MAP[def.magFilter ?? 'nearest'],
@@ -40,17 +40,19 @@ const toTextureArgs = (def: TextureDef) => ({
   anisotropy: def.anisotropy ?? 1,
   colorSpace: COLOR_SPACE_MAP[def.colorSpace ?? ''],
   format: def.format ? FORMAT_MAP[def.format] : undefined,
+  name,
 });
 
 const loadWithRetry = async (
   loader: THREE.ImageBitmapLoader,
   def: TextureDef,
+  name: string,
   maxRetries = 3
 ): Promise<THREE.Texture> => {
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      return await loadTexture(loader, def.url, toTextureArgs(def));
+      return await loadTexture(loader, def.url, toTextureArgs(def, name));
     } catch (err) {
       lastError = err;
       if (attempt < maxRetries) {
@@ -75,10 +77,10 @@ export class TextureFetchPool {
     private readonly maxRetries = 3
   ) {}
 
-  load(def: TextureDef): Promise<THREE.Texture> {
+  load(def: TextureDef, name: string): Promise<THREE.Texture> {
     return new Promise<THREE.Texture>((resolve, reject) => {
       const task = () => {
-        loadWithRetry(this.loader, def, this.maxRetries).then(
+        loadWithRetry(this.loader, def, name, this.maxRetries).then(
           tex => {
             this.active--;
             this.drain();

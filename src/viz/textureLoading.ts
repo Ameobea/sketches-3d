@@ -13,6 +13,8 @@ export interface TextureArgs {
   type?: THREE.TextureDataType | undefined;
   anisotropy?: number | undefined;
   colorSpace?: THREE.ColorSpace | undefined;
+  name?: string | undefined;
+  generateMipmaps?: boolean | undefined;
 }
 
 /**
@@ -38,6 +40,8 @@ export const loadTexture = (
     type,
     anisotropy = 1,
     colorSpace = THREE.NoColorSpace,
+    name = '',
+    generateMipmaps = true,
   }: TextureArgs = {}
 ) =>
   new Promise<THREE.Texture>((resolve, reject) =>
@@ -56,7 +60,8 @@ export const loadTexture = (
           anisotropy,
           colorSpace
         );
-        texture.generateMipmaps = true;
+        texture.name = name || url;
+        texture.generateMipmaps = generateMipmaps;
         texture.needsUpdate = true;
         resolve(texture);
       },

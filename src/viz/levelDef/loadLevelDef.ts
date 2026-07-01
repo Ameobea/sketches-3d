@@ -1044,7 +1044,7 @@ export const loadLevelDef = (
   const textureEntries = Object.entries(levelDef.textures ?? {});
 
   const textureFetchPromises = textureEntries.map(([texName, texDef]) =>
-    texturePool.load(texDef).then(
+    texturePool.load(texDef, texName).then(
       tex => {
         // Upload to GPU immediately so cost is spread across the loading window
         // rather than spiking on the first render frame after loadingComplete resolves.

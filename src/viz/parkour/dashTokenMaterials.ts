@@ -24,7 +24,7 @@ const loadTextures = (lib: LibraryMaterialFile): Promise<Map<string, THREE.Textu
       const texMap = new Map<string, THREE.Texture>();
       await Promise.all(
         Object.entries(lib.textures ?? {}).map(async ([name, def]) => {
-          texMap.set(name, await texturePool.load(def));
+          texMap.set(name, await texturePool.load(def, name));
         })
       );
       return texMap;
@@ -45,6 +45,6 @@ const buildLibraryMaterial = async (lib: LibraryMaterialFile): Promise<THREE.Mat
  */
 export const buildDefaultDashTokenMaterials = (): Promise<DashTokenMaterials> =>
   Promise.all([
-    buildLibraryMaterial(dashTokenCoreLib as unknown as LibraryMaterialFile),
-    buildLibraryMaterial(dashTokenRingLib as unknown as LibraryMaterialFile),
+    buildLibraryMaterial(dashTokenCoreLib as LibraryMaterialFile),
+    buildLibraryMaterial(dashTokenRingLib as LibraryMaterialFile),
   ]).then(([core, ring]) => ({ core, ring }));

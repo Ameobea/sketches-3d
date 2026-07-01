@@ -1383,7 +1383,7 @@ export class LevelEditor {
       const pool = new TextureFetchPool();
       await Promise.all(
         newTextures.map(([key, def]) =>
-          pool.load(def).then(
+          pool.load(def, key).then(
             tex => {
               this.viz.renderer.initTexture(tex);
               this.loadedTextures.set(key, tex);
