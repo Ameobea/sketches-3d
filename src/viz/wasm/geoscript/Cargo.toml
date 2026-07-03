@@ -26,6 +26,8 @@ arrayvec = "0.7"
 bitvec = "1"
 siphasher = "1"
 
+faer = { version = "0.24", default-features = false, features = ["std"] }
+
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }
 tessellation = { path = "../tessellation" }

@@ -19,6 +19,7 @@ interface RawRenderedGizmo {
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
+import { initUVUnwrap, setUVUnwrapWasmURL } from './uvUnwrap';
 import { textToSvg } from './text_to_path';
 import type { GeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
@@ -45,6 +46,7 @@ export interface GeoscriptAsyncDeps {
   cgal?: boolean;
   text_to_path?: boolean;
   clipper2?: boolean;
+  uv_unwrap?: boolean;
 }
 
 const initAsyncDeps = (
@@ -66,6 +68,9 @@ const initAsyncDeps = (
     if (clipperInit instanceof Promise) {
       promises.push(clipperInit);
     }
+  }
+  if (deps.uv_unwrap) {
+    promises.push(initUVUnwrap());
   }
   if (deps.text_to_path) {
     const args = argsByKey.text_to_path;
@@ -102,13 +107,14 @@ const initAsyncDeps = (
 const methods = {
   init: async (
     urls: GeoscriptWorkerWasmURLs,
-    eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean }
+    eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean; uv_unwrap?: boolean }
   ) => {
     geoscriptReplWasmURL = urls.geoscriptRepl;
     setManifoldWasmURL(urls.manifold);
     setCGALWasmURL(urls.cgal);
     setClipper2WasmURL(urls.clipper2);
     setGeodesicsWasmURL(urls.geodesics);
+    setUVUnwrapWasmURL(urls.uvUnwrap);
 
     const eagerInits: Promise<unknown>[] = [];
     if (eagerDeps?.cgal) {
@@ -125,6 +131,9 @@ const methods = {
     }
     if (eagerDeps?.geodesics) {
       eagerInits.push(initGeodesics());
+    }
+    if (eagerDeps?.uv_unwrap) {
+      eagerInits.push(initUVUnwrap());
     }
 
     const [_manifold, repl] = await Promise.all([initManifoldWasm(), initGeoscript(), ...eagerInits]);

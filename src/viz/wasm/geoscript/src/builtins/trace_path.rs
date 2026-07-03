@@ -252,12 +252,17 @@ pub(crate) fn normalize_path_sampler_guides(sampler: &dyn PathSampler) -> (Vec<f
 
 pub(crate) struct SubpathTopology {
   pub closed: bool,
-  pub segment_count: usize,
 }
 
 pub(crate) trait PathSampler: Any {
   fn critical_t_values(&self) -> Vec<f32>;
   fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
+    None
+  }
+  /// Global-t span `[start, end]` of each subpath. Since global t is arc-length parameterized,
+  /// a span's width equals that subpath's fraction of the total perimeter. `None` for samplers
+  /// that can't expose per-subpath structure (restricting them to single-loop use in rail_sweep).
+  fn subpath_t_spans(&self) -> Option<Vec<(f32, f32)>> {
     None
   }
   fn fill_rule(&self) -> Option<FillRule> {
@@ -2512,10 +2517,29 @@ impl PathSampler for PathTracerCallable {
         .iter()
         .map(|sp| SubpathTopology {
           closed: sp.closed,
-          segment_count: sp.segments.len(),
         })
         .collect(),
     )
+  }
+
+  fn subpath_t_spans(&self) -> Option<Vec<(f32, f32)>> {
+    if self.subpaths.is_empty() || self.total_length <= LENGTH_EPSILON {
+      return None;
+    }
+    let mut spans = Vec::with_capacity(self.subpaths.len());
+    let mut offset = 0.0f32;
+    for &cum in self.subpath_cumulative_lengths.iter() {
+      spans.push(((offset / self.total_length).clamp(0., 1.), (cum / self.total_length).clamp(0., 1.)));
+      offset = cum;
+    }
+    if self.reverse {
+      // `sample()`/`critical_t_values()` reverse via t → 1−t; mirror each span and flip order.
+      for s in &mut spans {
+        *s = (1.0 - s.1, 1.0 - s.0);
+      }
+      spans.reverse();
+    }
+    Some(spans)
   }
 
   fn fill_rule(&self) -> Option<FillRule> {

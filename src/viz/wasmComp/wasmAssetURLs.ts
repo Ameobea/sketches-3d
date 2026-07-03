@@ -5,6 +5,7 @@ import clipper2WasmURL from 'src/viz/wasm/clipper2/clipper2z.wasm?url';
 import flightRecorderWasmURL from 'src/viz/wasmComp/flight_recorder.wasm?url';
 import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
 import manifoldWasmURL from 'manifold-3d/manifold.wasm?url';
+import uvUnwrapWasmURL from 'src/viz/wasm/uv_unwrap/uv-unwrap.wasm?url';
 
 /**
  * Centralised registry of hashed wasm asset URLs, resolved by Vite from `?url`
@@ -23,6 +24,7 @@ export const WASM_ASSET_URLS = {
   flightRecorder: flightRecorderWasmURL,
   geoscriptRepl: geoscriptReplWasmURL,
   manifold: manifoldWasmURL,
+  uvUnwrap: uvUnwrapWasmURL,
 } as const;
 
 /** Subset of URLs the geoscript worker needs in its `init()` call. */
@@ -32,6 +34,7 @@ export interface GeoscriptWorkerWasmURLs {
   cgal: string;
   clipper2: string;
   geodesics: string;
+  uvUnwrap: string;
 }
 
 export const getGeoscriptWorkerWasmURLs = (): GeoscriptWorkerWasmURLs => ({
@@ -40,4 +43,5 @@ export const getGeoscriptWorkerWasmURLs = (): GeoscriptWorkerWasmURLs => ({
   cgal: WASM_ASSET_URLS.cgal,
   clipper2: WASM_ASSET_URLS.clipper2,
   geodesics: WASM_ASSET_URLS.geodesics,
+  uvUnwrap: WASM_ASSET_URLS.uvUnwrap,
 });

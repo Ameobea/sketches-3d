@@ -6,7 +6,7 @@ use std::rc::Rc;
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::trace_path::{polylines_to_draw_commands, PathTracerCallable};
+use crate::builtins::trace_path::{polylines_to_draw_commands, FillRule, PathTracerCallable};
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 #[cfg(target_arch = "wasm32")]
 use crate::{Callable, Vec2};
@@ -65,7 +65,6 @@ struct OffsetOptions {
 #[cfg(target_arch = "wasm32")]
 struct OffsetResult {
   paths: Vec<Vec<Vec2>>,
-  critical_t_values: Vec<f32>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -151,10 +150,7 @@ fn run_clipper_offset(
   opts: &OffsetOptions,
 ) -> Result<OffsetResult, ErrorStack> {
   if coords.is_empty() || path_lengths.is_empty() {
-    return Ok(OffsetResult {
-      paths: Vec::new(),
-      critical_t_values: Vec::new(),
-    });
+    return Ok(OffsetResult { paths: Vec::new() });
   }
 
   clipper2_offset_paths(
@@ -200,12 +196,37 @@ fn run_clipper_offset(
     }
   }
 
-  let critical_t_values = detect_critical_points(&paths, &CriticalPointConfig::default(), None);
+  Ok(OffsetResult { paths })
+}
 
-  Ok(OffsetResult {
-    paths,
-    critical_t_values,
-  })
+/// Computes critical t-values across all output subpaths in **global** t-space (the tracer
+/// walks its subpaths concatenated by arc length). `detect_critical_points` reports per-path
+/// t in each path's own `[0, 1]`; for path `k` with closed-perimeter length `L_k` starting at
+/// cumulative offset `offset_k`, the global value is `(offset_k + t_local * L_k) / total`.
+#[cfg(target_arch = "wasm32")]
+fn global_critical_points(paths: &[Vec<Vec2>]) -> Option<Vec<f32>> {
+  let closed_len = |p: &[Vec2]| -> f32 {
+    let n = p.len();
+    (0..n).map(|i| (p[(i + 1) % n] - p[i]).norm()).sum()
+  };
+  let lengths: Vec<f32> = paths.iter().map(|p| closed_len(p)).collect();
+  let total: f32 = lengths.iter().sum();
+  if total <= 1e-10 {
+    return None;
+  }
+
+  let config = CriticalPointConfig::default();
+  let mut out: Vec<f32> = Vec::new();
+  let mut offset = 0.0f32;
+  for (path, &len) in paths.iter().zip(&lengths) {
+    for t_local in detect_critical_points(std::slice::from_ref(path), &config, None) {
+      out.push(((offset + t_local * len) / total).clamp(0.0, 1.0));
+    }
+    offset += len;
+  }
+  out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+  out.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+  Some(out)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -321,7 +342,6 @@ pub fn offset_path_impl(
       }
 
       let mut output_paths = Vec::new();
-      let mut critical_points: Option<Vec<f32>> = None;
 
       let mut run_group = |paths: &[Vec<Vec2>], is_closed: bool| -> Result<(), ErrorStack> {
         if paths.is_empty() {
@@ -343,15 +363,6 @@ pub fn offset_path_impl(
         }
 
         let result = run_clipper_offset(&coords, &lengths, &closed_flags, &opts)?;
-        if output_paths.is_empty() && result.paths.len() == 1
-        // with new critical t detection logic in the Clipper2 fork, a case of 0 critical points is
-        // valid.  Using the adaptive sampler handles distributing points more intelligently along
-        // the path perimeter so we can force the inclusion of 0 explicit critical t values here.
-        //
-        // && !result.critical_t_values.is_empty()
-        {
-          critical_points = Some(result.critical_t_values.clone());
-        }
         output_paths.extend(result.paths);
         Ok(())
       };
@@ -359,11 +370,11 @@ pub fn offset_path_impl(
       run_group(&closed_inputs, true)?;
       run_group(&open_inputs, false)?;
 
-      let output_path_count = output_paths.len();
+      // Clipper2's forked offset now emits deterministic, winding-normalized (outer-CCW/hole-CW)
+      // subpaths, so critical points survive multi-subpath output and no geoscript-side re-sort is
+      // needed. `Positive` fill matches that convention.
+      let critical_points = global_critical_points(&output_paths);
       let draw_cmds = polylines_to_draw_commands(output_paths.into_iter().map(|p| (p, true)));
-      if output_path_count != 1 {
-        critical_points = None;
-      }
 
       // TODO: should have a `PathTracerCallable::new()` to avoid leaking this internal detail and
       // to simplify things
@@ -375,7 +386,8 @@ pub fn offset_path_impl(
         draw_cmds,
         interned_t_kwarg,
         critical_points,
-      );
+      )
+      .with_fill_rule(FillRule::Positive);
       return Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: "offset_path".to_owned(),
         inner: Box::new(tracer),

@@ -5,10 +5,11 @@ export interface LevelDefEagerDeps {
   cgal: boolean;
   clipper2: boolean;
   geodesics: boolean;
+  uv_unwrap: boolean;
 }
 
 export const collectLevelDefEagerDeps = (levelDef: LevelDef | null): LevelDefEagerDeps => {
-  const out: LevelDefEagerDeps = { cgal: false, clipper2: false, geodesics: false };
+  const out: LevelDefEagerDeps = { cgal: false, clipper2: false, geodesics: false, uv_unwrap: false };
   if (!levelDef) {
     return out;
   }
@@ -18,7 +19,7 @@ export const collectLevelDefEagerDeps = (levelDef: LevelDef | null): LevelDefEag
       continue;
     }
     for (const d of meta.asyncDeps) {
-      if (d === 'cgal' || d === 'clipper2' || d === 'geodesics') {
+      if (d === 'cgal' || d === 'clipper2' || d === 'geodesics' || d === 'uv_unwrap') {
         out[d] = true;
       }
     }
@@ -43,6 +44,9 @@ export const getScenePreloadUrls = (levelDef: LevelDef | null): string[] => {
   }
   if (eager.geodesics) {
     urls.push(WASM_ASSET_URLS.geodesics);
+  }
+  if (eager.uv_unwrap) {
+    urls.push(WASM_ASSET_URLS.uvUnwrap);
   }
 
   return urls;

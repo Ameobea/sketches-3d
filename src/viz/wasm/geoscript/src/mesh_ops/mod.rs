@@ -1,4 +1,5 @@
 pub mod adaptive_sampler;
+pub mod compute_uvs;
 pub mod extrude;
 pub mod extrude_path;
 pub mod extrude_pipe;
@@ -10,5 +11,7 @@ pub mod mesh_ops;
 pub mod parametric_surface;
 pub mod rail_sweep;
 pub mod stitch_contours;
+pub mod strip_uvs;
 pub mod tessellate_polygon;
+pub mod tube_uvs;
 pub mod voxels;

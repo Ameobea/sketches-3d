@@ -6470,9 +6470,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "ring_resolution",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Int),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Number of samples to take around each profile ring"
+            description: "Number of samples to take around each profile ring. For a multi-subpath profile (holed/disjoint), each subpath gets this full count (they are not split). Pass a sequence of ints to set a per-subpath count instead (in sampler subpath order); its length must match the number of subpaths."
           },
           ArgDef {
             name: "spine",
@@ -6514,7 +6514,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
-            description: "Whether to cap the start and end rings with triangulated faces.  Ignored when `closed` is true."
+            description: "Whether to cap the start and end rings with triangulated faces.  Ignored when `closed` is true.  For an open (non-closed) profile there is no closed boundary ring to cap: an explicit `capped=true` errors, while the default is silently treated as uncapped.  For holed/disjoint (multi-subpath) profiles, caps are triangulated per nesting group (outer + its holes) and are only available in wasm builds."
           },
           ArgDef {
             name: "profile_samplers",
@@ -6528,7 +6528,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float, u_ix: int|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool }`. Returns either a path sampler directly (critical points extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring). More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
+            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float, u_ix: int|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool, closed: bool }`. Returns either a path sampler directly (critical points and subpath topology extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring), `closed` (for a black-box sampler, whether the profile ring wraps closed — default true; an open profile sweeps into a sheet with boundary; not valid for multi-subpath samplers, whose per-subpath openness comes from their own topology). Multi-subpath profiles (disjoint loops, or nested opposite-winding loops for a hollow tube) require a real path sampler and a topology (count/closedness/winding/nesting) that stays constant along the spine. More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
           },
           ArgDef {
             name: "fku_stitching",
@@ -7202,6 +7202,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Computes an alpha-wrap of a sequence of points.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
         return_type: &[ArgType::Mesh],
       }
+    ],
+  },
+  "compute_uvs" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "type",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("auto".to_owned())),
+            description: "UV generation method.  \"auto\", \"unwrap\", \"disk\", and \"sphere\" produce a minimal-distortion conformal unwrap via the BFF module.  \"planar\" projects onto the mesh's dominant plane natively.  \"cylindrical\" wraps U around the auto-detected axis exactly once (seamless 0/1, meridian seam split); V is scaled by the tube circumference so texels stay square (isotropic), and cap faces get a planar disk projection at the tube's density.  It works best on tube-dominant meshes (length > diameter) where the axis is unambiguous and mostly straight.  \"tube\" generalizes it to bent/deformed closed tube-like meshes (elbows, arches, trim, pipes) via harmonic fields: U wraps the cross-section once, V runs along the tube arc-length-uniformly, and crease-bounded end caps become planar islands (see `options`).  Requires closed genus-0.  \"strip\" is a solver-free topological trim-strip unwrap: the mesh is split into smooth patches at sharp edges, and each patch that is a quad/tri strip (dual graph a path or ring) is mapped STRAIGHT in UV space — U = arc length along the strip's rails, V constant per rail — so a horizontally-patterned texture flows smoothly along a curved strip.  Ring strips are cut and rounded to an integer repeat count; non-strip patches fall back to planar islands (see `options`).  Best for hard-edged extrusions/profiles (square/polygonal pipes, frames, trim).  \"toroidal\" (closed genus-1) is reserved and not yet implemented.",
+          },
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Multiplier applied to the generated UV coordinates.  Larger values tile a texture more densely.  For \"cylindrical\" and \"tube\", integer values preserve the seamless wrap.  Closed \"strip\" rings stay seamless at any scale (their repeat count is rounded to an integer after scaling).",
+          },
+          ArgDef {
+            name: "n_cones",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: "Number of cone singularities for the conformal unwrap.  0 lets BFF pick automatically for closed surfaces.  Ignored by non-BFF types.",
+          },
+          ArgDef {
+            name: "island_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "Allow UV islands to be rotated when packing them into the atlas (BFF only).",
+          },
+          ArgDef {
+            name: "options",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Map of options specific to the chosen `type`.  For \"cylindrical\": `{ normalize_v: bool }` — when true, V is stretched to span 0..1 across the mesh's axial extent instead of being circumference-scaled for square texels.  For \"tube\": `{ caps: 'auto'|'none', cap_angle: degrees, cap_max_span: float, cap_alignment: float, normalize_v: bool, seam_straightness: float, detwist: bool }` — `caps` toggles end-cap island detection; `cap_angle` is the crease angle bounding a cap patch (defaults to the mesh sharp-edge threshold); `cap_max_span` is the max fraction of tube length a cap may span (default 0.15); `cap_alignment` is the min alignment between cap normal and local tube direction, 0..1 (default 0.6); `normalize_v` makes V span 0..1 over the tube length instead of isotropic scaling; `seam_straightness` (default 8) penalizes the internal seam cut for traveling around the tube instead of along it, preventing the texture from twisting along the spine (0 = plain shortest-path seam); `detwist` (default true) cancels any residual rotational drift of U along the spine by referencing a rotation-minimizing frame.  For \"strip\": `{ strip_angle: degrees, layout: 'stack'|'overlap'|'fill', u_mode: 'uniform'|'rail', fallback: 'planar'|'error' }` — `strip_angle` is the crease angle that splits the mesh into patches (defaults to the mesh sharp-edge threshold); `layout` places islands in V: 'stack' (default) stacks them at integer V offsets, 'overlap' gives every island the same V band starting at 0, 'fill' stretches each island's V to span 0..1 with U scaled to keep texels square; `u_mode` 'uniform' (default) gives both rails a shared U so quads map to true rectangles (a ring band's inner rail stretches instead of shearing), 'rail' keeps each rail's own arc length (exact per-rail texel density, shears when rail lengths differ); `fallback` controls non-strip patches: 'planar' (default) maps them as planar islands, 'error' fails so unexpected topology is surfaced.",
+          },
+        ],
+        description: "Procedurally generates UV coordinates and tangents for a mesh, returning a new mesh with `uv` and `tangent` vertex attributes populated.  Conformal types (auto/unwrap/disk/sphere) are backed by the BFF unwrap module; \"planar\" is a native planar projection.",
+        return_type: &[ArgType::Mesh],
+      },
     ],
   },
   "smooth" => FnDef {

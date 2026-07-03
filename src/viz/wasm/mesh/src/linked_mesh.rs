@@ -346,9 +346,25 @@ pub struct LinkedMesh<FaceData = ()> {
   pub vertex_channels: FxHashMap<String, Channel<VertexKey>>,
   /// Generic passive per-edge attribute channels.
   pub edge_channels: FxHashMap<String, Channel<EdgeKey>>,
+  /// `mesh_flags` bitset controlling the render finalize pass. Default 0 = full default treatment.
+  pub flags: u32,
+}
+
+/// Opt-in per-mesh flags. Whether to recompute shading normals is decided from ground truth (are the
+/// `shading_normals` complete), but welding coincident vertices can't be inferred that way — a mesh
+/// with attribute seams (UV cuts, duplicated boundary rings) has position-coincident verts that must
+/// stay distinct. Ops that author such seams set `NO_WELD` to opt out of the distance-weld.
+pub mod mesh_flags {
+  /// Skip `merge_vertices_by_distance` at render finalize.
+  pub const NO_WELD: u32 = 1 << 0;
 }
 
 impl<FaceData> LinkedMesh<FaceData> {
+  #[inline]
+  pub fn has_flag(&self, flag: u32) -> bool {
+    self.flags & flag != 0
+  }
+
   pub fn shading_normal(&self, key: VertexKey) -> Option<Vec3> {
     self.shading_normals.get(key).copied()
   }
@@ -1049,6 +1065,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       edge_displacement_normals: SecondaryMap::new(),
       vertex_channels: FxHashMap::default(),
       edge_channels: FxHashMap::default(),
+      flags: 0,
     }
   }
 
@@ -1106,6 +1123,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       edge_displacement_normals: SecondaryMap::new(),
       vertex_channels: FxHashMap::default(),
       edge_channels: FxHashMap::default(),
+      flags: 0,
     };
 
     mesh.faces = build_slotmap_from_iter_with_key(
@@ -1749,7 +1767,6 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     // For each vertex, walk the fan of incident faces
     let mut incident_faces = Vec::new();
     let mut visited_faces = FxHashSet::default();
-    let mut visited_edges = FxHashSet::default();
     for (vtx_key, vtx) in &self.vertices {
       if vtx.edges.is_empty() {
         return Err(NonManifoldError::LooseVertex { vtx_key });
@@ -1767,64 +1784,53 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       let start_face = &self.faces[start_face_key];
 
       visited_faces.clear();
-      visited_edges.clear();
 
-      // Find an edge of the face that contains this vertex.  Prefer starting on an edge with only
-      // one indicent face if one can be found so that we don't start in the middle of a non-closed
-      // fan, but then pick any edge if the fan is closed as we'll end up walking all the way around
-      let start_edge_key = start_face
+      // The two edges of the start face incident to this vertex. Each triangle touches a vertex
+      // via exactly two edges; walking outward through one sends the traversal in one direction of
+      // the fan. A boundary vertex's fan is an open path whose lowest-index (start) face may sit in
+      // its middle, so we must try both directions to cover it.
+      let start_vtx_edges: Vec<_> = start_face
         .edges
         .iter()
-        .find(|e| {
-          let edge = &self.edges[**e];
-          edge.vertices.contains(&vtx_key) && edge.faces.len() == 1
-        })
         .copied()
-        .unwrap_or_else(|| {
-          start_face
+        .filter(|&e| self.edges[e].vertices.contains(&vtx_key))
+        .collect();
+
+      // Walk the fan from `start_face_key`, entering via `entry_edge` (so we leave through the
+      // *other* vertex-edge), until a border edge or a full loop back to a visited face. Returns
+      // whether the fan closed on itself; faces are unioned into `visited_faces`.
+      let walk_fan = |entry_edge, visited_faces: &mut FxHashSet<_>| -> bool {
+        let mut cur_face_key = start_face_key;
+        let mut cur_edge_key = entry_edge;
+        loop {
+          visited_faces.insert(cur_face_key);
+          let face = &self.faces[cur_face_key];
+          let Some(next_edge_key) = face
             .edges
             .iter()
-            .find(|&&e| self.edges[e].vertices.contains(&vtx_key))
             .copied()
-            .unwrap()
-        });
-      let mut cur_face_key = start_face_key;
-      let mut cur_edge_key = start_edge_key;
-      let mut full_fan = false;
-      loop {
-        visited_faces.insert(cur_face_key);
-        visited_edges.insert(cur_edge_key);
-        // choose the next edge in the current face that contains this vertex and is not the
-        // previous edge
-        let face = &self.faces[cur_face_key];
-        let next_edge_key = face
-          .edges
-          .iter()
-          .find(|&&edge_key| {
-            self.edges[edge_key].vertices.contains(&vtx_key) && edge_key != cur_edge_key
-          })
-          .copied();
-
-        let Some(next_edge_key) = next_edge_key else {
-          // reached a border edge
-          break;
-        };
-
-        // Find the other face (besides cur_face_key) that shares this edge and contains the vertex
-        let edge = &self.edges[next_edge_key];
-        let Some(&next_face_key) = edge.faces.iter().find(|&&face_key| {
-          face_key != cur_face_key && self.faces[face_key].vertices.contains(&vtx_key)
-        }) else {
-          // reached a border edge
-          break;
-        };
-
-        if visited_faces.contains(&next_face_key) {
-          full_fan = true;
-          break;
+            .find(|&e| self.edges[e].vertices.contains(&vtx_key) && e != cur_edge_key)
+          else {
+            return false; // reached a border edge
+          };
+          let Some(&next_face_key) = self.edges[next_edge_key].faces.iter().find(|&&face_key| {
+            face_key != cur_face_key && self.faces[face_key].vertices.contains(&vtx_key)
+          }) else {
+            return false; // reached a border edge
+          };
+          if visited_faces.contains(&next_face_key) {
+            return true; // closed fan
+          }
+          cur_face_key = next_face_key;
+          cur_edge_key = next_edge_key;
         }
-        cur_face_key = next_face_key;
-        cur_edge_key = next_edge_key;
+      };
+
+      let mut full_fan = walk_fan(start_vtx_edges[0], &mut visited_faces);
+      if !full_fan {
+        if let Some(&other_edge) = start_vtx_edges.get(1) {
+          full_fan = walk_fan(other_edge, &mut visited_faces) || full_fan;
+        }
       }
 
       if visited_faces.len() != incident_faces.len() {
@@ -2614,7 +2620,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             .map(|v| [v[0], v[1]]),
           tangent_channel
             .and_then(|ch| ch.get(vtx_key))
-            .map(|v| [v[0], v[1], v[2], 1.]),
+            // preserve glTF handedness for Vec4 tangent channels; Vec3 channels report w=0 → 1
+            .map(|v| [v[0], v[1], v[2], if v[3] != 0. { v[3] } else { 1. }]),
         );
       }
     }
@@ -2660,7 +2667,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
             .map(|v| [v[0], v[1]]),
           tangent_channel
             .and_then(|ch| ch.get(vtx_key))
-            .map(|v| [v[0], v[1], v[2], 1.]),
+            // preserve glTF handedness for Vec4 tangent channels; Vec3 channels report w=0 → 1
+            .map(|v| [v[0], v[1], v[2], if v[3] != 0. { v[3] } else { 1. }]),
         );
       }
     }

@@ -107,27 +107,41 @@ angle, distance, or framing.
 
 ### `materials.json`
 
-Mirrors the in-app `MaterialDefinitions` shape:
+Mirrors the in-app `MaterialDefinitions` shape. Materials must use the modern
+`customShader` shape — the legacy `physical`/`basic` shape (with `{r,g,b}`
+color objects) is **not** accepted at render time and fails silently: the mesh
+falls back to a flat unlit gray. If a render comes back flat gray with no
+shading, suspect this file first (the prelude's lights are present either way).
 
 ```json
 {
-  "defaultMaterialID": "default",
+  "defaultMaterialID": "uvdbg",
   "materials": {
-    "default": {
-      "type": "physical",
-      "name": "default",
-      "color": { "r": 0.8, "g": 0.4, "b": 0.2 },
-      "roughness": 0.6,
-      "metalness": 0.1,
-      "clearcoat": 0,
-      "clearcoatRoughness": 0,
-      "iridescence": 0,
-      "normalScale": 1,
-      "uvScale": { "x": 0.13, "y": 0.13 }
+    "uvdbg": {
+      "type": "customShader",
+      "name": "uvdbg",
+      "props": {
+        "color": 16777215,
+        "roughness": 0.9,
+        "metalness": 0,
+        "map": "30",
+        "uvScale": [1, 1]
+      },
+      "shaders": {},
+      "options": {
+        "useTriplanarMapping": false,
+        "useGeneratedUVs": false
+      }
     }
   }
 }
 ```
+
+This example is the standard recipe for inspecting mesh UVs: texture `"30"` is
+the `uv_debug` checker/label texture, and `useTriplanarMapping: false` makes it
+sample the mesh's `uv` attribute (the default material is triplanar and ignores
+UVs entirely). `props.color` is an sRGB hex int, `props.map` and friends are
+texture IDs as strings, `uvScale` is an array.
 
 The `name` is what Geoscript references via `set_default_material` /
 `set_material`. Texture and shader fields work the same as in the in-app
@@ -200,7 +214,10 @@ Options:
 The standard prelude (default lights, camera, helpers) is included on every
 render unless you pass `--no-prelude` or drop a `.prelude_ejected` marker in the
 composition directory. Without it, a bare `box(8) | render` has no lights and
-renders black.
+renders black. There is no need to add `ambient_light`/`dir_light` to
+`main.geo` yourself — if a scene looks unlit (flat gray) despite the prelude,
+the cause is almost certainly an invalid `materials.json` falling back to an
+unlit material (see the `materials.json` section), not missing lights.
 
 `--material` swaps every rendered mesh to a debug material right before capture —
 the headless equivalent of the app's `n` (normal material), `w` (wireframe), and

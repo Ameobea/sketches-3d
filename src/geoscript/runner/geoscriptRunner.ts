@@ -524,5 +524,8 @@ export const populateScene = (
 
   fitAutoShadowFrusta(scene, newRenderedObjects);
 
+  // debugging handle for inspecting live scene meshes (attributes, UVs) from devtools/automation
+  (globalThis as any).__geotoyRenderedObjects = newRenderedObjects;
+
   return { objects: newRenderedObjects, reusedKeys };
 };

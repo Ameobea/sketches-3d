@@ -6,6 +6,7 @@ use std::rc::Rc;
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::path_critical_points::{
   collect_vertex_set, collect_vertex_set_multi, detect_critical_points, CriticalPointConfig,
+  VertexSet,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{
@@ -113,6 +114,38 @@ struct BooleanResult {
   critical_t_values: Vec<f32>,
 }
 
+/// Critical t-values for the boolean output in **global** t-space (the tracer walks its subpaths
+/// concatenated by arc length). `detect_critical_points` reports per-path t in each path's own
+/// `[0, 1]`, so for multi-subpath output each path's values are remapped by its closed-perimeter
+/// arc-length offset — mirroring `offset_path::global_critical_points`, but keeping the boolean's
+/// `pre_op_vertices` so op-created corners stay critical. All boolean outputs are closed.
+#[cfg(target_arch = "wasm32")]
+fn global_critical_points(paths: &[Vec<Vec2>], pre_op_vertices: &VertexSet) -> Vec<f32> {
+  let closed_len = |p: &[Vec2]| -> f32 {
+    let n = p.len();
+    (0..n).map(|i| (p[(i + 1) % n] - p[i]).norm()).sum()
+  };
+  let lengths: Vec<f32> = paths.iter().map(|p| closed_len(p)).collect();
+  let total: f32 = lengths.iter().sum();
+  if total <= 1e-10 {
+    return Vec::new();
+  }
+
+  let config = CriticalPointConfig::default();
+  let mut out: Vec<f32> = Vec::new();
+  let mut offset = 0.0f32;
+  for (path, &len) in paths.iter().zip(&lengths) {
+    for t_local in detect_critical_points(std::slice::from_ref(path), &config, Some(pre_op_vertices))
+    {
+      out.push(((offset + t_local * len) / total).clamp(0.0, 1.0));
+    }
+    offset += len;
+  }
+  out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+  out.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+  out
+}
+
 #[cfg(target_arch = "wasm32")]
 fn run_clipper_boolean(
   subject_coords: &[f64],
@@ -197,11 +230,7 @@ fn run_clipper_boolean(
     }
   }
 
-  let critical_t_values = detect_critical_points(
-    &paths,
-    &CriticalPointConfig::default(),
-    Some(&pre_op_vertices),
-  );
+  let critical_t_values = global_critical_points(&paths, &pre_op_vertices);
 
   BooleanResult {
     paths,
@@ -276,13 +305,9 @@ fn run_cgal_boolean(
     }
   }
 
-  // detect_critical_points takes f64 vertex coordinates; the pre-op set was
-  // collected from the f64 sample buffer so the comparison is apples-to-apples.
-  let critical_t_values = detect_critical_points(
-    &paths,
-    &CriticalPointConfig::default(),
-    Some(&pre_op_vertices),
-  );
+  // pre_op_vertices was collected from the f64 sample buffer and the output is compared as f32
+  // bits, matching how the buffer was hashed, so op-created corners are detected apples-to-apples.
+  let critical_t_values = global_critical_points(&paths, &pre_op_vertices);
 
   Ok(BooleanResult {
     paths,
@@ -451,11 +476,7 @@ pub fn path_boolean_impl(
         )?,
       };
 
-      let critical_points = if boolean_result.paths.len() == 1 {
-        Some(boolean_result.critical_t_values)
-      } else {
-        None
-      };
+      let critical_points = Some(boolean_result.critical_t_values);
 
       let draw_cmds =
         polylines_to_draw_commands(boolean_result.paths.into_iter().map(|p| (p, true)));

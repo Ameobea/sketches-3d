@@ -6,7 +6,7 @@ use geoscript::{
   parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls, ErrorStack, EvalCtx,
   Program, Scope, Sym, PRELUDE,
 };
-use mesh::OwnedIndexedMesh;
+use mesh::{linked_mesh::mesh_flags, OwnedIndexedMesh};
 use nanoserde::{DeJson, SerJson};
 use wasm_bindgen::prelude::*;
 
@@ -70,16 +70,22 @@ impl GeoscriptReplCtx {
       let mesh_handle = rendered.mesh;
       let mut mesh = (*mesh_handle.mesh).clone();
 
-      // A mesh that already carries a complete set of shading normals authored its own topology +
-      // attribute seams (e.g. `rail_sweep` with `split_seams`: cap/seam vertex splits whose UVs the
-      // merge + auto-smooth recompute below would destroy). Leave those finalized meshes untouched.
-      let normals_finalized =
+      // Weld and normal-recompute are decided independently. A complete set of shading normals means
+      // the mesh authored its own — skip the auto-smooth recompute. Welding can't be inferred from
+      // normals: a mesh with attribute seams (UV cuts, duplicated rings) has position-coincident
+      // verts that must stay distinct, so `rail_sweep`/`compute_uvs` set `NO_WELD`. A complete-normal
+      // mesh also skips welding for back-compat (it never re-welds an authored mesh).
+      let complete_normals =
         !mesh.shading_normals.is_empty() && mesh.shading_normals.len() == mesh.vertices.len();
-      let mut owned_mesh = if !normals_finalized {
+      let skip_weld = mesh.has_flag(mesh_flags::NO_WELD) || complete_normals;
+
+      if !skip_weld {
         let merged_count = mesh.merge_vertices_by_distance(0.0001);
         if merged_count > 0 {
           ::log::info!("Merged {merged_count} vertices in mesh");
         }
+      }
+      let mut owned_mesh = if !complete_normals {
         mesh.mark_edge_sharpness(
           self
             .geo_ctx
@@ -131,6 +137,7 @@ pub struct GeoscriptAsyncDependencies {
   pub geodesics: bool,
   pub cgal: bool,
   pub clipper2: bool,
+  pub uv_unwrap: bool,
 }
 
 #[wasm_bindgen]
@@ -147,6 +154,8 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
         deps.geodesics = true;
       } else if name == "offset_path" {
         deps.clipper2 = true;
+      } else if name == "compute_uvs" {
+        deps.uv_unwrap = true;
       } else if name == "alpha_wrap"
         || name == "smooth"
         || name == "remesh_planar_patches"
@@ -724,4 +733,61 @@ pub fn geoscript_repl_get_prelude() -> String {
 pub fn geoscript_repl_get_serialized_builtin_fn_defs() -> String {
   maybe_init();
   geoscript::get_serialized_builtin_fn_defs()
+}
+
+#[cfg(test)]
+mod tests {
+  use std::cell::RefCell;
+
+  use geoscript::{ManifoldHandle, Mat4, MeshHandle, RenderedMesh};
+  use mesh::{
+    linked_mesh::{mesh_flags, Vec3},
+    LinkedMesh,
+  };
+
+  use super::*;
+
+  /// Flat quad split into two tris that DUPLICATE the shared diagonal edge — 6 verts at 4 positions,
+  /// i.e. a UV-seam-like coincident-vertex pair that distance-welding would collapse.
+  fn seam_quad() -> LinkedMesh<()> {
+    let verts = [
+      Vec3::new(0., 0., 0.),
+      Vec3::new(1., 0., 0.),
+      Vec3::new(0., 0., 1.),
+      Vec3::new(1., 0., 0.),
+      Vec3::new(1., 0., 1.),
+      Vec3::new(0., 0., 1.),
+    ];
+    LinkedMesh::from_indexed_vertices(&verts, &[0, 1, 2, 3, 4, 5], None, None)
+  }
+
+  fn finalized_vertex_count(mesh: LinkedMesh<()>) -> usize {
+    let mut ctx = GeoscriptReplCtx::default();
+    ctx.geo_ctx.rendered_meshes.push(RenderedMesh {
+      mesh: Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Mat4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      }),
+      source_module: None,
+      mesh_id: 0,
+    });
+    ctx.convert_rendered_meshes();
+    ctx.output_meshes[0].mesh.vertices.len() / 3
+  }
+
+  #[test]
+  fn no_weld_flag_decouples_welding_from_normal_recompute() {
+    // Default finalize welds the coincident diagonal verts (6 -> 4) while recomputing normals.
+    assert_eq!(finalized_vertex_count(seam_quad()), 4);
+
+    // `NO_WELD` keeps the seam duplicates distinct — normals are still recomputed (the mesh authored
+    // none), proving the two decisions are independent.
+    let mut seamed = seam_quad();
+    seamed.flags |= mesh_flags::NO_WELD;
+    assert_eq!(finalized_vertex_count(seamed), 6);
+  }
 }

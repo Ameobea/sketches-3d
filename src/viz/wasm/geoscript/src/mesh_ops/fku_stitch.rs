@@ -713,34 +713,25 @@ pub fn dp_stitch_presampled(
 
     match mv {
       DpMove::AdvanceA => {
-        // Triangle: (A[i-2], A[i-1], B[j-1])
-        // For open strips, skip when i <= 1 since A[i-2] would be out of bounds
-        // For closed rings, i can go up to n+1 and wraps around
+        // Triangle: (A[i-2], A[i-1], B[j-1]). Skip when i <= 1 (A[i-2] out of bounds). When j=0
+        // the apex is B[0] — the bottom-edge fan of an open strip / the seam of a closed ring.
         if i > 1 {
-          // If j=0, we match against B[0]. This covers the case where the path hugs the A-axis.
-          // For closed rings, this stitches the seam.
-          if closed || j > 0 {
-            let idx_a_prev = get_a_vtx_ix(i - 2);
-            let idx_a_curr = get_a_vtx_ix(i - 1);
-            let b_idx_raw = if j == 0 { 0 } else { j - 1 };
-            let idx_b = get_b_vtx_ix(b_idx_raw);
-            out_indices.extend_from_slice(&[idx_a_prev, idx_a_curr, idx_b]);
-          }
+          let idx_a_prev = get_a_vtx_ix(i - 2);
+          let idx_a_curr = get_a_vtx_ix(i - 1);
+          let b_idx_raw = if j == 0 { 0 } else { j - 1 };
+          let idx_b = get_b_vtx_ix(b_idx_raw);
+          out_indices.extend_from_slice(&[idx_a_prev, idx_a_curr, idx_b]);
         }
       }
       DpMove::AdvanceB => {
-        // Triangle: (A[i-1], B[j-1], B[j-2])
-        // For open strips, skip when j <= 1 since B[j-2] would be out of bounds
-        // For closed rings, j can go up to m+1 and wraps around
+        // Triangle: (A[i-1], B[j-1], B[j-2]). Skip when j <= 1 (B[j-2] out of bounds). When i=0
+        // the apex is A[0] — the left-edge fan of an open strip / the seam of a closed ring.
         if j > 1 {
-          // If i=0, we match against A[0]. This covers the case where the path hugs the B-axis.
-          if closed || i > 0 {
-            let a_idx_raw = if i == 0 { 0 } else { i - 1 };
-            let idx_a = get_a_vtx_ix(a_idx_raw);
-            let idx_b_prev = get_b_vtx_ix(j - 2);
-            let idx_b_curr = get_b_vtx_ix(j - 1);
-            out_indices.extend_from_slice(&[idx_a, idx_b_curr, idx_b_prev]);
-          }
+          let a_idx_raw = if i == 0 { 0 } else { i - 1 };
+          let idx_a = get_a_vtx_ix(a_idx_raw);
+          let idx_b_prev = get_b_vtx_ix(j - 2);
+          let idx_b_curr = get_b_vtx_ix(j - 1);
+          out_indices.extend_from_slice(&[idx_a, idx_b_curr, idx_b_prev]);
         }
       }
     }

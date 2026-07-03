@@ -41,7 +41,7 @@ export class GeoscriptExecutor {
   private workerManager: WorkerManager;
   private ctxPtrPromise: Promise<number>;
 
-  constructor(eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean }) {
+  constructor(eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean; uv_unwrap?: boolean }) {
     this.workerManager = new WorkerManager();
     const repl = this.workerManager.getWorker();
     this.ctxPtrPromise = repl.init(getGeoscriptWorkerWasmURLs(), eagerDeps);

@@ -26,14 +26,8 @@ impl PathSampler for CatmullRomCallable2D {
   }
 
   fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
-    let segment_count = if self.closed {
-      self.points.len()
-    } else {
-      self.points.len() - 1
-    };
     Some(vec![SubpathTopology {
       closed: self.closed,
-      segment_count,
     }])
   }
 

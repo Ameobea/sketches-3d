@@ -75,6 +75,7 @@ pub const DEP_BIT_GEODESICS: u32 = 1 << 0;
 pub const DEP_BIT_CGAL: u32 = 1 << 1;
 pub const DEP_BIT_CLIPPER2: u32 = 1 << 2;
 pub const DEP_BIT_TEXT2PATH: u32 = 1 << 3;
+pub const DEP_BIT_UV_UNWRAP: u32 = 1 << 4;
 
 // Single-threaded WASM makes a global mutable u32 safe for dep tracking.
 #[cfg(target_arch = "wasm32")]

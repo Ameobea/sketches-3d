@@ -27,6 +27,7 @@ use crate::builtins::trace_path::{
   PathSubpath, PathTracerCallable, SubpathsSeq, TrimmedPathSampler,
 };
 use crate::materials::Material;
+use crate::mesh_ops::compute_uvs::{compute_uvs, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
   alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_cached_svg_path_str,
@@ -104,6 +105,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "worley" => "worley_noise",
   "path_render" => "render_path",
   "path_trim" => "trim_path",
+  "path_sub" => "path_difference",
   "skewer" => "subdivide_by_line",
   "partition_mesh" => "partition_faces",
   "transform_gizmo" => "gizmo_transform",
@@ -238,6 +240,8 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
         });
         combined.add_face::<false>(new_vtx_keys, ());
       }
+      // Either operand's authored seams (`NO_WELD`) must survive the merge, regardless of side.
+      combined.flags |= rhs.mesh.flags;
 
       let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
         (Some(lhs_aabb), Some(rhs_aabb)) => Some(Aabb {
@@ -3028,6 +3032,45 @@ fn smooth_impl(
 
       let out = smooth_mesh(mesh, smooth_type, iterations)
         .map_err(|err| err.wrap("Error in `smooth` function"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    }
+    _ => unimplemented!(),
+  }
+}
+
+fn compute_uvs_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let uv_type = UvType::from_str(arg_refs[1].resolve(args, kwargs).as_str().unwrap())?;
+      let scale = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let n_cones = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+      let island_rotation = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
+      let options = arg_refs[5].resolve(args, kwargs).as_map();
+
+      if scale <= 0. || !scale.is_finite() {
+        return Err(ErrorStack::new(format!(
+          "Invalid `scale` for `compute_uvs`: {scale}; must be a positive, finite number"
+        )));
+      }
+
+      let sharp_threshold_rad = ctx.sharp_angle_threshold_degrees.borrow().to_radians();
+      let out = compute_uvs(
+        mesh,
+        uv_type,
+        scale,
+        n_cones.max(0) as u32,
+        island_rotation,
+        sharp_threshold_rad,
+        options,
+      )
+      .map_err(|err| err.wrap("Error in `compute_uvs`"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -7276,6 +7319,8 @@ fn join_meshes(
       });
       combined.add_face::<false>(new_vtx_keys, ());
     }
+    // Any joined mesh's authored seams (`NO_WELD`) must survive the merge.
+    combined.flags |= rhs.mesh.flags;
   }
 
   Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -8704,6 +8749,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "smooth" => builtin_fn!(smooth, |def_ix, arg_refs, args, kwargs, _ctx| {
     smooth_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "compute_uvs" => builtin_fn!(compute_uvs, |def_ix, arg_refs, args, kwargs, ctx| {
+    compute_uvs_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, _ctx| {
     remesh_planar_patches_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -8918,5 +8966,42 @@ nparts = len(parts)
     // partition 1); in local space x ∈ [-1, 1] < 5 (all in partition 0).
     assert_eq!(face_counts("world"), vec![0, 12]);
     assert_eq!(face_counts("local"), vec![12, 0]);
+  }
+}
+
+#[cfg(test)]
+mod combine_flag_tests {
+  use std::rc::Rc;
+
+  use mesh::{
+    linked_mesh::{mesh_flags, Vec3},
+    LinkedMesh,
+  };
+
+  use crate::{builtins::add_impl, MeshHandle, Value};
+
+  fn mesh_value(flags: u32) -> Value {
+    let mut m = LinkedMesh::from_indexed_vertices(
+      &[Vec3::new(0., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(0., 1., 0.)],
+      &[0, 1, 2],
+      None,
+      None,
+    );
+    m.flags |= flags;
+    Value::Mesh(Rc::new(MeshHandle::new(Rc::new(m))))
+  }
+
+  #[test]
+  fn combine_ors_no_weld_from_either_operand() {
+    let plain = mesh_value(0);
+    let seamed = mesh_value(mesh_flags::NO_WELD);
+    // A seamed operand's NO_WELD must survive the combine regardless of side (def_ix 4 = mesh + mesh).
+    for (lhs, rhs) in [(&plain, &seamed), (&seamed, &plain)] {
+      let out = add_impl(4, lhs, rhs).unwrap();
+      assert!(out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));
+    }
+    // Two plain operands stay weldable.
+    let out = add_impl(4, &plain, &plain).unwrap();
+    assert!(!out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));
   }
 }
