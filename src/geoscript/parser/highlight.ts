@@ -19,6 +19,7 @@ export const geoscriptHighlighting = styleTags({
   '"%"': t.arithmeticOperator,
   '"||"': t.logicOperator,
   '"&&"': t.logicOperator,
+  NullishOp: t.logicOperator,
   '"&"': t.bitwiseOperator,
   '"|"': t.bitwiseOperator,
   '"^"': t.bitwiseOperator,

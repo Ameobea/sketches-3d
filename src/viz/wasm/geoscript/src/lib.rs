@@ -105,7 +105,7 @@ pub struct GSParser;
 lazy_static::lazy_static! {
   static ref PRATT_PARSER: PrattParser<Rule> = PrattParser::new()
     .op(Op::infix(Rule::range_inclusive_op, Assoc::Left) | Op::infix(Rule::range_op, Assoc::Left))
-    .op(Op::infix(Rule::or_op, Assoc::Left))
+    .op(Op::infix(Rule::or_op, Assoc::Left) | Op::infix(Rule::nullish_op, Assoc::Left))
     .op(Op::infix(Rule::and_op, Assoc::Left))
     .op(Op::infix(Rule::pipeline_op, Assoc::Left) | Op::infix(Rule::map_op, Assoc::Left))
     .op(Op::infix(Rule::bit_and_op, Assoc::Left))
@@ -2203,6 +2203,14 @@ impl EvalCtx {
           early_exit => return Ok(early_exit),
         };
 
+        // `??` short-circuits: non-nil lhs is returned without evaluating rhs
+        if matches!(op, BinOp::Nullish) {
+          if !matches!(lhs, Value::Nil) {
+            return Ok(ControlFlow::Continue(lhs));
+          }
+          return self.eval_expr(rhs, scope, None);
+        }
+
         // special-case short-circuiting for boolean ops
         if matches!(op, BinOp::And | BinOp::Or) {
           let lhs_bool = match lhs.as_bool() {
@@ -4075,6 +4083,8 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("x = |a| a + 1\ny = 2", ParseOutcome::Ok(2)),
   ("a || b", ParseOutcome::Ok(1)),
   ("a | b", ParseOutcome::Ok(1)),
+  ("a ?? b", ParseOutcome::Ok(1)),
+  ("a ?? b ?? c", ParseOutcome::Ok(1)),
   ("x = ||\n 1", ParseOutcome::Err("empty body")),
   // `from` is contextual: a valid identifier/kwarg name except inside an import.
   ("align(from=1, to=2)", ParseOutcome::Ok(1)),
@@ -4402,6 +4412,33 @@ c = vec3(1) * 2 + (vec3(4,4,4) / 2)
     *c,
     Vec3::new(1., 1., 1.) * 2. + (Vec3::new(4., 4., 4.) / 2.)
   );
+}
+
+#[test]
+fn test_nullish_coalescing() {
+  let src = r#"
+a = nil ?? 5
+b = 3 ?? 7
+c = nil ?? nil ?? 9
+// `+` binds tighter than `??`: parses as `10 ?? (2 + 3)`
+prec = 10 ?? 2 + 3
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 5);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 3);
+  assert_eq!(ctx.get_global("c").unwrap().as_int().unwrap(), 9);
+  assert_eq!(ctx.get_global("prec").unwrap().as_int().unwrap(), 10);
+}
+
+#[test]
+fn test_nullish_short_circuits_rhs() {
+  // non-nil lhs must not evaluate rhs, so the side-effecting `render` never runs
+  let short = parse_and_eval_program("x = 5 ?? render(box(1))").unwrap();
+  assert_eq!(short.rendered_meshes.into_inner().len(), 0);
+
+  // nil lhs falls through and does evaluate rhs
+  let full = parse_and_eval_program("x = nil ?? render(box(1))").unwrap();
+  assert_eq!(full.rendered_meshes.into_inner().len(), 1);
 }
 
 #[test]

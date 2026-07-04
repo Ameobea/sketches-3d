@@ -8,6 +8,7 @@
   compare @left
   and @left
   or @left
+  nullish @left
   bitOr @left
   assign @right
   range @left
@@ -103,7 +104,8 @@ BinaryExpr {
   Expr !bitOr "->" Expr |
   Expr !compare CompareOp Expr |
   Expr !and LogicalAndOp Expr |
-  Expr !or LogicalOrOp Expr
+  Expr !or LogicalOrOp Expr |
+  Expr !nullish NullishOp Expr
 }
 
 StaticFieldAccessExpr {
@@ -147,6 +149,7 @@ MapEntry { MapKV | MapSplat }
   Pipe { "|" }
   LogicalAndOp { "&&" }
   LogicalOrOp { "||" }
+  NullishOp { "??" }
   CompareOp { "<" | ">" | ">=" | "<=" | "==" | "!=" }
 
   BoolLiteral { "true" | "false" }

@@ -81,6 +81,13 @@
         "inner": "pit_grid_trapezoid"
       }
     },
+    "pipes": {
+      "type": "geotoyComposition",
+      "compositionId": 119,
+      "materialMap": {
+        "default": "panel_seams"
+      }
+    },
     "jump_pad": {
       "type": "geoscript",
       "code": "export mesh = box(8, 0.5, 2)",

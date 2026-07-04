@@ -86,6 +86,8 @@ const CASES: Case[] = [
   { src: 'x = |a| a + 1\ny = 2', expected: { ok: 2 } },
   { src: 'a || b', expected: { ok: 1 } },
   { src: 'a | b', expected: { ok: 1 } },
+  { src: 'a ?? b', expected: { ok: 1 } },
+  { src: 'a ?? b ?? c', expected: { ok: 1 } },
   // Empty body before newline — Pest preprocessor errors. Lezer accepts with the
   // body being whatever follows on the next line.
   { src: 'x = ||\n 1', expected: { err: true }, lezerOnlyOk: 1 },

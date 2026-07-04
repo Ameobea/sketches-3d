@@ -49,7 +49,7 @@ block_expr                   = { "{" ~ statement* ~ "}" }
 
 operator                     = _{ map_op | range_inclusive_op | range_op | add_op | sub_op
                                   | mul_op | div_op | mod_op | gte_op | lte_op | gt_op | lt_op
-                                  | neq_op | eq_op | or_op | and_op | bit_and_op | pipeline_op }
+                                  | neq_op | eq_op | nullish_op | or_op | and_op | bit_and_op | pipeline_op }
 
 neg_op                       = { "-" }
 pos_op                       = { "+" }
@@ -72,6 +72,7 @@ neq_op                       = { "!=" }
 eq_op                        = { "==" }
 and_op                       = { "&&" }
 or_op                        = { "||" }
+nullish_op                   = { "??" }
 bit_and_op                   = { "&" }
 
 func_call                    = { func_call_start ~ arg_list? ~ ")" }

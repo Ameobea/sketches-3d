@@ -1299,6 +1299,7 @@ pub enum BinOp {
   RangeInclusive,
   Pipeline,
   Map,
+  Nullish,
 }
 
 pub(crate) fn eval_range(
@@ -1332,7 +1333,7 @@ pub(crate) fn eval_range(
 // it would be great if these could somehow be made const rather than static
 static mut OP_DEF_SHORTHANDS_INITIALIZED: bool = false;
 
-static mut BINOP_DEF_IX_TABLE: [(usize, bool); 18] = [(usize::MAX, false); 18];
+static mut BINOP_DEF_IX_TABLE: [(usize, bool); 19] = [(usize::MAX, false); 19];
 static mut UNOP_DEF_IX_TABLE: [usize; 3] = [usize::MAX; 3];
 
 pub(crate) fn maybe_init_op_def_shorthands() {
@@ -1360,6 +1361,7 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       (0, false),                                              // RangeInclusive
       (get_builtin_fn_sig_entry_ix("bit_or").unwrap(), false), // Pipeline
       (get_builtin_fn_sig_entry_ix("map").unwrap(), true),
+      (0, false),                                              // Nullish
     ];
 
     UNOP_DEF_IX_TABLE = [
@@ -1389,6 +1391,9 @@ impl BinOp {
       }
       BinOp::Range => return eval_range(lhs, Some(rhs), false),
       BinOp::RangeInclusive => return eval_range(lhs, Some(rhs), true),
+      BinOp::Nullish => {
+        return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }.clone())
+      }
       _ => (),
     }
 
@@ -1426,7 +1431,9 @@ impl BinOp {
         }
         // treating as bit-or
         BinOp::Pipeline => bit_or_impl(ctx, def_ix, lhs, rhs),
-        BinOp::Range | BinOp::RangeInclusive => unreachable!("previously special-cased"),
+        BinOp::Range | BinOp::RangeInclusive | BinOp::Nullish => {
+          unreachable!("previously special-cased")
+        }
       }
     }
   }
@@ -1447,7 +1454,7 @@ impl BinOp {
       BinOp::And => "and",
       BinOp::Or => "or",
       BinOp::BitAnd => "bit_and",
-      BinOp::Range | BinOp::RangeInclusive | BinOp::Pipeline => {
+      BinOp::Range | BinOp::RangeInclusive | BinOp::Pipeline | BinOp::Nullish => {
         return None;
       }
       BinOp::Map => "map",
@@ -2194,6 +2201,7 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         Rule::bit_and_op => BinOp::BitAnd,
         Rule::or_op => BinOp::Or,
         Rule::map_op => BinOp::Map,
+        Rule::nullish_op => BinOp::Nullish,
         _ => {
           let (line, col) = op.line_col();
           return Err(
