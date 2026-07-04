@@ -30,26 +30,22 @@ const MIN_SEGMENT_CRITICAL_ANGLE: f32 = 1e-4;
 const DEFAULT_SEGMENT_FRACTION: f32 = 0.05;
 
 #[allow(dead_code)] // used only by wasm-gated path_boolean
-pub(crate) fn collect_vertex_set(coords: &[f64]) -> VertexSet {
+pub(crate) fn collect_vertex_set(coords: &[f32]) -> VertexSet {
   let mut set = VertexSet::default();
   let mut i = 0;
   while i + 1 < coords.len() {
-    let x = (coords[i] as f32).to_bits();
-    let y = (coords[i + 1] as f32).to_bits();
-    set.insert((x, y));
+    set.insert((coords[i].to_bits(), coords[i + 1].to_bits()));
     i += 2;
   }
   set
 }
 
 #[allow(dead_code)] // used only by wasm-gated path_boolean
-pub(crate) fn collect_vertex_set_multi(a: &[f64], b: &[f64]) -> VertexSet {
+pub(crate) fn collect_vertex_set_multi(a: &[f32], b: &[f32]) -> VertexSet {
   let mut set = collect_vertex_set(a);
   let mut i = 0;
   while i + 1 < b.len() {
-    let x = (b[i] as f32).to_bits();
-    let y = (b[i + 1] as f32).to_bits();
-    set.insert((x, y));
+    set.insert((b[i].to_bits(), b[i + 1].to_bits()));
     i += 2;
   }
   set

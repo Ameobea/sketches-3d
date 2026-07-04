@@ -18,10 +18,10 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(module = "src/viz/wasm/clipper2/clipper2")]
 extern "C" {
   fn clipper2_get_is_loaded() -> bool;
-  fn clipper2_offset_paths(
-    coords: &[f64],
+  fn clipper2_offset_flat(
+    coords: &[f32],
     path_lengths: &[u32],
-    path_is_closed: &[u8],
+    path_is_closed: &[u32],
     delta: f64,
     join_type: u32,
     end_type: u32,
@@ -38,9 +38,65 @@ extern "C" {
     chebyshev_spacing: bool,
     simplify_epsilon: f64,
   );
-  fn clipper2_get_output_coords() -> Vec<f64>;
-  fn clipper2_get_output_path_lengths() -> Vec<u32>;
-  fn clipper2_clear_output();
+  fn clipper2_get_output_coords_f32() -> Vec<f32>;
+  fn clipper2_get_output_path_lengths_flat() -> Vec<u32>;
+  fn clipper2_clear_output_flat();
+}
+
+/// Same memoization scheme as `path_boolean::bool_result_cache`: offset output is a pure
+/// function of the sampled input + options, and bevel-style `dynamic_profile` closures
+/// re-run it constantly (often with repeating deltas from symmetric profiles, and always
+/// with identical inputs across re-evals).
+#[cfg(target_arch = "wasm32")]
+mod offset_result_cache {
+  use std::cell::RefCell;
+
+  use super::OffsetOptions;
+  use crate::builtins::flat_memo::{polylines_bytes, push_f32_bits, push_f64_bits, FlatMemoCache};
+  use crate::Vec2;
+
+  thread_local! {
+    static CACHE: RefCell<FlatMemoCache<Vec<Vec<Vec2>>>> = RefCell::new(FlatMemoCache::default());
+  }
+
+  pub fn build_key(
+    coords: &[f32],
+    path_lengths: &[u32],
+    path_is_closed: &[u32],
+    opts: &OffsetOptions,
+  ) -> Vec<u32> {
+    let mut key = Vec::with_capacity(24 + path_lengths.len() * 2 + coords.len());
+    push_f64_bits(&mut key, opts.delta);
+    key.push(opts.join_type);
+    key.push(opts.end_type);
+    push_f64_bits(&mut key, opts.miter_limit);
+    push_f64_bits(&mut key, opts.arc_tolerance);
+    key.push(
+      opts.preserve_collinear as u32
+        | ((opts.reverse_solution as u32) << 1)
+        | ((opts.chebyshev_spacing as u32) << 2),
+    );
+    key.push(opts.step_count);
+    push_f64_bits(&mut key, opts.superellipse_exponent);
+    push_f64_bits(&mut key, opts.end_extension_scale);
+    push_f64_bits(&mut key, opts.arrow_back_sweep);
+    push_f64_bits(&mut key, opts.teardrop_pinch);
+    push_f64_bits(&mut key, opts.join_angle_threshold);
+    push_f64_bits(&mut key, opts.simplify_epsilon);
+    key.push(path_lengths.len() as u32);
+    key.extend_from_slice(path_lengths);
+    key.extend_from_slice(path_is_closed);
+    push_f32_bits(&mut key, coords);
+    key
+  }
+
+  pub fn get(key: &[u32]) -> Option<Vec<Vec<Vec2>>> {
+    CACHE.with(|c| c.borrow().get(key))
+  }
+
+  pub fn insert(key: Vec<u32>, paths: &Vec<Vec<Vec2>>) {
+    CACHE.with(|c| c.borrow_mut().insert(key, paths, polylines_bytes(paths)));
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -144,16 +200,21 @@ fn parse_end_type(value: &Value) -> Result<u32, ErrorStack> {
 
 #[cfg(target_arch = "wasm32")]
 fn run_clipper_offset(
-  coords: &[f64],
+  coords: &[f32],
   path_lengths: &[u32],
-  path_is_closed: &[u8],
+  path_is_closed: &[u32],
   opts: &OffsetOptions,
 ) -> Result<OffsetResult, ErrorStack> {
   if coords.is_empty() || path_lengths.is_empty() {
     return Ok(OffsetResult { paths: Vec::new() });
   }
 
-  clipper2_offset_paths(
+  let cache_key = offset_result_cache::build_key(coords, path_lengths, path_is_closed, opts);
+  if let Some(paths) = offset_result_cache::get(&cache_key) {
+    return Ok(OffsetResult { paths });
+  }
+
+  clipper2_offset_flat(
     coords,
     path_lengths,
     path_is_closed,
@@ -174,9 +235,9 @@ fn run_clipper_offset(
     opts.simplify_epsilon,
   );
 
-  let out_coords = clipper2_get_output_coords();
-  let out_lengths = clipper2_get_output_path_lengths();
-  clipper2_clear_output();
+  let out_coords = clipper2_get_output_coords_f32();
+  let out_lengths = clipper2_get_output_path_lengths_flat();
+  clipper2_clear_output_flat();
 
   let mut paths = Vec::with_capacity(out_lengths.len());
   let mut coord_ix = 0usize;
@@ -186,9 +247,7 @@ fn run_clipper_offset(
       if coord_ix + 1 >= out_coords.len() {
         break;
       }
-      let x = out_coords[coord_ix];
-      let y = out_coords[coord_ix + 1];
-      path.push(Vec2::new(x as f32, y as f32));
+      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
       coord_ix += 2;
     }
     if path.len() >= 2 {
@@ -196,6 +255,7 @@ fn run_clipper_offset(
     }
   }
 
+  offset_result_cache::insert(cache_key, &paths);
   Ok(OffsetResult { paths })
 }
 
@@ -274,7 +334,8 @@ pub fn offset_path_impl(
       let join_angle_threshold = arg_refs[13].resolve(args, kwargs).as_float().unwrap() as f64;
       let chebyshev_spacing = arg_refs[14].resolve(args, kwargs).as_bool().unwrap();
       let simplify_epsilon = arg_refs[15].resolve(args, kwargs).as_float().unwrap() as f64;
-      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[16].resolve(args, kwargs)) as f64;
+      let curve_angle_degrees =
+        ctx.resolve_curve_angle_degrees(arg_refs[16].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `offset_path`; expected > 0, found: \
@@ -347,18 +408,18 @@ pub fn offset_path_impl(
         if paths.is_empty() {
           return Ok(());
         }
-        let mut coords = Vec::new();
-        let mut lengths = Vec::new();
-        let mut closed_flags = Vec::new();
+        let mut coords: Vec<f32> = Vec::new();
+        let mut lengths: Vec<u32> = Vec::new();
+        let mut closed_flags: Vec<u32> = Vec::new();
         for path in paths {
           if path.len() < 2 {
             continue;
           }
           lengths.push(path.len() as u32);
-          closed_flags.push(if is_closed { 1 } else { 0 });
+          closed_flags.push(is_closed as u32);
           for pt in path {
-            coords.push(pt.x as f64);
-            coords.push(pt.y as f64);
+            coords.push(pt.x);
+            coords.push(pt.y);
           }
         }
 

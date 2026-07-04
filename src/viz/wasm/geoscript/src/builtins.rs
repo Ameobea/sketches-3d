@@ -70,6 +70,8 @@ pub(crate) mod catmull_rom;
 pub(crate) mod fillet_path;
 pub mod fn_defs;
 pub(crate) mod lerp_path;
+#[cfg(target_arch = "wasm32")]
+pub(crate) mod flat_memo;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]

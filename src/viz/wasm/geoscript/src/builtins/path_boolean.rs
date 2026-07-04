@@ -24,38 +24,18 @@ use wasm_bindgen::prelude::*;
 #[wasm_bindgen(module = "src/viz/wasm/clipper2/clipper2")]
 extern "C" {
   fn clipper2_get_is_loaded() -> bool;
-  fn clipper2_union_paths(
-    subject_coords: &[f64],
-    subject_path_lengths: &[u32],
-    clip_coords: &[f64],
-    clip_path_lengths: &[u32],
+  // op: 0=union 1=intersect 2=difference 3=xor 4=self-union (clip ignored)
+  fn clipper2_boolean_flat(
+    op: u32,
     fill_rule: u32,
-  );
-  fn clipper2_intersect_paths(
-    subject_coords: &[f64],
+    subject_coords: &[f32],
     subject_path_lengths: &[u32],
-    clip_coords: &[f64],
+    clip_coords: &[f32],
     clip_path_lengths: &[u32],
-    fill_rule: u32,
   );
-  fn clipper2_difference_paths(
-    subject_coords: &[f64],
-    subject_path_lengths: &[u32],
-    clip_coords: &[f64],
-    clip_path_lengths: &[u32],
-    fill_rule: u32,
-  );
-  fn clipper2_xor_paths(
-    subject_coords: &[f64],
-    subject_path_lengths: &[u32],
-    clip_coords: &[f64],
-    clip_path_lengths: &[u32],
-    fill_rule: u32,
-  );
-  fn clipper2_union_self(subject_coords: &[f64], subject_path_lengths: &[u32], fill_rule: u32);
-  fn clipper2_get_output_coords() -> Vec<f64>;
-  fn clipper2_get_output_path_lengths() -> Vec<u32>;
-  fn clipper2_clear_output();
+  fn clipper2_get_output_coords_f32() -> Vec<f32>;
+  fn clipper2_get_output_path_lengths_flat() -> Vec<u32>;
+  fn clipper2_clear_output_flat();
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -73,6 +53,57 @@ extern "C" {
   fn cgal_get_path_boolean_2d_path_lengths() -> Vec<u32>;
   fn cgal_clear_path_boolean_2d_output();
   fn cgal_get_last_error() -> Option<String>;
+}
+
+/// Memoizes boolean results keyed on the exact sampled input geometry.  Compositions like
+/// rail_sweep `dynamic_profile` closures re-run identical boolean chains once per spine
+/// sample; deterministic sampling makes the coord bit patterns identical, so this collapses
+/// hundreds of clipper round-trips into one per unique input.  Never invalidated (results
+/// are pure); byte-bounded via `flat_memo`.
+#[cfg(target_arch = "wasm32")]
+mod bool_result_cache {
+  use std::cell::RefCell;
+
+  use super::BooleanResult;
+  use crate::builtins::flat_memo::{polylines_bytes, push_f32_bits, FlatMemoCache};
+
+  thread_local! {
+    static CACHE: RefCell<FlatMemoCache<BooleanResult>> = RefCell::new(FlatMemoCache::default());
+  }
+
+  pub fn build_key(
+    op_discriminant: u32,
+    fill_rule: u32,
+    subject_coords: &[f32],
+    subject_path_lengths: &[u32],
+    clip_coords: &[f32],
+    clip_path_lengths: &[u32],
+  ) -> Vec<u32> {
+    let mut key = Vec::with_capacity(
+      4 + subject_path_lengths.len()
+        + clip_path_lengths.len()
+        + subject_coords.len()
+        + clip_coords.len(),
+    );
+    key.push(op_discriminant);
+    key.push(fill_rule);
+    key.push(subject_path_lengths.len() as u32);
+    key.push(clip_path_lengths.len() as u32);
+    key.extend_from_slice(subject_path_lengths);
+    key.extend_from_slice(clip_path_lengths);
+    push_f32_bits(&mut key, subject_coords);
+    push_f32_bits(&mut key, clip_coords);
+    key
+  }
+
+  pub fn get(key: &[u32]) -> Option<BooleanResult> {
+    CACHE.with(|c| c.borrow().get(key))
+  }
+
+  pub fn insert(key: Vec<u32>, result: &BooleanResult) {
+    let val_bytes = polylines_bytes(&result.paths) + result.critical_t_values.len() * 4;
+    CACHE.with(|c| c.borrow_mut().insert(key, result, val_bytes));
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -109,6 +140,7 @@ pub enum BooleanOp {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[derive(Clone)]
 struct BooleanResult {
   paths: Vec<Vec<Vec2>>,
   critical_t_values: Vec<f32>,
@@ -135,7 +167,8 @@ fn global_critical_points(paths: &[Vec<Vec2>], pre_op_vertices: &VertexSet) -> V
   let mut out: Vec<f32> = Vec::new();
   let mut offset = 0.0f32;
   for (path, &len) in paths.iter().zip(&lengths) {
-    for t_local in detect_critical_points(std::slice::from_ref(path), &config, Some(pre_op_vertices))
+    for t_local in
+      detect_critical_points(std::slice::from_ref(path), &config, Some(pre_op_vertices))
     {
       out.push(((offset + t_local * len) / total).clamp(0.0, 1.0));
     }
@@ -148,9 +181,9 @@ fn global_critical_points(paths: &[Vec<Vec2>], pre_op_vertices: &VertexSet) -> V
 
 #[cfg(target_arch = "wasm32")]
 fn run_clipper_boolean(
-  subject_coords: &[f64],
+  subject_coords: &[f32],
   subject_path_lengths: &[u32],
-  clip_coords: &[f64],
+  clip_coords: &[f32],
   clip_path_lengths: &[u32],
   fill_rule: u32,
   op: BooleanOp,
@@ -171,46 +204,41 @@ fn run_clipper_boolean(
     collect_vertex_set_multi(subject_coords, clip_coords)
   };
 
-  match op {
+  let op_code = match op {
     BooleanOp::Union => {
       if is_self_union {
-        clipper2_union_self(subject_coords, subject_path_lengths, fill_rule);
+        4
       } else {
-        clipper2_union_paths(
-          subject_coords,
-          subject_path_lengths,
-          clip_coords,
-          clip_path_lengths,
-          fill_rule,
-        )
+        0
       }
     }
-    BooleanOp::Intersect => clipper2_intersect_paths(
+    BooleanOp::Intersect => 1,
+    BooleanOp::Difference => 2,
+    BooleanOp::Xor => 3,
+  };
+  if is_self_union {
+    clipper2_boolean_flat(
+      op_code,
+      fill_rule,
+      subject_coords,
+      subject_path_lengths,
+      &[],
+      &[],
+    );
+  } else {
+    clipper2_boolean_flat(
+      op_code,
+      fill_rule,
       subject_coords,
       subject_path_lengths,
       clip_coords,
       clip_path_lengths,
-      fill_rule,
-    ),
-    BooleanOp::Difference => clipper2_difference_paths(
-      subject_coords,
-      subject_path_lengths,
-      clip_coords,
-      clip_path_lengths,
-      fill_rule,
-    ),
-    BooleanOp::Xor => clipper2_xor_paths(
-      subject_coords,
-      subject_path_lengths,
-      clip_coords,
-      clip_path_lengths,
-      fill_rule,
-    ),
+    );
   }
 
-  let out_coords = clipper2_get_output_coords();
-  let out_lengths = clipper2_get_output_path_lengths();
-  clipper2_clear_output();
+  let out_coords = clipper2_get_output_coords_f32();
+  let out_lengths = clipper2_get_output_path_lengths_flat();
+  clipper2_clear_output_flat();
 
   let mut paths = Vec::with_capacity(out_lengths.len());
   let mut coord_ix = 0usize;
@@ -220,9 +248,7 @@ fn run_clipper_boolean(
       if coord_ix + 1 >= out_coords.len() {
         break;
       }
-      let x = out_coords[coord_ix];
-      let y = out_coords[coord_ix + 1];
-      path.push(Vec2::new(x as f32, y as f32));
+      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
       coord_ix += 2;
     }
     if path.len() >= 2 {
@@ -240,9 +266,9 @@ fn run_clipper_boolean(
 
 #[cfg(target_arch = "wasm32")]
 fn run_cgal_boolean(
-  subject_coords: &[f64],
+  subject_coords: &[f32],
   subject_path_lengths: &[u32],
-  clip_coords: &[f64],
+  clip_coords: &[f32],
   clip_path_lengths: &[u32],
   op: BooleanOp,
   fn_name: &str,
@@ -261,9 +287,6 @@ fn run_cgal_boolean(
     collect_vertex_set_multi(subject_coords, clip_coords)
   };
 
-  let subj_f32: Vec<f32> = subject_coords.iter().map(|&v| v as f32).collect();
-  let clip_f32: Vec<f32> = clip_coords.iter().map(|&v| v as f32).collect();
-
   let op_id: u32 = match op {
     BooleanOp::Union => 0,
     BooleanOp::Intersect => 1,
@@ -272,9 +295,9 @@ fn run_cgal_boolean(
   };
 
   let ok = cgal_path_boolean_2d(
-    &subj_f32,
+    subject_coords,
     subject_path_lengths,
-    &clip_f32,
+    clip_coords,
     clip_path_lengths,
     op_id,
   );
@@ -305,8 +328,6 @@ fn run_cgal_boolean(
     }
   }
 
-  // pre_op_vertices was collected from the f64 sample buffer and the output is compared as f32
-  // bits, matching how the buffer was hashed, so op-created corners are detected apples-to-apples.
   let critical_t_values = global_critical_points(&paths, &pre_op_vertices);
 
   Ok(BooleanResult {
@@ -323,7 +344,7 @@ fn sample_path_to_coords(
   sample_count: usize,
   closed_override: Option<bool>,
   fn_name: &str,
-) -> Result<(Vec<f64>, Vec<u32>), ErrorStack> {
+) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
   let subpaths = sample_path_subpaths(
     ctx,
     path_callable,
@@ -338,8 +359,8 @@ fn sample_path_to_coords(
   for (points, _is_closed) in subpaths {
     lengths.push(points.len() as u32);
     for pt in &points {
-      coords.push(pt.x as f64);
-      coords.push(pt.y as f64);
+      coords.push(pt.x);
+      coords.push(pt.y);
     }
   }
   Ok((coords, lengths))
@@ -373,7 +394,8 @@ pub fn path_boolean_impl(
 
       let fill_rule_val = arg_refs[2].resolve(args, kwargs);
 
-      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
+      let curve_angle_degrees =
+        ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `{fn_name}`; expected > 0, found: {curve_angle_degrees}"
@@ -457,23 +479,43 @@ pub fn path_boolean_impl(
         fn_name,
       )?;
 
-      let boolean_result = match engine {
-        BooleanEngine::Clipper => run_clipper_boolean(
-          &subject_coords,
-          &subject_lengths,
-          &clip_coords,
-          &clip_lengths,
-          fill_rule_enum.to_clipper2_u32(),
-          op,
-        ),
-        BooleanEngine::Cgal => run_cgal_boolean(
-          &subject_coords,
-          &subject_lengths,
-          &clip_coords,
-          &clip_lengths,
-          op,
-          fn_name,
-        )?,
+      let op_ix = op as u32;
+      let engine_discriminant = match engine {
+        BooleanEngine::Clipper => op_ix,
+        BooleanEngine::Cgal => 8 + op_ix,
+      };
+      let cache_key = bool_result_cache::build_key(
+        engine_discriminant,
+        fill_rule_enum.to_clipper2_u32(),
+        &subject_coords,
+        &subject_lengths,
+        &clip_coords,
+        &clip_lengths,
+      );
+
+      let boolean_result = if let Some(cached) = bool_result_cache::get(&cache_key) {
+        cached
+      } else {
+        let result = match engine {
+          BooleanEngine::Clipper => run_clipper_boolean(
+            &subject_coords,
+            &subject_lengths,
+            &clip_coords,
+            &clip_lengths,
+            fill_rule_enum.to_clipper2_u32(),
+            op,
+          ),
+          BooleanEngine::Cgal => run_cgal_boolean(
+            &subject_coords,
+            &subject_lengths,
+            &clip_coords,
+            &clip_lengths,
+            op,
+            fn_name,
+          )?,
+        };
+        bool_result_cache::insert(cache_key, &result);
+        result
       };
 
       let critical_points = Some(boolean_result.critical_t_values);
@@ -658,7 +700,7 @@ fn ensure_path_sampler(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn coords_aabb(coords: &[f64]) -> Option<(Vec2, Vec2)> {
+fn coords_aabb(coords: &[f32]) -> Option<(Vec2, Vec2)> {
   if coords.len() < 2 {
     return None;
   }
@@ -666,8 +708,8 @@ fn coords_aabb(coords: &[f64]) -> Option<(Vec2, Vec2)> {
   let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
   let mut i = 0;
   while i + 1 < coords.len() {
-    let x = coords[i] as f32;
-    let y = coords[i + 1] as f32;
+    let x = coords[i];
+    let y = coords[i + 1];
     if x < min.x {
       min.x = x;
     }
@@ -720,7 +762,8 @@ pub fn path_intersects_impl(
       let fill_rule_enum = FillRule::parse(arg_refs[2].resolve(args, kwargs), "path_intersects")?;
       let fill_rule = fill_rule_enum.to_clipper2_u32();
 
-      let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
+      let curve_angle_degrees =
+        ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
           "Invalid curve_angle_degrees for `path_intersects`; expected > 0, found: \
@@ -796,10 +839,10 @@ pub fn path_intersects_impl(
         }
       }
 
-      clipper2_intersect_paths(&a_coords, &a_lengths, &b_coords, &b_lengths, fill_rule);
-      let out_lengths = clipper2_get_output_path_lengths();
+      clipper2_boolean_flat(1, fill_rule, &a_coords, &a_lengths, &b_coords, &b_lengths);
+      let out_lengths = clipper2_get_output_path_lengths_flat();
       let has_intersection = out_lengths.iter().any(|len| *len > 0);
-      clipper2_clear_output();
+      clipper2_clear_output_flat();
 
       Ok(Value::Bool(has_intersection))
     }
