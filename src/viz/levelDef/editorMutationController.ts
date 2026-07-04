@@ -308,35 +308,26 @@ export class EditorMutationController {
     const parentId = parentRef.type === 'group' ? parentRef.groupId : undefined;
     const index = targetChildren.length;
 
-    let root: LevelSceneNode;
-    if (entry.kind === 'object' || entry.kind === 'composition') {
-      const newDef = await this.api.sendAdd({
-        asset: entry.assetId,
-        material: entry.def.material,
-        position,
-        rotation,
-        scale,
-        parentId,
-        index,
-      });
-      if (!newDef) return null;
-      const built =
-        entry.kind === 'composition'
-          ? buildCompositionGroupFromCtx(this.ctx, newDef)
-          : buildLeafNode(this.ctx, entry.assetId, newDef);
-      if (!built) return null;
-      root = built;
+    // Send the full clipboard def (fresh transform patched in) through the paste endpoint so every
+    // field — behaviors/parkour/userData/flags — round-trips; the server assigns fresh ids.
+    const patchedDef = {
+      ...JSON.parse(JSON.stringify(entry.def)),
+      position,
+      rotation,
+      scale,
+    } as ObjectDef | ObjectGroupDef;
+    const newDef = await this.api.sendPaste(patchedDef, parentId, index);
+    if (!newDef) return null;
+
+    let root: LevelSceneNode | null;
+    if (entry.kind === 'composition') {
+      root = buildCompositionGroupFromCtx(this.ctx, newDef as ObjectDef);
+    } else if (entry.kind === 'group') {
+      root = buildGroupSubtree(this.ctx, newDef as ObjectGroupDef);
     } else {
-      const patchedDef: ObjectGroupDef = {
-        ...JSON.parse(JSON.stringify(entry.def)),
-        position,
-        rotation,
-        scale,
-      };
-      const newDef = await this.api.sendPasteGroup(patchedDef, parentId, index);
-      if (!newDef) return null;
-      root = buildGroupSubtree(this.ctx, newDef);
+      root = buildLeafNode(this.ctx, entry.assetId, newDef as ObjectDef);
     }
+    if (!root) return null;
 
     const leaves = collectSubtreeLeaves(root);
     const subtree: RuntimeSubtree = {

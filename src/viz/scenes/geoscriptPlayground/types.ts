@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { GizmoMode } from './transformGizmo';
+import type { EvalRequest } from './evalResult';
 
 /** Debug material override for all rendered meshes (matches the `n` / `w` / `shift+w` keybinds). */
 export type MaterialOverrideMode = 'wireframe' | 'wireframe-xray' | 'normal';
@@ -28,6 +29,9 @@ export interface ReplCtx {
   treeRedo: (event?: KeyboardEvent) => void;
   /** Instant fit-all framing, ignoring selection — used by transient render auto-framing. */
   autoFrameForRender: () => void;
+  /** Eval-mode (`geotoy eval`): serialize the run's outputs — values, exports, prints,
+   *  meshes, paths — to the JSON envelope. Call after a successful run. */
+  buildEvalResultJson: (req: EvalRequest) => Promise<string>;
 }
 
 export interface RunStats {

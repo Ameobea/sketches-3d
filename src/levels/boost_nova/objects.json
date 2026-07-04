@@ -101,9 +101,12 @@
       "id": "dash_token_1",
       "position": [8.0278, 79.6416, 20.8062],
       "parkour": {
-        "dashToken": {
-          "checkpointIx": 1
-        }
+        "entities": [
+          {
+            "kind": "dashToken",
+            "checkpointIx": 1
+          }
+        ]
       },
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
@@ -163,10 +166,8 @@
         },
         {
           "id": "wall_1",
-          "asset": "wall",
+          "asset": "csg_wall",
           "position": [-60.7131, 39.0846, 23.1651],
-          "rotation": [0, 0, 0],
-          "scale": [21.9585, 13.4275, 7.493],
           "material": "grate_trench"
         },
         {
@@ -224,6 +225,69 @@
       "position": [-217.7501, 108.9961, 20.0645],
       "rotation": [0, 0, 0],
       "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "trapezoid_plat",
+      "asset": "trapezoid_plat",
+      "position": [-239.9479, 109.4961, 33.4908],
+      "rotation": [0, -1.5708, 0],
+      "scale": [0.8396, 0.9581, 1.022]
+    },
+    {
+      "id": "trapezoid_plat_1",
+      "asset": "trapezoid_plat",
+      "position": [-215.5979, 109.4961, 40.1576],
+      "rotation": [0, 0, 0],
+      "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "trapezoid_plat_2",
+      "asset": "trapezoid_plat",
+      "position": [-184.4553, 105.6896, 40.1576],
+      "rotation": [0, 0, 0],
+      "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "trapezoid_plat_3",
+      "asset": "trapezoid_plat",
+      "position": [-174.6435, 105.6896, 40.1576],
+      "rotation": [0, 0, 0],
+      "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "trapezoid_plat_4",
+      "asset": "trapezoid_plat",
+      "position": [-153.8513, 113.2985, 40.1576],
+      "rotation": [0, 0, 0],
+      "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "trapezoid_plat_5",
+      "asset": "trapezoid_plat",
+      "position": [-144.4111, 113.2985, 40.1576],
+      "rotation": [0, 0, 0],
+      "scale": [0.6785, 0.9581, 0.8695]
+    },
+    {
+      "id": "jump_pad_1",
+      "asset": "jump_pad",
+      "position": [-134.4111, 111.8291, 40.1576],
+      "parkour": {
+        "entities": [
+          {
+            "kind": "jumpPad",
+            "region": {
+              "shape": "mesh"
+            },
+            "baseImpulse": 86,
+            "speedScaling": 0.3,
+            "cooldownSeconds": 0.15,
+            "direction": "matchMeshRotation"
+          }
+        ]
+      },
+      "rotation": [0, 0, -0.5559],
+      "scale": [1, 1, 1]
     }
   ]
 }

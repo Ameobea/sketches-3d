@@ -25,11 +25,13 @@
     DefaultCameraZoom,
     type MaterialOverrideMode,
   } from 'src/viz/scenes/geoscriptPlayground/types';
+  import type { EvalRequest } from 'src/viz/scenes/geoscriptPlayground/evalResult';
 
   interface TransientPayload {
     tree?: TreeDef;
     metadata?: Partial<CompositionVersionMetadata>;
     materialOverride?: MaterialOverrideMode;
+    eval?: EvalRequest;
   }
 
   LoadOrbitControls.getter = async () => OrbitControls;
@@ -52,7 +54,21 @@
       };
     }
 
-    const tree: TreeDef = payload.tree ?? buildEmptyTree();
+    let tree: TreeDef = payload.tree ?? buildEmptyTree();
+    // `eval --expr` is appended to the root source as a trailing expression so it's evaluated
+    // as part of the (optimized) run; its value becomes the run's captured last value.
+    if (payload.eval?.expr) {
+      const root = tree.nodes[tree.rootId];
+      if (root) {
+        tree = {
+          ...tree,
+          nodes: {
+            ...tree.nodes,
+            [tree.rootId]: { ...root, source: `${root.source}\n(${payload.eval.expr})\n` },
+          },
+        };
+      }
+    }
     const meta = payload.metadata ?? {};
     const autoFrame = !meta.view;
     const metadata: CompositionVersionMetadata = {
@@ -93,6 +109,8 @@
         renderMode: true,
         transientAutoFrame: autoFrame,
         renderMaterialOverride: payload.materialOverride,
+        failRenderOnError: true,
+        evalRequest: payload.eval,
         me: null,
         workerManager: browser ? new WorkerManager() : null,
       },

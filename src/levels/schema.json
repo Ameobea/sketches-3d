@@ -1996,16 +1996,265 @@
                     ],
                     "additionalProperties": false
                   },
-                  "dashToken": {
-                    "type": "object",
-                    "properties": {
-                      "checkpointIx": {
-                        "type": "integer",
-                        "minimum": -9007199254740991,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "additionalProperties": false
+                  "entities": {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "jumpPad"
+                            },
+                            "region": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "box"
+                                    },
+                                    "halfExtents": {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "shape",
+                                    "halfExtents"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "sphere"
+                                    },
+                                    "radius": {
+                                      "type": "number",
+                                      "exclusiveMinimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "shape",
+                                    "radius"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "mesh"
+                                    },
+                                    "collider": {
+                                      "type": "string",
+                                      "enum": [
+                                        "trimesh",
+                                        "convexHull",
+                                        "aabb"
+                                      ]
+                                    },
+                                    "margin": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "shape"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "baseImpulse": {
+                              "type": "number"
+                            },
+                            "speedScaling": {
+                              "type": "number"
+                            },
+                            "cooldownSeconds": {
+                              "type": "number"
+                            },
+                            "direction": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "items": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "number"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "string",
+                                  "const": "matchMeshRotation"
+                                }
+                              ]
+                            },
+                            "useExternalVelocity": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "region",
+                            "baseImpulse",
+                            "speedScaling"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "boostZone"
+                            },
+                            "region": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "box"
+                                    },
+                                    "halfExtents": {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        }
+                                      ]
+                                    }
+                                  },
+                                  "required": [
+                                    "shape",
+                                    "halfExtents"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "sphere"
+                                    },
+                                    "radius": {
+                                      "type": "number",
+                                      "exclusiveMinimum": 0
+                                    }
+                                  },
+                                  "required": [
+                                    "shape",
+                                    "radius"
+                                  ],
+                                  "additionalProperties": false
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "shape": {
+                                      "type": "string",
+                                      "const": "mesh"
+                                    },
+                                    "collider": {
+                                      "type": "string",
+                                      "enum": [
+                                        "trimesh",
+                                        "convexHull",
+                                        "aabb"
+                                      ]
+                                    },
+                                    "margin": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "shape"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              ]
+                            },
+                            "strength": {
+                              "type": "number"
+                            },
+                            "directionalBias": {
+                              "type": "number"
+                            },
+                            "direction": {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "region",
+                            "strength",
+                            "directionalBias",
+                            "direction"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "const": "dashToken"
+                            },
+                            "checkpointIx": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": [
+                            "kind"
+                          ],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -3219,16 +3468,265 @@
                         ],
                         "additionalProperties": false
                       },
-                      "dashToken": {
-                        "type": "object",
-                        "properties": {
-                          "checkpointIx": {
-                            "type": "integer",
-                            "minimum": -9007199254740991,
-                            "maximum": 9007199254740991
-                          }
-                        },
-                        "additionalProperties": false
+                      "entities": {
+                        "type": "array",
+                        "items": {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "jumpPad"
+                                },
+                                "region": {
+                                  "oneOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "box"
+                                        },
+                                        "halfExtents": {
+                                          "type": "array",
+                                          "items": [
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "number"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "shape",
+                                        "halfExtents"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "sphere"
+                                        },
+                                        "radius": {
+                                          "type": "number",
+                                          "exclusiveMinimum": 0
+                                        }
+                                      },
+                                      "required": [
+                                        "shape",
+                                        "radius"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "mesh"
+                                        },
+                                        "collider": {
+                                          "type": "string",
+                                          "enum": [
+                                            "trimesh",
+                                            "convexHull",
+                                            "aabb"
+                                          ]
+                                        },
+                                        "margin": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "shape"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                "baseImpulse": {
+                                  "type": "number"
+                                },
+                                "speedScaling": {
+                                  "type": "number"
+                                },
+                                "cooldownSeconds": {
+                                  "type": "number"
+                                },
+                                "direction": {
+                                  "anyOf": [
+                                    {
+                                      "type": "array",
+                                      "items": [
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        },
+                                        {
+                                          "type": "number"
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "type": "string",
+                                      "const": "matchMeshRotation"
+                                    }
+                                  ]
+                                },
+                                "useExternalVelocity": {
+                                  "type": "boolean"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "region",
+                                "baseImpulse",
+                                "speedScaling"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "boostZone"
+                                },
+                                "region": {
+                                  "oneOf": [
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "box"
+                                        },
+                                        "halfExtents": {
+                                          "type": "array",
+                                          "items": [
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "number"
+                                            },
+                                            {
+                                              "type": "number"
+                                            }
+                                          ]
+                                        }
+                                      },
+                                      "required": [
+                                        "shape",
+                                        "halfExtents"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "sphere"
+                                        },
+                                        "radius": {
+                                          "type": "number",
+                                          "exclusiveMinimum": 0
+                                        }
+                                      },
+                                      "required": [
+                                        "shape",
+                                        "radius"
+                                      ],
+                                      "additionalProperties": false
+                                    },
+                                    {
+                                      "type": "object",
+                                      "properties": {
+                                        "shape": {
+                                          "type": "string",
+                                          "const": "mesh"
+                                        },
+                                        "collider": {
+                                          "type": "string",
+                                          "enum": [
+                                            "trimesh",
+                                            "convexHull",
+                                            "aabb"
+                                          ]
+                                        },
+                                        "margin": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "required": [
+                                        "shape"
+                                      ],
+                                      "additionalProperties": false
+                                    }
+                                  ]
+                                },
+                                "strength": {
+                                  "type": "number"
+                                },
+                                "directionalBias": {
+                                  "type": "number"
+                                },
+                                "direction": {
+                                  "type": "array",
+                                  "items": [
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "number"
+                                    },
+                                    {
+                                      "type": "number"
+                                    }
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "region",
+                                "strength",
+                                "directionalBias",
+                                "direction"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "dashToken"
+                                },
+                                "checkpointIx": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "required": [
+                                "kind"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        }
                       }
                     },
                     "additionalProperties": false

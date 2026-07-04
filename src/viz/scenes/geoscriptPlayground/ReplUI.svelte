@@ -47,6 +47,7 @@
     setLastRunWasSuccessful,
   } from './persistence';
   import { compileTree, buildGizmoValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
+  import { buildEvalResultJson } from './evalResult';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
   import { buildParentMap, computeMeshCounts, findParentId, getNodeAncestorChain } from './treeOps';
   import HierarchyPanel from './HierarchyPanel.svelte';
@@ -1683,6 +1684,17 @@
       },
       autoFrameForRender: () => {
         void centerView(viz, renderedObjects);
+      },
+      buildEvalResultJson: req => {
+        if (ctxPtr === null) throw new Error('no geoscript context');
+        return buildEvalResultJson({
+          repl,
+          ctxPtr,
+          renderedObjects,
+          tree: treeState.state.tree,
+          stats: runStats,
+          req,
+        });
       },
     });
 

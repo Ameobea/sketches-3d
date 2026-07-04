@@ -41,7 +41,7 @@ export const partitionParkourObjects = (
   const checkpointMeshes: THREE.Mesh[] = [];
   const dashTokens: DashTokenSpawn[] = [];
   for (const obj of objs) {
-    if (obj.def.parkour?.dashToken) {
+    if (obj.def.parkour?.entities?.some(e => e.kind === 'dashToken')) {
       dashTokens.push({ id: obj.id, parent: obj.object });
     } else if (obj.def.parkour?.checkpoint != null || obj.def.parkour?.win) {
       forEachMesh(obj.object, mesh => checkpointMeshes.push(mesh));

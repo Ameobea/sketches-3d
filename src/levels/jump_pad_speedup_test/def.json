@@ -153,6 +153,72 @@
       "position": [-36.4138, 9.5731, 0.087],
       "rotation": [0, 0, 0],
       "scale": [3.6213, 0.4817, 3.6213]
+    },
+    {
+      "id": "jump_pad_1",
+      "position": [0, 1.1, 18],
+      "parkour": {
+        "entities": [
+          {
+            "kind": "jumpPad",
+            "region": { "shape": "box", "halfExtents": [3.2, 1.2, 3.2] },
+            "baseImpulse": 56,
+            "speedScaling": 0.3,
+            "cooldownSeconds": 0.15,
+            "direction": [0, 1, 0]
+          }
+        ]
+      }
+    },
+    {
+      "id": "jump_pad_2",
+      "position": [0, 12.1, 68],
+      "parkour": {
+        "entities": [
+          {
+            "kind": "jumpPad",
+            "region": { "shape": "box", "halfExtents": [3.2, 1.2, 3.2] },
+            "baseImpulse": 58,
+            "speedScaling": 0.3,
+            "cooldownSeconds": 0.15,
+            "direction": [0.45, 1, 0.15]
+          }
+        ]
+      }
+    },
+    {
+      "id": "boost_zone_1",
+      "position": [0, 1.2, 6],
+      "parkour": {
+        "entities": [
+          {
+            "kind": "boostZone",
+            "region": { "shape": "box", "halfExtents": [5, 1.2, 12] },
+            "strength": 26,
+            "directionalBias": 1.0,
+            "direction": [0, 0, 1]
+          }
+        ]
+      }
+    },
+    {
+      "id": "jump_pad_cyl",
+      "asset": "cyl",
+      "position": [-18, 0.5, 18],
+      "rotation": [0.3, 0, 0.15],
+      "scale": [3, 1, 3],
+      "parkour": {
+        "entities": [
+          {
+            "kind": "jumpPad",
+            "region": { "shape": "mesh", "margin": 0.5 },
+            "baseImpulse": 56,
+            "speedScaling": 0.3,
+            "cooldownSeconds": 0.15,
+            "direction": "matchMeshRotation"
+          }
+        ]
+      }
     }
   ]
 }

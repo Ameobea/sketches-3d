@@ -11,7 +11,7 @@ use std::{cell::RefCell, fmt::Display};
 
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{DisplacementNormalMethod, FaceKey, Plane, Vec3, Vertex, VertexKey},
+  linked_mesh::{mesh_flags, DisplacementNormalMethod, FaceKey, Plane, Vec3, Vertex, VertexKey},
   LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
@@ -550,13 +550,13 @@ pub(crate) fn neq_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
     0 => {
       let a = lhs.as_int().unwrap();
       let b = rhs.as_int().unwrap();
-      Ok(Value::Bool(a == b))
+      Ok(Value::Bool(a != b))
     }
     // float != float
     1 => {
       let a = lhs.as_float().unwrap();
       let b = rhs.as_float().unwrap();
-      Ok(Value::Bool(a == b))
+      Ok(Value::Bool(a != b))
     }
     // either one of a or b is nil
     2 | 3 => {
@@ -3077,6 +3077,51 @@ fn compute_uvs_impl(
   }
 }
 
+fn compute_normals_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  match def_ix {
+    0 => {
+      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
+      let smooth_angle = arg_refs[1].resolve(args, kwargs);
+      let smooth_angle_deg = match smooth_angle {
+        _ if let Some(a) = smooth_angle.as_float() => a,
+        Value::Nil => *ctx.sharp_angle_threshold_degrees.borrow(),
+        _ => {
+          return Err(ErrorStack::new(format!(
+            "Invalid `smooth_angle` for `compute_normals`; expected a number of degrees or nil, \
+             found: {smooth_angle:?}"
+          )))
+        }
+      };
+      if !smooth_angle_deg.is_finite() || smooth_angle_deg < 0. {
+        return Err(ErrorStack::new(format!(
+          "Invalid `smooth_angle` for `compute_normals`: {smooth_angle_deg}; must be a \
+           non-negative, finite number of degrees"
+        )));
+      }
+
+      let mut out = (*mesh.mesh).clone();
+      out.recompute_shading_normals_preserving_seams(smooth_angle_deg.to_radians());
+      out.flags |= mesh_flags::NO_WELD;
+
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(out),
+        transform: mesh.transform,
+        manifold_handle: Rc::new(ManifoldHandle::new(0)),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: mesh.material.clone(),
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn remesh_planar_patches_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -4676,7 +4721,14 @@ fn print_impl(
     .collect::<Vec<_>>()
     .join(", ");
 
-  (ctx.log_fn)(&format!("{formatted_pos_ags}, {formatted_kwargs}"));
+  let msg = match (formatted_pos_ags.is_empty(), formatted_kwargs.is_empty()) {
+    (false, false) => format!("{formatted_pos_ags}, {formatted_kwargs}"),
+    (false, true) => formatted_pos_ags,
+    (true, false) => formatted_kwargs,
+    (true, true) => String::new(),
+  };
+  ctx.prints.borrow_mut().push(msg.clone());
+  (ctx.log_fn)(&msg);
   Ok(Value::Nil)
 }
 
@@ -8751,6 +8803,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "compute_uvs" => builtin_fn!(compute_uvs, |def_ix, arg_refs, args, kwargs, ctx| {
     compute_uvs_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "compute_normals" => builtin_fn!(compute_normals, |def_ix, arg_refs, args, kwargs, ctx| {
+    compute_normals_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, _ctx| {
     remesh_planar_patches_impl(def_ix, arg_refs, args, kwargs)

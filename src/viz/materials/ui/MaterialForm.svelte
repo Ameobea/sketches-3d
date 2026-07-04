@@ -252,6 +252,8 @@
             view generated uv mappings
           </button>
         </div>
+      {/if}
+      {#if mappingMode(cs) === 'uv' || mappingMode(cs) === 'mesh_uv'}
         <FormField label="enable hex tilebreaking">
           <input
             type="checkbox"

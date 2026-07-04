@@ -81,6 +81,11 @@
         "inner": "pit_grid_trapezoid"
       }
     },
+    "jump_pad": {
+      "type": "geoscript",
+      "code": "export mesh = box(8, 0.5, 2)",
+      "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "833de1a6" }
+    },
     "csg_box": {
       "type": "csg",
       "tree": {
@@ -120,6 +125,48 @@
         ]
       },
       "_meta": { "runtimeMs": 2.1, "count": 5, "codeHash": "26dae5ed", "asyncDeps": [ "cgal" ] }
+    },
+    "csg_wall": {
+      "type": "csg",
+      "tree": {
+        "op": "union",
+        "children": [
+          {
+            "asset": "wall",
+            "scale": [21.9585, 13.4275, 7.493]
+          },
+          {
+            "op": "difference",
+            "children": [
+              {
+                "asset": "box",
+                "position": [-77.3661, 0, 9.2255],
+                "rotation": [0, 0, 0],
+                "scale": [7.2132, 134.3323, 17.874]
+              },
+              {
+                "asset": "box",
+                "position": [-76.9226, 29.6489, 17.6953],
+                "rotation": [0, 0, 0],
+                "scale": [13.8659, 6.1052, 3.0198]
+              }
+            ]
+          },
+          {
+            "asset": "box",
+            "position": [-52.5944, 0, 8.4389],
+            "rotation": [0, 0, 0],
+            "scale": [0.6529, 134.3323, 13.7076]
+          },
+          {
+            "asset": "box",
+            "position": [-22.2759, 0, 8.4389],
+            "rotation": [0, 0, 0],
+            "scale": [0.6529, 134.3323, 13.7076]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 5.1, "count": 5, "codeHash": "cc288796", "asyncDeps": [ "cgal" ] }
     }
   },
   "environment": {

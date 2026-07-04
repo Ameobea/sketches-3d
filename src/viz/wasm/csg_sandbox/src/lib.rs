@@ -1,12 +1,14 @@
+#[cfg(target_arch = "wasm32")]
 use nalgebra::Matrix4;
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
-use geoscript::mesh_ops::mesh_boolean::{apply_boolean, decode_manifold_output};
 use geoscript::mesh_ops::mesh_boolean::{
-  create_manifold, drop_manifold_mesh_handle, MeshBooleanOp,
+  apply_boolean, create_manifold, decode_manifold_output, drop_manifold_mesh_handle, MeshBooleanOp,
 };
-use mesh::{csg::FaceData, linked_mesh::DisplacementNormalMethod, LinkedMesh, OwnedIndexedMesh};
+#[cfg(target_arch = "wasm32")]
+use mesh::linked_mesh::DisplacementNormalMethod;
+use mesh::{csg::FaceData, LinkedMesh, OwnedIndexedMesh};
 
 static mut DID_INIT: bool = false;
 
@@ -46,6 +48,7 @@ pub fn free_mesh(mesh: *mut LinkedMesh<FaceData>) {
   drop(unsafe { Box::from_raw(mesh) });
 }
 
+#[cfg(target_arch = "wasm32")]
 fn displace_mesh<T>(mesh: &mut LinkedMesh<T>) {
   use noise::{MultiFractal, NoiseModule};
 

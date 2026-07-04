@@ -2,9 +2,10 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use geoscript::{
-  eval_program_with_ctx, materials::Material, optimizer::optimize_ast,
-  parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls, ErrorStack, EvalCtx,
-  Program, Scope, Sym, PRELUDE,
+  eval_program_into_scope, materials::Material, optimizer::optimize_ast,
+  parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls,
+  value_json::{serialize_bindings_to_json, serialize_value_to_json},
+  ErrorStack, EvalCtx, Program, Scope, Sym, Value, PRELUDE,
 };
 use mesh::{linked_mesh::mesh_flags, OwnedIndexedMesh};
 use nanoserde::{DeJson, SerJson};
@@ -49,6 +50,11 @@ pub struct GeoscriptReplCtx {
   pub last_program: Result<Program, ErrorStack>,
   pub last_result: Result<(), ErrorStack>,
   pub output_meshes: Vec<OutputMesh>,
+  /// Root program's own top-level scope after the last successful eval, retained so
+  /// `geotoy eval` can read its exports and evaluate follow-up expressions against it.
+  pub last_root_scope: Option<Scope>,
+  /// Value of the last top-level statement of the last successful eval.
+  pub last_value: Option<Value>,
 }
 
 impl Default for GeoscriptReplCtx {
@@ -58,6 +64,8 @@ impl Default for GeoscriptReplCtx {
       last_program: Err(ErrorStack::new("No program parsed yet")),
       last_result: Ok(()),
       output_meshes: Vec::new(),
+      last_root_scope: None,
+      last_value: None,
     }
   }
 }
@@ -197,6 +205,9 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     ctx.last_result = Err(err);
     return;
   }
+  ctx.geo_ctx.prints.borrow_mut().clear();
+  ctx.last_root_scope = None;
+  ctx.last_value = None;
   // The entry-point program is `_root`'s emitted source; tag its renders accordingly
   // so JS-side ancestor-transform composition can find the source node.
   let prev_module = ctx
@@ -204,9 +215,61 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     .current_module
     .borrow_mut()
     .replace("_root".to_owned());
-  ctx.last_result = eval_program_with_ctx(&ctx.geo_ctx, program);
+  let root_scope = ctx.geo_ctx.root_program_scope();
+  ctx.last_result = match eval_program_into_scope(&ctx.geo_ctx, program, &root_scope) {
+    Ok(val) => {
+      ctx.last_value = Some(val);
+      ctx.last_root_scope = Some(root_scope);
+      Ok(())
+    }
+    Err(err) => Err(err),
+  };
   *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
   ctx.convert_rendered_meshes();
+}
+
+/// Root program's own top-level bindings from the last successful eval, as a JSON object
+/// of tagged values keyed by name. Names shared with the ambient (prelude/globals) scope
+/// are excluded so only the composition's own definitions are returned.
+#[wasm_bindgen]
+pub fn geoscript_repl_get_exports_json(ctx: *mut GeoscriptReplCtx, sample_count: u32) -> String {
+  let ctx = unsafe { &*ctx };
+  let Some(scope) = ctx.last_root_scope.as_ref() else {
+    return "{}".to_owned();
+  };
+  let ambient_keys = ctx
+    .geo_ctx
+    .ambient_scope
+    .borrow()
+    .as_ref()
+    .map(|s| s.own_keys())
+    .unwrap_or_default();
+  let bindings: Vec<(String, Value)> = scope
+    .own_bindings()
+    .into_iter()
+    .filter(|(sym, _)| !ambient_keys.contains(sym))
+    .map(|(sym, val)| (ctx.geo_ctx.with_resolved_sym(sym, |s| s.to_owned()), val))
+    .collect();
+  serialize_bindings_to_json(&ctx.geo_ctx, &bindings, sample_count as usize)
+}
+
+/// Serialize the value of the last top-level statement of the last successful eval as a
+/// tagged value. `geotoy eval --expr` appends the expression as that final statement, so this
+/// returns its value — fully resolved/optimized because it ran as part of the program.
+#[wasm_bindgen]
+pub fn geoscript_repl_get_last_value_json(ctx: *mut GeoscriptReplCtx, sample_count: u32) -> String {
+  let ctx = unsafe { &*ctx };
+  match &ctx.last_value {
+    Some(val) => serialize_value_to_json(&ctx.geo_ctx, val, sample_count as usize),
+    None => "{\"t\":\"nil\"}".to_owned(),
+  }
+}
+
+/// Drain the `print()` output captured during the last eval.
+#[wasm_bindgen]
+pub fn geoscript_repl_take_prints(ctx: *mut GeoscriptReplCtx) -> Vec<String> {
+  let ctx = unsafe { &mut *ctx };
+  std::mem::take(&mut *ctx.geo_ctx.prints.borrow_mut())
 }
 
 #[wasm_bindgen]
@@ -233,6 +296,9 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.last_program = Err(ErrorStack::new("No program parsed yet"));
   ctx.last_result = Ok(());
   ctx.output_meshes.clear();
+  ctx.last_root_scope = None;
+  ctx.last_value = None;
+  ctx.geo_ctx.prints.borrow_mut().clear();
 
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();

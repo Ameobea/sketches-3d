@@ -2587,6 +2587,77 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  /// Recomputes shading normals with dihedral auto-smooth creasing (`mark_edge_sharpness` +
+  /// `separate_vertices_and_compute_normals`) while keeping authored attribute seams smooth. Any set
+  /// of position-coincident verts present *before* the split (a UV seam cut, a duplicated boundary
+  /// ring) is re-averaged per normal cluster afterward, so a seam running through a smooth region
+  /// reads seamless while genuine geometric creases and cap edges keep their crisp split normals.
+  /// Passive channels (uv/tangent) are cloned onto split verts by the separation pass and never
+  /// touched here, so procedural UVs survive intact.
+  ///
+  /// Coincidence is bit-exact on position, matching the way seam ops (`rail_sweep`, `compute_uvs`)
+  /// author their duplicates.
+  pub fn recompute_shading_normals_preserving_seams(&mut self, sharp_edge_threshold_rads: f32) {
+    let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+
+    // Authored seams are the coincident verts that exist before the auto-smooth split; the split
+    // itself only ever *adds* coincident verts, at fresh creases.
+    let mut counts: FxHashMap<[u32; 3], u32> = FxHashMap::default();
+    for v in self.vertices.values() {
+      *counts.entry(pos_key(v.position)).or_insert(0) += 1;
+    }
+    let seam_positions: FxHashSet<[u32; 3]> =
+      counts.into_iter().filter(|&(_, n)| n > 1).map(|(k, _)| k).collect();
+
+    self.mark_edge_sharpness(sharp_edge_threshold_rads);
+    self.separate_vertices_and_compute_normals();
+
+    if seam_positions.is_empty() {
+      return;
+    }
+
+    // Re-gather the (possibly further crease-split) verts sitting on each seam position.
+    let mut groups: FxHashMap<[u32; 3], Vec<VertexKey>> = FxHashMap::default();
+    for (key, v) in self.vertices.iter() {
+      let p = pos_key(v.position);
+      if seam_positions.contains(&p) {
+        groups.entry(p).or_default().push(key);
+      }
+    }
+
+    // Within each seam, greedily cluster verts whose recomputed normals stay within the smooth
+    // threshold and collapse each multi-member cluster onto its averaged normal; distinct clusters
+    // (real creases, cap turns) stay sharp.
+    let cos_threshold = sharp_edge_threshold_rads.cos();
+    let mut clusters: Vec<(Vec3, Vec<VertexKey>)> = Vec::new();
+    for verts in groups.values() {
+      if verts.len() < 2 {
+        continue;
+      }
+      clusters.clear();
+      for &vk in verts {
+        let Some(n) = self.shading_normal(vk) else {
+          continue;
+        };
+        match clusters.iter_mut().find(|(rep, _)| rep.dot(&n) >= cos_threshold) {
+          Some((_, members)) => members.push(vk),
+          None => clusters.push((n, vec![vk])),
+        }
+      }
+      for (_, members) in &clusters {
+        if members.len() < 2 {
+          continue;
+        }
+        let sum: Vec3 = members.iter().filter_map(|&vk| self.shading_normal(vk)).sum();
+        if let Some(avg) = sum.try_normalize(1e-12) {
+          for &vk in members {
+            self.set_shading_normal(vk, Some(avg));
+          }
+        }
+      }
+    }
+  }
+
   pub fn to_raw_indexed(
     &self,
     include_shading_normals: bool,

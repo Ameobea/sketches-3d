@@ -35,6 +35,39 @@ const getExportableObjects = (objects: (THREE.Mesh | THREE.Line | THREE.Light)[]
       return clone;
     });
 
+export type MeshExportFormat = 'glb' | 'gltf' | 'obj';
+
+/**
+ * Headless variant of the export buttons: serialize the rendered objects to the given
+ * format and return the raw bytes/text (no download). Used by `geotoy eval`.
+ */
+export const exportObjectsToData = async (
+  objects: (THREE.Mesh | THREE.Line | THREE.Light)[],
+  format: MeshExportFormat
+): Promise<{ binary: Uint8Array } | { text: string }> => {
+  const exportableObjects = getExportableObjects(objects);
+  const sceneToExport = new THREE.Scene();
+  for (const obj of exportableObjects) sceneToExport.add(obj);
+
+  if (format === 'obj') {
+    const exporter = new (await OBJExporterP.get())();
+    return { text: exporter.parse(sceneToExport) };
+  }
+
+  const exporter = new (await GLTFExporterP.get())();
+  return new Promise((resolve, reject) => {
+    exporter.parse(
+      sceneToExport,
+      result =>
+        result instanceof ArrayBuffer
+          ? resolve({ binary: new Uint8Array(result) })
+          : resolve({ text: JSON.stringify(result) }),
+      err => reject(err instanceof Error ? err : new Error(String(err))),
+      { binary: format === 'glb', trs: false, onlyVisible: true, truncateDrawRange: true }
+    );
+  });
+};
+
 export const exportGLTF = async (
   objects: (THREE.Mesh | THREE.Line | THREE.Light)[],
   binary: boolean

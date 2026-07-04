@@ -24,8 +24,10 @@ import type {
   LevelDef,
   ObjectDef,
   ObjectGroupDef,
+  ParkourRegion,
 } from './types';
 import { TEXTURE_SLOTS } from './types';
+import type { ContactRegion } from '../collision';
 import { compileTree, buildGizmoValues } from 'src/geoscript/treeCodegen';
 import {
   bakeCompositionMeshes,
@@ -734,12 +736,12 @@ export const loadLevelDef = (
   });
 
   const maybeRegisterPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
-    if (
-      registeredPhysicsObjects.has(levelObj.id) ||
-      !hasAsset(levelObj.def) ||
-      levelObj.def.nocollide ||
-      levelObj.def.userData?.nocollide
-    ) {
+    // Jump pads default to no rigid-body collider (they're pure trigger volumes); an explicit
+    // `nocollide: false` still opts back in.
+    const jumpPadDefault = !!levelObj.def.parkour?.entities?.some(e => e.kind === 'jumpPad');
+    const nocollide =
+      levelObj.def.nocollide ?? (levelObj.def.userData?.nocollide as boolean | undefined) ?? jumpPadDefault;
+    if (registeredPhysicsObjects.has(levelObj.id) || !hasAsset(levelObj.def) || nocollide) {
       return;
     }
 
@@ -1125,6 +1127,87 @@ export const loadLevelDef = (
     }
   );
   viz.registerPhysicsStartupBarrier(physicsRegistrationComplete);
+
+  // Register level-def parkour trigger entities (jump pads / boost zones) once physics is up and
+  // every object is placed. These ride the owning object's world transform; asset-less objects act
+  // as invisible markers. Dash-token entities are realized separately by the parkour subsystem.
+  // `mesh` regions reuse the placed asset mesh (its world transform + geometry); primitives are
+  // positioned by the object's decomposed world pos/quat. Returns null (with a warn) when a `mesh`
+  // region has no asset mesh to build from.
+  const parkourRegionToContact = (
+    region: ParkourRegion,
+    objDef: ObjectDef,
+    obj: THREE.Object3D,
+    pos: THREE.Vector3,
+    quat: THREE.Quaternion
+  ): ContactRegion | null => {
+    switch (region.shape) {
+      case 'box':
+        return {
+          type: 'box',
+          pos: pos.clone(),
+          halfExtents: new THREE.Vector3(...region.halfExtents),
+          quat: quat.clone(),
+        };
+      case 'sphere':
+        return { type: 'sphere', pos: pos.clone(), radius: region.radius };
+      case 'mesh':
+        if (!hasAsset(objDef) || !(obj instanceof THREE.Mesh)) {
+          console.warn(
+            `[loadLevelDef] parkour "${objDef.id}" mesh-shaped region has no asset mesh — skipping`
+          );
+          return null;
+        }
+        switch (region.collider ?? 'trimesh') {
+          case 'convexHull':
+            return { type: 'convexHull', mesh: obj };
+          case 'aabb':
+            return { type: 'aabb', mesh: obj };
+          default:
+            return { type: 'mesh', mesh: obj, margin: region.margin };
+        }
+    }
+  };
+
+  const parkourEntitiesComplete = Promise.all([objectsPromise, physicsWorldReady]).then(([, fpCtx]) => {
+    const pos = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    for (const objDef of allLeafDefs) {
+      const entities = objDef.parkour?.entities;
+      if (!entities?.length) continue;
+      const levelObj = allLevelObjects.get(objDef.id);
+      if (!levelObj) continue;
+      levelObj.object.updateWorldMatrix(true, false);
+      levelObj.object.matrixWorld.decompose(pos, quat, scl);
+      for (const ent of entities) {
+        if (ent.kind !== 'jumpPad' && ent.kind !== 'boostZone') continue;
+        const region = parkourRegionToContact(ent.region, objDef, levelObj.object, pos, quat);
+        if (!region) continue;
+        if (ent.kind === 'jumpPad') {
+          const direction =
+            ent.direction === 'matchMeshRotation'
+              ? new THREE.Vector3(0, 1, 0).applyQuaternion(quat).normalize()
+              : new THREE.Vector3(...(ent.direction ?? [0, 1, 0])).normalize();
+          fpCtx.addJumpPad(region, {
+            baseImpulse: ent.baseImpulse,
+            speedScaling: ent.speedScaling,
+            cooldownSeconds: ent.cooldownSeconds ?? 0.15,
+            direction,
+            useExternalVelocity: ent.useExternalVelocity,
+          });
+        } else {
+          const [dx, dy, dz] = ent.direction;
+          fpCtx.addBoostZone(region, {
+            strength: ent.strength,
+            directionalBias: ent.directionalBias,
+            direction: new THREE.Vector3(dx, dy, dz).normalize(),
+          });
+        }
+      }
+    }
+  });
+  viz.registerPhysicsStartupBarrier(parkourEntitiesComplete);
 
   const completePromise: Promise<void> = Promise.all([objectsPromise, ...textureFetchPromises]).then(
     () => void 0

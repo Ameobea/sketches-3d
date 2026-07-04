@@ -14,6 +14,7 @@ import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoy
 import type { MaterialOverrideMode, ReplCtx } from './types';
 import { buildGeotoyKeymap } from './keymap';
 import { WorkerManager } from 'src/geoscript/workerManager';
+import type { EvalRequest } from './evalResult';
 
 const locations = {
   spawn: {
@@ -51,6 +52,11 @@ export interface GeoscriptPlaygroundUserData {
   transientAutoFrame?: boolean;
   /** Transient render only: swap all meshes to a debug material (normal / wireframe) before capturing. */
   renderMaterialOverride?: MaterialOverrideMode;
+  /** Transient render only: fail the render (`window.onRenderError`) on a run error instead of
+   *  capturing a blank frame, so the CLI reports the geoscript error / wasm panic. */
+  failRenderOnError?: boolean;
+  /** `geotoy eval`: serialize the run's outputs to JSON (`window.onEvalReady`) instead of rendering. */
+  evalRequest?: EvalRequest;
   me?: User | null | undefined;
 }
 
@@ -98,8 +104,38 @@ export const processLoadedScene = async (
 
   if (userData?.renderMode) {
     let didRender = false;
+    const fail = (msg: string) => {
+      didRender = true;
+      (window as any).onRenderError?.(msg);
+    };
+
     viz.setRenderOverride(timeDiffSeconds => {
-      if (!ctx?.getLastRunOutcome() || didRender || !ctx?.getAreAllMaterialsLoaded()) {
+      const outcome = ctx?.getLastRunOutcome();
+      if (!outcome || didRender) {
+        return;
+      }
+
+      // A run error (geoscript error or wasm panic) yields no geometry; surface it to the
+      // CLI instead of capturing a blank frame / empty eval. Gated to transient renders so
+      // the prod thumbnail path still tolerates broken saved compositions.
+      if (outcome.type === 'err' && (userData.failRenderOnError || userData.evalRequest)) {
+        fail(outcome.err ?? 'Geoscript run failed');
+        return;
+      }
+
+      if (userData.evalRequest) {
+        didRender = true;
+        ctx!
+          .buildEvalResultJson(userData.evalRequest)
+          .then(json => {
+            (window as any).__geotoyEvalResult = json;
+            (window as any).onEvalReady?.(json);
+          })
+          .catch(err => (window as any).onRenderError?.(err instanceof Error ? err.message : String(err)));
+        return;
+      }
+
+      if (!ctx?.getAreAllMaterialsLoaded()) {
         return;
       }
 

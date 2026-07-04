@@ -2,14 +2,22 @@
 
 This is the LLM/agent companion to Geotoy. It bundles a Geoscript composition
 (code + optional metadata files) into a JSON payload, posts it to the
-geoscript_backend `/render/transient` endpoint, and writes back a PNG (or AVIF
-/ JPEG) of the rendered scene. Nothing touches the database — each render is
-ephemeral.
+geoscript_backend `/render/transient` endpoint, and writes back either a PNG (or
+AVIF / JPEG) of the rendered scene (`render`) or a JSON envelope of the program's
+outputs (`eval`). Nothing touches the database — each run is ephemeral.
+
+Two commands:
+
+- **`geotoy render <path>`** → a rendered image. Look at the scene.
+- **`geotoy eval <path>`** → JSON of the composition's outputs: computed/exported
+  values, `render()`ed meshes, `render_path()`ed paths, `print()` output, and an
+  optional `--expr`. Assert on real numbers/points instead of eyeballing a PNG.
 
 It exists so an agent can do this loop:
 
 1. write/edit Geoscript files locally
-2. `geotoy render my_composition/` → look at the resulting PNG
+2. `geotoy render my_composition/` → look at the resulting PNG, or
+   `geotoy eval my_composition/ --expr '…'` → read the actual values
 3. iterate
 
 ## Install
@@ -224,6 +232,125 @@ the headless equivalent of the app's `n` (normal material), `w` (wireframe), and
 `shift+w` (wireframe x-ray) keybinds. Great for inspecting shading normals (e.g.
 whether a bevel is smooth) without lighting/material noise. `materials.json` is
 ignored for the overridden meshes while this is set.
+
+## `geotoy eval` — extract program outputs as JSON
+
+`geotoy eval <path>` runs a composition exactly like `render` (same prelude,
+globals, tree, async deps, error handling), but instead of a PNG it returns a
+JSON envelope of the program's *outputs*. Use it to assert on real values,
+inspect rendered geometry, or find out *why* a scene came back empty.
+
+```sh
+geotoy eval my_scene/                       # → JSON on stdout
+geotoy eval my_scene/ --expr 'my_radius'    # + the value of an expression
+geotoy eval my_scene/ --meshes glb -o out.json   # + full geometry as out.glb
+```
+
+### Envelope
+
+```jsonc
+{
+  "ok": true,
+  "error": null,
+  "stats":   { "meshes": 1, "paths": 1, "lights": 2, "vertices": 88, "faces": 75, "runtimeMs": 3.1 },
+  "exports": { "<name>": <value>, ... },       // the composition's own top-level bindings
+  "expr":    <value>,                          // only with --expr
+  "prints":  ["...", ...],                      // print() output, in call order
+  "meshes":  [{ "id", "sourceModule", "material", "vertices", "faces", "bbox": { "min", "max" } }],
+  "paths":   [{ "id", "sourceModule", "points": [[x,y,z], ...] }],
+  "lights":  [{ "type", "color", "intensity", "position" }],
+  "meshData": { ... }                          // only with --meshes glb|gltf|obj|json
+}
+```
+
+### Tagged values
+
+Every value (`exports`, `expr`, sequence items, map entries) is tagged:
+`{ "t": <type>, "v": <payload> }`.
+
+| `t`        | shape                                                                  |
+| ---------- | ---------------------------------------------------------------------- |
+| `nil`      | `{}`                                                                    |
+| `int`      | `v`: number                                                            |
+| `float`    | `v`: number — or the string `"NaN"` / `"Infinity"` / `"-Infinity"`     |
+| `bool`     | `v`: bool                                                              |
+| `string`   | `v`: string                                                            |
+| `vec2`     | `v`: `[x, y]`                                                          |
+| `vec3`     | `v`: `[x, y, z]`                                                       |
+| `mat4`     | `v`: 16 numbers (column-major)                                         |
+| `seq`      | `v`: items, `len`: number, optional `truncated: true` (capped at 4096) |
+| `map`      | `v`: object of tagged values                                          |
+| `mesh`     | `vertices`, `faces` (counts; full geometry is in `meshes`/`meshData`) |
+| `material` | `name`                                                                |
+| `light`    | `v`: the light's JSON                                                 |
+| `callable` | with `--samples N`: `samples: [{ t_in, out | error }]` over t∈[0,1]   |
+
+Non-finite floats are emitted as strings on purpose, so a NaN leaking into a
+value is visible rather than crashing the JSON.
+
+### What gets captured
+
+- **`exports`** — every top-level `name = …` binding in `_root`. Prelude/globals
+  names are excluded, so this is just the composition's own definitions.
+- **`meshes`** — one entry per `render()`ed mesh (counts + world-space bbox).
+  Full geometry with `--meshes` (below).
+- **`paths`** — one entry per `render_path()`ed path, as a world-space polyline.
+- **`lights`** — one entry per rendered light.
+- **`prints`** — everything `print(...)` emitted, in order.
+- **`expr`** — `--expr '<geoscript>'` is appended to `_root` as a trailing
+  expression, so it can reference the composition's definitions and is evaluated
+  as part of the run. A malformed expr fails the whole run (see errors below).
+
+### Mesh geometry — `--meshes <fmt>`
+
+| `--meshes`          | Effect                                                            |
+| ------------------- | ---------------------------------------------------------------- |
+| `summary` (default) | counts + bbox only, in `meshes[]`                                |
+| `glb`               | binary glTF — recommended for loading into other apps            |
+| `gltf`              | text glTF                                                        |
+| `obj`               | Wavefront OBJ                                                    |
+| `json`              | raw `positions`/`normals`/`uvs`/`indices` arrays + `matrixWorld` |
+
+For `glb`/`gltf`/`obj` the geometry goes to a **sidecar file** next to `--out`
+(or to `--meshes-out <file>`), and `meshData` points at it:
+`{ "format": "glb", "path": "out.glb", "bytes": 2392 }`. With no `--out` and no
+`--meshes-out` (pure stdout), the bytes are base64-embedded in `meshData`
+instead. This reuses the editor's "Export Scene" serializer: geometry is baked
+to world space (the same `render()`-composed transforms the export button uses),
+lights are included, paths are not (they're already in `paths[]`). It is the
+canonical `render()` output — material-driven UV unwrap is a render-time
+transform and is not applied here.
+
+### eval options
+
+```
+  -o, --out <file>     Write the JSON envelope to a file (default: stdout)
+  --expr <geoscript>   Evaluate an expression against the composition's root scope
+  --samples <n>        Sample callable values at N points over t in [0,1] (default 0)
+  --meshes <fmt>       summary (default) | glb | gltf | obj | json
+  --meshes-out <file>  Where to write full mesh geometry (default: beside --out)
+```
+
+Plus the common `--dev` / `--backend` / `--token` / `--no-prelude` / `--timeout`
+(eval defaults to a 30s timeout). All the composition-directory inputs
+(`main.geo`, `globals.geo`, `nodes/`, `tree.json`, …) work identically to
+`render`.
+
+## Errors & Wasm panics — no more silent blank output
+
+A geoscript error (bad argument, a NaN reaching a path sampler, …) or a Wasm
+panic used to produce a valid-but-blank PNG (or an empty eval) with no
+diagnostic. Both commands now **fail loudly**: the message comes back as a
+non-zero exit with the error on stderr, e.g.
+
+```
+Server returned 500 Internal Server Error
+at line 8, column 1: No valid function signature found for `render_path` ...
+```
+
+Wasm panics are reported with their real message and location (not the opaque
+`RuntimeError: unreachable` the trap otherwise surfaces as), and are still
+logged to the browser console and captured by Sentry.
 
 ### Defaults & overrides
 

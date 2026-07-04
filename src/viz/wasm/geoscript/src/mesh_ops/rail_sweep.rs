@@ -871,10 +871,18 @@ fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents
   mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
 }
 
-/// Duplicate a boundary ring `[ring_start, ring_start+count)` into cap-owned verts carrying
-/// planar profile-space UVs (`offset` projected onto the cap `PlaneFrame`) + an in-plane tangent
-/// (`u_axis`). Keeps the tube body's arc-length UV / spine tangent intact on the shared ring and
-/// gives the cap edge a sharp normal (cap verts touch only cap faces). Returns the first dup index.
+/// Total edge length of a closed loop of points (includes the last→first edge).
+fn loop_perimeter(pts: &[Vec3]) -> f32 {
+  let n = pts.len();
+  (0..n).map(|i| (pts[(i + 1) % n] - pts[i]).norm()).sum()
+}
+
+/// Duplicate a boundary ring `[ring_start, ring_start+count)` into cap-owned verts carrying planar
+/// cap-frame UVs (`offset` projected onto the `PlaneFrame`, scaled by `cap_uv_scale`) + an in-plane
+/// tangent (`u_axis`). Callers pre-divide `cap_uv_scale.y` by the cap's mean loop arc length so cap
+/// V lives in the body's perimeter-normalized V space (matched texel density across the seam). Keeps
+/// the body's arc-length UV / spine tangent intact on the shared ring and gives the cap edge a sharp
+/// normal (cap verts touch only cap faces). Returns the first dup index.
 fn dup_cap_ring(
   verts: &mut Vec<Vec3>,
   uvs: &mut Vec<[f32; 2]>,
@@ -1124,6 +1132,7 @@ pub fn rail_sweep(
       // `split_seams` duplicates the boundary ring so the cap carries planar UVs/tangents (at the
       // cost of watertight topology); otherwise the cap reuses the shared ring verts (2-manifold).
       let cap_base = if split_seams {
+        let cap_v_scale = 1. / loop_perimeter(&verts[ring_start..ring_start + count]).max(1e-6);
         dup_cap_ring(
           &mut verts,
           &mut uvs,
@@ -1131,7 +1140,7 @@ pub fn rail_sweep(
           ring_start,
           count,
           &frame,
-          Vec2::new(1., 1.),
+          Vec2::new(1., cap_v_scale),
         )
       } else {
         ring_start
@@ -1434,18 +1443,20 @@ fn rail_sweep_dynamic(
         // `split_seams` gives caps their own planar-UV verts (non-watertight); otherwise caps
         // reuse the shared ring verts (2-manifold).
         let cap_bases: Vec<usize> = if split_seams {
+          // Normalize cap V by the group's mean loop arc length so cap texel density matches the
+          // walls, whose V spans [0,1] per loop; a holed cap lands between outer/inner wall density.
+          let mean_perimeter = {
+            let sum: f32 = loop_meta
+              .iter()
+              .map(|&(s, c)| loop_perimeter(&verts[s..s + c]))
+              .sum();
+            (sum / loop_meta.len() as f32).max(1e-6)
+          };
+          let scale = Vec2::new(cap_uv_scale.x, cap_uv_scale.y / mean_perimeter);
           loop_meta
             .iter()
             .map(|&(start, count)| {
-              dup_cap_ring(
-                &mut verts,
-                &mut uvs,
-                &mut tangents,
-                start,
-                count,
-                &frame,
-                cap_uv_scale,
-              )
+              dup_cap_ring(&mut verts, &mut uvs, &mut tangents, start, count, &frame, scale)
             })
             .collect()
         } else {
@@ -2530,6 +2541,152 @@ mod tests {
       let dir = Vec3::new(t[0], t[1], t[2]);
       assert!((dir - Vec3::new(0., 0., 1.)).norm() < 1e-5, "tangent not +Z: {dir:?}");
     }
+  }
+
+  /// Groups verts by bit-exact position, keeping only positions shared by >1 vert (seam clones and
+  /// crease splits), and returns each group's shading normals.
+  fn coincident_normal_groups(mesh: &mesh::LinkedMesh<()>) -> Vec<Vec<Vec3>> {
+    let mut map: FxHashMap<[u32; 3], Vec<Vec3>> = FxHashMap::default();
+    for (k, v) in mesh.vertices.iter() {
+      let n = mesh.shading_normal(k).expect("every vertex has a shading normal");
+      let p = v.position;
+      map
+        .entry([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
+        .or_default()
+        .push(n);
+    }
+    map.into_values().filter(|g| g.len() > 1).collect()
+  }
+
+  fn max_pairwise_angle_deg(normals: &[Vec3]) -> f32 {
+    let mut worst = 0f32;
+    for i in 0..normals.len() {
+      for j in i + 1..normals.len() {
+        worst = worst.max(normals[i].angle(&normals[j]).to_degrees());
+      }
+    }
+    worst
+  }
+
+  #[test]
+  fn compute_normals_creases_square_profile_and_preserves_uvs() {
+    use mesh::linked_mesh::ChannelStore;
+
+    let spine = vec![
+      Vec3::new(0., 0., 0.),
+      Vec3::new(0., 0., 1.),
+      Vec3::new(0., 0., 2.),
+    ];
+    let square = [
+      Vec2::new(1., 1.),
+      Vec2::new(-1., 1.),
+      Vec2::new(-1., -1.),
+      Vec2::new(1., -1.),
+    ];
+    let mut mesh = rail_sweep(
+      &spine,
+      4,
+      FrameMode::Rmf,
+      false,
+      false,
+      |_, _| Ok(0.),
+      move |_, _, _, v_ix, _| Ok(square[v_ix % 4]),
+      None,
+      None,
+      None,
+      true,
+    )
+    .unwrap();
+
+    // rail_sweep with `split_seams` bakes fully-smooth normals; the only coincident verts are the
+    // V-seam clones, which share a normal, so nothing reads as a crease yet.
+    let creases = |m: &mesh::LinkedMesh<()>| {
+      coincident_normal_groups(m)
+        .iter()
+        .filter(|g| max_pairwise_angle_deg(g) > 45.)
+        .count()
+    };
+    assert_eq!(creases(&mesh), 0, "rail_sweep should bake fully-smooth normals");
+
+    mesh.recompute_shading_normals_preserving_seams(45f32.to_radians());
+
+    // The 90° profile corners now carry sharp (split) normals...
+    assert!(creases(&mesh) >= 4, "expected creased profile corners, got {}", creases(&mesh));
+    // ...while the procedural UV wrap survives untouched: every vertex keeps a uv and V still spans
+    // the 0→1 seam.
+    assert_eq!(mesh.shading_normals.len(), mesh.vertices.len(), "normals complete");
+    let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
+      panic!("uv channel missing after compute_normals");
+    };
+    assert_eq!(uv.len(), mesh.vertices.len(), "every vertex retains a uv");
+    let (mut min_v, mut max_v) = (f32::MAX, f32::MIN);
+    for u in uv.values() {
+      min_v = min_v.min(u[1]);
+      max_v = max_v.max(u[1]);
+    }
+    assert!(
+      min_v.abs() < 1e-4 && (max_v - 1.).abs() < 1e-4,
+      "procedural V seam should survive 0..1, got {min_v}..{max_v}"
+    );
+  }
+
+  #[test]
+  fn compute_normals_keeps_smooth_profile_seam_smooth() {
+    let spine = vec![Vec3::new(0., 0., 0.), Vec3::new(0., 0., 2.)];
+    let mut mesh = rail_sweep(
+      &spine,
+      32,
+      FrameMode::Rmf,
+      false,
+      false,
+      |_, _| Ok(0.),
+      |_, v_norm, _, _, _| {
+        let a = v_norm * std::f32::consts::TAU;
+        Ok(Vec2::new(a.cos(), a.sin()))
+      },
+      None,
+      None,
+      None,
+      true,
+    )
+    .unwrap();
+
+    mesh.recompute_shading_normals_preserving_seams(45f32.to_radians());
+
+    // Uncapped smooth circle: the only coincident verts are the V-seam clones. The seam-preserving
+    // pass re-averages each clone pair to a shared normal, so no lighting crease appears at the seam
+    // (a plain re-separate would leave a ~11° discontinuity here).
+    let groups = coincident_normal_groups(&mesh);
+    assert!(!groups.is_empty(), "expected V-seam clones to inspect");
+    let worst = groups.iter().map(|g| max_pairwise_angle_deg(g)).fold(0f32, f32::max);
+    assert!(worst < 1., "smooth profile seam should stay smooth, worst angle {worst}°");
+  }
+
+  #[test]
+  fn compute_normals_e2e_creases_and_keeps_uvs() {
+    let src = r#"
+rail_sweep(
+  spine_resolution=3,
+  ring_resolution=4,
+  spine=|u| v3(0, 0, u * 2),
+  profile=|u, v| { a = v * 6.28318530718; v2(cos(a), sin(a)) },
+  split_seams=true,
+) | compute_normals | render
+"#;
+    let ctx = crate::parse_and_eval_program(src).unwrap();
+    let binding = ctx.rendered_meshes.into_inner();
+    let mesh = &binding[0].mesh.mesh;
+
+    assert_eq!(mesh.shading_normals.len(), mesh.vertices.len(), "normals complete");
+    assert!(mesh.has_flag(mesh_flags::NO_WELD), "compute_normals keeps seams");
+    assert!(mesh.vertex_channels.contains_key("uv"), "procedural uv preserved");
+
+    // 90° corners of the 4-sided ring crease into split normals.
+    let creases = coincident_normal_groups(mesh)
+      .iter()
+      .filter(|g| max_pairwise_angle_deg(g) > 45.)
+      .count();
+    assert!(creases >= 4, "expected creased corners e2e, got {creases}");
   }
 
   #[test]

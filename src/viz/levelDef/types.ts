@@ -326,18 +326,65 @@ export const SpawnerDefSchema = z.object({
 export type SpawnerDef = z.infer<typeof SpawnerDefSchema>;
 
 /**
- * Marks an object as a dash-token spawn point. The object is a position-only marker:
- * the animated default token (or a scene-overridden one) is spawned at its world position
- * and no static mesh/collision is created for it, so `asset` may be omitted.
+ * Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`
+ * are explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world
+ * transform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.
  */
-export const DashTokenMetaSchema = z.object({
-  /**
-   * Checkpoint index this token belongs to. Currently metadata only — dash-token respawn
-   * is driven by the controller's per-checkpoint state snapshot, not this field.
-   */
+const ParkourRegionSchema = z.discriminatedUnion('shape', [
+  z.object({ shape: z.literal('box'), halfExtents: Vec3 }),
+  z.object({ shape: z.literal('sphere'), radius: z.number().positive() }),
+  z.object({
+    shape: z.literal('mesh'),
+    /** Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations. */
+    collider: z.enum(['trimesh', 'convexHull', 'aabb']).optional(),
+    /** trimesh only: uniform inflation of the sensor volume. Default: 0 */
+    margin: z.number().optional(),
+  }),
+]);
+export type ParkourRegion = z.infer<typeof ParkourRegionSchema>;
+
+/** Launches the player on contact. `direction` is world-space (default straight up). */
+const JumpPadEntitySchema = z.object({
+  kind: z.literal('jumpPad'),
+  region: ParkourRegionSchema,
+  baseImpulse: z.number(),
+  speedScaling: z.number(),
+  /** Default: 0.15 */
+  cooldownSeconds: z.number().optional(),
+  /** World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the
+   *  object's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0] */
+  direction: z.union([Vec3, z.literal('matchMeshRotation')]).optional(),
+  useExternalVelocity: z.boolean().optional(),
+});
+
+/** Continuously pushes the player while inside. `direction` is world-space. */
+const BoostZoneEntitySchema = z.object({
+  kind: z.literal('boostZone'),
+  region: ParkourRegionSchema,
+  strength: z.number(),
+  directionalBias: z.number(),
+  direction: Vec3,
+});
+
+/**
+ * Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the
+ * animated token + collect ghost are spawned at the object's world position, so `asset` may be
+ * omitted and no static mesh/collision is created.
+ */
+const DashTokenEntitySchema = z.object({
+  kind: z.literal('dashToken'),
+  /** Checkpoint index this token belongs to. Metadata only — respawn is driven by the
+   * controller's per-checkpoint state snapshot, not this field. */
   checkpointIx: z.number().int().optional(),
 });
-export type DashTokenMeta = z.infer<typeof DashTokenMetaSchema>;
+
+/** A standalone parkour entity riding an object's transform (asset-less marker or on a mesh). */
+export const ParkourEntitySchema = z.discriminatedUnion('kind', [
+  JumpPadEntitySchema,
+  BoostZoneEntitySchema,
+  DashTokenEntitySchema,
+]);
+export type ParkourEntity = z.infer<typeof ParkourEntitySchema>;
 
 export const ParkourObjectMetaSchema = z.object({
   /** Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint. */
@@ -346,15 +393,15 @@ export const ParkourObjectMetaSchema = z.object({
   win: z.boolean().optional(),
   /** Per-object boost-surface config; overrides any material-level config on the same object. */
   boostSurface: BoostSurfaceConfigSchema.optional(),
-  /** Marks this object as a dash-token spawn point (position-only marker). */
-  dashToken: DashTokenMetaSchema.optional(),
+  /** Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform. */
+  entities: z.array(ParkourEntitySchema).optional(),
 });
 export type ParkourObjectMeta = z.infer<typeof ParkourObjectMetaSchema>;
 
 export const ObjectDefSchema = z
   .object({
     id: z.string(),
-    /** Key into the top-level `assets` registry. Optional only for dash-token markers (`parkour.dashToken`). */
+    /** Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`). */
     asset: z.string().optional(),
     /** World-space position. Default: [0, 0, 0] */
     position: Vec3.optional(),
@@ -391,8 +438,8 @@ export const ObjectDefSchema = z
     message: '"behaviors" and "spawner" are mutually exclusive on an object',
     path: ['spawner'],
   })
-  .refine(def => def.asset !== undefined || def.parkour?.dashToken !== undefined, {
-    message: '"asset" is required unless the object is a dash-token marker ("parkour.dashToken")',
+  .refine(def => def.asset !== undefined || (def.parkour?.entities?.length ?? 0) > 0, {
+    message: '"asset" is required unless the object is a parkour marker ("parkour.entities")',
     path: ['asset'],
   });
 

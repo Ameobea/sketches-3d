@@ -83,8 +83,14 @@ export class LevelEditorApi {
     index?: number;
   }): Promise<ObjectDef | null> => this.reqJson('add', '', jsonInit('POST', body));
 
-  sendPasteGroup = (def: ObjectGroupDef, parentId?: string, index?: number): Promise<ObjectGroupDef | null> =>
-    this.reqJson('paste group', '', jsonInit('POST', { type: 'group_paste', def, parentId, index }));
+  /** Paste a full node def (leaf or group) — the server assigns fresh ids and preserves every
+   *  other field, so behaviors/parkour/userData/flags survive (unlike the minimal `sendAdd`). */
+  sendPaste = (
+    def: ObjectDef | ObjectGroupDef,
+    parentId?: string,
+    index?: number
+  ): Promise<ObjectDef | ObjectGroupDef | null> =>
+    this.reqJson('paste', '', jsonInit('POST', { type: 'group_paste', def, parentId, index }));
 
   sendAddGroup = (body: {
     position: [number, number, number];

@@ -51,6 +51,8 @@ interface TransientRenderOptions {
   timeoutMs?: number;
   /** Debug material applied to all meshes before capture: 'normal' | 'wireframe' | 'wireframe-xray'. */
   materialOverride?: 'normal' | 'wireframe' | 'wireframe-xray';
+  /** `geotoy eval`: serialize the run's outputs to JSON instead of rendering an image. */
+  eval?: unknown;
 }
 
 interface TransientRenderBody {
@@ -59,12 +61,15 @@ interface TransientRenderBody {
   options?: TransientRenderOptions;
 }
 
+/** How a render page signalled completion: a normal frame, or an eval-mode JSON payload. */
+type ReadySignal = { kind: 'render' } | { kind: 'eval'; json: string };
+
 async function setupPage(
   page: Page,
   url: string,
   abortController: AbortController,
   opts: { width?: number; height?: number; allowLocalhost?: boolean; timeoutMs?: number } = {}
-): Promise<{ promise: Promise<void>; getDiagnostics: () => string[] }> {
+): Promise<{ promise: Promise<ReadySignal>; getDiagnostics: () => string[] }> {
   await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
   const allowLocalhost = !!opts.allowLocalhost;
   const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
@@ -95,7 +100,7 @@ async function setupPage(
     });
   });
 
-  const renderReadyPromise = new Promise<void>((resolve, reject) => {
+  const renderReadyPromise = new Promise<ReadySignal>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Render timed out after ${timeoutMs}ms`)), timeoutMs);
 
     const onAbort = () => {
@@ -110,11 +115,25 @@ async function setupPage(
     }
 
     abortController.signal.addEventListener('abort', onAbort);
-
-    page.exposeFunction('onRenderReady', () => {
+    const settle = () => {
       clearTimeout(timeout);
       abortController.signal.removeEventListener('abort', onAbort);
-      resolve();
+    };
+
+    page.exposeFunction('onRenderReady', () => {
+      settle();
+      resolve({ kind: 'render' });
+    });
+    // A geoscript run error / wasm panic — fail the render with the message instead of
+    // capturing a blank frame, so the CLI reports why.
+    page.exposeFunction('onRenderError', (msg: string) => {
+      settle();
+      reject(new Error(typeof msg === 'string' && msg.length ? msg : 'Geoscript run failed'));
+    });
+    // Eval mode: the page serialized the run's outputs to JSON instead of rendering.
+    page.exposeFunction('onEvalReady', (json: string) => {
+      settle();
+      resolve({ kind: 'eval', json: typeof json === 'string' ? json : String(json) });
     });
   });
 
@@ -186,7 +205,7 @@ async function render(
   url: string,
   abortController: AbortController,
   opts: RenderOpts = {}
-): Promise<Buffer> {
+): Promise<Buffer | { evalJson: string }> {
   console.log('Launching browser...');
   const browser: Browser = await puppeteer.launch({ args: BROWSER_ARGS });
 
@@ -208,7 +227,12 @@ async function render(
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
       console.log('Waiting for visualization to signal readiness...');
-      await renderReadyPromise;
+      const ready = await renderReadyPromise;
+
+      if (ready.kind === 'eval') {
+        console.log('Received eval result.');
+        return { evalJson: ready.json };
+      }
 
       console.log('Taking screenshot...');
       const screenshotBuffer = await page.screenshot();
@@ -272,7 +296,7 @@ app.get('/render/:id', async (req: Request, res: Response) => {
     const url = `${baseUrl}${sceneId}?render=true&admin_token=${adminToken}&version_id=${versionID}`;
     const screenshot = await render(url, abortController);
     res.set('Content-Type', 'image/avif');
-    res.send(screenshot);
+    res.send(screenshot as Buffer);
   } catch (error) {
     if (error instanceof Error && error.message === 'Render cancelled by newer request') {
       console.log(`Render for composition ${sceneId} version ${versionNum} was cancelled`);
@@ -312,7 +336,7 @@ app.get('/render_material/:id', async (req: Request, res: Response) => {
     const url = `${baseUrl}${materialId}?render=true&admin_token=${adminToken}`;
     const screenshot = await render(url, abortController);
     res.set('Content-Type', 'image/avif');
-    res.send(screenshot);
+    res.send(screenshot as Buffer);
   } catch (error) {
     if (error instanceof Error && error.message === 'Render cancelled by newer request') {
       console.log(`Render for material ${materialId} was cancelled`);
@@ -373,8 +397,8 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
   });
 
   try {
-    const payload = { tree, metadata, materialOverride: options.materialOverride };
-    const image = await render(url, abortController, {
+    const payload = { tree, metadata, materialOverride: options.materialOverride, eval: options.eval };
+    const out = await render(url, abortController, {
       encode,
       width,
       height,
@@ -386,8 +410,13 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
         }, payload);
       },
     });
-    res.set('Content-Type', contentType);
-    res.send(image);
+    if (typeof out === 'object' && !Buffer.isBuffer(out)) {
+      res.set('Content-Type', 'application/json');
+      res.send(out.evalJson);
+    } else {
+      res.set('Content-Type', contentType);
+      res.send(out);
+    }
   } catch (error) {
     console.error('Transient render failed:', error);
     res.status(500).type('text/plain').send(error instanceof Error ? error.message : 'Render failed');

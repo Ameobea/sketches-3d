@@ -41,6 +41,35 @@ const initGeoscript = async () => {
 
 const filterNils = <T>(arr: (T | null | undefined)[]): T[] => arr.filter((x): x is T => x != null);
 
+// `console_error_panic_hook` logs the real `panicked at …` message (with location + JS
+// stack) to `console.error` synchronously, just before the wasm trap surfaces in JS as a
+// bare `RuntimeError: unreachable`. Capture that string here so the actual panic — not the
+// useless trap — reaches the caller. The original `console.error` still runs, so worker
+// console logging (and anything scraping it, e.g. the headless harness) is unaffected.
+let lastWasmPanic: string | null = null;
+{
+  const orig = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    const first = args[0];
+    if (typeof first === 'string' && first.includes('panicked at')) {
+      lastWasmPanic = args.map(a => (typeof a === 'string' ? a : String(a))).join(' ');
+    }
+    orig(...args);
+  };
+}
+
+/** Prefer the captured Rust panic message over the opaque `unreachable` trap it throws as. */
+const enrichWasmError = (err: unknown): Error => {
+  const panic = lastWasmPanic;
+  lastWasmPanic = null;
+  if (panic) {
+    const e = new Error(panic);
+    e.name = 'WasmPanic';
+    return e;
+  }
+  return err instanceof Error ? err : new Error(String(err));
+};
+
 export interface GeoscriptAsyncDeps {
   geodesics?: boolean;
   cgal?: boolean;
@@ -175,20 +204,44 @@ const methods = {
       Geoscript.geoscript_repl_clear_ambient_scope(ctxPtr);
       return;
     }
-    Geoscript.geoscript_repl_set_ambient_scope_from_sources(ctxPtr, sources);
+    lastWasmPanic = null;
+    try {
+      Geoscript.geoscript_repl_set_ambient_scope_from_sources(ctxPtr, sources);
+    } catch (err) {
+      throw enrichWasmError(err);
+    }
   },
   eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
-    Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
-    if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
-      return { durationMs: 0, usedDepsBitmask: 0 };
-    }
+    lastWasmPanic = null;
+    try {
+      Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
+      if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
+        return { durationMs: 0, usedDepsBitmask: 0 };
+      }
 
-    const start = performance.now();
-    Geoscript.geoscript_repl_eval(ctxPtr);
-    const durationMs = performance.now() - start;
-    const usedDepsBitmask = Geoscript.geoscript_repl_get_used_async_deps(ctxPtr);
-    return { durationMs, usedDepsBitmask };
+      const start = performance.now();
+      Geoscript.geoscript_repl_eval(ctxPtr);
+      const durationMs = performance.now() - start;
+      const usedDepsBitmask = Geoscript.geoscript_repl_get_used_async_deps(ctxPtr);
+      return { durationMs, usedDepsBitmask };
+    } catch (err) {
+      throw enrichWasmError(err);
+    }
   },
+  /** Eval-mode: root program's own top-level bindings as tagged-JSON (see `value_json.rs`). */
+  getExportsJson: (ctxPtr: number, sampleCount: number): string =>
+    Geoscript.geoscript_repl_get_exports_json(ctxPtr, sampleCount),
+  /** Eval-mode: tagged-JSON value of the run's last top-level statement (`--expr` appends it). */
+  getLastValueJson: (ctxPtr: number, sampleCount: number): string => {
+    lastWasmPanic = null;
+    try {
+      return Geoscript.geoscript_repl_get_last_value_json(ctxPtr, sampleCount);
+    } catch (err) {
+      throw enrichWasmError(err);
+    }
+  },
+  /** Eval-mode: drain `print()` output captured during the last run. */
+  takePrints: (ctxPtr: number): string[] => Geoscript.geoscript_repl_take_prints(ctxPtr),
   getErr: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_get_err(ctxPtr);
   },

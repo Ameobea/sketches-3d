@@ -65,6 +65,7 @@ pub mod preprocess;
 mod seq;
 pub mod ty;
 pub mod type_infer;
+pub mod value_json;
 
 pub use self::ast::{traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
@@ -1653,6 +1654,16 @@ impl Scope {
     }
     out
   }
+
+  /// This scope's own bindings, excluding the parent chain.
+  pub fn own_bindings(&self) -> Vec<(Sym, Value)> {
+    self.vars.borrow().iter().map(|(k, v)| (*k, v.clone())).collect()
+  }
+
+  /// Keys of this scope's own bindings, excluding the parent chain.
+  pub fn own_keys(&self) -> FxHashSet<Sym> {
+    self.vars.borrow().keys().copied().collect()
+  }
 }
 
 /// Handle to an interned symbol.
@@ -1947,6 +1958,8 @@ pub struct EvalCtx {
   /// Per-module-eval counter assigning `@N` ids to unnamed gizmo calls. Saved/reset
   /// by the module-context guard so nested module evals don't interfere.
   pub current_module_unnamed_gizmo_count: Cell<u32>,
+  /// Text emitted via `print()` this run, captured for `geotoy eval`. Cleared at run start.
+  pub prints: RefCell<Vec<String>>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -1990,6 +2003,7 @@ impl Default for EvalCtx {
       gizmo_values: RefCell::new(FxHashMap::default()),
       current_module_gizmo_reads: RefCell::new(None),
       current_module_unnamed_gizmo_count: Cell::new(0),
+      prints: RefCell::new(Vec::new()),
     }
   }
 }
@@ -3804,19 +3818,40 @@ pub fn parse_program_maybe_with_prelude_and_ambient(
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
-  // When an ambient scope is installed, the root program (treated as a module for
-  // hierarchy purposes) gets a fresh clone of it as its base scope, rather than the
-  // long-lived `ctx.globals` that accumulates user vars across calls.
-  let ambient_scope_owned;
-  let scope: &Scope = if ctx.ambient_scope.borrow().is_some() {
-    ambient_scope_owned = ctx.fresh_module_scope();
-    &ambient_scope_owned
+  // When an ambient scope is installed the root program (treated as a module) gets a fresh clone
+  // of it so its vars don't leak into the long-lived `globals`; otherwise it evaluates directly
+  // into `globals` so top-level bindings persist for later `get_global` reads.
+  if ctx.ambient_scope.borrow().is_some() {
+    let scope = ctx.fresh_module_scope();
+    eval_program_into_scope(ctx, ast, &scope).map(|_| ())
   } else {
-    &ctx.globals
-  };
+    eval_program_into_scope(ctx, ast, &ctx.globals).map(|_| ())
+  }
+}
 
+/// Base scope for the root program: a fresh clone of the ambient scope when installed
+/// (so root vars don't leak into the long-lived globals across calls), else `globals`.
+impl EvalCtx {
+  pub fn root_program_scope(&self) -> Scope {
+    if self.ambient_scope.borrow().is_some() {
+      self.fresh_module_scope()
+    } else {
+      self.globals.clone()
+    }
+  }
+}
+
+/// Evaluate `ast`'s top-level statements against `scope`, returning the value of the
+/// last statement. Unlike `eval_program_with_ctx` the caller owns `scope`, so it can be
+/// inspected afterward (used by `geotoy eval` to read exports / eval follow-up exprs).
+pub fn eval_program_into_scope(
+  ctx: &EvalCtx,
+  ast: &Program,
+  scope: &Scope,
+) -> Result<Value, ErrorStack> {
+  let mut last = Value::Nil;
   for statement in &ast.statements {
-    let _val = match ctx.eval_top_level_statement(statement, scope)? {
+    last = match ctx.eval_top_level_statement(statement, scope)? {
       ControlFlow::Continue(val) => val,
       ControlFlow::Break(_) => {
         return Err(ErrorStack::new(
@@ -3831,7 +3866,7 @@ pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorSt
     };
   }
 
-  Ok(())
+  Ok(last)
 }
 
 pub fn parse_and_eval_program_with_ctx(
@@ -6791,6 +6826,54 @@ fn test_module_error_reports_module_name_and_local_line() {
     err.contains("broken"),
     "error should mention the failing module name, got: {err}"
   );
+}
+
+#[test]
+fn test_neq_numeric() {
+  let get = |src: &str| {
+    let ctx = EvalCtx::default();
+    let scope = ctx.evaluate_module_to_scope(src).unwrap();
+    scope
+      .get(ctx.interned_symbols.intern("r"))
+      .unwrap()
+      .as_bool()
+      .unwrap()
+  };
+  assert!(!get("r = 2 != 2"));
+  assert!(get("r = 2 != 3"));
+  assert!(!get("r = 1.5 != 1.5"));
+  assert!(get("r = 1.5 != 2.5"));
+}
+
+/// `!=` on numbers used to be implemented as `==`, inverting conditionals that branched on it.
+/// A closure whose body rotates a profile only when `r != 0` then produced identical output for
+/// every nonzero arg (see the `rail_sweep` ridge repro).
+#[test]
+fn test_neq_in_closure_conditional_branches_per_arg() {
+  let src = r#"
+ridge = |r: num = 0| {
+  x = 100
+  if r != 0 {
+    x = x + r
+  }
+  x
+}
+a = ridge(0)
+b = ridge(2)
+c = ridge(5)
+"#;
+  let ctx = EvalCtx::default();
+  let scope = ctx.evaluate_module_to_scope(src).unwrap();
+  let read = |name: &str| {
+    scope
+      .get(ctx.interned_symbols.intern(name))
+      .unwrap()
+      .as_int()
+      .unwrap()
+  };
+  assert_eq!(read("a"), 100);
+  assert_eq!(read("b"), 102);
+  assert_eq!(read("c"), 105);
 }
 
 #[test]

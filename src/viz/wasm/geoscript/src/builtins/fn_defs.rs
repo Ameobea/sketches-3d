@@ -6563,7 +6563,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
-            description: "Per-axis multiplier baked into the planar cap UVs when `split_seams` is set (the cap UV is the profile cross-section in world units). Lets the caps have a texture density independent of the swept body, e.g. set it to undo an anisotropic material `uvScale` so the cap reads isotropically instead of stretched. Default (1, 1) = raw world-unit profile coordinates. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
+            description: "Extra per-axis multiplier on the planar cap UVs when `split_seams` is set. Caps are baked to match the swept walls' texel density automatically: U in world units (like the body's arc-length U) and V normalized by the cap's mean loop perimeter (like the body's per-loop [0,1] V), so the same material `uvScale` reads consistently across the seam and holed caps land between the outer/inner wall density. This multiplier layers on top for manual tweaks; default (1, 1) keeps the matched density. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
           },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
@@ -7254,6 +7254,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Procedurally generates UV coordinates and tangents for a mesh, returning a new mesh with `uv` and `tangent` vertex attributes populated.  Conformal types (auto/unwrap/disk/sphere) are backed by the BFF unwrap module; \"planar\" is a native planar projection.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "compute_normals" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "smooth_angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Dihedral crease threshold in degrees: an edge whose two faces differ in orientation by more than this becomes a sharp (hard) shading edge, while smoother edges are shaded smooth.  Larger values smooth more.  Defaults to the runtime sharp-angle threshold (see `set_sharp_angle_threshold`).",
+          },
+        ],
+        description: "Recomputes a mesh's shading normals using dihedral-angle auto-smoothing (like Blender's shade-auto-smooth), replacing any existing normals so hard edges get crisp creasing while smooth regions stay smooth.  Existing `uv`/`tangent` attributes are preserved, and authored attribute seams (e.g. a `rail_sweep` `split_seams` UV seam, or a `compute_uvs` cut) that run through a smooth region are re-smoothed so they don't read as a lighting crease.  Useful after `rail_sweep` with `split_seams` (which bakes fully-smooth normals) to restore crisp creasing without losing the procedural UVs.",
         return_type: &[ArgType::Mesh],
       },
     ],
