@@ -129,6 +129,14 @@ export class LevelEditorApi {
     await this.fetchOk('material assignment save', '', jsonInit('PATCH', { id, material }));
   };
 
+  saveCompositionMaterialMap = async (assetId: string, materialMap: Record<string, string>) => {
+    await this.fetchOk(
+      'composition material-map save',
+      '/composition-material-map',
+      jsonInit('PATCH', { assetId, materialMap })
+    );
+  };
+
   saveMaterial = async (id: string, def: import('./types').MaterialDef) => {
     await this.fetchOk('material save', '/materials', jsonInit('PUT', { name: id, def }));
   };

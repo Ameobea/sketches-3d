@@ -39,19 +39,31 @@
     },
     "triangle_grid": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/triangle_grid" }
+      "extends": {
+        "type": "library",
+        "path": "procedural/triangle_grid"
+      }
     },
     "grate_trench": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/grate_trench" }
+      "extends": {
+        "type": "library",
+        "path": "procedural/grate_trench"
+      }
     },
     "panel_seams": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/panel_seams" }
+      "extends": {
+        "type": "library",
+        "path": "procedural/panel_seams"
+      }
     },
     "pit_grid_trapezoid": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -137,6 +149,18 @@
       },
       "options": {
         "useTriplanarMapping": true
+      }
+    },
+    "pool_tiles_uv": {
+      "type": "customShader",
+      "extends": {
+        "type": "geotoy",
+        "materialId": 23
+      },
+      "shaders": {
+        "commonShader": {
+          "file": "shaders/poolTilesUV/common.glsl"
+        }
       }
     }
   }

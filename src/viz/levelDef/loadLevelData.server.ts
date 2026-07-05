@@ -8,13 +8,15 @@ import { getAssetsDir } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
 import { resolveExternalParent, resolveLibraryMaterials } from './libraryMaterials.server';
-import { resolveGeotoyMaterial } from './geotoyMaterials.server';
+import { inlineGeotoyMaterialTextures, resolveGeotoyMaterial } from './geotoyMaterials.server';
+import { compMaterialKey } from 'src/geoscript/runner/bakeComposition';
 import { resolveMaterialExtends } from './materialExtends.server';
 import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
 import type {
   GeotoyCompositionAssetDef,
   GeotoyCompositionAssetDefRaw,
   LevelDef,
+  MaterialDef,
   ObjectDef,
   ObjectGroupDef,
   TextureDef,
@@ -86,7 +88,9 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
  */
 const resolveCompositionAsset = async (
   assetId: string,
-  def: GeotoyCompositionAssetDefRaw
+  def: GeotoyCompositionAssetDefRaw,
+  synthesized: Record<string, TextureDef>,
+  autoImported: Record<string, MaterialDef>
 ): Promise<GeotoyCompositionAssetDef> => {
   const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
   const baseUrl = getGeotoyAPIBaseURL();
@@ -118,9 +122,36 @@ const resolveCompositionAsset = async (
 
   const palette = version.metadata?.materials;
   if (palette) {
-    resolved.materialNames = [...new Set(Object.values(palette.materials).map(m => m.name))];
     const defId = palette.defaultMaterialID;
     if (defId != null) resolved.defaultMaterialName = palette.materials[defId]?.name;
+
+    // Dedup palette materials by geotoy name (first wins) — the runtime `set_material` name list and
+    // the auto-import source both derive from it.
+    const byName = new Map<string, MaterialDef>();
+    for (const m of Object.values(palette.materials)) if (!byName.has(m.name)) byName.set(m.name, m);
+    resolved.materialNames = [...byName.keys()];
+
+    // Auto-import each palette material as an anonymous `__comp:` level material so unmapped
+    // composition meshes render the composition's own material instead of the placeholder. Prod
+    // imports only names not overridden by `materialMap` (lean load); dev imports all so the editor
+    // can revert any row to its composition default.
+    const explicit = def.materialMap ?? {};
+    await Promise.all(
+      [...byName].map(async ([name, paletteDef]) => {
+        if (!dev && name in explicit) return;
+        try {
+          autoImported[compMaterialKey(assetId, name)] = await inlineGeotoyMaterialTextures(
+            paletteDef,
+            synthesized,
+            `composition ${def.compositionId} material "${name}"`
+          );
+        } catch (err) {
+          console.warn(
+            `[loadLevelData] composition "${assetId}": failed to auto-import material "${name}": ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      })
+    );
   } else {
     console.warn(
       `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette in metadata; \`set_material\` calls in its tree may fail`
@@ -198,6 +229,8 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   const withLibrary = resolveLibraryMaterials(rawResult.data);
   // Flattening `extends` can itself pull in geotoy/library parents and synthesize their textures.
   const synthesizedTextures: Record<string, TextureDef> = {};
+  // Anonymous materials auto-imported from composition palettes; merged into `materials` below.
+  const autoImportedMaterials: Record<string, MaterialDef> = {};
   const flatMaterials = withLibrary.materials
     ? await resolveMaterialExtends(withLibrary.materials, resolveExternalParent, synthesizedTextures)
     : withLibrary.materials;
@@ -215,7 +248,10 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           return [assetId, { ...rest, type: 'geoscript' as const, code }];
         }
         if (assetDef.type === 'geotoyComposition') {
-          return [assetId, await resolveCompositionAsset(assetId, assetDef)];
+          return [
+            assetId,
+            await resolveCompositionAsset(assetId, assetDef, synthesizedTextures, autoImportedMaterials),
+          ];
         }
         return [assetId, assetDef];
       })
@@ -242,10 +278,13 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   const mergedTextures = Object.keys(synthesizedTextures).length
     ? { ...withLibrary.textures, ...synthesizedTextures }
     : withLibrary.textures;
+  const mergedMaterials = Object.keys(autoImportedMaterials).length
+    ? { ...(resolvedMaterials ?? {}), ...autoImportedMaterials }
+    : resolvedMaterials;
   const inlinedDef = {
     ...withLibrary,
     assets: resolvedAssets,
-    materials: resolvedMaterials,
+    materials: mergedMaterials,
     textures: mergedTextures,
   };
 

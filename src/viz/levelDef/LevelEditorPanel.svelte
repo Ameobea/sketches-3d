@@ -1,5 +1,6 @@
 <script lang="ts">
   import AssetTreePicker from './AssetTreePicker.svelte';
+  import CompositionMaterialPanel from './CompositionMaterialPanel.svelte';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import InfoPanel from './InfoPanel.svelte';
   import LightInfoPanel from './LightInfoPanel.svelte';
@@ -189,6 +190,13 @@
       onrecenterorigin={actions.recenterGroupOrigin}
       ondelete={actions.deleteSelection}
     />
+    {#if view.compositionMaterials}
+      <CompositionMaterialPanel
+        info={view.compositionMaterials}
+        materialIds={view.materialIds}
+        onmap={actions.mapCompositionMaterial}
+      />
+    {/if}
   {/if}
 </div>
 

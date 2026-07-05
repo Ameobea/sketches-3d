@@ -191,7 +191,17 @@
           "position": [-97.7909, -19.5811, -2.0268],
           "rotation": [0, -3.1416, 0],
           "scale": [1.9964, 1.8622, 2.8661],
-          "material": "__ASSETS__/materials/parkour/boost_strip_active"
+          "material": "__ASSETS__/materials/parkour/boost_strip_active",
+          "behaviors": [
+            {
+              "fn": "boostSurfaceVisual",
+              "params": {
+                "defaultMaterial": "__ASSETS__/materials/parkour/boost_strip_active",
+                "readyMaterial": "__ASSETS__/materials/parkour/boost_strip_ready",
+                "armedMaterial": "__ASSETS__/materials/parkour/boost_strip_armed"
+              }
+            }
+          ]
         },
         {
           "id": "pillar",
@@ -213,60 +223,60 @@
           "rotation": [0, 0.0005, 0],
           "scale": [1, 1, 1],
           "material": "panel_seams"
+        },
+        {
+          "id": "trapezoid_plat",
+          "asset": "trapezoid_plat",
+          "position": [-173.8533, 76.0038, 23.1387],
+          "rotation": [0, -1.5708, 0],
+          "scale": [0.8396, 0.9581, 1.022]
+        },
+        {
+          "id": "trapezoid_plat_1",
+          "asset": "trapezoid_plat",
+          "position": [-149.5033, 76.0038, 30.7267],
+          "rotation": [0, 0, 0],
+          "scale": [0.9654, 0.9581, 1.2372]
+        },
+        {
+          "id": "trapezoid_plat_2",
+          "asset": "trapezoid_plat",
+          "position": [-118.3607, 72.1973, 29.8055],
+          "rotation": [0, 0, 0],
+          "scale": [0.6785, 0.9581, 0.8695]
+        },
+        {
+          "id": "trapezoid_plat_3",
+          "asset": "trapezoid_plat",
+          "position": [-108.5489, 72.1973, 29.8055],
+          "rotation": [0, 0, 0],
+          "scale": [0.6785, 0.9581, 0.8695]
+        },
+        {
+          "id": "trapezoid_plat_4",
+          "asset": "trapezoid_plat",
+          "position": [-87.7567, 79.8062, 29.8055],
+          "rotation": [0, 0, 0],
+          "scale": [0.6785, 0.9581, 0.8695]
+        },
+        {
+          "id": "trapezoid_plat_5",
+          "asset": "trapezoid_plat",
+          "position": [-78.3165, 79.8062, 29.8055],
+          "rotation": [0, 0, 0],
+          "scale": [0.6785, 0.9581, 0.8695]
+        },
+        {
+          "id": "plat_2",
+          "asset": "trapezoid_plat",
+          "position": [-151.6555, 75.5038, 9.7124],
+          "rotation": [0, 0, 0],
+          "scale": [0.6785, 0.9581, 0.8695]
         }
       ],
       "position": [-66.0946, 33.4923, 10.3521],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
-    },
-    {
-      "id": "plat_2",
-      "asset": "trapezoid_plat",
-      "position": [-217.7501, 108.9961, 20.0645],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
-    },
-    {
-      "id": "trapezoid_plat",
-      "asset": "trapezoid_plat",
-      "position": [-239.9479, 109.4961, 33.4908],
-      "rotation": [0, -1.5708, 0],
-      "scale": [0.8396, 0.9581, 1.022]
-    },
-    {
-      "id": "trapezoid_plat_1",
-      "asset": "trapezoid_plat",
-      "position": [-215.5979, 109.4961, 40.1576],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
-    },
-    {
-      "id": "trapezoid_plat_2",
-      "asset": "trapezoid_plat",
-      "position": [-184.4553, 105.6896, 40.1576],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
-    },
-    {
-      "id": "trapezoid_plat_3",
-      "asset": "trapezoid_plat",
-      "position": [-174.6435, 105.6896, 40.1576],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
-    },
-    {
-      "id": "trapezoid_plat_4",
-      "asset": "trapezoid_plat",
-      "position": [-153.8513, 113.2985, 40.1576],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
-    },
-    {
-      "id": "trapezoid_plat_5",
-      "asset": "trapezoid_plat",
-      "position": [-144.4111, 113.2985, 40.1576],
-      "rotation": [0, 0, 0],
-      "scale": [0.6785, 0.9581, 0.8695]
     },
     {
       "id": "jump_pad_1",
@@ -295,6 +305,35 @@
       "position": [20.5097, 88.0234, 15.5994],
       "rotation": [0, 0, 0],
       "scale": [3.1329, 3.1329, 3.1329]
+    },
+    {
+      "id": "palms_1",
+      "position": [-290.9989, 104.8695, 28.4315],
+      "rotation": [0, 1.5708, 0],
+      "scale": [2.1351, 2.1351, 2.1351],
+      "children": [
+        {
+          "id": "planter_1",
+          "asset": "planter",
+          "position": [0.4869, -2.5209, -0.209],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "palm_tree_2",
+          "asset": "palm_tree",
+          "position": [-4.4065, 2.1559, -0.0712],
+          "rotation": [-0.0232, -0.8939, 0.1254],
+          "scale": [1.6686, 1.793, 1.6686]
+        },
+        {
+          "id": "palm_tree_3",
+          "asset": "palm_tree",
+          "position": [4.9104, 1.6777, 0.2803],
+          "rotation": [0.0763, 1.1147, 0.0374],
+          "scale": [1.6686, 1.6686, 1.6686]
+        }
+      ]
     }
   ]
 }

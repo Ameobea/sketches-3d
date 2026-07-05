@@ -889,6 +889,7 @@ export const loadLevelDef = (
     const { name, unmapped } = resolveCompositionMaterial(
       levelMaterialNames,
       def.materialMap,
+      assetId,
       objDef.material,
       geotoyName
     );

@@ -149,8 +149,8 @@ export const GeotoyCompositionAssetDefSchema = GeotoyCompositionAssetDefRawSchem
   preludeEjected: z.boolean().optional(),
   /**
    * geotoy material names from the composition palette, registered with the geoscript runtime
-   * before baking so the tree's `set_material('<name>')` calls resolve. The defs themselves are
-   * not imported — meshes carry the name and map onto level materials via `materialMap` (§4).
+   * before baking so the tree's `set_material('<name>')` calls resolve. Names not overridden by
+   * `materialMap` are auto-imported from the palette as anonymous `__comp:<assetId>:<name>` materials.
    */
   materialNames: z.array(z.string()).optional(),
   /** geotoy palette default material name; assigned to meshes that don't call `set_material`. */

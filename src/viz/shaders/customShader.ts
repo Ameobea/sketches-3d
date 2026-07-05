@@ -863,9 +863,7 @@ export const buildCustomShaderArgs = (
   }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
   uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
-  if (uvTransform) {
-    uniforms.uvTransform = { value: uvTransform };
-  }
+  uniforms.uvTransform = { value: uvTransform ?? new THREE.Matrix3().identity() };
   if (emissiveIntensity !== undefined) {
     uniforms.emissiveIntensity = { value: emissiveIntensity };
   }

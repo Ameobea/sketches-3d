@@ -16,25 +16,32 @@ export interface BakedCompositionMesh {
 
 export interface CompositionMaterialResolution {
   name: string | undefined;
-  /** geotoyName was non-empty but matched neither a `materialMap` entry nor a same-named level material. */
+  /** geotoyName was non-empty but resolved to neither `materialMap` nor an auto-imported material. */
   unmapped: boolean;
 }
 
+/** Prefix + key for a composition's own palette material, auto-imported as an anonymous level material. */
+export const COMP_MATERIAL_PREFIX = '__comp:';
+export const compMaterialKey = (assetId: string, geotoyName: string): string =>
+  `${COMP_MATERIAL_PREFIX}${assetId}:${geotoyName}`;
+
 /**
  * Resolve a rendered mesh's geotoy material name to a level-def material id:
- * explicit `materialMap` → same-named level material → the referencing object's material →
- * `undefined` (caller falls back to the placeholder). `unmapped` lets the caller warn without
- * re-deriving the decision.
+ * explicit `materialMap` override → the auto-imported composition material (`compMaterialKey`) →
+ * the referencing object's material → `undefined` (caller falls back to the placeholder).
+ * `unmapped` lets the caller warn without re-deriving the decision.
  */
 export const resolveCompositionMaterial = (
   levelMaterialNames: ReadonlySet<string>,
   materialMap: Record<string, string> | undefined,
+  assetId: string,
   objectMaterial: string | undefined,
   geotoyName: string
 ): CompositionMaterialResolution => {
   const mapped = geotoyName ? materialMap?.[geotoyName] : undefined;
   if (mapped && levelMaterialNames.has(mapped)) return { name: mapped, unmapped: false };
-  if (geotoyName && levelMaterialNames.has(geotoyName)) return { name: geotoyName, unmapped: false };
+  const auto = geotoyName ? compMaterialKey(assetId, geotoyName) : undefined;
+  if (auto && levelMaterialNames.has(auto)) return { name: auto, unmapped: false };
   const name = objectMaterial && levelMaterialNames.has(objectMaterial) ? objectMaterial : undefined;
   return { name, unmapped: geotoyName.length > 0 };
 };

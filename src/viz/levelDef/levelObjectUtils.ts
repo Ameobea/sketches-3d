@@ -1,9 +1,15 @@
 import * as THREE from 'three';
 
 import type { GeneratedObject } from 'src/geoscript/runner/types';
+import { COMP_MATERIAL_PREFIX } from 'src/geoscript/runner/bakeComposition';
 import type { ObjectDef, ObjectGroupDef } from './types';
 
 export const LEVEL_PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
+
+/** Level-material ids hidden from user-facing pickers: shared library refs and per-composition
+ *  auto-imported materials. */
+export const isInternalMaterialId = (id: string): boolean =>
+  id.startsWith('__ASSETS__/') || id.startsWith(COMP_MATERIAL_PREFIX);
 
 /** Material applied to selected objects in the level editor */
 export const SELECTION_HIGHLIGHT_MAT = new THREE.MeshBasicMaterial({ color: 0x4488ff });

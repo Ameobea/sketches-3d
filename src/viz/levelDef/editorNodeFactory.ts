@@ -181,7 +181,7 @@ export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): 
     ctx,
     objDef,
     baked,
-    g => resolveCompositionMaterial(names, materialMap, objDef.material, g).name
+    g => resolveCompositionMaterial(names, materialMap, assetId, objDef.material, g).name
   );
 }
 

@@ -5,7 +5,7 @@ import type { LevelDef, MaterialDef } from './types';
 import type { LevelObject } from './loadLevelDef';
 import type { LevelEditorApi } from './levelEditorApi';
 import { buildMaterial } from 'src/viz/materials';
-import { LEVEL_PLACEHOLDER_MAT, assignMaterial } from './levelObjectUtils';
+import { LEVEL_PLACEHOLDER_MAT, assignMaterial, isInternalMaterialId } from './levelObjectUtils';
 import LevelMaterialEditor from './LevelMaterialEditor.svelte';
 
 export class MaterialEditorController {
@@ -31,7 +31,7 @@ export class MaterialEditorController {
     this.target = target;
 
     const localMaterials = Object.fromEntries(
-      Object.entries(this.levelDef.materials ?? {}).filter(([id]) => !id.startsWith('__ASSETS__/'))
+      Object.entries(this.levelDef.materials ?? {}).filter(([id]) => !isInternalMaterialId(id))
     );
     this.component = mount(LevelMaterialEditor, {
       target,

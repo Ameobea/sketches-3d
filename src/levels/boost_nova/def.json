@@ -85,7 +85,7 @@
       "type": "geotoyComposition",
       "compositionId": 119,
       "materialMap": {
-        "default": "panel_seams"
+        "default": "pool_tiles_uv"
       }
     },
     "jump_pad": {
@@ -208,10 +208,11 @@
       }
     },
     {
-      "id": "ambient",
-      "type": "ambient",
-      "color": "#ffffff",
-      "intensity": 0.8
+      "id": "hemisphere",
+      "type": "hemisphere",
+      "skyColor": "#ffffff",
+      "groundColor": "#888888",
+      "intensity": 0.6
     }
   ],
   "objects": []

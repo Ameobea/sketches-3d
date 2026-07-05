@@ -60,26 +60,31 @@ test('bake composes ancestor instance world × mesh transform, once per instance
   assert.equal(baked[0].materialName, 'red');
 });
 
-test('material resolves map → same-name → object material → undefined, with unmapped flag', () => {
-  const names = new Set(['red', 'wood', 'default']);
-  assert.deepEqual(resolveCompositionMaterial(names, { red: 'wood' }, 'fallback', 'red'), {
+test('material resolves map → auto-import → object material → undefined, with unmapped flag', () => {
+  const names = new Set(['red', 'wood', 'default', '__comp:x:red']);
+  // explicit map override wins
+  assert.deepEqual(resolveCompositionMaterial(names, { red: 'wood' }, 'x', 'fallback', 'red'), {
     name: 'wood',
     unmapped: false,
   });
-  assert.deepEqual(resolveCompositionMaterial(names, {}, 'fallback', 'red'), {
-    name: 'red',
+  // no override → auto-imported composition material (`__comp:<assetId>:<name>`)
+  assert.deepEqual(resolveCompositionMaterial(names, {}, 'x', 'fallback', 'red'), {
+    name: '__comp:x:red',
     unmapped: false,
-  }); // same-name
-  assert.deepEqual(resolveCompositionMaterial(names, { red: 'missing' }, undefined, 'red'), {
-    name: 'red',
+  });
+  // override points at a missing material → falls through to auto-import
+  assert.deepEqual(resolveCompositionMaterial(names, { red: 'missing' }, 'x', undefined, 'red'), {
+    name: '__comp:x:red',
     unmapped: false,
-  }); // bad map → same-name
-  assert.deepEqual(resolveCompositionMaterial(names, {}, 'wood', 'unknown'), {
+  });
+  // no override, no auto entry → object material
+  assert.deepEqual(resolveCompositionMaterial(names, {}, 'y', 'wood', 'unknown'), {
     name: 'wood',
     unmapped: true,
-  }); // unmapped → object material
-  assert.deepEqual(resolveCompositionMaterial(names, {}, undefined, 'unknown'), {
+  });
+  // nothing resolves → placeholder
+  assert.deepEqual(resolveCompositionMaterial(names, {}, 'y', undefined, 'unknown'), {
     name: undefined,
     unmapped: true,
-  }); // unmapped → placeholder
+  });
 });

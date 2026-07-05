@@ -6,9 +6,10 @@ import type { Viz } from 'src/viz';
 import type { BulletPhysics } from 'src/viz/collision';
 import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
 import type { BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
+import { resolveCompositionMaterial } from 'src/geoscript/runner/bakeComposition';
 import type { AmbientLightDef, EditorBookmark, HemisphereLightDef, LevelDef, LightDef } from './types';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
-import { isLevelGroup, isEditable } from './levelSceneTypes';
+import { isLevelGroup, isEditable, isCompositionNode } from './levelSceneTypes';
 import { hasAsset } from './levelDefTreeUtils';
 import { SelectionManager } from './SelectionManager.svelte';
 import {
@@ -19,7 +20,12 @@ import {
   snapshotWorldTransform,
 } from './TransformHandler';
 import type { TransformSnapshot, TransformMode } from './TransformHandler';
-import { LEVEL_PLACEHOLDER_MAT, SELECTION_HIGHLIGHT_MAT, assignMaterial } from './levelObjectUtils';
+import {
+  LEVEL_PLACEHOLDER_MAT,
+  SELECTION_HIGHLIGHT_MAT,
+  assignMaterial,
+  isInternalMaterialId,
+} from './levelObjectUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
 import { buildMaterial } from 'src/viz/materials';
 import { TextureFetchPool } from './texturePool';
@@ -36,7 +42,11 @@ import { round } from './mathUtils';
 import { collectSubtreeLeaves, groupContainsDescendantId } from './editorStructuralOps';
 import { EditorMutationController } from './editorMutationController';
 import type { StructuralUndoEntry, ClipboardEntry } from './editorMutationController';
-import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
+import type {
+  CompositionMaterialInfo,
+  LevelEditorPanelActions,
+  LevelEditorPanelViewState,
+} from './levelEditorPanelTypes';
 import {
   addLevelLightToScene,
   applyLightDefToLevelLight,
@@ -134,6 +144,17 @@ export class LevelEditor {
   /** Convenience accessor — null when the primary selected node is a group. */
   get selectedObject(): LevelObject | null {
     return this.selection.primaryObject;
+  }
+
+  /** The selected geotoy composition node + its asset, or null if the selection isn't one. */
+  private selectedComposition() {
+    const node = this.selectedNode;
+    if (!node || !isCompositionNode(node)) return null;
+    const assetId = node.compositionDef.asset;
+    if (assetId === undefined) return null;
+    const asset = this.levelDef.assets[assetId];
+    if (!asset || asset.type !== 'geotoyComposition') return null;
+    return { node, assetId, asset };
   }
 
   private selectableMeshes: THREE.Mesh[] = [];
@@ -533,7 +554,7 @@ export class LevelEditor {
         return Object.keys(self.levelDef.assets);
       },
       get materialIds() {
-        return Object.keys(self.levelDef.materials ?? {}).filter(id => !id.startsWith('__ASSETS__/'));
+        return Object.keys(self.levelDef.materials ?? {}).filter(id => !isInternalMaterialId(id));
       },
       get libFolders() {
         return state.libFolders;
@@ -575,6 +596,23 @@ export class LevelEditor {
       },
       get isGeneratedSelected() {
         return state.isGenerated;
+      },
+      get compositionMaterials(): CompositionMaterialInfo | null {
+        void state.selectedNodeIds;
+        void state.treeVersion;
+        const comp = self.selectedComposition();
+        if (!comp) return null;
+        const { assetId, asset } = comp;
+        const map = asset.materialMap ?? {};
+        const rows = (asset.materialNames ?? []).map(geotoyName => ({
+          geotoyName,
+          mappedTo: map[geotoyName] ?? null,
+        }));
+        let placementCount = 0;
+        for (const n of self.nodeById.values()) {
+          if (isCompositionNode(n) && n.compositionDef.asset === assetId) placementCount += 1;
+        }
+        return { placementCount, rows };
       },
       get materialEditorOpen() {
         return materialEditorOpen();
@@ -628,6 +666,7 @@ export class LevelEditor {
         }
       },
       changeMaterial: matId => void this.onObjectMaterialChange(matId),
+      mapCompositionMaterial: (geotoyName, matId) => void this.onCompositionMaterialMap(geotoyName, matId),
       applyTransform: snap => this.applyTransformInput(snap),
       deleteSelection: () => this.deleteSelected(),
       toggleMaterialEditor: () => {
@@ -1399,6 +1438,48 @@ export class LevelEditor {
     this.levelDef.materials[materialId] = material;
     this.builtMaterials.set(materialId, buildMaterial(material, this.loadedTextures));
     return true;
+  }
+
+  /**
+   * Set or clear a geotoy composition's material-map override for one geotoy name. The mapping lives
+   * on the shared asset, so every placement of it is re-materialized live (geometry untouched — only
+   * the material swaps), then persisted. Clearing an entry falls the mesh back to the composition's
+   * own auto-imported material.
+   */
+  private async onCompositionMaterialMap(geotoyName: string, matId: string | null) {
+    const comp = this.selectedComposition();
+    if (!comp) return;
+    const { assetId, asset } = comp;
+
+    const map: Record<string, string> = { ...(asset.materialMap ?? {}) };
+    if (matId) map[geotoyName] = matId;
+    else delete map[geotoyName];
+    asset.materialMap = map;
+
+    if (matId && !(await this.ensureMaterialBuilt(matId))) return;
+
+    const names = new Set(Object.keys(this.levelDef.materials ?? {}));
+    const baked = this.compositionBaked.get(assetId);
+    this.clearSelectionHighlights();
+    for (const n of this.nodeById.values()) {
+      if (!isCompositionNode(n) || n.compositionDef.asset !== assetId) continue;
+      (n.opaqueParts ?? []).forEach((part, i) => {
+        const gName = baked?.[i]?.materialName ?? '';
+        const resolved = resolveCompositionMaterial(
+          names,
+          map,
+          assetId,
+          n.compositionDef.material,
+          gName
+        ).name;
+        part.def.material = resolved;
+        assignMaterial(part.object, (resolved && this.builtMaterials.get(resolved)) || LEVEL_PLACEHOLDER_MAT);
+      });
+    }
+    this.applySelectionHighlights();
+
+    this.selectionState.treeVersion++;
+    void this.api.saveCompositionMaterialMap(assetId, map);
   }
 
   private async pasteObject() {
