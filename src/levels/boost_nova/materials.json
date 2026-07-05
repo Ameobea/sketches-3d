@@ -154,12 +154,19 @@
     "pool_tiles_uv": {
       "type": "customShader",
       "extends": {
-        "type": "geotoy",
-        "materialId": 23
+        "type": "library",
+        "path": "procedural/pool_tiles"
       },
       "shaders": {
-        "commonShader": {
-          "file": "shaders/poolTilesUV/common.glsl"
+        "constants": {
+          "PT_UV_MODE": {
+            "type": "int",
+            "value": 1
+          },
+          "PT_UV_SCALE": {
+            "type": "vec2",
+            "value": [3, 100]
+          }
         }
       }
     }

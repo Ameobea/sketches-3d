@@ -17,6 +17,15 @@ const float AA_FADE_HI    = 1.0;  // ... and completes at HI×period
 const float AA_RELIEF_LO  = 0.4;  // relief-normal flatten: begins at LO×featureWidth ...
 const float AA_RELIEF_HI  = 1.2;  // ... and completes at HI×featureWidth
 
+// Pixel footprints filled once in main() — before the POM march/discards, so they stay
+// valid on paths where later derivatives aren't and reachable from the ctx-less POM
+// height/normal slots. `aaWorldFootprint` is the world-space half-width (the same value
+// SceneCtx.aaFootprint carries); `aaUvFootprint` is the per-axis screen-derivative
+// footprint of vUv — UV-keyed materials multiply it by their pattern scale for
+// anisotropic pattern-space AA.
+float aaWorldFootprint = 0.;
+vec2 aaUvFootprint = vec2(0.);
+
 // AA'd hard step at `edge`: a sharp region boundary softened over the footprint.
 float aaStep(float edge, float x, float aa) {
   return smoothstep(edge - AA_EDGE_WIDTH * aa, edge + AA_EDGE_WIDTH * aa, x);

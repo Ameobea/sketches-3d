@@ -352,6 +352,25 @@ Wasm panics are reported with their real message and location (not the opaque
 `RuntimeError: unreachable` the trap otherwise surfaces as), and are still
 logged to the browser console and captured by Sentry.
 
+**GLSL shader compile errors fail loudly too.** A `customShader` material with a
+snippet that doesn't compile used to yield a clean-looking PNG with the mesh
+silently missing (three.js only logs shader errors; nothing throws). `render`
+now fails with three's full report — material name, the GLSL error, and a
+numbered source excerpt around the offending line:
+
+```
+Server returned 500 Internal Server Error
+THREE.WebGLProgram: Shader Error 0 - VALIDATE_STATUS false
+Material Name: pool_tiles
+...
+ERROR: 0:1931: 'this' : Illegal use of reserved word
+> 1931: this is not valid glsl;
+```
+
+So: a mesh that's missing from an otherwise-fine render is *not* a shader error
+(those abort the render) — suspect the legacy-shape `materials.json` fallback
+(see the `materials.json` section) or scene/camera issues instead.
+
 ### Defaults & overrides
 
 | Field             | Default                                                |

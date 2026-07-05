@@ -109,6 +109,22 @@ export const processLoadedScene = async (
       (window as any).onRenderError?.(msg);
     };
 
+    // GLSL compile/link failures don't throw — three only console.error()s them (with the
+    // material name + a numbered source excerpt) — so tap console.error and fail the render
+    // after the first frame, which is what compiles every visible program. Gated like run
+    // errors so the prod thumbnail path still tolerates broken saved materials.
+    const shaderErrors: string[] = [];
+    if (userData.failRenderOnError) {
+      const origConsoleError = console.error.bind(console);
+      console.error = (...args: unknown[]) => {
+        origConsoleError(...args);
+        const msg = args.map(a => String(a)).join(' ');
+        if (msg.includes('THREE.WebGLProgram')) {
+          shaderErrors.push(msg);
+        }
+      };
+    }
+
     viz.setRenderOverride(timeDiffSeconds => {
       const outcome = ctx?.getLastRunOutcome();
       if (!outcome || didRender) {
@@ -158,6 +174,11 @@ export const processLoadedScene = async (
         }
       });
       pipelineController?.renderFrame(timeDiffSeconds);
+      if (shaderErrors.length) {
+        const joined = shaderErrors.join('\n\n');
+        fail(joined.length > 8192 ? `${joined.slice(0, 8192)}\n… (truncated)` : joined);
+        return;
+      }
       didRender = true;
       (window as any).onRenderReady?.();
     }, false);

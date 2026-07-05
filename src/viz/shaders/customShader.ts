@@ -1939,12 +1939,12 @@ void main() {
   #endif
 
   ${
-    usesSceneCtx
-      ? /* glsl */ `float aaNdotV = abs(dot(normalize(vWorldNormal), vWorldPos - cameraPosition)) / distanceToCamera;
-  float aaFootprint = unitsPerPx / max(aaNdotV, 0.1);
-  SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, aaFootprint);`
+    hasCustomShaderSnippet
+      ? /* glsl */ `aaWorldFootprint = unitsPerPx / max(abs(dot(normalize(vWorldNormal), vWorldPos - cameraPosition)) / distanceToCamera, 0.1);
+  aaUvFootprint = vec2(length(vec2(dFdx(vUv.x), dFdy(vUv.x))), length(vec2(dFdx(vUv.y), dFdy(vUv.y))));`
       : ''
   }
+  ${usesSceneCtx ? 'SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, aaWorldFootprint);' : ''}
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
   ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomAnalytic, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
