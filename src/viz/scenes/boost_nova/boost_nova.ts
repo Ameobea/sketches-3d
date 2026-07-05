@@ -128,6 +128,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         maxSlopeRadians: 1.4,
         boostArmLeniencySeconds: 0.1,
         externalVelocityAirIdleDampingFactor: new THREE.Vector3(0.92, 0.92, 0.92),
+        oobYThreshold: -20,
       },
       sfx: {
         boost: {

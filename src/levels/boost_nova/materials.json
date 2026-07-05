@@ -157,6 +157,10 @@
         "type": "library",
         "path": "procedural/pool_tiles"
       },
+      "props": {
+        "ambientLightScale": 0.5,
+        "envMapIntensity": 0.08
+      },
       "shaders": {
         "constants": {
           "PT_UV_MODE": {

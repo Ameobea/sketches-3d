@@ -199,12 +199,7 @@
           "medium": 2048,
           "high": 4096
         },
-        "near": 0.1,
-        "far": 250,
-        "left": -90,
-        "right": 90,
-        "top": 90,
-        "bottom": -90
+        "auto": true
       }
     },
     {

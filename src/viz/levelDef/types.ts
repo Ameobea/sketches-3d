@@ -18,9 +18,8 @@ const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
 /**
  * Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a
- * CSS-style 6-digit hex string (e.g. "#303030").  No transform here so the
- * schema remains representable in JSON Schema; callers that need an integer
- * must run `normalizeRawDefColors` after parsing.
+ * CSS-style 6-digit hex string (e.g. "#303030").  No transform here; callers
+ * that need an integer must run `normalizeRawDefColors`.
  */
 const ColorInputSchema = z.union([
   z.number().int(),
@@ -28,9 +27,9 @@ const ColorInputSchema = z.union([
 ]);
 
 /**
- * Asset collider shape (default `trimesh`, with auto box/sphere detection for primitives).
- * `convexHull` precomputes a real hull once per asset via Manifold and shares it across all
- * instances — for shapes that don't need concave accuracy.
+ * Asset collider shape (default `trimesh`).
+ *
+ * `convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.
  */
 const AssetColliderShapeSchema = z.enum(['trimesh', 'convexHull']);
 export type AssetColliderShape = z.infer<typeof AssetColliderShapeSchema>;
@@ -561,6 +560,12 @@ export const ShadowConfigDefSchema = z.object({
   top: z.number().optional(),
   /** Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5 */
   bottom: z.number().optional(),
+  /**
+   * Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's
+   * shadow-casting geometry at load. When true, `position` is treated as direction-only and the
+   * explicit `left/right/top/bottom/near/far` fields are ignored. Default: false
+   */
+  auto: z.boolean().optional(),
 });
 export type ShadowConfigDef = z.infer<typeof ShadowConfigDefSchema>;
 

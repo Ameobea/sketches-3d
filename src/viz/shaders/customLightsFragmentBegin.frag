@@ -187,7 +187,7 @@ IncidentLight directLight;
 		#pragma unroll_loop_start
 		for ( int i = 0; i < NUM_HEMI_LIGHTS; i ++ ) {
 
-			irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );
+			irradiance += getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal ) * __AMBIENT_LIGHT_SCALE__;
 
 		}
 		#pragma unroll_loop_end

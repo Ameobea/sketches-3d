@@ -2575,6 +2575,9 @@
                   },
                   "bottom": {
                     "type": "number"
+                  },
+                  "auto": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -2704,6 +2707,9 @@
                   },
                   "bottom": {
                     "type": "number"
+                  },
+                  "auto": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -2853,6 +2859,9 @@
                   },
                   "bottom": {
                     "type": "number"
+                  },
+                  "auto": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false

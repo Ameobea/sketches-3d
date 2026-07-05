@@ -296,7 +296,7 @@ const buildLightsFragmentBegin = (
         return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
       })()
     )
-    .replace('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
+    .replaceAll('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
     .replace('__USE_AMBIENT_LIGHT_DISTANCE_AMP__', ambientDistanceAmp ? '1' : '0');
 
   if (ambientDistanceAmp) {

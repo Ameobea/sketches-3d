@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
+import { deriveDirectionalShadowNormalBias, fitDirectionalShadowFrustumToBox } from 'src/viz/helpers/lights';
 import type { RenderedObject } from 'src/geoscript/runner/types';
 
 export interface ShadowMapSize {
@@ -132,16 +132,8 @@ export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
   }
 };
 
-const AUTO_MIN_EXTENT = 0.05;
-const AUTO_MAX_EXTENT = 5000;
-
 const _box = new THREE.Box3();
-const _sphere = new THREE.Sphere();
 const _meshBox = new THREE.Box3();
-const _corner = new THREE.Vector3();
-const _view = new THREE.Matrix4();
-const _dir = new THREE.Vector3();
-const _up = new THREE.Vector3(0, 1, 0);
 
 /**
  * Fits the shadow frustum and light distance of every directional light flagged with
@@ -174,58 +166,7 @@ export const fitAutoShadowFrusta = (scene: THREE.Scene, renderedObjects: Rendere
     return;
   }
 
-  _box.getBoundingSphere(_sphere);
-  const center = _sphere.center;
-  const radius = _sphere.radius;
-  if (!Number.isFinite(radius) || radius <= 0) {
-    return;
-  }
-  const margin = Math.max(radius * 0.05, AUTO_MIN_EXTENT);
-  const nearFloor = Math.max(radius * 1e-3, 1e-4);
-  const { min, max } = _box;
-
   for (const light of autoLights) {
-    _dir.copy(light.target.position).sub(light.position);
-    if (_dir.lengthSq() < 1e-12) {
-      _dir.set(0, -1, 0);
-    }
-    _dir.normalize();
-    light.target.position.copy(center);
-    light.position.copy(center).addScaledVector(_dir, -(radius + margin));
-
-    // Matches THREE's `LightShadow.updateMatrices`: shadow cam at the light, looking at the target.
-    _view.lookAt(light.position, light.target.position, _up).setPosition(light.position).invert();
-
-    let minX = Infinity,
-      minY = Infinity,
-      minZ = Infinity;
-    let maxX = -Infinity,
-      maxY = -Infinity,
-      maxZ = -Infinity;
-    for (let i = 0; i < 8; i += 1) {
-      _corner.set(i & 1 ? max.x : min.x, i & 2 ? max.y : min.y, i & 4 ? max.z : min.z).applyMatrix4(_view);
-      minX = Math.min(minX, _corner.x);
-      maxX = Math.max(maxX, _corner.x);
-      minY = Math.min(minY, _corner.y);
-      maxY = Math.max(maxY, _corner.y);
-      minZ = Math.min(minZ, _corner.z);
-      maxZ = Math.max(maxZ, _corner.z);
-    }
-
-    const halfW = THREE.MathUtils.clamp((maxX - minX) / 2, AUTO_MIN_EXTENT, AUTO_MAX_EXTENT);
-    const halfH = THREE.MathUtils.clamp((maxY - minY) / 2, AUTO_MIN_EXTENT, AUTO_MAX_EXTENT);
-    const cx = (minX + maxX) / 2;
-    const cy = (minY + maxY) / 2;
-    const cam = light.shadow.camera;
-    cam.left = cx - halfW;
-    cam.right = cx + halfW;
-    cam.bottom = cy - halfH;
-    cam.top = cy + halfH;
-    // Camera looks down -Z, so geometry in front has negative view-space z.
-    cam.near = Math.max(-maxZ, nearFloor);
-    cam.far = Math.max(-minZ, cam.near + nearFloor);
-    cam.updateProjectionMatrix();
-
-    deriveDirectionalShadowNormalBias(light, { bias: light.shadow.bias });
+    fitDirectionalShadowFrustumToBox(light, _box);
   }
 };

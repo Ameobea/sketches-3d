@@ -36,6 +36,14 @@ const applyShadowConfig = (
   if (cfg.radius !== undefined) light.shadow.radius = cfg.radius;
   if (cfg.blurSamples !== undefined) light.shadow.blurSamples = cfg.blurSamples;
 
+  // Auto frustum: fit deferred to `fitAutoShadowFrustaFromScene` once geometry is placed; the
+  // explicit frustum/near/far fields are ignored so they never fight the fit.
+  if (light instanceof THREE.DirectionalLight && cfg.auto) {
+    light.userData.autoShadowFrustum = true;
+    return;
+  }
+  light.userData.autoShadowFrustum = false;
+
   const cam = light.shadow.camera;
   if (cfg.near !== undefined) cam.near = cfg.near;
   if (cfg.far !== undefined) cam.far = cfg.far;

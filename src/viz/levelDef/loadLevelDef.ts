@@ -48,6 +48,7 @@ import {
 import { replaceLeafInstance } from './editorStructuralOps';
 import { buildCompositionChild } from './editorNodeFactory';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
+import { fitAutoShadowFrustaFromScene } from 'src/viz/helpers/lights';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 import { buildMaterial, stampMaterialMetaUserData } from 'src/viz/materials';
 import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
@@ -1128,6 +1129,17 @@ export const loadLevelDef = (
     }
   );
   viz.registerPhysicsStartupBarrier(physicsRegistrationComplete);
+
+  // Fit any `shadow.auto` directional lights to the placed geometry. Registered as a startup
+  // barrier so it lands before the one-shot shadow-map bake in the default postprocessing pipeline.
+  viz.registerPhysicsStartupBarrier(
+    objectsPromise.then(() =>
+      fitAutoShadowFrustaFromScene(
+        viz.scene,
+        levelLights.map(l => l.light)
+      )
+    )
+  );
 
   // Register level-def parkour trigger entities (jump pads / boost zones) once physics is up and
   // every object is placed. These ride the owning object's world transform; asset-less objects act

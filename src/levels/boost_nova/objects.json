@@ -227,9 +227,9 @@
         {
           "id": "trapezoid_plat",
           "asset": "trapezoid_plat",
-          "position": [-173.8533, 76.0038, 23.1387],
+          "position": [-172.5915, 76.0972, 23.1085],
           "rotation": [0, -1.5708, 0],
-          "scale": [0.8396, 0.9581, 1.022]
+          "scale": [0.9364, 0.9581, 0.691]
         },
         {
           "id": "trapezoid_plat_1",
