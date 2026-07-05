@@ -2,7 +2,8 @@ import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 
 import { getAssetsDir } from './levelPaths.server';
-import { flattenMaterialExtends } from './materialExtends.server';
+import { resolveGeotoyMaterial } from './geotoyMaterials.server';
+import { resolveMaterialExtends } from './materialExtends.server';
 import { resolveGlslPath, SHADER_GLSL_FIELDS } from './shaderFiles.server';
 import {
   LibraryMaterialFileSchema,
@@ -12,6 +13,7 @@ import {
   type LevelDefRaw,
   type MaterialDef,
   type MaterialDefRaw,
+  type MaterialExtendsRef,
   type TextureDef,
 } from './types';
 
@@ -111,22 +113,12 @@ export const resolveLibraryMaterials = (def: LevelDefRaw): LevelDefRaw => {
     }
   };
 
-  // Library refs come from object fields (material:, behavior params, …) and from a material's
-  // `extends`. A pulled-in library material may itself `extends` another, so iterate to a fixpoint.
-  const gatherRefs = (): Set<string> => {
-    const refs = new Set(objRefs);
-    for (const mat of Object.values(materials)) {
-      const ext = mat.type === 'customShader' ? mat.extends : undefined;
-      if (isLibraryRef(ext)) refs.add(ext);
-    }
-    return refs;
-  };
-
-  let pending = [...gatherRefs()].filter(ref => !(ref in materials));
-  if (objRefs.size === 0 && pending.length === 0) return def;
-  while (pending.length > 0) {
-    for (const ref of pending) pullIn(ref);
-    pending = [...gatherRefs()].filter(ref => !(ref in materials));
+  // Only direct object material assignments (`material: "__ASSETS__/…"`) are pulled in here; a
+  // library material referenced solely as an `extends` parent is resolved from disk by the extends
+  // pass (`resolveExternalParent`), not registered as a level material.
+  if (objRefs.size === 0) return def;
+  for (const ref of objRefs) {
+    pullIn(ref); // pullIn is idempotent (no-ops on refs already registered)
   }
 
   return { ...def, materials, textures };
@@ -140,16 +132,36 @@ export const libraryMaterialExists = (ref: string): boolean =>
  * applying the same GLSL-inlining, texture-prefixing, and `extends`-flattening the full-level load
  * does. Used by the editor to live-build a library material the moment it's assigned.
  */
-export const resolveLibraryMaterial = (
+export const resolveLibraryMaterial = async (
   ref: string
-): { material: MaterialDef; textures: Record<string, TextureDef> } => {
+): Promise<{ material: MaterialDef; textures: Record<string, TextureDef> }> => {
   const probe = { version: 1, assets: {}, objects: [{ material: ref }] } as unknown as LevelDefRaw;
   const withLib = resolveLibraryMaterials(probe);
-  const flat = flattenMaterialExtends(withLib.materials ?? {});
+  const textures: Record<string, TextureDef> = { ...(withLib.textures ?? {}) };
+  const flat = await resolveMaterialExtends(withLib.materials ?? {}, resolveExternalParent, textures);
   const parsed = MaterialDefSchema.safeParse(flat[ref]);
   if (!parsed.success) {
     const msg = parsed.error.issues.map(i => `  ${i.path.join('.')}: ${i.message}`).join('\n');
     throw new Error(`[resolveLibraryMaterial] Invalid library material "${ref}":\n${msg}`);
   }
-  return { material: parsed.data, textures: withLib.textures ?? {} };
+  return { material: parsed.data, textures };
 };
+
+/**
+ * Resolves a library/geotoy `extends` parent to a flattened def, accumulating any textures it pulls
+ * in. Injected into `resolveMaterialExtends`; it lives here (not in materialExtends) to avoid an
+ * import cycle, since a library parent recurses back through `resolveLibraryMaterial`.
+ */
+export async function resolveExternalParent(
+  ref: Extract<MaterialExtendsRef, { type: 'library' | 'geotoy' }>,
+  textures: Record<string, TextureDef>
+): Promise<MaterialDefRaw> {
+  if (ref.type === 'geotoy') {
+    return (await resolveGeotoyMaterial(ref.materialId, textures)) as MaterialDefRaw;
+  }
+  const { material, textures: libTextures } = await resolveLibraryMaterial(
+    `${LIBRARY_MATERIAL_PREFIX}${ref.path}`
+  );
+  Object.assign(textures, libTextures);
+  return material as MaterialDefRaw;
+}

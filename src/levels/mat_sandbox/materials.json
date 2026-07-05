@@ -14,10 +14,10 @@
       "type": "geotoyMaterial",
       "materialId": 7
     },
-    "triangle_grid": {"type": "customShader", "extends": "__ASSETS__/materials/procedural/triangle_grid"},
+    "triangle_grid": {"type": "customShader", "extends": { "type": "library", "path": "procedural/triangle_grid" }},
     "chevron_strips_wide": {
       "type": "customShader",
-      "extends": "__ASSETS__/materials/procedural/chevron_strips",
+      "extends": { "type": "library", "path": "procedural/chevron_strips" },
       "props": {
         "roughness": 0.3,
         "metalness": 0.6
@@ -45,7 +45,7 @@
     },
     "pit_grid_diamond": {
       "type": "customShader",
-      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "extends": { "type": "library", "path": "procedural/pit_grid" },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -57,7 +57,7 @@
     },
     "pit_grid_triangle": {
       "type": "customShader",
-      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "extends": { "type": "library", "path": "procedural/pit_grid" },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -69,7 +69,7 @@
     },
     "pit_grid_trapezoid": {
       "type": "customShader",
-      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "extends": { "type": "library", "path": "procedural/pit_grid" },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -81,7 +81,7 @@
     },
     "pit_grid_stagger": {
       "type": "customShader",
-      "extends": "__ASSETS__/materials/procedural/pit_grid",
+      "extends": { "type": "library", "path": "procedural/pit_grid" },
       "shaders": {
         "constants": {
           "PG_STAGGER": {
@@ -105,6 +105,30 @@
         "useTriplanarMapping": false,
         "useGeneratedUVs": false
       }
+    },
+    "demo_local_base": {
+      "type": "customShader",
+      "props": { "color": "#c24d2c", "roughness": 0.6, "metalness": 0.1 }
+    },
+    "demo_extends_local": {
+      "type": "customShader",
+      "extends": { "type": "local", "name": "demo_local_base" },
+      "props": { "color": "#2c74c2", "metalness": 0.85 }
+    },
+    "demo_extends_library": {
+      "type": "customShader",
+      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "props": { "roughness": 0.25 },
+      "shaders": {
+        "constants": {
+          "PG_SHAPE": { "type": "int", "value": 2 }
+        }
+      }
+    },
+    "demo_extends_geotoy": {
+      "type": "customShader",
+      "extends": { "type": "geotoy", "materialId": 7 },
+      "props": { "metalness": 0.9, "roughness": 0.2 }
     }
   }
 }

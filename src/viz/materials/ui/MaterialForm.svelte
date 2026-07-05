@@ -193,8 +193,20 @@
       </FormField>
     {/if}
     <FormField label="texture scale" help="The scale of the texture coordinates.">
-      <input type="number" step="0.1" bind:value={cs.props.uvScale![0]} style="width: 80px" />
-      <input type="number" step="0.1" bind:value={cs.props.uvScale![1]} style="width: 80px" />
+      <input
+        type="number"
+        step="0.1"
+        value={cs.props.uvScale?.[0] ?? 1}
+        oninput={e => ((cs.props.uvScale ??= [1, 1])[0] = (e.target as HTMLInputElement).valueAsNumber)}
+        style="width: 80px"
+      />
+      <input
+        type="number"
+        step="0.1"
+        value={cs.props.uvScale?.[1] ?? 1}
+        oninput={e => ((cs.props.uvScale ??= [1, 1])[1] = (e.target as HTMLInputElement).valueAsNumber)}
+        style="width: 80px"
+      />
     </FormField>
 
     {#if host.showUvUnwrap}

@@ -235,17 +235,29 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   pomNormalShader: ShaderGlslFieldRawSchema.optional(),
 });
 
+/**
+ * Target of a material `extends`: another material defined in the same file (`local`), a
+ * shared-library material (`library`; `path` is relative to `src/assets/materials/`), or a Geotoy
+ * material by id (`geotoy`). All three resolve server-side to a fully-flattened parent that the
+ * extending def deep-merges over; `extends` is stripped before the client sees it. The resolved
+ * parent must be `customShader`.
+ */
+export const MaterialExtendsRefSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('local'), name: z.string() }),
+  z.object({ type: z.literal('library'), path: z.string() }),
+  z.object({ type: z.literal('geotoy'), materialId: z.number().int().positive() }),
+]);
+export type MaterialExtendsRef = z.infer<typeof MaterialExtendsRefSchema>;
+
 const CustomShaderMatDefRawSchema = CustomShaderMatDefSchema.extend({
   props: ShaderPropsJsonRawSchema.optional(),
   shaders: ShaderShadersJsonRawSchema.optional(),
   /**
-   * Inherit from another material — a level-local material name or an `__ASSETS__/materials/…`
-   * library path — and deep-merge this def's fields over it (arrays/scalars replace, objects merge
-   * per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`). Resolved
-   * server-side into a fully-flattened def; `extends` itself is stripped before the client sees it.
-   * Both parent and child must be `customShader`.
+   * Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,
+   * objects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).
+   * Resolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.
    */
-  extends: z.string().optional(),
+  extends: MaterialExtendsRefSchema.optional(),
 });
 
 const CustomBasicShaderMatDefRawSchema = CustomBasicShaderMatDefSchema.extend({

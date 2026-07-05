@@ -170,6 +170,46 @@
       "scale": [1, 1, 1]
     },
     {
+      "id": "extends_demo_row",
+      "children": [
+        {
+          "id": "ext_base",
+          "asset": "plat",
+          "material": "demo_local_base",
+          "position": [-22, 4.2, -20],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "ext_local",
+          "asset": "plat",
+          "material": "demo_extends_local",
+          "position": [-11, 4.2, -20],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "ext_library",
+          "asset": "plat",
+          "material": "demo_extends_library",
+          "position": [0, 4.2, -20],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        },
+        {
+          "id": "ext_geotoy",
+          "asset": "plat",
+          "material": "demo_extends_geotoy",
+          "position": [11, 4.2, -20],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [0.4, 1, 0.4]
+        }
+      ],
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
       "id": "sparse_seams_backdrop",
       "asset": "plat",
       "material": "__ASSETS__/materials/procedural/sparse_seams",

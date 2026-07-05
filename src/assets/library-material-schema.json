@@ -1257,7 +1257,52 @@
               ]
             },
             "extends": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "local"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["type", "name"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "library"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  },
+                  "required": ["type", "path"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "geotoy"
+                    },
+                    "materialId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["type", "materialId"],
+                  "additionalProperties": false
+                }
+              ]
             }
           },
           "required": ["type"],

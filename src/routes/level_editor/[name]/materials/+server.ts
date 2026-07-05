@@ -16,7 +16,7 @@ export const POST: RequestHandler = async ({ request }) => {
   const { libRef } = (await request.json()) as { libRef: string };
   if (!libRef?.startsWith(LIBRARY_MATERIAL_PREFIX)) error(400, 'libRef must be a library material path');
   if (!libraryMaterialExists(libRef)) error(404, `Library material not found: ${libRef}`);
-  return json(resolveLibraryMaterial(libRef));
+  return json(await resolveLibraryMaterial(libRef));
 };
 
 /** Upsert (create or full replace) a material */
