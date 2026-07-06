@@ -130,6 +130,23 @@ IncidentLight directLight;
 
 		getDirectionalLightInfo( directionalLight, directLight );
 
+		#ifdef USE_CSM
+		{
+			int _csmCascade;
+			float _csmShadow = all( bvec2( directLight.visible, receiveShadow ) ) ? sampleCsm( vWorldPos, vWorldNormal, vViewPosition.z, _csmCascade ) : 1.0;
+			computedShadow = _csmShadow;
+			totalShadow *= _csmShadow;
+			directLight.color *= _csmShadow;
+			if ( csmParams.w > 0.5 ) {
+				vec3 _tint = _csmCascade == 0 ? vec3( 1.5, 0.5, 0.5 )
+					: _csmCascade == 1 ? vec3( 0.5, 1.5, 0.5 )
+					: _csmCascade == 2 ? vec3( 0.5, 0.5, 1.5 )
+					: vec3( 1.5, 1.5, 0.5 );
+				directLight.color *= _tint;
+			}
+		}
+		#endif
+
 		#if defined( USE_SHADOWMAP ) && ( UNROLLED_LOOP_INDEX < NUM_DIR_LIGHT_SHADOWS )
 		directionalLightShadow = directionalLightShadows[ i ];
     computedShadow = all( bvec2( directLight.visible, receiveShadow ) ) ? getShadow( directionalShadowMap[ i ], directionalLightShadow.shadowMapSize, directionalLightShadow.shadowBias, directionalLightShadow.shadowRadius, vDirectionalShadowCoord[ i ] ) : 1.0;

@@ -387,4 +387,12 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     legacyLights: false,
     useSceneDef: true,
   },
+  csm_test: {
+    modulePath: 'src/viz/scenes/csm_test',
+    sceneName: null,
+    gltfName: null,
+    audio: false,
+    metadata: { title: 'CSM test' },
+    legacyLights: false,
+  },
 };

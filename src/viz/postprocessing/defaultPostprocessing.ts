@@ -15,7 +15,9 @@ import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import {
   buildOcclusionDepthMaterial,
   buildPlainDepthMaterial,
+  CustomShaderMaterial,
   setShadowCastSide,
+  syncCsmUniforms,
 } from 'src/viz/shaders/customShader';
 import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
@@ -26,6 +28,8 @@ import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import { PomExitBufferManager } from 'src/viz/postprocessing/pomExitBuffer';
 import type { SkyStack } from 'src/viz/SkyStack';
+import { CascadedShadowMap } from 'src/viz/shadows/CascadedShadowMap';
+import { CsmDebugBlit } from 'src/viz/shadows/CsmDebugBlit';
 
 export const DEFAULT_EMISSIVE_BLOOM_CONFIG: Omit<EmissiveBloomConfig, 'levels'> = {
   radius: 0.35,
@@ -39,6 +43,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   public depthPass: DepthPass | null;
   public depthPrePassMaterial: THREE.Material | null;
   public renderer: THREE.WebGLRenderer;
+  public csm: CascadedShadowMap | null = null;
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
   public readonly inlineEmissivePass: InlineEmissivePass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
@@ -159,6 +164,22 @@ export interface ToneMappingConfig {
   exposure?: number;
 }
 
+export interface CsmConfig {
+  /** The scene's sun. CSM takes over its shadows; `castShadow` is forced off (we own the maps). */
+  light: THREE.DirectionalLight;
+  cascades?: number;
+  maxDistance?: number;
+  lambda?: number;
+  mapSize?: number;
+  lightMargin?: number;
+  pcfRadius?: number;
+  normalBias?: number;
+  /** Draw per-cascade depth thumbnails bottom-left for debugging. */
+  debugBlit?: boolean;
+  /** Tint direct sunlight by cascade (red/green/blue/…) to visualize cascade selection. */
+  debugTint?: boolean;
+}
+
 export interface ConfigureDefaultPostprocessingPipelineParams {
   viz: Viz;
   quality: GraphicsQuality;
@@ -207,6 +228,11 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    */
   pomExitBuffers?: boolean;
   /**
+   * Opt a scene into custom cascaded shadow maps for its sun (large-scale directional shadows).
+   * customShader-only and mutually exclusive with volumetric/godray shadows. See `shadows/CascadedShadowMap`.
+   */
+  csm?: CsmConfig;
+  /**
    * Close the second-depth ("peter-panning") shadow gap at wall/floor contacts: cast
    * `DoubleSide` into shadow maps and auto-derive a texel-scaled `normalBias` for every
    * shadow-casting directional light (which suppresses the self-shadow acne DoubleSide casting
@@ -217,6 +243,21 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
    */
   shadowContactFix?: boolean;
 }
+
+const enableCsmOnSceneMaterials = (scene: THREE.Scene) => {
+  scene.traverse(obj => {
+    const mat = (obj as THREE.Mesh).material;
+    if (!mat) {
+      return;
+    }
+    for (const m of Array.isArray(mat) ? mat : [mat]) {
+      if (m instanceof CustomShaderMaterial) {
+        m.defines.USE_CSM = '1';
+        m.needsUpdate = true;
+      }
+    }
+  });
+};
 
 export const configureDefaultPostprocessingPipeline = ({
   viz,
@@ -235,6 +276,7 @@ export const configureDefaultPostprocessingPipeline = ({
   skyStack,
   pomExitBuffers = false,
   shadowContactFix = true,
+  csm: csmConfig,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   const applyShadowContactFix = shadowContactFix && viz.renderer.shadowMap.type !== THREE.VSMShadowMap;
   if (applyShadowContactFix) {
@@ -443,8 +485,30 @@ export const configureDefaultPostprocessingPipeline = ({
     finalPass.renderToScreen = true;
   }
 
+  let csm: CascadedShadowMap | null = null;
+  let csmDebugBlit: CsmDebugBlit | null = null;
+  if (csmConfig) {
+    csmConfig.light.castShadow = false;
+    csm = new CascadedShadowMap({
+      camera: viz.camera as THREE.PerspectiveCamera,
+      light: csmConfig.light,
+      cascades: csmConfig.cascades,
+      maxDistance: csmConfig.maxDistance,
+      lambda: csmConfig.lambda,
+      mapSize: csmConfig.mapSize,
+      lightMargin: csmConfig.lightMargin,
+      pcfRadius: csmConfig.pcfRadius,
+      normalBias: csmConfig.normalBias,
+    });
+    enableCsmOnSceneMaterials(viz.scene);
+    if (csmConfig.debugBlit) {
+      csmDebugBlit = new CsmDebugBlit(csm);
+    }
+  }
+
   let didRenderShadowMap = false;
   let didShadowContactSetup = false;
+  let didComputeCsmCasterBounds = false;
   let sceneGeomReady = false;
   viz.awaitPhysicsStartupBarriers().then(() => {
     sceneGeomReady = true;
@@ -499,7 +563,17 @@ export const configureDefaultPostprocessingPipeline = ({
       viz.renderer.shadowMap.autoUpdate = false;
     }
 
+    if (csm) {
+      if (!didComputeCsmCasterBounds && sceneGeomReady) {
+        didComputeCsmCasterBounds = true;
+        csm.computeCasterBounds(viz.scene);
+      }
+      csm.update();
+      csm.renderCascades(viz.renderer, viz.scene);
+      syncCsmUniforms(csm, csmConfig!.debugTint ?? false);
+    }
     composerRender(timeDiffSeconds);
+    csmDebugBlit?.render(viz.renderer, csm!.cascades);
   };
   viz.setRenderOverride(renderFrame);
 
@@ -514,6 +588,7 @@ export const configureDefaultPostprocessingPipeline = ({
     finalPass,
     inlineEmissivePass
   );
+  controller.csm = csm;
   if (pomRescanCb) {
     controller.setPomRescanCb(pomRescanCb);
   }

@@ -36,6 +36,8 @@ import { getTextureMeanColor } from './meanTextureColor';
 import VERTEX_LIGHTING_FRAGMENT from './vertexLighting.frag?raw';
 import PLAYER_SHADOW_FRAGMENT from './playerShadow.frag?raw';
 
+import type { CascadedShadowMap } from 'src/viz/shadows/CascadedShadowMap';
+
 export { MaterialClass } from './customShader.types';
 export type {
   AmbientDistanceAmpParams,
@@ -452,6 +454,13 @@ export const resetCustomShaderGlobals = () => {
   playerShadowParams.set(0, 0, 0, 0);
   psRingData.fill(0);
   occlusionParams.set(0, 0, 0, 0);
+  csmShadowArrayUniform.value = null;
+  csmParams.set(0, 1, 2, 0);
+  csmSplits.fill(0);
+  csmTexelWorld.fill(0);
+  for (const m of csmLightMatrices) {
+    m.identity();
+  }
 };
 
 const playerShadowPos = new THREE.Vector3();
@@ -474,6 +483,29 @@ export const getOcclusionUniforms = () => ({
   occlusionEnd,
   occlusionParams,
 });
+
+// Cascaded shadow maps: shared-singleton uniforms mutated once/frame by `syncCsmUniforms`, bound by
+// reference into every material so no per-material traversal is needed on the hot path. Arrays are
+// sized to a compile-time max; the active count rides in `csmParams.x`. Kept in sync with the GLSL
+// `CSM_MAX_CASCADES` below.
+export const CSM_MAX_CASCADES = 4;
+const csmLightMatrices: THREE.Matrix4[] = Array.from({ length: CSM_MAX_CASCADES }, () => new THREE.Matrix4());
+const csmSplits = new Float32Array(CSM_MAX_CASCADES);
+const csmTexelWorld = new Float32Array(CSM_MAX_CASCADES);
+// x = active cascade count, y = PCF radius (texels), z = normal-bias (× texel world), w = debug tint (0/1)
+const csmParams = new THREE.Vector4(0, 1, 2, 0);
+const csmShadowArrayUniform: { value: THREE.Texture | null } = { value: null };
+
+export const syncCsmUniforms = (csm: CascadedShadowMap, debugTint: boolean) => {
+  const n = Math.min(csm.cascades, CSM_MAX_CASCADES);
+  for (let i = 0; i < n; i += 1) {
+    csmLightMatrices[i].copy(csm.lightMatrices[i]);
+    csmSplits[i] = csm.splitDistances[i];
+    csmTexelWorld[i] = csm.texelWorld[i];
+  }
+  csmShadowArrayUniform.value = csm.depthRT.texture;
+  csmParams.set(n, csm.pcfRadius, csm.normalBias, debugTint ? 1 : 0);
+};
 
 // World units spanned by one device pixel at unit camera distance:
 // `2*tan(fov/2) / drawingBufferHeight`. `unitsPerPx` in the shader is this times
@@ -878,6 +910,13 @@ export const buildCustomShaderArgs = (
   uniforms.occlusionStart = { value: occlusionStart };
   uniforms.occlusionEnd = { value: occlusionEnd };
   uniforms.occlusionParams = { value: occlusionParams };
+  uniforms.csmLightMatrices = { value: csmLightMatrices };
+  uniforms.csmSplits = { value: csmSplits };
+  uniforms.csmTexelWorld = { value: csmTexelWorld };
+  uniforms.csmParams = { value: csmParams };
+  // Shared wrapper object (not a fresh `{ value }`) so `syncCsmUniforms` can set the array texture
+  // after the manager exists and have every material see it.
+  uniforms.csmShadowArray = csmShadowArrayUniform;
 
   // Bound post-merge so live object references (e.g. a shared per-frame uniform object) survive
   // `UniformsUtils.merge`'s deep clone.
@@ -1740,6 +1779,53 @@ ${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap, !!pomSelfShadow)}
 uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=maxReceiverY (highest probe, for early-out)
 uniform float psRingData[16]; // [0..7]: outer ring receiverY (angles 0-7), [8..15]: inner ring (angles 0-7)
+
+#ifdef USE_CSM
+#define CSM_MAX_CASCADES 4
+precision highp sampler2DArray;
+uniform sampler2DArray csmShadowArray;
+uniform mat4 csmLightMatrices[CSM_MAX_CASCADES];
+uniform float csmSplits[CSM_MAX_CASCADES]; // per-cascade far edge, positive view-space distance
+uniform float csmTexelWorld[CSM_MAX_CASCADES];
+uniform vec4 csmParams; // x=count, y=pcf radius (texels), z=normal bias (× texel world), w=debug tint
+
+const vec2 CSM_POISSON[12] = vec2[12](
+  vec2(-0.326, -0.406), vec2(-0.840, -0.074), vec2(-0.696, 0.457), vec2(-0.203, 0.621),
+  vec2(0.962, -0.195), vec2(0.473, -0.480), vec2(0.519, 0.767), vec2(0.185, -0.893),
+  vec2(0.507, 0.064), vec2(0.896, 0.412), vec2(-0.322, -0.933), vec2(-0.792, -0.598)
+);
+
+// Per-pixel-rotated Poisson-disk PCF: turns the packed-depth map's hard texel steps into a dithered
+// penumbra whose width scales with csmParams.y texels.
+float csmPcf(int layer, vec2 uv, float compareDepth) {
+  float texel = 1.0 / float(textureSize(csmShadowArray, 0).x);
+  float ang = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.2831853;
+  float c = cos(ang), s = sin(ang);
+  mat2 rot = mat2(c, s, -s, c);
+  float sum = 0.0;
+  for (int i = 0; i < 12; i++) {
+    vec2 o = (rot * CSM_POISSON[i]) * texel * csmParams.y;
+    sum += step(compareDepth, unpackRGBAToDepth(texture(csmShadowArray, vec3(uv + o, float(layer)))));
+  }
+  return sum * (1.0 / 12.0);
+}
+
+// Returns sun visibility [0,1] for a world-space receiver, selecting the tightest cascade whose
+// view-depth slab contains it. Ortho projection ⇒ clip.w == 1, so NDC == clip.xyz.
+float sampleCsm(vec3 worldPos, vec3 worldNormal, float viewDepth, out int cascade) {
+  int count = int(csmParams.x);
+  cascade = count - 1;
+  for (int i = 0; i < CSM_MAX_CASCADES; i++) {
+    if (i >= count) break;
+    if (viewDepth <= csmSplits[i]) { cascade = i; break; }
+  }
+  vec3 biasedPos = worldPos + normalize(worldNormal) * (csmTexelWorld[cascade] * csmParams.z);
+  vec4 clip = csmLightMatrices[cascade] * vec4(biasedPos, 1.0);
+  vec3 uvd = clip.xyz * 0.5 + 0.5;
+  if (uvd.x < 0.0 || uvd.x > 1.0 || uvd.y < 0.0 || uvd.y > 1.0 || uvd.z > 1.0) return 1.0;
+  return csmPcf(cascade, uvd.xy, uvd.z);
+}
+#endif
 
 ${softOcclusionPreamble}
 
