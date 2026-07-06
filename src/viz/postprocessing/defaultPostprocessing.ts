@@ -279,6 +279,7 @@ export const configureDefaultPostprocessingPipeline = ({
   csm: csmConfig,
 }: ConfigureDefaultPostprocessingPipelineParams): PostprocessingPipelineController => {
   const applyShadowContactFix = shadowContactFix && viz.renderer.shadowMap.type !== THREE.VSMShadowMap;
+  console.log({ applyShadowContactFix, shadowContactFix, shadowMapType: viz.renderer.shadowMap.type });
   if (applyShadowContactFix) {
     setShadowCastSide(viz.scene, THREE.DoubleSide);
   }

@@ -2,7 +2,7 @@ import { error, json, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
 import { libraryMaterialExists } from 'src/viz/levelDef/libraryMaterials.server';
-import type { ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
+import type { InputValueJson, ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
 import {
   findNodeById,
   findNodeWithParent,
@@ -39,6 +39,8 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     scale?: [number, number, number];
     /** Pass a string to assign, null to remove. Omit to leave unchanged. */
     material?: string | null;
+    /** Per-object `input_*` overrides. Pass a map to assign, null/empty to remove. Omit to leave unchanged. */
+    inputs?: Record<string, InputValueJson> | null;
   };
 
   const level = openLevel(name);
@@ -56,6 +58,13 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
       objDef.material = body.material;
     } else {
       delete objDef.material;
+    }
+  }
+  if ('inputs' in body && !isObjectGroup(objDef)) {
+    if (body.inputs && Object.keys(body.inputs).length > 0) {
+      objDef.inputs = body.inputs;
+    } else {
+      delete objDef.inputs;
     }
   }
 

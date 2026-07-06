@@ -167,6 +167,11 @@ export interface BtKinematicCharacterController {
   getCameraRayHitNormalY(): number;
   getCameraRayHitNormalZ(): number;
   getCameraRayHitNonPermeable(): boolean;
+  castShadowProbeGrid(
+    world: BtDiscreteDynamicsWorld,
+    centerX: number, originY: number, centerZ: number,
+    radius: number, maxDist: number, n: number, outBuffer: number
+  ): number;
 
   packState(outBuffer: number): number;
   resetForNewRun(): void;

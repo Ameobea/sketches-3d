@@ -261,6 +261,8 @@ export class EditorMutationController {
   }
 
   private async _pasteOne(entry: ClipboardEntry): Promise<{ subtree: RuntimeSubtree } | null> {
+    // Prototypes/baked meshes are keyed by effective (param-variant) asset id.
+    const effId = (def: ObjectDef) => this.ctx.effectiveAssetId?.(def) ?? def.asset ?? '';
     if (entry.kind === 'object') {
       if (!this.ctx.prototypes.has(entry.assetId)) {
         console.warn(
@@ -269,15 +271,15 @@ export class EditorMutationController {
         return null;
       }
     } else if (entry.kind === 'composition') {
-      if (!this.ctx.compositionBaked?.has(entry.assetId)) {
+      if (!this.ctx.compositionBaked?.has(effId(entry.def))) {
         console.warn(`[EditorMutationController] No baked meshes for composition asset "${entry.assetId}"`);
         return null;
       }
     } else {
       for (const leaf of flattenLeaves([entry.def])) {
         if (!hasAsset(leaf)) continue; // dash-token marker — no prototype needed
-        const known =
-          this.ctx.prototypes.has(leaf.asset) || (this.ctx.compositionBaked?.has(leaf.asset) ?? false);
+        const eid = effId(leaf);
+        const known = this.ctx.prototypes.has(eid) || (this.ctx.compositionBaked?.has(eid) ?? false);
         if (!known) {
           console.warn(`[EditorMutationController] No prototype for asset "${leaf.asset}" in pasted group`);
           return null;

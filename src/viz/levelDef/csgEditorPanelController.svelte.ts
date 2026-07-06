@@ -55,8 +55,12 @@ export class CsgEditorPanelController {
     this.target = target;
 
     const state = this.panelState;
+    // Parametric assets (with `inputs`) are intentionally unsupported in CSG trees.
     const geoscriptAssetIds = Object.entries(levelDef.assets)
-      .filter(([, def]: [string, AssetDef]) => def.type === 'geoscript')
+      .filter(
+        ([, def]: [string, AssetDef]) =>
+          def.type === 'geoscript' && !(def.inputs && Object.keys(def.inputs).length > 0)
+      )
       .map(([id]) => id);
 
     this.component = mount(CsgTreeEditor, {

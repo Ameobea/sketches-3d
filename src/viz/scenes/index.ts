@@ -160,7 +160,7 @@ export type ViewMode =
       minZoomDistance?: number;
       /**
        * How fast the scroll wheel adjusts distance (world units per scroll step).
-       * Default: 2.0
+       * Default: 7.0
        */
       zoomSpeed?: number;
       /**

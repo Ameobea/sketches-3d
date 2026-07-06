@@ -288,6 +288,76 @@
       "position": [-40, 3, 40],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "param_tower_demo_slim",
+      "asset": "param_tower",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "inputs": {
+        "segments": {
+          "type": "int",
+          "value": 18
+        },
+        "radius": {
+          "type": "float",
+          "value": 0.7
+        },
+        "twist_per_level": {
+          "type": "float",
+          "value": 0.55
+        }
+      },
+      "position": [-48, 3, 40],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "param_tower_demo_squat",
+      "asset": "param_tower",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "inputs": {
+        "segments": {
+          "type": "int",
+          "value": 5
+        },
+        "radius": {
+          "type": "float",
+          "value": 2.8
+        }
+      },
+      "position": [-31, 3, 47],
+      "rotation": [0, 0.6, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "param_tower_demo_slim_clone",
+      "asset": "param_tower",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "inputs": {
+        "segments": {
+          "type": "int",
+          "value": 18
+        },
+        "radius": {
+          "type": "float",
+          "value": 0.7
+        },
+        "twist_per_level": {
+          "type": "float",
+          "value": 0.55
+        }
+      },
+      "position": [-56, 3, 47],
+      "rotation": [0, 3.14159, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "tower_ring",
+      "generator": "tower_ring",
+      "children": [],
+      "position": [-100, 3, 40],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

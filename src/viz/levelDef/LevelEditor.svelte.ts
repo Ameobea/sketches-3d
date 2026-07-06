@@ -7,7 +7,17 @@ import type { BulletPhysics } from 'src/viz/collision';
 import type { CollisionMeshOverride } from 'src/viz/collisionShapes';
 import type { BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
 import { resolveCompositionMaterial } from 'src/geoscript/runner/bakeComposition';
-import type { AmbientLightDef, EditorBookmark, HemisphereLightDef, LevelDef, LightDef } from './types';
+import type {
+  AmbientLightDef,
+  EditorBookmark,
+  HemisphereLightDef,
+  InputValueJson,
+  LevelDef,
+  LightDef,
+  ObjectDef,
+} from './types';
+import type { RenderedControl } from 'src/geoscript/runner/types';
+import { ParamVariantResolver } from './paramVariantResolver';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup, isEditable, isCompositionNode } from './levelSceneTypes';
 import { hasAsset } from './levelDefTreeUtils';
@@ -46,6 +56,7 @@ import type {
   CompositionMaterialInfo,
   LevelEditorPanelActions,
   LevelEditorPanelViewState,
+  ObjectInputsInfo,
 } from './levelEditorPanelTypes';
 import {
   addLevelLightToScene,
@@ -64,6 +75,13 @@ type UndoEntry =
       type: 'transform';
       entries: Array<{ node: LevelSceneNode; before: TransformSnapshot; after: TransformSnapshot }>;
     }
+  | {
+      type: 'inputs';
+      node: LevelSceneNode;
+      handleId: string;
+      before: InputValueJson | undefined;
+      after: InputValueJson | undefined;
+    }
   | StructuralUndoEntry;
 
 export interface LevelEditorInit {
@@ -81,6 +99,10 @@ export interface LevelEditorInit {
   /** See `LevelEditor.resolveAssetPrototype`. Null when running outside `loadLevelDef`. */
   resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null;
   compositionBaked: Map<string, BakedCompositionMesh[]>;
+  /** See `BuildCtx.effectiveAssetId`. */
+  effectiveAssetId: (def: ObjectDef) => string;
+  /** `input_*` control declarations per effective asset id, for the param UI. */
+  assetControls: Map<string, RenderedControl[]>;
 }
 
 export class LevelEditor {
@@ -102,6 +124,9 @@ export class LevelEditor {
    * Provided by `loadLevelDef`; null when running outside that scope.
    */
   resolveAssetPrototype: ((assetId: string, prototype: THREE.Mesh) => Promise<void>) | null;
+  /** Def → effective (param-variant) asset id for prototype/baked-mesh lookups. */
+  effectiveAssetId: (def: ObjectDef) => string;
+  assetControls: Map<string, RenderedControl[]>;
 
   api: LevelEditorApi;
   private undoSystem = new UndoSystem<UndoEntry>();
@@ -126,6 +151,9 @@ export class LevelEditor {
     this.undoSystem.purge(entry => {
       if (entry.type === 'transform') {
         return entry.entries.some(e => ids.has(e.node.id));
+      }
+      if (entry.type === 'inputs') {
+        return ids.has(entry.node.id);
       }
       const refsDeleted = (op: { subtree: { root: { id: string }; leaves: { id: string }[] } }) =>
         ids.has(op.subtree.root.id) || op.subtree.leaves.some(l => ids.has(l.id));
@@ -192,6 +220,7 @@ export class LevelEditor {
   private panelTarget: HTMLDivElement | null = null;
 
   private csgController = new CsgEditController(this);
+  private paramResolver = new ParamVariantResolver(this);
 
   private bookmarks = new Map<number, EditorBookmark>();
 
@@ -204,11 +233,14 @@ export class LevelEditor {
     this.compositionBaked = init.compositionBaked;
     this.assetCollisionMeshes = init.assetCollisionMeshes;
     this.resolveAssetPrototype = init.resolveAssetPrototype;
+    this.effectiveAssetId = init.effectiveAssetId;
+    this.assetControls = init.assetControls;
     this.allLevelObjects = init.objects;
     this.rootNodes = init.rootNodes;
     this.nodeById = init.nodeById;
     this.allLevelLights = init.levelLights;
 
+    (window as any).levelEditor = this;
     this.api = new LevelEditorApi(init.levelName);
     this.materialEditor = new MaterialEditorController(
       init.levelDef,
@@ -614,6 +646,23 @@ export class LevelEditor {
         }
         return { placementCount, rows };
       },
+      get objectInputs(): ObjectInputsInfo | null {
+        void state.selectedNodeIds;
+        void state.treeVersion;
+        const node = self.selectedNode;
+        if (!node || !isEditable(node)) return null;
+        const def = self.paramInputsDef(node);
+        if (!def?.asset) return null;
+        const controls =
+          self.assetControls.get(self.effectiveAssetId(def)) ?? self.assetControls.get(def.asset);
+        if (!controls || controls.length === 0) return null;
+        const assetDef = self.levelDef.assets[def.asset];
+        const assetInputs =
+          assetDef && (assetDef.type === 'geoscript' || assetDef.type === 'geotoyComposition')
+            ? assetDef.inputs
+            : undefined;
+        return { controls, overrides: { ...(assetInputs ?? {}), ...(def.inputs ?? {}) } };
+      },
       get materialEditorOpen() {
         return materialEditorOpen();
       },
@@ -667,6 +716,7 @@ export class LevelEditor {
       },
       changeMaterial: matId => void this.onObjectMaterialChange(matId),
       mapCompositionMaterial: (geotoyName, matId) => void this.onCompositionMaterialMap(geotoyName, matId),
+      setObjectInput: (handleId, value) => this.setObjectInput(handleId, value),
       applyTransform: snap => this.applyTransformInput(snap),
       deleteSelection: () => this.deleteSelected(),
       toggleMaterialEditor: () => {
@@ -1157,6 +1207,17 @@ export class LevelEditor {
       // Re-select the first node for focus
       if (entry.entries.length > 0) this.select(entry.entries[0].node);
       this.syncTransformFromNode();
+    } else if (entry.type === 'inputs') {
+      const def = this.paramInputsDef(entry.node);
+      if (!def) return;
+      const v = direction === 'undo' ? entry.before : entry.after;
+      const inputs = { ...(def.inputs ?? {}) };
+      if (v === undefined) delete inputs[entry.handleId];
+      else inputs[entry.handleId] = v;
+      def.inputs = Object.keys(inputs).length > 0 ? inputs : undefined;
+      this.paramResolver.queueRebuild(entry.node);
+      void this.api.saveInputs(entry.node.id, def.inputs);
+      this.select(entry.node);
     } else if (entry.type === 'structural') {
       const nodeToSelect = this.mutationController.applyStructuralUndoEntry(entry, direction);
       this.selectionState.treeVersion++;
@@ -1166,6 +1227,57 @@ export class LevelEditor {
       entry satisfies never;
     }
   };
+
+  /** The def carrying a placement's per-object `inputs`: composition pointer or leaf def. */
+  private paramInputsDef(node: LevelSceneNode): ObjectDef | null {
+    if (isCompositionNode(node)) return node.compositionDef;
+    if (!isLevelGroup(node)) return node.def;
+    return null;
+  }
+
+  // Coalesce a burst of edits to one input (e.g. a slider drag) into a single undo entry,
+  // and debounce the disk save alongside.
+  private inputsUndoPending: {
+    node: LevelSceneNode;
+    handleId: string;
+    before: InputValueJson | undefined;
+  } | null = null;
+  private inputsUndoTimer = 0;
+  private inputsSaveTimer = 0;
+
+  private flushInputsUndo() {
+    const p = this.inputsUndoPending;
+    if (!p) return;
+    this.inputsUndoPending = null;
+    const after = this.paramInputsDef(p.node)?.inputs?.[p.handleId];
+    if (JSON.stringify(p.before) === JSON.stringify(after)) return;
+    this.undoSystem.push({ type: 'inputs', node: p.node, handleId: p.handleId, before: p.before, after });
+  }
+
+  private setObjectInput(handleId: string, value: InputValueJson) {
+    const node = this.selectedNode;
+    if (!node || !isEditable(node)) return;
+    const def = this.paramInputsDef(node);
+    if (!def?.asset) return;
+
+    if (
+      this.inputsUndoPending &&
+      (this.inputsUndoPending.node !== node || this.inputsUndoPending.handleId !== handleId)
+    ) {
+      this.flushInputsUndo();
+    }
+    if (!this.inputsUndoPending) {
+      this.inputsUndoPending = { node, handleId, before: def.inputs?.[handleId] };
+    }
+
+    def.inputs = { ...(def.inputs ?? {}), [handleId]: value };
+    this.paramResolver.queueRebuild(node);
+
+    clearTimeout(this.inputsUndoTimer);
+    this.inputsUndoTimer = window.setTimeout(() => this.flushInputsUndo(), 400);
+    clearTimeout(this.inputsSaveTimer);
+    this.inputsSaveTimer = window.setTimeout(() => void this.api.saveInputs(node.id, def.inputs), 400);
+  }
 
   private async onAddGroupClick() {
     const group = await this.mutationController.spawnGroup(this.getOrbitPosition());
@@ -1302,9 +1414,15 @@ export class LevelEditor {
     for (const n of nodes) {
       if (!isEditable(n)) return false;
       if (isLevelGroup(n)) return false;
+      // Parametric × CSG is intentionally unsupported; param-variant placements also land on the
+      // `!assetDef` branch since their assetId is synthetic.
       const assetDef = this.levelDef.assets[n.assetId];
       if (!assetDef) return false;
       if (assetDef.type !== 'geoscript' && assetDef.type !== 'csg') return false;
+      if (assetDef.type === 'geoscript' && assetDef.inputs && Object.keys(assetDef.inputs).length > 0) {
+        return false;
+      }
+      if (n.def.inputs && Object.keys(n.def.inputs).length > 0) return false;
     }
     if (nodes.length > 1 && !this.selection.haveSharedParent(this.nodeById, this.rootNodes)) {
       return false;
@@ -1609,6 +1727,7 @@ export class LevelEditor {
 
   private destroy() {
     window.removeEventListener('keydown', this.onKeyDown);
+    this.paramResolver.destroy();
     if (this.isEditMode) {
       this.exitEditMode();
     }

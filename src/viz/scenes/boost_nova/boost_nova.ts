@@ -144,7 +144,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         distance: 15,
         cameraFOV: 75,
         zoomEnabled: true,
-        maxZoomDistance: 50,
+        maxZoomDistance: 40,
+        zoomSpeed: 5,
       },
     }
   );

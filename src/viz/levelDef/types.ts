@@ -451,6 +451,12 @@ export const ObjectDefSchema = z
     userData: z.record(z.string(), z.unknown()).optional(),
     /** Key into the top-level `materials` registry. All meshes in this object get this material. */
     material: z.string().optional(),
+    /**
+     * Per-object overrides for the asset's `input_*` control values (sparse; merged over the
+     * asset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with
+     * distinct merged inputs resolve to distinct baked variants of the asset.
+     */
+    inputs: InputsJsonSchema.optional(),
     /** If true, this object will not be registered in the collision world */
     nocollide: z.boolean().optional(),
     /**
@@ -857,6 +863,16 @@ export const LevelDefSchema = z
           message: `Unknown material "${obj.material}". Available: ${[...matKeys].join(', ') || '(none)'}`,
         });
       }
+      if (obj.inputs && Object.keys(obj.inputs).length > 0) {
+        const assetDef = obj.asset !== undefined ? def.assets[obj.asset] : undefined;
+        if (assetDef && assetDef.type !== 'geoscript' && assetDef.type !== 'geotoyComposition') {
+          ctx.addIssue({
+            code: 'custom',
+            path: [...path, 'inputs'],
+            message: `"inputs" requires a geoscript or geotoyComposition asset; "${obj.asset}" is "${assetDef.type}"`,
+          });
+        }
+      }
     }
 
     // Validate CSG asset tree references
@@ -878,6 +894,15 @@ export const LevelDefSchema = z
               code: 'custom',
               path: ['assets', assetName, ...path, 'asset'],
               message: `CSG leaf must reference a geoscript or csg asset, got "${refDef.type}"`,
+            });
+          }
+          // Parametric × CSG is intentionally unsupported: a parametric asset in a CSG tree
+          // would need per-variant CSG re-runs and input injection into sub-modules.
+          if (refDef?.type === 'geoscript' && refDef.inputs && Object.keys(refDef.inputs).length > 0) {
+            ctx.addIssue({
+              code: 'custom',
+              path: ['assets', assetName, ...path, 'asset'],
+              message: `CSG leaf references parametric asset "${node.asset}" (has "inputs"); parametric assets are not supported in CSG trees`,
             });
           }
         } else {

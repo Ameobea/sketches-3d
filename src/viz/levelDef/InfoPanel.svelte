@@ -12,6 +12,7 @@
     materialIds: string[];
     materialLibFolders: AssetLibFolder[];
     isCsgAsset: boolean;
+    canConvertToCsg: boolean;
     position: [number, number, number];
     rotation: [number, number, number];
     scale: [number, number, number];
@@ -32,6 +33,7 @@
     materialIds,
     materialLibFolders,
     isCsgAsset,
+    canConvertToCsg,
     position,
     rotation,
     scale,
@@ -122,7 +124,14 @@
         {#if isCsgAsset}
           <span class="csg-label">CSG asset</span>
         {:else}
-          <button class="action-btn" onclick={onconvertToCsg}>convert to CSG</button>
+          <button
+            class="action-btn"
+            onclick={onconvertToCsg}
+            disabled={!canConvertToCsg}
+            title={canConvertToCsg ? undefined : 'unavailable (parametric assets are not supported in CSG)'}
+          >
+            convert to CSG
+          </button>
         {/if}
       {/if}
 

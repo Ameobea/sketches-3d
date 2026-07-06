@@ -22,7 +22,15 @@ export interface BuildCtx {
   compositionBaked?: Map<string, BakedCompositionMesh[]>;
   /** Needed alongside `compositionBaked` to resolve composition material-name mappings. */
   levelDef?: LevelDef;
+  /**
+   * Resolves a def to the asset id its prototype/baked meshes live under (a param-variant id when
+   * the def carries `inputs`, else the authored id). Absent = authored id.
+   */
+  effectiveAssetId?: (def: ObjectDef) => string;
 }
+
+const effectiveAssetIdOf = (ctx: BuildCtx, def: ObjectDef): string =>
+  ctx.effectiveAssetId?.(def) ?? def.asset ?? '';
 
 /**
  * Build a LevelObject from a def and its asset prototype.
@@ -70,14 +78,14 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
       // dash-token marker: the clone serializes its def + reload re-materializes it; only live
       // in-editor spawn (token visual + physics ghost, from the parkour subsystem) is skipped.
       continue;
-    } else if (ctx.compositionBaked?.has(childDef.asset)) {
+    } else if (ctx.compositionBaked?.has(effectiveAssetIdOf(ctx, childDef))) {
       const child = buildCompositionGroupFromCtx(ctx, childDef);
       if (child) {
         groupObj.add(child.object);
         levelGroup.children.push(child);
       }
     } else {
-      const leaf = buildLeafNode(ctx, childDef.asset, childDef);
+      const leaf = buildLeafNode(ctx, effectiveAssetIdOf(ctx, childDef), childDef);
       groupObj.add(leaf.object);
       levelGroup.children.push(leaf);
     }
@@ -169,7 +177,8 @@ export function buildCompositionGroup(
 export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): LevelGroup | null {
   const assetId = objDef.asset;
   if (assetId === undefined) return null;
-  const baked = ctx.compositionBaked?.get(assetId);
+  // Baked meshes live under the effective (variant) id; the materialMap under the authored id.
+  const baked = ctx.compositionBaked?.get(effectiveAssetIdOf(ctx, objDef));
   if (!baked) {
     console.warn(`[editorNodeFactory] No baked meshes for composition asset "${assetId}"`);
     return null;

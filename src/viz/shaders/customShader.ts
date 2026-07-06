@@ -452,7 +452,7 @@ export const resetCustomShaderGlobals = () => {
   currentSceneEnvironment = null;
   playerShadowPos.set(0, 0, 0);
   playerShadowParams.set(0, 0, 0, 0);
-  psRingData.fill(0);
+  psGridData.fill(0);
   occlusionParams.set(0, 0, 0, 0);
   csmShadowArrayUniform.value = null;
   csmParams.set(0, 1, 2, 0);
@@ -465,13 +465,14 @@ export const resetCustomShaderGlobals = () => {
 
 const playerShadowPos = new THREE.Vector3();
 const playerShadowParams = new THREE.Vector4(0, 0, 0, 0);
-// flat packing: [0..7] = outer ring receiverY (angles 0-7), [8..15] = inner ring (angles 0-7)
-const psRingData = new Float32Array(16);
+// 8x8 probe receiver Ys spanning ±radius around the player, row-major with z rows;
+// bound as vec4[16]
+const psGridData = new Float32Array(64);
 
 export const getPlayerShadowUniforms = () => ({
   playerShadowPos,
   playerShadowParams,
-  psRingData,
+  psGridData,
 });
 
 const occlusionStart = new THREE.Vector3();
@@ -906,7 +907,7 @@ export const buildCustomShaderArgs = (
   }
   uniforms.playerShadowPos = { value: playerShadowPos };
   uniforms.playerShadowParams = { value: playerShadowParams };
-  uniforms.psRingData = { value: psRingData };
+  uniforms.psGridData = { value: psGridData };
   uniforms.occlusionStart = { value: occlusionStart };
   uniforms.occlusionEnd = { value: occlusionEnd };
   uniforms.occlusionParams = { value: occlusionParams };
@@ -1777,8 +1778,10 @@ float softenTerminator(vec3 geoN, vec3 lightDir) {
 ${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap, !!pomSelfShadow)}
 
 uniform vec3 playerShadowPos;
-uniform vec4 playerShadowParams; // x=radius, y=intensity, z=centerReceiverY, w=maxReceiverY (highest probe, for early-out)
-uniform float psRingData[16]; // [0..7]: outer ring receiverY (angles 0-7), [8..15]: inner ring (angles 0-7)
+uniform vec4 playerShadowParams; // x=radius, y=intensity, z/w=min/max probe receiverY (early-out band)
+// 8x8 probe receiver Ys spanning ±radius around the player, row-major with z rows
+uniform vec4 psGridData[16];
+float psGridFetch(int i) { return psGridData[i >> 2][i & 3]; }
 
 #ifdef USE_CSM
 #define CSM_MAX_CASCADES 4

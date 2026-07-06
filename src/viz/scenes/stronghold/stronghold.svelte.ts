@@ -205,29 +205,6 @@ const setupScene = async (
   const ambientLight = new THREE.AmbientLight(0xffffff, 0.58);
   viz.scene.add(ambientLight);
 
-  const sunPos = new THREE.Vector3(20, 50, -20);
-  const sunLight = new THREE.DirectionalLight(0xffffff, 2.3);
-  const shadowMapSize = {
-    [GraphicsQuality.Low]: 1024,
-    [GraphicsQuality.Medium]: 2048,
-    [GraphicsQuality.High]: 4096,
-  }[vizConf.graphics.quality];
-  sunLight.castShadow = true;
-  // sunLight.shadow.bias = 0.01;
-  sunLight.shadow.mapSize.width = shadowMapSize;
-  sunLight.shadow.mapSize.height = shadowMapSize;
-  sunLight.shadow.camera.near = 0.1;
-  sunLight.shadow.camera.far = 200;
-  sunLight.shadow.camera.left = -250;
-  sunLight.shadow.camera.right = 250;
-  sunLight.shadow.camera.top = 250;
-  sunLight.shadow.camera.bottom = -250;
-  sunLight.shadow.camera.updateProjectionMatrix();
-  sunLight.matrixWorldNeedsUpdate = true;
-  sunLight.updateMatrixWorld();
-  sunLight.position.copy(sunPos);
-  viz.scene.add(sunLight);
-
   // const shadowCameraHelper = new THREE.CameraHelper(sunLight.shadow.camera);
   // viz.scene.add(shadowCameraHelper);
 
@@ -402,6 +379,30 @@ export const processLoadedScene = async (
 
   const placeholder = loadedWorld.getObjectByName('placeholder') as THREE.Mesh | undefined;
   placeholder?.removeFromParent();
+
+  // need to create sun before setting up default postprocessing so that the shadow bias fix
+  // can get auto-applied
+  const sunPos = new THREE.Vector3(20, 50, -20);
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.3);
+  const shadowMapSize = {
+    [GraphicsQuality.Low]: 1024,
+    [GraphicsQuality.Medium]: 2048,
+    [GraphicsQuality.High]: 4096,
+  }[vizConf.graphics.quality];
+  sunLight.castShadow = true;
+  sunLight.shadow.mapSize.width = shadowMapSize;
+  sunLight.shadow.mapSize.height = shadowMapSize;
+  sunLight.shadow.camera.near = 0.1;
+  sunLight.shadow.camera.far = 200;
+  sunLight.shadow.camera.left = -250;
+  sunLight.shadow.camera.right = 250;
+  sunLight.shadow.camera.top = 250;
+  sunLight.shadow.camera.bottom = -250;
+  sunLight.shadow.camera.updateProjectionMatrix();
+  sunLight.matrixWorldNeedsUpdate = true;
+  sunLight.updateMatrixWorld();
+  sunLight.position.copy(sunPos);
+  viz.scene.add(sunLight);
 
   const pipeline = initPylonsPostprocessing(viz, vizConf, true);
 

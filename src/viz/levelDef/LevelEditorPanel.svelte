@@ -4,6 +4,7 @@
   import HierarchyPanel from './HierarchyPanel.svelte';
   import InfoPanel from './InfoPanel.svelte';
   import LightInfoPanel from './LightInfoPanel.svelte';
+  import ObjectInputsPanel from './ObjectInputsPanel.svelte';
   import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
   import type { LightDef } from './types';
 
@@ -179,6 +180,7 @@
       materialIds={view.materialIds}
       materialLibFolders={view.materialLibFolders}
       isCsgAsset={view.isCsgAsset}
+      canConvertToCsg={view.canConvertSelectedToCsg ?? false}
       position={view.position}
       rotation={view.rotation}
       scale={view.scale}
@@ -190,6 +192,13 @@
       onrecenterorigin={actions.recenterGroupOrigin}
       ondelete={actions.deleteSelection}
     />
+    {#if view.objectInputs}
+      <ObjectInputsPanel
+        info={view.objectInputs}
+        nodeId={view.selectedNodeId}
+        onchange={actions.setObjectInput}
+      />
+    {/if}
     {#if view.compositionMaterials}
       <CompositionMaterialPanel
         info={view.compositionMaterials}

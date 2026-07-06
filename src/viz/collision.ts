@@ -96,9 +96,7 @@ export interface SubtickInputState {
 
 const MAX_SUBSTEPS_PER_FRAME = 120;
 
-// Precomputed unit circle offsets for shadow ring probes (8 angles at 45° intervals)
-const SHADOW_PROBE_COS = Array.from({ length: 8 }, (_, i) => Math.cos((i / 8) * Math.PI * 2));
-const SHADOW_PROBE_SIN = Array.from({ length: 8 }, (_, i) => Math.sin((i / 8) * Math.PI * 2));
+const SHADOW_PROBE_GRID_N = 8;
 
 let ammojs: Promise<AmmoInterface> | null = null;
 
@@ -245,6 +243,7 @@ export class BulletPhysics {
   private readonly collisionShapeCleanupFns = new WeakMap<BtCollisionObject, () => void>();
   public flightRecorder: FlightRecorder = new FlightRecorder();
   public packStateBufPtr = 0;
+  private shadowProbeBufPtr = 0;
   public readonly replayController: ReplayController;
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
@@ -625,48 +624,34 @@ export class BulletPhysics {
           const shadowUniforms = getPlayerShadowUniforms();
           shadowUniforms.playerShadowPos.set(newPlayerPos.x, feetY, newPlayerPos.z);
 
-          const shadowRayMaxDist = 50;
-          const rayOriginY = newPlayerPos.y;
-          const rayEndY = rayOriginY - shadowRayMaxDist;
-          const px = newPlayerPos.x;
-          const pz = newPlayerPos.z;
+          const n = SHADOW_PROBE_GRID_N;
+          if (!this.shadowProbeBufPtr) {
+            this.shadowProbeBufPtr = this.Ammo._malloc(n * n * 4);
+          }
           const radius = this.viz.sceneConf.player.playerShadow.radius;
+          const maxReceiverY = this.playerController.castShadowProbeGrid(
+            this.collisionWorld,
+            newPlayerPos.x,
+            newPlayerPos.y,
+            newPlayerPos.z,
+            radius,
+            50,
+            n,
+            this.shadowProbeBufPtr
+          );
 
-          const castShadowRay = (x: number, z: number): number => {
-            const frac = this.playerController.cameraRayTest(
-              this.collisionWorld,
-              x,
-              rayOriginY,
-              z,
-              x,
-              rayEndY,
-              z
-            );
-            return frac < 1.0 ? rayOriginY - frac * shadowRayMaxDist : feetY - shadowRayMaxDist;
-          };
-
-          const centerReceiverY = castShadowRay(px, pz);
-          shadowUniforms.playerShadowParams.z = centerReceiverY;
-
-          // Track the highest receiver Y across all probes so the shader can early-out
-          // fragments above it (they can never be on a shadowed surface). All rays are
-          // cast straight down from the player center, so every probe is <= player center.
-          let maxReceiverY = centerReceiverY;
-
-          // 8 angles at 45° intervals, two rings (outer=radius, inner=radius/2)
-          // flat layout: [0..7] = outer ring (angles 0-7), [8..15] = inner ring
-          const ringRadii = [radius, radius * 0.5];
-          const elems = shadowUniforms.psRingData;
-          for (let ring = 0; ring < 2; ring++) {
-            const r = ringRadii[ring];
-            const offset = ring * 8; // 0 for outer, 8 for inner
-            for (let i = 0; i < 8; i++) {
-              const probeY = castShadowRay(px + SHADOW_PROBE_COS[i] * r, pz + SHADOW_PROBE_SIN[i] * r);
-              elems[offset + i] = probeY;
-              maxReceiverY = Math.max(maxReceiverY, probeY);
-            }
+          const base = this.shadowProbeBufPtr / 4;
+          const heap = this.Ammo.HEAPF32;
+          shadowUniforms.psGridData.set(heap.subarray(base, base + n * n));
+          let minReceiverY = maxReceiverY;
+          for (let i = 0; i < n * n; i++) {
+            minReceiverY = Math.min(minReceiverY, heap[base + i]);
           }
 
+          // z/w = min/max receiver Y band for shader early-out; x synced so a
+          // runtime radius change keeps probe span and shader footprint matched
+          shadowUniforms.playerShadowParams.x = radius;
+          shadowUniforms.playerShadowParams.z = minReceiverY;
           shadowUniforms.playerShadowParams.w = maxReceiverY;
         }
 

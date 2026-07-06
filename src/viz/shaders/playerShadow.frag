@@ -1,47 +1,58 @@
-if (playerShadowParams.y > 0.) {
-  float psNormalUp = smoothstep(0.2, 0.5, vWorldNormal.y);
-  if (psNormalUp > 0. && vWorldPos.y < playerShadowParams.w + 0.3) {
-    float psRadius = playerShadowParams.x;
+// Gates ordered cheapest-first: raw compares only (no ALU) until a fragment is
+// inside the probe Y band, squared-distance circle test before the sqrt.
+if (
+  playerShadowParams.y > 0. &&
+  vWorldNormal.y > 0.2 &&
+  vWorldPos.y < playerShadowParams.w + 0.4 &&
+  vWorldPos.y > playerShadowParams.z - 1.6
+) {
+  float psRadius = playerShadowParams.x;
+  vec2 psDelta = vWorldPos.xz - playerShadowPos.xz;
 
-    vec2 psDelta = vWorldPos.xz - playerShadowPos.xz;
+  if (dot(psDelta, psDelta) < psRadius * psRadius) {
     float psDist = length(psDelta);
     float psCircle = 1. - smoothstep(psRadius * 0.6, psRadius, psDist);
 
-    if (psCircle > 0.) {
-      float psCenterReceiverY = playerShadowParams.z;
+    // Bilateral reconstruction over the 4 surrounding grid probes: bilinear
+    // weights gated by Y-proximity to this fragment, so it references only
+    // probes on its own surface. Plain bilinear chased heights blended across
+    // steps/ledges, eating the shadow on the upper surface and smearing it
+    // partway down; missed rays (parked ~50 below) poisoned their neighborhood.
+    // Both now just lose their weight.
+    vec2 psTc = clamp((psDelta / psRadius * 0.5 + 0.5) * 7., 0., 7.);
+    vec2 psCell = min(floor(psTc), vec2(6.));
+    vec2 psF = psTc - psCell;
+    int psBase = int(psCell.y) * 8 + int(psCell.x);
+    float psY00 = psGridFetch(psBase);
+    float psY10 = psGridFetch(psBase + 1);
+    float psY01 = psGridFetch(psBase + 8);
+    float psY11 = psGridFetch(psBase + 9);
 
-      // Angular lookup of receiver Y from ring probes
-      float psAngle = atan(psDelta.y, psDelta.x); // -PI to PI
-      float psSector = fract(psAngle / 6.2831853) * 8.; // 0 to 8
-      int psIdx0 = int(floor(psSector)); // 0..7, fract() keeps this in range
-      int psIdx1 = int(mod(float(psIdx0) + 1., 8.));
-      float psAngFrac = fract(psSector);
+    float psW00 = (1. - psF.x) * (1. - psF.y) * (1. - smoothstep(0.25, 1.25, abs(vWorldPos.y - psY00)));
+    float psW10 = psF.x * (1. - psF.y) * (1. - smoothstep(0.25, 1.25, abs(vWorldPos.y - psY10)));
+    float psW01 = (1. - psF.x) * psF.y * (1. - smoothstep(0.25, 1.25, abs(vWorldPos.y - psY01)));
+    float psW11 = psF.x * psF.y * (1. - smoothstep(0.25, 1.25, abs(vWorldPos.y - psY11)));
+    float psWSum = psW00 + psW10 + psW01 + psW11;
 
-      // Bilinear receiver Y: angular lerp between adjacent probes, radial lerp
-      // center -> inner ring (0.5R) -> outer ring (R). Tracks sloped ground;
-      // the old per-sector max() popped at sector/ring boundaries on slopes.
-      // Flat layout: [0..7] = outer ring (angles 0-7), [8..15] = inner ring.
-      float psOuterY = mix(psRingData[psIdx0], psRingData[psIdx1], psAngFrac);
-      float psInnerY = mix(psRingData[8 + psIdx0], psRingData[8 + psIdx1], psAngFrac);
-
-      float psRadialT = clamp(psDist / psRadius, 0., 1.);
-      float psReceiverY = psRadialT < 0.5
-        ? mix(psCenterReceiverY, psInnerY, psRadialT * 2.)
-        : mix(psInnerY, psOuterY, psRadialT * 2. - 1.);
-
-      // Drop distance derived from final receiverY
+    // Spatial weights sum to 1, so psWSum is the fraction of probe support that
+    // agrees with this fragment's height; fade where support is thin (over a
+    // void, under an overhang).
+    float psValidity = smoothstep(0.1, 0.4, psWSum);
+    if (psValidity > 0.) {
+      float psReceiverY = (psW00 * psY00 + psW10 * psY10 + psW01 * psY01 + psW11 * psY11) / psWSum;
       float psDropDist = playerShadowPos.y - psReceiverY;
 
       // Asymmetric surface check: tight above, gradual bleed below
       float psYDiff = vWorldPos.y - psReceiverY;
       float psOnSurface = psYDiff > 0.
-        ? 1. - smoothstep(0., 0.3, psYDiff)
+        ? 1. - smoothstep(0., 0.4, psYDiff)
         : 1. - smoothstep(0., 1.5, -psYDiff);
 
       // Fade shadow with height above surface
       float psHeightFade = 1. - smoothstep(0., 40., psDropDist);
 
-      float psShadow = psCircle * psOnSurface * psNormalUp * psHeightFade * playerShadowParams.y;
+      float psNormalUp = smoothstep(0.2, 0.5, vWorldNormal.y);
+      float psShadow = psCircle * psOnSurface * psValidity * psNormalUp * psHeightFade * playerShadowParams.y;
       float lightFactor = 1. - psShadow;
       totalDiffuse *= lightFactor;
       totalSpecular *= lightFactor;

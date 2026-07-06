@@ -1,0 +1,31 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#4c4f53",
+      "roughness": 0.7,
+      "metalness": 0.05
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.12,
+        "steps": 10,
+        "lodFadeStart": 14,
+        "lodFadeRange": 40,
+        "refinement": "binary",
+        "refinementSteps": 4,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "shapeStrip.common.glsl" },
+      "colorShader": { "file": "shapeStrip.color.glsl" },
+      "lightAttenuationShader": { "file": "shapeStrip.attenuation.glsl" },
+      "pomHeightShader": { "file": "shapeStrip.height.glsl" },
+      "pomNormalShader": { "file": "shapeStrip.normal.glsl" }
+    }
+  }
+}

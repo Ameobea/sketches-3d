@@ -1,7 +1,8 @@
+import type { RenderedControl } from 'src/geoscript/runner/types';
 import type { AssetLibFolder } from './assetLibTypes';
 import type { LevelLight, LevelSceneNode } from './loadLevelDef';
 import type { TransformSnapshot } from './TransformHandler';
-import type { LightDef } from './types';
+import type { InputValueJson, LightDef } from './types';
 
 /** Material-mapping surface for a selected geotoy composition node. */
 export interface CompositionMaterialInfo {
@@ -9,6 +10,14 @@ export interface CompositionMaterialInfo {
   placementCount: number;
   /** One row per geotoy material name; `mappedTo` is the explicit override, or null (composition default). */
   rows: { geotoyName: string; mappedTo: string | null }[];
+}
+
+/** Parametric-inputs surface for a selected placement of a parametric asset. */
+export interface ObjectInputsInfo {
+  /** `input_*` sites from the placement's variant run (or the base asset's as fallback). */
+  controls: RenderedControl[];
+  /** Effective values by bare input name: asset-level `inputs` overlaid with the object's. */
+  overrides: Record<string, InputValueJson>;
 }
 
 export interface LevelEditorPanelActions {
@@ -22,6 +31,8 @@ export interface LevelEditorPanelActions {
   changeMaterial(matId: string | null): void;
   /** Set (matId) or clear (null → composition default) a composition material-map override. */
   mapCompositionMaterial(geotoyName: string, matId: string | null): void;
+  /** Set a per-object `input_*` override on the selected placement (live-rebuilds it). */
+  setObjectInput(handleId: string, value: InputValueJson): void;
   applyTransform(snap: Partial<TransformSnapshot>): void;
   applyLightPosition(pos: [number, number, number]): void;
   applyLightProperty(update: Partial<LightDef>): void;
@@ -52,6 +63,8 @@ export interface LevelEditorPanelViewState {
   isGeneratedSelected: boolean;
   /** Non-null when a single geotoy composition node is selected; drives the material-map panel. */
   compositionMaterials: CompositionMaterialInfo | null;
+  /** Non-null when the selected placement's asset declares `input_*` controls. */
+  objectInputs: ObjectInputsInfo | null;
   materialEditorOpen: boolean;
   isCsgAsset: boolean;
   position: [number, number, number];

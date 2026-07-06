@@ -129,6 +129,11 @@ export class LevelEditorApi {
     await this.fetchOk('material assignment save', '', jsonInit('PATCH', { id, material }));
   };
 
+  /** Persist a placement's per-object `inputs` (undefined/empty clears the field). */
+  saveInputs = async (id: string, inputs: Record<string, import('./types').InputValueJson> | undefined) => {
+    await this.fetchOk('inputs save', '', jsonInit('PATCH', { id, inputs: inputs ?? null }));
+  };
+
   saveCompositionMaterialMap = async (assetId: string, materialMap: Record<string, string>) => {
     await this.fetchOk(
       'composition material-map save',

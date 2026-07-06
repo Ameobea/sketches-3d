@@ -44,7 +44,7 @@
           "value": 0.35
         }
       },
-      "_meta": { "runtimeMs": 0.3, "count": 1, "codeHash": "d3ebf25a" }
+      "_meta": { "runtimeMs": 1.3, "count": 5, "codeHash": "c9bb1304" }
     },
     "csg_plat": {
       "type": "csg",
@@ -110,5 +110,16 @@
       "intensity": 0.8
     }
   ],
+  "generators": {
+    "tower_ring": {
+      "file": "towers.gen.ts",
+      "params": {
+        "asset": "param_tower",
+        "material": "__ASSETS__/materials/procedural/grooved_plastic",
+        "count": 8,
+        "ringRadius": 24
+      }
+    }
+  },
   "objects": []
 }

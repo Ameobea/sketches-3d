@@ -2,7 +2,7 @@ import { WorkerManager } from 'src/geoscript/workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
 /** A lazily-created geoscript worker + its initialized context pointer. */
-class WorkerSlot {
+export class WorkerSlot {
   private manager: WorkerManager | null = null;
   private repl: ReturnType<WorkerManager['getWorker']> | null = null;
   private ctxPtrPromise: Promise<number> | null = null;

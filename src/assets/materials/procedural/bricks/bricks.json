@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#8b9089",
+      "roughness": 0.9,
+      "metalness": 0,
+      "envMapIntensity": 1
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.06,
+        "steps": 8,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 3,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "bricks.common.glsl" },
+      "colorShader": { "file": "bricks.color.glsl" },
+      "roughnessShader": { "file": "bricks.roughness.glsl" },
+      "lightAttenuationShader": { "file": "bricks.attenuation.glsl" },
+      "pomHeightShader": { "file": "bricks.height.glsl" },
+      "pomNormalShader": { "file": "bricks.normal.glsl" }
+    }
+  }
+}

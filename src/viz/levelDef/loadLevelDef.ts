@@ -13,7 +13,7 @@ import {
   instantiateLevelObject,
   meshesFromRunObjects,
 } from './levelObjectUtils';
-import type { GeneratedObject } from 'src/geoscript/runner/types';
+import type { GeneratedObject, RenderedControl } from 'src/geoscript/runner/types';
 import type {
   AssetDef,
   BehaviorSpec,
@@ -30,6 +30,7 @@ import { TEXTURE_SLOTS } from './types';
 import type { ContactRegion } from '../collision';
 import { compileTree, buildInjectedValues } from 'src/geoscript/treeCodegen';
 import { injectInputs, warnUnmatchedInputs } from './inputInjection';
+import { canonicalizeInputs, djb2Hash, expandParamVariants, type InputsJson } from './paramVariants';
 import {
   bakeCompositionMeshes,
   resolveCompositionMaterial,
@@ -313,24 +314,23 @@ const buildAssetModules = (
   return { ...modules, code };
 };
 
-/** djb2 hash over a string, returned as a hex string. */
-const djb2Hash = (s: string): string => {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) {
-    h = ((h << 5) + h + s.charCodeAt(i)) | 0;
-  }
-  return (h >>> 0).toString(16);
-};
-
-const computeCodeHash = (includePrelude: boolean, modules: Record<string, string>): string => {
+const computeCodeHash = (
+  includePrelude: boolean,
+  modules: Record<string, string>,
+  inputs?: InputsJson
+): string => {
   const content =
     (includePrelude ? '1' : '0') +
     Object.entries(modules)
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([k, v]) => `${k}:${v}`)
-      .join('\0');
+      .join('\0') +
+    (inputs && Object.keys(inputs).length > 0 ? '\0inputs:' + canonicalizeInputs(inputs) : '');
   return djb2Hash(content);
 };
+
+const assetInputs = (def: AssetDef): InputsJson | undefined =>
+  def.type === 'geoscript' || def.type === 'geotoyComposition' ? def.inputs : undefined;
 
 const shouldCollectMeta = (
   def: AssetDef,
@@ -341,7 +341,7 @@ const shouldCollectMeta = (
   if (!meta) {
     return true;
   }
-  if (meta.codeHash !== computeCodeHash(includePrelude, modules)) {
+  if (meta.codeHash !== computeCodeHash(includePrelude, modules, assetInputs(def))) {
     return true;
   }
   return meta.count < 5;
@@ -351,9 +351,10 @@ const computeUpdatedMeta = (
   existing: GeoscriptAssetMeta | undefined,
   sampled: { runtimeMs: number; asyncDeps: string[] },
   modules: Record<string, string>,
-  includePrelude: boolean
+  includePrelude: boolean,
+  inputs?: InputsJson
 ): GeoscriptAssetMeta => {
-  const codeHash = computeCodeHash(includePrelude, modules);
+  const codeHash = computeCodeHash(includePrelude, modules, inputs);
   const hashChanged = !existing || existing.codeHash !== codeHash;
   const baseCount = hashChanged ? 0 : existing!.count;
   const baseRuntimeMs = hashChanged ? 0 : existing!.runtimeMs;
@@ -378,7 +379,9 @@ const resolveScriptAssets = async (
   assets: Record<string, AssetDef>,
   onResolved: (id: string, obj: THREE.Mesh) => void,
   sceneName: string,
-  providedExecutor?: GeoscriptExecutor
+  providedExecutor?: GeoscriptExecutor,
+  variantIds?: ReadonlySet<string>,
+  controlsOut?: Map<string, RenderedControl[]>
 ): Promise<void> => {
   const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
   if (scriptIds.length === 0) {
@@ -398,7 +401,8 @@ const resolveScriptAssets = async (
       ((def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined)?.asyncDeps?.filter(
         d => d !== 'text_to_path'
       ) ?? [];
-    const collectMetadata = dev && shouldCollectMeta(def, modules, includePrelude);
+    // Variants never sample `_meta` — it belongs to the authored base asset.
+    const collectMetadata = dev && !variantIds?.has(id) && shouldCollectMeta(def, modules, includePrelude);
     // Plain geoscript user code runs in the module named "code" (see BAKED_RENDER_WRAPPER).
     const gizmoValues =
       def.type === 'geoscript' && def.inputs ? injectInputs({}, def.inputs, ['code']) : undefined;
@@ -425,6 +429,7 @@ const resolveScriptAssets = async (
       }
       const gdef = assets[id];
       if (gdef.type === 'geoscript') warnUnmatchedInputs(id, gdef.inputs, res.controls);
+      if (controlsOut && res.controls.length > 0) controlsOut.set(id, res.controls);
       const prototype = extractPrototype(res.objects);
       if (!prototype) {
         console.warn(`[levelDef] Asset "${id}" produced no meshes`);
@@ -438,7 +443,7 @@ const resolveScriptAssets = async (
         const modules = buildAssetModules(id, def, assets);
         const includePrelude = def.type === 'geoscript' ? (def.includePrelude ?? true) : false;
         const existing = (def as Record<string, unknown>)._meta as GeoscriptAssetMeta | undefined;
-        const updated = computeUpdatedMeta(existing, res.meta, modules, includePrelude);
+        const updated = computeUpdatedMeta(existing, res.meta, modules, includePrelude, assetInputs(def));
         if (JSON.stringify(updated) !== JSON.stringify(existing)) {
           metaUpdates[id] = updated;
         }
@@ -499,23 +504,31 @@ export const loadLevelDef = (
   // Flatten all leaf ObjectDefs for asset/material bookkeeping.
   const allLeafDefs = flattenLeaves(levelDef.objects);
 
-  // Map from assetId → list of ObjectDefs that use it. Asset-less leaves are dash-token
+  // Objects with per-object `inputs` resolve against synthesized variant assets. `assetDefs` is
+  // the authored assets plus those variants; all resolution below is keyed by effective asset id
+  // while the authored def (and `objDef.asset`) stays untouched.
+  const paramVariants = expandParamVariants(levelDef.assets, allLeafDefs);
+  const assetDefs = paramVariants.assets;
+  const { effectiveAssetId } = paramVariants;
+
+  // Map from effective assetId → list of ObjectDefs that use it. Asset-less leaves are dash-token
   // markers (no mesh/asset); they're placed separately in `placeMarker`.
   const assetToObjDefs = new Map<string, ObjectDef[]>();
   for (const objDef of allLeafDefs) {
     if (!hasAsset(objDef)) continue;
-    const list = assetToObjDefs.get(objDef.asset) ?? [];
+    const id = effectiveAssetId(objDef);
+    const list = assetToObjDefs.get(id) ?? [];
     list.push(objDef);
-    assetToObjDefs.set(objDef.asset, list);
+    assetToObjDefs.set(id, list);
   }
 
   // Warn about orphaned assets — assets that are defined but never referenced by any object
   // (directly or transitively through CSG). In dev, still resolve them so the level editor
   // can spawn new objects that reference assets not yet used in the scene.
-  const reachableAssets = computeReachableAssets(levelDef.assets, assetToObjDefs.keys());
+  const reachableAssets = computeReachableAssets(assetDefs, assetToObjDefs.keys());
   if (dev) {
     for (const id of Object.keys(levelDef.assets)) {
-      if (!reachableAssets.has(id)) {
+      if (!reachableAssets.has(id) && !paramVariants.variantsByBase.has(id)) {
         console.warn(`[levelDef] Asset "${id}" is defined but not referenced by any object`);
       }
     }
@@ -534,6 +547,8 @@ export const loadLevelDef = (
   // Baked mesh prototypes per composition asset, retained so the editor can re-expand a
   // placement (add-from-library / clone) without re-running the geoscript worker.
   const compositionBaked = new Map<string, BakedCompositionMesh[]>();
+  // `input_*` control declarations per effective asset id, retained for the editor's param UI.
+  const assetControls = new Map<string, RenderedControl[]>();
   const builtMaterials = new Map<string, THREE.Material>();
   const loadedTextures = new Map<string, THREE.Texture>();
   const assetPrototypes = new Map<string, THREE.Mesh>();
@@ -579,7 +594,7 @@ export const loadLevelDef = (
   const resolveAssetPrototype = (
     assetId: string,
     mesh: THREE.Mesh,
-    assetsRef: Record<string, AssetDef> = levelDef.assets
+    assetsRef: Record<string, AssetDef> = assetDefs
   ): Promise<void> => {
     assetPrototypes.set(assetId, mesh);
     // Drop any stale hull entry now; will be repopulated below if applicable.
@@ -957,7 +972,7 @@ export const loadLevelDef = (
   };
 
   const resolveCompositionAssets = async (): Promise<void> => {
-    const compIds = sortedAssetIds.filter(id => levelDef.assets[id].type === 'geotoyComposition');
+    const compIds = sortedAssetIds.filter(id => assetDefs[id].type === 'geotoyComposition');
     if (compIds.length === 0) return;
     if (!sharedExecutor) {
       console.error('[levelDef] geotoyComposition assets present but no geoscript executor available');
@@ -967,7 +982,7 @@ export const loadLevelDef = (
     const prelude = await sharedExecutor.getPrelude();
 
     const jobs: GeoscriptJob[] = compIds.map(id => {
-      const def = levelDef.assets[id] as GeotoyCompositionAssetDef;
+      const def = assetDefs[id] as GeotoyCompositionAssetDef;
       if (def.rootNodeName) {
         console.warn(
           `[levelDef] composition "${id}": rootNodeName scoping is not supported in v1; importing the whole tree`
@@ -1005,8 +1020,9 @@ export const loadLevelDef = (
             console.error(`[levelDef] composition asset "${id}" error:`, res.error);
             return;
           }
-          const def = levelDef.assets[id] as GeotoyCompositionAssetDef;
+          const def = assetDefs[id] as GeotoyCompositionAssetDef;
           warnUnmatchedInputs(id, def.inputs, res.controls);
+          if (res.controls.length > 0) assetControls.set(id, res.controls);
           const baked = bakeCompositionMeshes(def.tree, res.objects);
           compositionBaked.set(id, baked);
           if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
@@ -1099,13 +1115,13 @@ export const loadLevelDef = (
   // --- Topo-sort assets for dependency ordering ---
 
   const sortedAssetIds = dev
-    ? topoSortAssets(levelDef.assets)
-    : topoSortAssets(levelDef.assets).filter(id => reachableAssets.has(id));
+    ? topoSortAssets(assetDefs)
+    : topoSortAssets(assetDefs).filter(id => reachableAssets.has(id));
 
   // --- Resolve gltf assets immediately (sync) ---
 
   for (const assetId of sortedAssetIds) {
-    const assetDef = levelDef.assets[assetId];
+    const assetDef = assetDefs[assetId];
     if (assetDef.type !== 'gltf') continue;
     const src = loadedWorld.getObjectByName(assetDef.meshName);
     if (!src) {
@@ -1124,10 +1140,12 @@ export const loadLevelDef = (
 
   const geoscriptDone = resolveScriptAssets(
     sortedAssetIds,
-    levelDef.assets,
+    assetDefs,
     onAssetResolved,
     viz.sceneName,
-    sharedExecutor
+    sharedExecutor,
+    paramVariants.variantIds,
+    assetControls
   );
 
   // Composition jobs share the worker ctx with script assets, so run them after the script
@@ -1256,8 +1274,8 @@ export const loadLevelDef = (
   };
 
   if (dev) {
-    // Mutable shadow of levelDef.assets, kept current as geo files are hot-reloaded.
-    const mutableAssets: Record<string, AssetDef> = { ...levelDef.assets };
+    // Mutable shadow of the expanded asset record, kept current as geo files are hot-reloaded.
+    const mutableAssets: Record<string, AssetDef> = { ...assetDefs };
 
     objectsPromise.then(() =>
       import('./LevelEditor.svelte').then(({ initLevelEditor }) => {
@@ -1275,6 +1293,8 @@ export const loadLevelDef = (
           assetCollisionMeshes,
           resolveAssetPrototype,
           compositionBaked,
+          effectiveAssetId,
+          assetControls,
         });
 
         forwardEditorSelectable = visual => editor.registerExternalSelectable(visual);
@@ -1296,9 +1316,16 @@ export const loadLevelDef = (
           const existing = mutableAssets[assetId];
           if (!existing || existing.type !== 'geoscript') return;
           mutableAssets[assetId] = { ...existing, code };
+          for (const vid of paramVariants.variantsByBase.get(assetId) ?? []) {
+            mutableAssets[vid] = paramVariants.synthesize(mutableAssets[assetId], vid);
+          }
 
-          // Re-run the changed asset and everything that transitively depends on it.
+          // Re-run the changed asset and everything that transitively depends on it,
+          // plus the param variants of every affected asset.
           const affected = getDownstreamAssets(assetId, buildReverseDeps(mutableAssets));
+          for (const id of [...affected]) {
+            for (const vid of paramVariants.variantsByBase.get(id) ?? []) affected.add(vid);
+          }
           const sortedAffected = topoSortAssets(mutableAssets).filter(
             id =>
               affected.has(id) && (mutableAssets[id].type === 'geoscript' || mutableAssets[id].type === 'csg')
@@ -1324,7 +1351,9 @@ export const loadLevelDef = (
               });
             },
             viz.sceneName,
-            sharedExecutor
+            sharedExecutor,
+            paramVariants.variantIds,
+            assetControls
           );
         });
 
