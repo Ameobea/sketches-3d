@@ -1,0 +1,66 @@
+.control-panel {
+  --cp-bg1: rgb(35, 35, 35);
+  --cp-bg2: rgb(54, 54, 54);
+  --cp-bg2-hover: rgb(58, 58, 58);
+  --cp-fg1: rgb(112, 112, 112);
+  --cp-text1: rgb(235, 235, 235);
+  --cp-text2: rgb(161, 161, 161);
+  --cp-font: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+  --cp-row-h: 20px;
+
+  font-family: var(--cp-font);
+  font-size: 11px;
+  color: var(--cp-text1);
+  -webkit-user-select: none;
+  user-select: none;
+  text-align: left;
+  box-sizing: border-box;
+}
+
+.control-panel *,
+.control-panel *::before,
+.control-panel *::after {
+  box-sizing: border-box;
+}
+
+/* Native range styling lives here (global) so its vendor pseudo-elements aren't mangled by
+ * Svelte's per-component scoping. Track = background2, thumb = 10x20 foreground1 block. */
+.control-panel input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: var(--cp-row-h);
+  margin: 0;
+  background: var(--cp-bg2);
+  cursor: ew-resize;
+}
+.control-panel input[type='range']:focus {
+  outline: none;
+}
+.control-panel input[type='range']::-webkit-slider-runnable-track {
+  height: var(--cp-row-h);
+  background: var(--cp-bg2);
+}
+.control-panel input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 20px;
+  width: 10px;
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--cp-fg1);
+  cursor: ew-resize;
+}
+.control-panel input[type='range']::-moz-range-track {
+  height: var(--cp-row-h);
+  background: var(--cp-bg2);
+}
+.control-panel input[type='range']::-moz-range-thumb {
+  height: 20px;
+  width: 10px;
+  border: 0;
+  border-radius: 0;
+  background: var(--cp-fg1);
+  cursor: ew-resize;
+}

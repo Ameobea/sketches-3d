@@ -9,7 +9,7 @@ import { test } from 'node:test';
 // `geotoyAPIClient` reads `import.meta.env` at module top level (Vite), which is
 // undefined under plain node. Re-declare the small handful of types we need here
 // so the test file is node-runnable without pulling in the API client.
-import { compileTree } from './treeCodegen';
+import { compileTree, buildInjectedValues } from './treeCodegen';
 
 interface Transform3 {
   pos: [number, number, number];
@@ -23,6 +23,17 @@ interface NodeDef {
   instances: (Transform3 & { id: string })[];
   children: string[];
   disabled?: boolean;
+  handles?: Record<
+    string,
+    { kind: 'vec3' | 'transform'; mode: 'delta' | 'absolute'; value: [number, number, number] | Transform3 }
+  >;
+  controls?: Record<
+    string,
+    {
+      kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+      value: number | boolean | [number, number, number] | string;
+    }
+  >;
 }
 interface TreeDef {
   version: 1;
@@ -99,6 +110,33 @@ test('deeply nested tree: each parent side-effect-imports each enabled child', (
   assert.match(modules.gp, /import \{ \} from "p"/);
   assert.match(modules.p, /import \{ \} from "leaf"/);
   assert.equal(modules.leaf, 'render(box(1))');
+});
+
+test('buildInjectedValues merges gizmo handles and control values per module name', () => {
+  const t = tree('r', [
+    node({ id: 'r', name: '_root', children: ['a'] }),
+    node({
+      id: 'a',
+      name: 'a',
+      source: 'render(box(1))',
+      handles: { g: { kind: 'vec3', mode: 'delta', value: [1, 2, 3] } },
+      controls: {
+        stories: { kind: 'int', value: 5 },
+        wall: { kind: 'color', value: [0.2, 0.4, 0.6] },
+        mode: { kind: 'select', value: 'b' },
+        gain: { kind: 'float', value: 0.5 },
+        roof: { kind: 'bool', value: true },
+      },
+    }),
+  ]);
+  const inj = buildInjectedValues(t);
+
+  assert.deepEqual(inj.a.g, { kind: 'vec3', value: [1, 2, 3] });
+  assert.deepEqual(inj.a.stories, { kind: 'int', value: [5] });
+  assert.deepEqual(inj.a.wall, { kind: 'color', value: [0.2, 0.4, 0.6] });
+  assert.deepEqual(inj.a.mode, { kind: 'select', str_value: 'b' });
+  assert.deepEqual(inj.a.gain, { kind: 'float', value: [0.5] });
+  assert.deepEqual(inj.a.roof, { kind: 'bool', value: [1] });
 });
 
 test('node body is preserved verbatim after the side-effect imports', () => {

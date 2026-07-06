@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import type { GizmoValue, NodeDef, Transform3, TreeDef } from './geotoyAPIClient';
+import type { ControlValue, GizmoValue, NodeDef, Transform3, TreeDef } from './geotoyAPIClient';
 import { ROOT_NODE_NAME } from './geotoyAPIClient';
 import type { GizmoValuesByModule, GizmoValueWire } from './runner/types';
 import { composeTransform3 } from './runner/worldMatrixCache';
@@ -66,6 +66,34 @@ export const buildGizmoValues = (tree: TreeDef): GizmoValuesByModule => {
     const handles: Record<string, GizmoValueWire> = {};
     for (const [id, v] of Object.entries(node.handles)) handles[id] = gizmoValueToWire(v);
     out[node.name] = handles;
+  }
+  return out;
+};
+
+export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
+  switch (v.kind) {
+    case 'float':
+      return { kind: 'float', value: [v.value as number] };
+    case 'int':
+      return { kind: 'int', value: [v.value as number] };
+    case 'bool':
+      return { kind: 'bool', value: [(v.value as boolean) ? 1 : 0] };
+    case 'color': {
+      const c = v.value as [number, number, number];
+      return { kind: 'color', value: [c[0], c[1], c[2]] };
+    }
+    case 'select':
+      return { kind: 'select', str_value: v.value as string };
+  }
+};
+
+/** All host-injected handle values (gizmos + control inputs) merged per module name. */
+export const buildInjectedValues = (tree: TreeDef): GizmoValuesByModule => {
+  const out = buildGizmoValues(tree);
+  for (const node of Object.values(tree.nodes)) {
+    if (!node.controls) continue;
+    const bucket = (out[node.name] ??= {});
+    for (const [id, v] of Object.entries(node.controls)) bucket[id] = controlValueToWire(v);
   }
   return out;
 };

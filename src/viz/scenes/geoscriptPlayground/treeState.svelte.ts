@@ -8,7 +8,7 @@
 // `recordInstanceTransformChange` once per gesture. Source edits, globals
 // source, disable, and renames are not tracked here.
 
-import type { GizmoValue, Instance, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { ControlValue, GizmoValue, Instance, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { cloneTransform3 } from 'src/geoscript/geotoyAPIClient';
 
 /**
@@ -27,6 +27,9 @@ import {
   findParentId,
   deleteHandle as opsDeleteHandle,
   pruneHandles as opsPruneHandles,
+  setControl as opsSetControl,
+  deleteControl as opsDeleteControl,
+  pruneControls as opsPruneControls,
   removeInstance as opsRemoveInstance,
   renameNode as opsRenameNode,
   reparent as opsReparent,
@@ -298,6 +301,36 @@ export class TreeState {
 
   deleteHandle(nodeId: string, handleId: string): void {
     opsDeleteHandle(this.state.tree, nodeId, handleId);
+  }
+
+  /** Does NOT push undo. Pair with `recordControlChange` to commit an undo entry. */
+  setControl(nodeId: string, handleId: string, value: ControlValue): void {
+    opsSetControl(this.state.tree, nodeId, handleId, value);
+  }
+
+  captureControl(nodeId: string, handleId: string): ControlValue | null {
+    const v = this.state.tree.nodes[nodeId]?.controls?.[handleId];
+    return v ? (structuredClone($state.snapshot(v)) as ControlValue) : null;
+  }
+
+  recordControlChange(
+    nodeId: string,
+    handleId: string,
+    before: ControlValue | null,
+    after: ControlValue | null
+  ): void {
+    if (!this.state.tree.nodes[nodeId]) return;
+    if (JSON.stringify(before) === JSON.stringify(after)) return;
+    this.undoSystem.push({ type: 'setControl', nodeId, handleId, before, after });
+  }
+
+  /** GC orphaned control values (no undo entry — automatic cleanup on run/save). */
+  pruneControls(nodeId: string, liveHandleIds: ReadonlySet<string>): void {
+    opsPruneControls(this.state.tree, nodeId, liveHandleIds);
+  }
+
+  deleteControl(nodeId: string, handleId: string): void {
+    opsDeleteControl(this.state.tree, nodeId, handleId);
   }
 
   setSource(id: string, source: string): void {

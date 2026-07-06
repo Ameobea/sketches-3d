@@ -26,6 +26,8 @@ const ColorInputSchema = z.union([
   z.string().regex(/^#[0-9a-fA-F]{6}$/i, 'Color string must be a 6-digit hex value like "#rrggbb"'),
 ]);
 
+const Vec3Tuple = z.tuple([z.number(), z.number(), z.number()]);
+
 /**
  * Asset collider shape (default `trimesh`).
  *
@@ -50,11 +52,28 @@ export const GeoscriptAssetMetaSchema = z.object({
 });
 export type GeoscriptAssetMeta = z.infer<typeof GeoscriptAssetMetaSchema>;
 
+/**
+ * A parametric input value injected into a geoscript program / composition at bake, keyed by the
+ * `input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,
+ * an int (0xRRGGBB), or a "#rrggbb" hex string (the latter two normalized to a 0..1 triple).
+ */
+export const InputValueJsonSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('float'), value: z.number() }),
+  z.object({ type: z.literal('int'), value: z.number().int() }),
+  z.object({ type: z.literal('bool'), value: z.boolean() }),
+  z.object({ type: z.literal('color'), value: z.union([Vec3Tuple, ColorInputSchema]) }),
+  z.object({ type: z.literal('select'), value: z.string() }),
+]);
+export type InputValueJson = z.infer<typeof InputValueJsonSchema>;
+export const InputsJsonSchema = z.record(z.string(), InputValueJsonSchema);
+
 export const GeoscriptAssetDefSchema = z.object({
   type: z.literal('geoscript'),
   code: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  /** Values for the program's `input_*` controls, keyed by control name. */
+  inputs: InputsJsonSchema.optional(),
   colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
@@ -66,6 +85,8 @@ export const GeoscriptAssetDefFileSchema = z.object({
   file: z.string(),
   /** Whether to include the standard geoscript prelude. Default: true */
   includePrelude: z.boolean().optional(),
+  /** Values for the program's `input_*` controls, keyed by control name. */
+  inputs: InputsJsonSchema.optional(),
   colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
@@ -137,6 +158,8 @@ export const GeotoyCompositionAssetDefRawSchema = z.object({
   materialMap: z.record(z.string(), z.string()).optional(),
   /** Restrict the import to a subtree by node name; omitted = whole tree. */
   rootNodeName: z.string().optional(),
+  /** Values for the composition's `input_*` controls, keyed by control name. */
+  inputs: InputsJsonSchema.optional(),
   colliderShape: AssetColliderShapeSchema.optional(),
   _meta: GeoscriptAssetMetaSchema.optional(),
 });

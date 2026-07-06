@@ -46,7 +46,8 @@
     saveState,
     setLastRunWasSuccessful,
   } from './persistence';
-  import { compileTree, buildGizmoValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
+  import { compileTree, buildInjectedValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
+  import ControlsPanel from './ControlsPanel.svelte';
   import { buildEvalResultJson } from './evalResult';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
   import { buildParentMap, computeMeshCounts, findParentId, getNodeAncestorChain } from './treeOps';
@@ -54,7 +55,7 @@
   import NodeInspector from './NodeInspector.svelte';
   import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
   import type { GizmoTargetRef } from 'src/viz/gizmos/gizmoTypes';
-  import { scanGizmoHandleIds, scanGizmoHandleOrder } from 'src/geoscript/gizmoScan';
+  import { scanGizmoHandleIds, scanGizmoHandleOrder, scanControlHandleIds } from 'src/geoscript/gizmoScan';
   import { GizmoGhosts, type GhostSpec } from 'src/viz/gizmos/gizmoGhosts';
   import { gizmoColorForIndex } from 'src/viz/gizmos/gizmoPalette';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
@@ -67,7 +68,7 @@
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
   import { decomposeTransform3, composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
-  import type { MatEntry, RenderedObject, RenderedGizmo } from 'src/geoscript/runner/types';
+  import type { MatEntry, RenderedObject, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
     fetchAndSetTextures,
@@ -267,6 +268,30 @@
   let lastGizmos: RenderedGizmo[] = [];
   /** Whether the last run produced any gizmos anywhere — gates the ghost-toggle menu item. */
   let hasAnyGizmos = $state(false);
+  /** Input controls reported by the last successful run; feeds the auto-generated panel + GC. */
+  let lastControls = $state<RenderedControl[]>([]);
+  let hasAnyControls = $derived(lastControls.length > 0);
+  /** Module-name → node-id from the last run, so the panel resolves a control's owning node. */
+  let lastModuleNameToNodeId = $state<Record<string, string>>({});
+  const controlScanCache = new Map<string, { source: string; ids: Set<string> }>();
+
+  // Continuous inputs (sliders) fire rapidly; coalesce into a trailing re-run once edits settle.
+  let controlRunTimer = 0;
+  let controlRunPending = false;
+  const scheduleControlRun = () => {
+    controlRunPending = true;
+    clearTimeout(controlRunTimer);
+    controlRunTimer = window.setTimeout(fireControlRun, 120);
+  };
+  const fireControlRun = () => {
+    if (!controlRunPending) return;
+    if (isRunning) {
+      controlRunTimer = window.setTimeout(fireControlRun, 60);
+      return;
+    }
+    controlRunPending = false;
+    runOrFast();
+  };
   let showGizmoGhosts = $state(localStorage.getItem('geoscript-gizmo-ghosts') !== 'false');
   let ghosts: GizmoGhosts | null = null;
   let ghostTick: (() => void) | null = null;
@@ -1161,9 +1186,10 @@
       // `children` matters: reparenting changes `compileTree`'s emitted imports.
       // `instances.length` (not the transforms) matters: add/remove changes the
       // rendered-object set, so it must force a full re-run while drags stay fast.
-      // `handles` matters: a gizmo value can change geometry, so it must force re-eval.
+      // `handles`/`controls` matter: a gizmo or input-control value can change geometry, so
+      // either must force a full re-eval rather than the transform-only fast path.
       parts.push(
-        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}:${JSON.stringify(n.handles ?? null)}`
+        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}:${JSON.stringify(n.handles ?? null)}:${JSON.stringify(n.controls ?? null)}`
       );
     }
     parts.push(`pe:${preludeEjected ? 1 : 0}`);
@@ -1267,7 +1293,7 @@
         includePrelude: !preludeEjected,
         materialOverride,
         renderMode: userData?.renderMode ?? false,
-        gizmoValues: buildGizmoValues(tree),
+        gizmoValues: buildInjectedValues(tree),
       });
 
       if (myGen !== runGen) return;
@@ -1323,6 +1349,8 @@
 
       lastGizmos = result.gizmos;
       hasAnyGizmos = result.gizmos.length > 0;
+      lastControls = result.controls;
+      lastModuleNameToNodeId = moduleNameToNodeId;
       publishGizmoReadouts();
       // GC orphaned handles: keep ids the channel reported this run (covers dynamic names
       // the static scan can't see), plus the static handle ids in each node's source
@@ -1348,6 +1376,30 @@
         }
         for (const id of scan.ids) live.add(id);
         treeState.pruneHandles(node.id, live);
+      }
+
+      // Same orphan-GC for input controls (runtime-reported ids + static scan for un-run branches).
+      const liveControlsByNode = new Map<string, Set<string>>();
+      for (const c of result.controls) {
+        const nid = c.sourceModule ? moduleNameToNodeId[c.sourceModule] : undefined;
+        if (!nid) continue;
+        let set = liveControlsByNode.get(nid);
+        if (!set) {
+          set = new Set();
+          liveControlsByNode.set(nid, set);
+        }
+        set.add(c.handleId);
+      }
+      for (const node of Object.values(tree.nodes)) {
+        if (!node.controls) continue;
+        const live = liveControlsByNode.get(node.id) ?? new Set<string>();
+        let scan = controlScanCache.get(node.id);
+        if (!scan || scan.source !== node.source) {
+          scan = { source: node.source, ids: scanControlHandleIds(node.source) };
+          controlScanCache.set(node.id, scan);
+        }
+        for (const id of scan.ids) live.add(id);
+        treeState.pruneControls(node.id, live);
       }
 
       for (const helper of lightHelpers) {
@@ -1727,6 +1779,15 @@
 </script>
 
 <svelte:window bind:innerWidth />
+
+{#if hasAnyControls}
+  <ControlsPanel
+    controls={lastControls}
+    {treeState}
+    moduleNameToNodeId={lastModuleNameToNodeId}
+    onEdit={scheduleControlRun}
+  />
+{/if}
 
 <ExportModal bind:dialog={exportDialog} {renderedObjects} />
 <MaterialEditor

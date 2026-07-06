@@ -444,6 +444,11 @@ impl Callable {
             | "gizmo1d"
             | "gizmo_transform"
             | "transform_gizmo"
+            | "input_float"
+            | "input_int"
+            | "input_bool"
+            | "input_color"
+            | "input_select"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -1576,6 +1581,35 @@ pub struct RenderedGizmo {
 
 type RenderedGizmos = AppendOnlyBuffer<RenderedGizmo>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ControlKind {
+  Float,
+  Int,
+  Bool,
+  Color,
+  Select,
+}
+
+/// An `input_*(...)` value site reported to the host so it can render a control-panel
+/// widget. Value plumbing (injection + cache invalidation) is shared with gizmos via
+/// `gizmo_values`/`gizmo_reads`; only the descriptor and UI surface differ. Replayed
+/// from the module cache like `RenderedGizmo`.
+#[derive(Clone)]
+pub struct RenderedControl {
+  pub source_module: Option<String>,
+  pub handle_id: String,
+  pub kind: ControlKind,
+  pub label: Option<String>,
+  pub current_value: Value,
+  pub min: Option<f64>,
+  pub max: Option<f64>,
+  pub step: Option<f64>,
+  pub style: Option<String>,
+  pub options: Vec<String>,
+}
+
+type RenderedControls = AppendOnlyBuffer<RenderedControl>;
+
 #[derive(Default, Debug)]
 pub struct Scope {
   vars: RefCell<FxHashMap<Sym, Value>>,
@@ -1879,6 +1913,7 @@ pub struct ModuleExportsCacheEntry {
   pub own_lights: Vec<RenderedLight>,
   pub own_paths: Vec<RenderedPath>,
   pub own_gizmos: Vec<RenderedGizmo>,
+  pub own_controls: Vec<RenderedControl>,
   pub rng_state_at_start: Pcg32,
   pub rng_state_at_end: Pcg32,
   pub direct_imports: Vec<(String, u64)>,
@@ -1898,6 +1933,7 @@ pub struct EvalCtx {
   pub rendered_lights: RenderedLights,
   pub rendered_paths: RenderedPaths,
   pub rendered_gizmos: RenderedGizmos,
+  pub rendered_controls: RenderedControls,
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
@@ -1976,6 +2012,7 @@ impl Default for EvalCtx {
       rendered_lights: RenderedLights::default(),
       rendered_paths: RenderedPaths::default(),
       rendered_gizmos: RenderedGizmos::default(),
+      rendered_controls: RenderedControls::default(),
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
@@ -3279,6 +3316,22 @@ impl EvalCtx {
           hasher.write_u32(c.to_bits());
         }
       }
+      Some(Value::Float(f)) => {
+        hasher.write_u8(3);
+        hasher.write_u32(f.to_bits());
+      }
+      Some(Value::Int(i)) => {
+        hasher.write_u8(4);
+        hasher.write_i64(*i);
+      }
+      Some(Value::Bool(b)) => {
+        hasher.write_u8(5);
+        hasher.write_u8(*b as u8);
+      }
+      Some(Value::String(s)) => {
+        hasher.write_u8(6);
+        hasher.write(s.as_bytes());
+      }
       _ => hasher.write_u8(0),
     }
     hasher.finish()
@@ -3412,6 +3465,9 @@ impl EvalCtx {
         for gizmo in &entry.own_gizmos {
           self.rendered_gizmos.push(gizmo.clone());
         }
+        for control in &entry.own_controls {
+          self.rendered_controls.push(control.clone());
+        }
         self.set_rng_state(entry.rng_state_at_end.clone());
         #[cfg(target_arch = "wasm32")]
         or_async_dep_bit(entry.own_async_deps_bitmask);
@@ -3538,6 +3594,7 @@ impl EvalCtx {
     let lights_before = self.rendered_lights.len();
     let paths_before = self.rendered_paths.len();
     let gizmos_before = self.rendered_gizmos.len();
+    let controls_before = self.rendered_controls.len();
     #[cfg(target_arch = "wasm32")]
     let async_before = get_async_dep_bits();
 
@@ -3608,6 +3665,13 @@ impl EvalCtx {
       .get(gizmos_before..)
       .map(|s| s.iter().filter(|g| is_own(&g.source_module)).cloned().collect())
       .unwrap_or_default();
+    let own_controls: Vec<RenderedControl> = self
+      .rendered_controls
+      .inner
+      .borrow()
+      .get(controls_before..)
+      .map(|s| s.iter().filter(|c| is_own(&c.source_module)).cloned().collect())
+      .unwrap_or_default();
     let gizmo_reads: Vec<(String, u64)> = self
       .current_module_gizmo_reads
       .borrow_mut()
@@ -3645,6 +3709,7 @@ impl EvalCtx {
       own_lights,
       own_paths,
       own_gizmos,
+      own_controls,
       rng_state_at_start: rng_at_start,
       rng_state_at_end: rng_at_end,
       direct_imports,
@@ -6388,6 +6453,7 @@ fn test_random_module_cache_requires_matching_rng_state() {
     own_lights: Vec::new(),
     own_paths: Vec::new(),
     own_gizmos: Vec::new(),
+    own_controls: Vec::new(),
     rng_state_at_start: rng_start,
     rng_state_at_end: rng_end,
     direct_imports: Vec::new(),
@@ -6644,6 +6710,121 @@ fn test_gizmo_ghost_kwarg_passthrough() {
   assert_eq!(ghost("on"), Some(true));
   assert_eq!(ghost("off"), Some(false));
   assert_eq!(ghost("def"), None);
+}
+
+/// Injected value wins over `default`, is clamped to `min`/`max`, and re-injection
+/// re-evals — proving the call isn't const-folded despite sitting in a const expr.
+#[test]
+fn test_input_float_injected_default_and_clamp() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export p = input_float(\"x\", min=0, max=10, default=3) + 100".to_string(),
+  );
+  let run = |inj: Option<f32>| -> f32 {
+    if let Some(v) = inj {
+      inject_gizmo(&ctx, "node", "x", Value::Float(v));
+    }
+    ctx.replayed_this_run.borrow_mut().clear();
+    parse_and_eval_program_with_ctx(
+      "import { p } from \"node\"\nresult = p".to_string(),
+      &ctx,
+      false,
+    )
+    .unwrap();
+    ctx.get_global("result").unwrap().as_float().unwrap()
+  };
+  assert_eq!(run(None), 103.);
+  assert_eq!(run(Some(7.)), 107.);
+  assert_eq!(run(Some(99.)), 110.);
+  assert_eq!(run(Some(-5.)), 100.);
+}
+
+#[test]
+fn test_input_int_rounds_and_returns_int() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export p = input_int(\"n\", default=4)".to_string(),
+  );
+  inject_gizmo(&ctx, "node", "n", Value::Float(6.7));
+  parse_and_eval_program_with_ctx(
+    "import { p } from \"node\"\nresult = p".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert_eq!(ctx.get_global("result").unwrap().as_int().unwrap(), 7);
+}
+
+#[test]
+fn test_input_bool_and_color_defaults() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export b = input_bool(\"flag\", default=true)\nexport c = input_color(\"col\", default=vec3(0.25, 0.5, 0.75))".to_string(),
+  );
+  parse_and_eval_program_with_ctx(
+    "import { b, c } from \"node\"\nrb = b\nrc = c".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  assert!(ctx.get_global("rb").unwrap().as_bool().unwrap());
+  assert_eq!(
+    ctx.get_global("rc").unwrap().as_vec3().unwrap(),
+    &Vec3::new(0.25, 0.5, 0.75)
+  );
+}
+
+/// An injected option outside `options` falls back to `default`; the default itself
+/// falls back to the first option.
+#[test]
+fn test_input_select_validates_and_defaults() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export s = input_select(\"style\", options=[\"a\", \"b\", \"c\"], default=\"b\")".to_string(),
+  );
+  let run = |inj: Option<&str>| -> String {
+    if let Some(v) = inj {
+      inject_gizmo(&ctx, "node", "style", Value::String(v.to_owned()));
+    }
+    ctx.replayed_this_run.borrow_mut().clear();
+    parse_and_eval_program_with_ctx(
+      "import { s } from \"node\"\nresult = s".to_string(),
+      &ctx,
+      false,
+    )
+    .unwrap();
+    ctx.get_global("result").unwrap().as_str().unwrap().to_owned()
+  };
+  assert_eq!(run(None), "b");
+  assert_eq!(run(Some("c")), "c");
+  assert_eq!(run(Some("z")), "b");
+}
+
+#[test]
+fn test_rendered_control_carries_config() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export a = input_float(\"amp\", min=0, max=2, step=0.5, style=\"knob\")\nexport s = input_select(\"mode\", options=[\"x\", \"y\"])".to_string(),
+  );
+  parse_and_eval_program_with_ctx(
+    "import { a, s } from \"node\"\nra = a\nrs = s".to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+  let controls = ctx.rendered_controls.inner.borrow();
+  let amp = controls.iter().find(|c| c.handle_id == "amp").unwrap();
+  assert_eq!((amp.min, amp.max, amp.step), (Some(0.), Some(2.), Some(0.5)));
+  assert_eq!(amp.style.as_deref(), Some("knob"));
+  assert!(matches!(amp.kind, ControlKind::Float));
+  let mode = controls.iter().find(|c| c.handle_id == "mode").unwrap();
+  assert_eq!(mode.options, ["x".to_string(), "y".to_string()]);
+  assert!(matches!(mode.kind, ControlKind::Select));
 }
 
 #[test]

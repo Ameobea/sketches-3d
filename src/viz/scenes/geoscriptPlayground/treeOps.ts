@@ -1,7 +1,7 @@
 // Pure functions for mutating a `TreeDef`. Svelte-free so the logic is
 // unit-testable under plain node.
 
-import type { GizmoValue, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { ControlValue, GizmoValue, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import {
   ROOT_NODE_NAME,
   buildEmptyTree,
@@ -262,6 +262,31 @@ export const pruneHandles = (tree: TreeDef, nodeId: string, liveHandleIds: Reado
     if (!liveHandleIds.has(id)) delete handles[id];
   }
   if (Object.keys(handles).length === 0) delete tree.nodes[nodeId].handles;
+};
+
+/** Stores a control-panel input value on a node (creates the `controls` map if needed). */
+export const setControl = (tree: TreeDef, nodeId: string, handleId: string, value: ControlValue): void => {
+  const node = tree.nodes[nodeId];
+  if (!node) return;
+  (node.controls ??= {})[handleId] = structuredClone(value);
+};
+
+/** Removes a stored control value; drops the `controls` map when it empties. */
+export const deleteControl = (tree: TreeDef, nodeId: string, handleId: string): void => {
+  const controls = tree.nodes[nodeId]?.controls;
+  if (!controls) return;
+  delete controls[handleId];
+  if (Object.keys(controls).length === 0) delete tree.nodes[nodeId].controls;
+};
+
+/** Drops stored control values whose handleId is no longer live (GC of orphans). */
+export const pruneControls = (tree: TreeDef, nodeId: string, liveHandleIds: ReadonlySet<string>): void => {
+  const controls = tree.nodes[nodeId]?.controls;
+  if (!controls) return;
+  for (const id of Object.keys(controls)) {
+    if (!liveHandleIds.has(id)) delete controls[id];
+  }
+  if (Object.keys(controls).length === 0) delete tree.nodes[nodeId].controls;
 };
 
 export const setSource = (tree: TreeDef, id: string, source: string): void => {

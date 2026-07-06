@@ -3,7 +3,14 @@
 // either; entries return a `selectAfter` hint where it matters (e.g. undo of
 // delete re-selects the restored root).
 
-import type { GizmoValue, Instance, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type {
+  ControlValue,
+  GizmoValue,
+  Instance,
+  NodeDef,
+  Transform3,
+  TreeDef,
+} from 'src/geoscript/geotoyAPIClient';
 import { cloneTransform3 } from 'src/geoscript/geotoyAPIClient';
 
 import { UndoSystem } from 'src/viz/util/undoSystem';
@@ -17,6 +24,13 @@ export type GeotoyUndoEntry =
       handleId: string;
       before: GizmoValue | null;
       after: GizmoValue | null;
+    }
+  | {
+      type: 'setControl';
+      nodeId: string;
+      handleId: string;
+      before: ControlValue | null;
+      after: ControlValue | null;
     }
   | { type: 'addInstance'; nodeId: string; instance: Instance }
   | { type: 'removeInstance'; nodeId: string; instance: Instance; index: number }
@@ -98,6 +112,20 @@ export const applyGeotoyUndoEntry = (
       }
       return {};
     }
+    case 'setControl': {
+      const node = tree.nodes[entry.nodeId];
+      if (!node) return {};
+      const target = direction === 'undo' ? entry.before : entry.after;
+      if (target === null) {
+        if (node.controls) {
+          delete node.controls[entry.handleId];
+          if (Object.keys(node.controls).length === 0) delete node.controls;
+        }
+      } else {
+        (node.controls ??= {})[entry.handleId] = structuredClone(target);
+      }
+      return {};
+    }
     case 'addInstance': {
       const node = tree.nodes[entry.nodeId];
       if (!node) return {};
@@ -143,6 +171,7 @@ export const applyGeotoyUndoEntry = (
       const created = tree.nodes[def.id];
       created.instances = structuredClone(def.instances);
       if (def.handles) created.handles = structuredClone(def.handles);
+      if (def.controls) created.controls = structuredClone(def.controls);
       if (def.disabled) created.disabled = true;
       return { selectAfter: def.id };
     }

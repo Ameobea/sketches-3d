@@ -27,6 +27,25 @@
       "code": "export mesh = rail_sweep(spine_resolution=200, ring_resolution=48, spine=|u| v3(cos(pi*(1-u))*12, sin(pi*(1-u))*12, 0), profile=|u, v| v2(cos(v*2*pi), sin(v*2*pi)) * 1.2, frame_mode='rmf', capped=true, split_seams=true)",
       "_meta": { "runtimeMs": 185.8, "count": 5, "codeHash": "b118eece", "asyncDeps": [ "cgal" ] }
     },
+    "param_tower": {
+      "type": "geoscript",
+      "code": "n = input_int(\"segments\", min=3, max=20, default=10)\nr = input_float(\"radius\", min=0.5, max=3, default=1.5)\ntwist = input_float(\"twist_per_level\", min=0, max=0.6, default=0.2)\nexport mesh = 0..n -> |i| { box(r, 1, r) | rot(v3(0, i * twist, 0)) | apply_transforms | translate(v3(0, i * 1.15, 0)) } | join",
+      "inputs": {
+        "segments": {
+          "type": "int",
+          "value": 14
+        },
+        "radius": {
+          "type": "float",
+          "value": 2
+        },
+        "twist_per_level": {
+          "type": "float",
+          "value": 0.35
+        }
+      },
+      "_meta": { "runtimeMs": 0.3, "count": 1, "codeHash": "d3ebf25a" }
+    },
     "csg_plat": {
       "type": "csg",
       "tree": {

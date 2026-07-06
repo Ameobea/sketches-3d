@@ -120,3 +120,22 @@ export const scanGizmoHandleOrder = (source: string): string[] =>
   scanSource(source)
     .filter(s => !s.dynamic)
     .map(s => s.handleId);
+
+const INPUT_CALLEES = new Set(['input_float', 'input_int', 'input_bool', 'input_color', 'input_select']);
+
+/** Static `input_*` control handle ids in a node's source; used for orphaned-control GC. */
+export const scanControlHandleIds = (source: string): Set<string> => {
+  const out = new Set<string>();
+  const read: Read = (from, to) => source.slice(from, to);
+  parser.parse(source).iterate({
+    enter: (ref: SyntaxNodeRef) => {
+      if (ref.name !== 'CallExpr') return;
+      const node = ref.node;
+      const callee = node.firstChild;
+      if (callee?.name !== 'Identifier' || !INPUT_CALLEES.has(read(callee.from, callee.to))) return;
+      const nameVal = resolveNameValue(node, read);
+      if (nameVal?.name === 'StringLiteral') out.add(unquote(read(nameVal.from, nameVal.to)));
+    },
+  });
+  return out;
+};

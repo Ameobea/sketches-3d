@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
 
 import { runGeoscript } from './runner/geoscriptRunner';
-import type { GeneratedObject, GizmoValuesByModule } from './runner/types';
+import type { GeneratedObject, GizmoValuesByModule, RenderedControl } from './runner/types';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
 import { WorkerManager } from './workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
@@ -34,6 +34,8 @@ export interface GeoscriptJob {
 export interface GeoscriptJobResult {
   objects: GeneratedObject[];
   error: string | null;
+  /** Input controls declared by the program; used by level-def to validate injected inputs. */
+  controls: RenderedControl[];
   meta?: { runtimeMs: number; asyncDeps: string[] };
 }
 
@@ -108,6 +110,7 @@ export class GeoscriptExecutor {
             const result: GeoscriptJobResult = {
               objects: runResult.objects,
               error: runResult.error,
+              controls: runResult.controls,
             };
             if (job.collectMetadata && !runResult.error) {
               result.meta = {
@@ -119,7 +122,7 @@ export class GeoscriptExecutor {
             res(result);
           })
           .catch(err => {
-            res({ objects: [], error: String(err) });
+            res({ objects: [], error: String(err), controls: [] });
           });
       });
 

@@ -280,6 +280,14 @@
       "position": [0, 55, 164.1542],
       "rotation": [-1.5708, 0, 0],
       "scale": [46.8323, 1, 12.7025]
+    },
+    {
+      "id": "param_tower_demo",
+      "asset": "param_tower",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "position": [-40, 3, 40],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

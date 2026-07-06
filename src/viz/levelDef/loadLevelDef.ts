@@ -28,7 +28,8 @@ import type {
 } from './types';
 import { TEXTURE_SLOTS } from './types';
 import type { ContactRegion } from '../collision';
-import { compileTree, buildGizmoValues } from 'src/geoscript/treeCodegen';
+import { compileTree, buildInjectedValues } from 'src/geoscript/treeCodegen';
+import { injectInputs, warnUnmatchedInputs } from './inputInjection';
 import {
   bakeCompositionMeshes,
   resolveCompositionMaterial,
@@ -398,7 +399,19 @@ const resolveScriptAssets = async (
         d => d !== 'text_to_path'
       ) ?? [];
     const collectMetadata = dev && shouldCollectMeta(def, modules, includePrelude);
-    return { id, modules, code: BAKED_RENDER_WRAPPER, includePrelude, asyncDeps, deps: [], collectMetadata };
+    // Plain geoscript user code runs in the module named "code" (see BAKED_RENDER_WRAPPER).
+    const gizmoValues =
+      def.type === 'geoscript' && def.inputs ? injectInputs({}, def.inputs, ['code']) : undefined;
+    return {
+      id,
+      modules,
+      code: BAKED_RENDER_WRAPPER,
+      includePrelude,
+      asyncDeps,
+      deps: [],
+      collectMetadata,
+      gizmoValues,
+    };
   });
 
   const promises = executor.submit(jobs);
@@ -410,6 +423,8 @@ const resolveScriptAssets = async (
         console.error(`[levelDef] ${assets[id].type} error for asset "${id}":`, res.error);
         return;
       }
+      const gdef = assets[id];
+      if (gdef.type === 'geoscript') warnUnmatchedInputs(id, gdef.inputs, res.controls);
       const prototype = extractPrototype(res.objects);
       if (!prototype) {
         console.warn(`[levelDef] Asset "${id}" produced no meshes`);
@@ -970,7 +985,10 @@ export const loadLevelDef = (
         code: compiled.rootSource,
         includePrelude: !preludeEjected,
         ambientSources,
-        gizmoValues: buildGizmoValues(def.tree),
+        gizmoValues: injectInputs(buildInjectedValues(def.tree), def.inputs, [
+          ...Object.keys(compiled.modules),
+          '_root',
+        ]),
         asyncDeps,
         deps: [],
         collectMetadata: false,
@@ -988,6 +1006,7 @@ export const loadLevelDef = (
             return;
           }
           const def = levelDef.assets[id] as GeotoyCompositionAssetDef;
+          warnUnmatchedInputs(id, def.inputs, res.controls);
           const baked = bakeCompositionMeshes(def.tree, res.objects);
           compositionBaked.set(id, baked);
           if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);

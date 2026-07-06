@@ -88,6 +88,12 @@ export interface GizmoValue {
   value: [number, number, number] | Transform3;
 }
 
+/** An `input_*(...)` control value keyed by handleId; sparse. Written by the control panel. */
+export interface ControlValue {
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+  value: number | boolean | [number, number, number] | string;
+}
+
 export interface NodeDef {
   id: string;
   name: string;
@@ -96,6 +102,8 @@ export interface NodeDef {
   instances: Instance[];
   /** Gizmo values keyed by handleId; sparse. Populated by the gizmo runtime (M3). */
   handles?: Record<string, GizmoValue>;
+  /** Control-panel input values keyed by handleId; sparse. */
+  controls?: Record<string, ControlValue>;
   children: string[];
   disabled?: boolean;
 }

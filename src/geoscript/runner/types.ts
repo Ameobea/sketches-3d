@@ -53,13 +53,36 @@ export interface GeneratedLight {
 
 export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight;
 
-/** A `gizmo(...)` value the host injects per-run, keyed `moduleName → handleId`.
- *  `value` is 3 numbers for `vec3` or a 16-element column-major matrix for `transform`. */
+/** A handle value the host injects per-run, keyed `moduleName → handleId`. Covers both
+ *  draggable gizmos and control-panel inputs (they share the injection store). `value`
+ *  carries the numeric payload (3 for `vec3`/`color`, 16 col-major for `transform`, 1 for
+ *  `float`/`int`/`bool`); `str_value` carries the `string`/`select` payload. */
 export interface GizmoValueWire {
-  kind: 'vec3' | 'transform';
-  value: number[];
+  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select';
+  value?: number[];
+  str_value?: string;
 }
 export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>;
+
+/** An `input_*(...)` control site reported by the runtime for the last eval. */
+export interface RenderedControl {
+  sourceModule: string | null;
+  handleId: string;
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+  /** Display label override; falls back to `handleId` when null. */
+  label: string | null;
+  /** Numeric payload (float/int: 1 num; color: 3 rgb). Empty for select. */
+  value: number[];
+  /** Chosen option for `select`; null otherwise. */
+  str_value: string | null;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  /** Numeric widget style: `slider` (default) | `entry` | `knob`. */
+  style: string | null;
+  /** Selectable options for `select`; empty otherwise. */
+  options: string[];
+}
 
 /** A `gizmo(...)`/`gizmo_transform(...)` site reported by the runtime for the last eval. */
 export interface RenderedGizmo {
@@ -125,4 +148,6 @@ export interface GeoscriptRunResult {
   error: string | null;
   /** Gizmos evaluated this run, for the editor's interactive overlay (empty on error). */
   gizmos: RenderedGizmo[];
+  /** Input controls declared this run, for the auto-generated control panel (empty on error). */
+  controls: RenderedControl[];
 }

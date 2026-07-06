@@ -4556,6 +4556,171 @@ fn gizmo_transform_impl(
   Ok(Value::Mat4(mat))
 }
 
+/// Shared head for every `input_*` builtin: the required string `name`, the module
+/// scope, the optional display `label`, and the host-injected value. Reuses the gizmo
+/// value store + read-tracking so control changes invalidate only the owning module.
+struct InputCommon {
+  handle_id: String,
+  module: Option<String>,
+  label: Option<String>,
+  injected: Option<Value>,
+}
+
+fn input_common(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  label_ix: usize,
+) -> Result<InputCommon, ErrorStack> {
+  let handle_id = arg_refs[0]
+    .resolve(args, kwargs)
+    .as_str()
+    .ok_or_else(|| ErrorStack::new("`input_*` requires a string `name`"))?
+    .to_owned();
+  let module = ctx.current_module.borrow().clone();
+  let label = arg_refs[label_ix]
+    .resolve(args, kwargs)
+    .as_str()
+    .map(str::to_owned);
+  let injected = injected_gizmo_value(ctx, &module, &handle_id);
+  record_gizmo_read(ctx, &handle_id);
+  Ok(InputCommon { handle_id, module, label, injected })
+}
+
+fn input_numeric_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  is_int: bool,
+) -> Result<Value, ErrorStack> {
+  let c = input_common(ctx, arg_refs, args, kwargs, 5)?;
+  let min = arg_refs[1].resolve(args, kwargs).as_float().map(|f| f as f64);
+  let max = arg_refs[2].resolve(args, kwargs).as_float().map(|f| f as f64);
+  let step = arg_refs[3].resolve(args, kwargs).as_float().map(|f| f as f64);
+  let default = arg_refs[4].resolve(args, kwargs).as_float();
+  let style = arg_refs[6].resolve(args, kwargs).as_str().map(str::to_owned);
+
+  let mut f = c.injected.as_ref().and_then(|v| v.as_float()).or(default).unwrap_or(0.);
+  if let Some(m) = min {
+    f = f.max(m as f32);
+  }
+  if let Some(m) = max {
+    f = f.min(m as f32);
+  }
+
+  let (value, kind) = if is_int {
+    (Value::Int(f.round() as i64), crate::ControlKind::Int)
+  } else {
+    (Value::Float(f), crate::ControlKind::Float)
+  };
+  ctx.rendered_controls.push(crate::RenderedControl {
+    source_module: c.module,
+    handle_id: c.handle_id,
+    kind,
+    label: c.label,
+    current_value: value.clone(),
+    min,
+    max,
+    step,
+    style,
+    options: Vec::new(),
+  });
+  Ok(value)
+}
+
+fn input_bool_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let default = arg_refs[1].resolve(args, kwargs).as_bool();
+  let b = c.injected.as_ref().and_then(|v| v.as_bool()).or(default).unwrap_or(false);
+  let value = Value::Bool(b);
+  ctx.rendered_controls.push(crate::RenderedControl {
+    source_module: c.module,
+    handle_id: c.handle_id,
+    kind: crate::ControlKind::Bool,
+    label: c.label,
+    current_value: value.clone(),
+    min: None,
+    max: None,
+    step: None,
+    style: None,
+    options: Vec::new(),
+  });
+  Ok(value)
+}
+
+fn input_color_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let default = arg_refs[1].resolve(args, kwargs).as_vec3().copied();
+  let v = match &c.injected {
+    Some(Value::Vec3(v)) => *v,
+    _ => default.unwrap_or_else(Vec3::zeros),
+  };
+  let value = Value::Vec3(v);
+  ctx.rendered_controls.push(crate::RenderedControl {
+    source_module: c.module,
+    handle_id: c.handle_id,
+    kind: crate::ControlKind::Color,
+    label: c.label,
+    current_value: value.clone(),
+    min: None,
+    max: None,
+    step: None,
+    style: None,
+    options: Vec::new(),
+  });
+  Ok(value)
+}
+
+fn input_select_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let c = input_common(ctx, arg_refs, args, kwargs, 3)?;
+  let options: Vec<String> = match arg_refs[1].resolve(args, kwargs).as_sequence() {
+    Some(seq) => seq
+      .consume(ctx)
+      .filter_map(|r| r.ok().and_then(|v| v.as_str().map(str::to_owned)))
+      .collect(),
+    None => Vec::new(),
+  };
+  let default = arg_refs[2].resolve(args, kwargs).as_str().map(str::to_owned);
+  let injected = c.injected.as_ref().and_then(|v| v.as_str()).map(str::to_owned);
+  let in_opts = |s: &String| options.iter().any(|o| o == s);
+  let chosen = injected
+    .filter(&in_opts)
+    .or_else(|| default.filter(&in_opts))
+    .or_else(|| options.first().cloned())
+    .unwrap_or_default();
+  let value = Value::String(chosen);
+  ctx.rendered_controls.push(crate::RenderedControl {
+    source_module: c.module,
+    handle_id: c.handle_id,
+    kind: crate::ControlKind::Select,
+    label: c.label,
+    current_value: value.clone(),
+    min: None,
+    max: None,
+    step: None,
+    style: None,
+    options,
+  });
+  Ok(value)
+}
+
 fn render_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -8583,6 +8748,21 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "gizmo_transform" => builtin_fn!(gizmo_transform, |def_ix, arg_refs, args, kwargs, ctx| {
     gizmo_transform_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "input_float" => builtin_fn!(input_float, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_numeric_impl(ctx, arg_refs, args, kwargs, false)
+  }),
+  "input_int" => builtin_fn!(input_int, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_numeric_impl(ctx, arg_refs, args, kwargs, true)
+  }),
+  "input_bool" => builtin_fn!(input_bool, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_bool_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "input_color" => builtin_fn!(input_color, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_color_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "input_select" => builtin_fn!(input_select, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_select_impl(ctx, arg_refs, args, kwargs)
   }),
   "point_distribute" => builtin_fn!(point_distribute, |def_ix, arg_refs, args, kwargs, _ctx| {
     point_distribute_impl(def_ix, arg_refs, args, kwargs)

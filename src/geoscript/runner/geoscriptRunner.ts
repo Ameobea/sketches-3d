@@ -7,6 +7,7 @@ import type {
   GeneratedObject,
   MatEntry,
   RenderedGizmo,
+  RenderedControl,
 } from './types';
 import { buildLight, fitAutoShadowFrusta } from 'src/viz/scenes/geoscriptPlayground/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
@@ -107,6 +108,7 @@ export const runGeoscript = async ({
         stats: buildEmptyRunStats(),
         error: `Error building ambient scope: ${err}`,
         gizmos: [],
+        controls: [],
       };
     }
   }
@@ -125,6 +127,7 @@ export const runGeoscript = async ({
       stats: buildEmptyRunStats(),
       error: errorMessage,
       gizmos: [],
+      controls: [],
     };
   }
 
@@ -151,6 +154,7 @@ export const runGeoscript = async ({
       stats: buildEmptyRunStats(),
       error: err,
       gizmos: [],
+      controls: [],
     };
   }
 
@@ -231,6 +235,7 @@ export const runGeoscript = async ({
           stats,
           error: errorMessage,
           gizmos: [],
+          controls: [],
         };
       }
     }
@@ -336,11 +341,31 @@ export const runGeoscript = async ({
     });
   }
 
+  const controls: RenderedControl[] = [];
+  const controlCount = await repl.getRenderedControlCount(ctxPtr);
+  for (let i = 0; i < controlCount; i += 1) {
+    const c = await repl.getRenderedControl(ctxPtr, i);
+    controls.push({
+      sourceModule: c.source_module,
+      handleId: c.handle_id,
+      kind: c.kind,
+      label: c.label,
+      value: c.value,
+      str_value: c.str_value,
+      min: c.min,
+      max: c.max,
+      step: c.step,
+      style: c.style,
+      options: c.options,
+    });
+  }
+
   const result: GeoscriptRunResult = {
     objects: renderedObjects,
     stats,
     error: null,
     gizmos,
+    controls,
   };
 
   return result;

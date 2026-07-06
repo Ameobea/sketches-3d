@@ -304,6 +304,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
 
   // Eval-scoped trackers: clear in case the previous run was interrupted mid-eval.
   ctx.geo_ctx.modules_in_flight.borrow_mut().clear();
@@ -413,6 +414,7 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
   // Ambient discarded any replayed side effects; let them fire again in `_root`.
   ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
   *ctx.geo_ctx.last_ambient_hash.borrow_mut() = Some(new_hash);
@@ -651,12 +653,15 @@ pub fn geoscript_get_rendered_light_id(ctx: *const GeoscriptReplCtx, light_ix: u
   ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix].light_id
 }
 
-/// One host-injected gizmo value. `value` is 3 floats for `vec3` or a 16-float
-/// column-major matrix for `transform`.
+/// One host-injected handle value (gizmo or control). `value` carries the numeric
+/// payload — 3 floats for `vec3`/`color`, 16 for `transform`, 1 for `float`/`int`/`bool`;
+/// `str_value` carries the `string`/`select` payload.
 #[derive(DeJson)]
 struct GizmoValueWire {
   kind: String,
+  #[nserde(default)]
   value: Vec<f32>,
+  str_value: Option<String>,
 }
 
 /// Replace the full gizmo-value map. Parallel arrays: the i-th value is keyed by
@@ -679,14 +684,19 @@ pub fn geoscript_repl_set_gizmo_values(
       continue;
     };
     let value = match wire.kind.as_str() {
-      "vec3" if wire.value.len() >= 3 => geoscript::Value::Vec3(mesh::linked_mesh::Vec3::new(
-        wire.value[0],
-        wire.value[1],
-        wire.value[2],
-      )),
+      "vec3" | "color" if wire.value.len() >= 3 => geoscript::Value::Vec3(
+        mesh::linked_mesh::Vec3::new(wire.value[0], wire.value[1], wire.value[2]),
+      ),
       "transform" if wire.value.len() >= 16 => {
         geoscript::Value::Mat4(Rc::new(geoscript::Mat4::from_column_slice(&wire.value[..16])))
       }
+      "float" if !wire.value.is_empty() => geoscript::Value::Float(wire.value[0]),
+      "int" if !wire.value.is_empty() => geoscript::Value::Int(wire.value[0] as i64),
+      "bool" if !wire.value.is_empty() => geoscript::Value::Bool(wire.value[0] != 0.),
+      "string" | "select" => match wire.str_value {
+        Some(s) => geoscript::Value::String(s),
+        None => continue,
+      },
       _ => continue,
     };
     map
@@ -745,6 +755,64 @@ pub fn geoscript_repl_get_rendered_gizmo(ctx: *const GeoscriptReplCtx, gizmo_ix:
     absolute: g.absolute,
     axes: g.axes.to_vec(),
     ghost: g.ghost,
+  }
+  .serialize_json()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_control_count(ctx: *const GeoscriptReplCtx) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_controls.len()
+}
+
+#[derive(SerJson)]
+struct RenderedControlWire {
+  source_module: Option<String>,
+  handle_id: String,
+  kind: String,
+  label: Option<String>,
+  value: Vec<f32>,
+  str_value: Option<String>,
+  min: Option<f64>,
+  max: Option<f64>,
+  step: Option<f64>,
+  style: Option<String>,
+  options: Vec<String>,
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_control(ctx: *const GeoscriptReplCtx, control_ix: usize) -> String {
+  let ctx = unsafe { &*ctx };
+  let controls = ctx.geo_ctx.rendered_controls.inner.borrow();
+  let c = &controls[control_ix];
+  let kind = match c.kind {
+    geoscript::ControlKind::Float => "float",
+    geoscript::ControlKind::Int => "int",
+    geoscript::ControlKind::Bool => "bool",
+    geoscript::ControlKind::Color => "color",
+    geoscript::ControlKind::Select => "select",
+  }
+  .to_owned();
+  let (value, str_value): (Vec<f32>, Option<String>) = match &c.current_value {
+    geoscript::Value::Float(f) => (vec![*f], None),
+    geoscript::Value::Int(i) => (vec![*i as f32], None),
+    geoscript::Value::Bool(b) => (vec![if *b { 1. } else { 0. }], None),
+    geoscript::Value::Vec3(v) => (vec![v.x, v.y, v.z], None),
+    geoscript::Value::String(s) => (Vec::new(), Some(s.clone())),
+    _ => (Vec::new(), None),
+  };
+  RenderedControlWire {
+    source_module: c.source_module.clone(),
+    handle_id: c.handle_id.clone(),
+    kind,
+    label: c.label.clone(),
+    value,
+    str_value,
+    min: c.min,
+    max: c.max,
+    step: c.step,
+    style: c.style.clone(),
+    options: c.options.clone(),
   }
   .serialize_json()
 }

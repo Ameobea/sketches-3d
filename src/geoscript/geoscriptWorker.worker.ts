@@ -16,6 +16,21 @@ interface RawRenderedGizmo {
   axes: [boolean, boolean, boolean];
   ghost: boolean | null;
 }
+
+/** Raw shape of `geoscript_repl_get_rendered_control`'s JSON (snake_case from Rust). */
+interface RawRenderedControl {
+  source_module: string | null;
+  handle_id: string;
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+  label: string | null;
+  value: number[];
+  str_value: string | null;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  style: string | null;
+  options: string[];
+}
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
@@ -300,6 +315,9 @@ const methods = {
   getRenderedGizmoCount: (ctxPtr: number) => Geoscript.geoscript_repl_get_rendered_gizmo_count(ctxPtr),
   getRenderedGizmo: (ctxPtr: number, ix: number): RawRenderedGizmo =>
     JSON.parse(Geoscript.geoscript_repl_get_rendered_gizmo(ctxPtr, ix)),
+  getRenderedControlCount: (ctxPtr: number) => Geoscript.geoscript_repl_get_rendered_control_count(ctxPtr),
+  getRenderedControl: (ctxPtr: number, ix: number): RawRenderedControl =>
+    JSON.parse(Geoscript.geoscript_repl_get_rendered_control(ctxPtr, ix)),
   setMaterials: (ctxPtr: number, defaultMaterialID: string | null, availableMaterials: string[]) => {
     Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);
     Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);

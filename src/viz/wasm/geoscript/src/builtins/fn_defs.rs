@@ -3961,6 +3961,90 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "input_float" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "min", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider minimum." },
+          ArgDef { name: "max", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider maximum." },
+          ArgDef { name: "step", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider step; omit for continuous." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value returned when the control is unset." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+          ArgDef { name: "style", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Widget style: \"slider\" (default), \"entry\", or \"knob\"." },
+        ],
+        description: "A panel-driven `num` control (slider by default). Interactive in the Geotoy editor and injectable from level defs; elsewhere returns the stored value, or `default`/zero when unset.",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
+  "input_int" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "min", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider minimum." },
+          ArgDef { name: "max", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider maximum." },
+          ArgDef { name: "step", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Slider step; defaults to 1 in the panel." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value returned when the control is unset." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+          ArgDef { name: "style", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Widget style: \"slider\" (default), \"entry\", or \"knob\"." },
+        ],
+        description: "A panel-driven integer control (rounded slider). Injectable from level defs; returns the stored value, or `default`/zero when unset.",
+        return_type: &[ArgType::Int],
+      },
+    ],
+  },
+  "input_bool" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Bool), default_value: DefaultValue::Optional(|| Value::Nil), description: "Value returned when the control is unset." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "A panel-driven checkbox `bool` control. Returns the stored value, or `default`/false when unset.",
+        return_type: &[ArgType::Bool],
+      },
+    ],
+  },
+  "input_color" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Optional(|| Value::Nil), description: "RGB color returned when the control is unset." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "A panel-driven color picker; returns the chosen color as an RGB `vec3`. Returns the stored value, or `default`/black when unset.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "input_select" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "options", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Sequence), default_value: DefaultValue::Required, description: "The selectable string options." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Option returned when unset; defaults to the first option." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "A panel-driven dropdown; returns the chosen option as a `string`. An injected/stored value not in `options` falls back to `default` or the first option.",
+        return_type: &[ArgType::String],
+      },
+    ],
+  },
   "render_path" => FnDef {
     module: "core",
     examples: &[],
