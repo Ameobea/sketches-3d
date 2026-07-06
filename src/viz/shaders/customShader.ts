@@ -1941,7 +1941,17 @@ void main() {
   ${
     hasCustomShaderSnippet
       ? /* glsl */ `aaWorldFootprint = unitsPerPx / max(abs(dot(normalize(vWorldNormal), vWorldPos - cameraPosition)) / distanceToCamera, 0.1);
-  aaUvFootprint = vec2(length(vec2(dFdx(vUv.x), dFdy(vUv.x))), length(vec2(dFdx(vUv.y), dFdy(vUv.y))));`
+  aaUvFootprint = vec2(length(vec2(dFdx(vUv.x), dFdy(vUv.x))), length(vec2(dFdx(vUv.y), dFdy(vUv.y))));
+  {
+    vec3 _dp1 = dFdx(vWorldPos), _dp2 = dFdy(vWorldPos);
+    vec2 _duv1 = dFdx(vUv), _duv2 = dFdy(vUv);
+    vec3 _fn = normalize(vWorldNormal);
+    vec3 _dp2p = cross(_dp2, _fn), _dp1p = cross(_fn, _dp1);
+    vec3 _t = _dp2p * _duv1.x + _dp1p * _duv2.x;
+    vec3 _b = _dp2p * _duv1.y + _dp1p * _duv2.y;
+    if (dot(_t, _t) > 1e-14) { uvFrameT = normalize(_t); }
+    if (dot(_b, _b) > 1e-14) { uvFrameB = normalize(_b); }
+  }`
       : ''
   }
   ${usesSceneCtx ? 'SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, aaWorldFootprint);' : ''}

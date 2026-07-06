@@ -14,10 +14,19 @@
       "type": "geotoyMaterial",
       "materialId": 7
     },
-    "triangle_grid": {"type": "customShader", "extends": { "type": "library", "path": "procedural/triangle_grid" }},
+    "triangle_grid": {
+      "type": "customShader",
+      "extends": {
+        "type": "library",
+        "path": "procedural/triangle_grid"
+      }
+    },
     "chevron_strips_wide": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/chevron_strips" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/chevron_strips"
+      },
       "props": {
         "roughness": 0.3,
         "metalness": 0.6
@@ -45,7 +54,10 @@
     },
     "pit_grid_diamond": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -57,7 +69,10 @@
     },
     "pit_grid_triangle": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -69,7 +84,10 @@
     },
     "pit_grid_trapezoid": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
       "shaders": {
         "constants": {
           "PG_SHAPE": {
@@ -81,12 +99,96 @@
     },
     "pit_grid_stagger": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
       "shaders": {
         "constants": {
           "PG_STAGGER": {
             "type": "int",
             "value": 1
+          }
+        }
+      }
+    },
+    "moulding_uv": {
+      "type": "customShader",
+      "extends": {
+        "type": "library",
+        "path": "procedural/moulding"
+      },
+      "shaders": {
+        "constants": {
+          "MD_UV_MODE": {
+            "type": "int",
+            "value": 1
+          },
+          "MD_UV_SCALE": {
+            "type": "vec2",
+            "value": [0.4, 3]
+          }
+        }
+      }
+    },
+    "shape_strip_uv": {
+      "type": "customShader",
+      "extends": {
+        "type": "library",
+        "path": "procedural/shape_strip"
+      },
+      "shaders": {
+        "constants": {
+          "SS_UV_MODE": {
+            "type": "int",
+            "value": 1
+          },
+          "SS_UV_SCALE": {
+            "type": "vec2",
+            "value": [0.4, 3]
+          },
+          "SS_SHAPE": {
+            "type": "int",
+            "value": 1
+          }
+        }
+      }
+    },
+    "bricks_red": {
+      "type": "customShader",
+      "extends": {
+        "type": "library",
+        "path": "procedural/bricks"
+      },
+      "shaders": {
+        "constants": {
+          "BR_CELL": {
+            "type": "vec2",
+            "value": [1.6, 0.55]
+          },
+          "BR_JOINT_HW": {
+            "type": "float",
+            "value": 0.035
+          },
+          "BR_BEVEL_W": {
+            "type": "float",
+            "value": 0.06
+          },
+          "BR_BLOCK_COLOR": {
+            "type": "vec3",
+            "value": [0.42, 0.16, 0.11]
+          },
+          "BR_MORTAR_COLOR": {
+            "type": "vec3",
+            "value": [0.55, 0.52, 0.46]
+          },
+          "BR_SOOT_AMT": {
+            "type": "float",
+            "value": 0.55
+          },
+          "BR_TINT_AMP": {
+            "type": "float",
+            "value": 0.16
           }
         }
       }
@@ -108,27 +210,51 @@
     },
     "demo_local_base": {
       "type": "customShader",
-      "props": { "color": "#c24d2c", "roughness": 0.6, "metalness": 0.1 }
+      "props": {
+        "color": "#c24d2c",
+        "roughness": 0.6,
+        "metalness": 0.1
+      }
     },
     "demo_extends_local": {
       "type": "customShader",
-      "extends": { "type": "local", "name": "demo_local_base" },
-      "props": { "color": "#2c74c2", "metalness": 0.85 }
+      "extends": {
+        "type": "local",
+        "name": "demo_local_base"
+      },
+      "props": {
+        "color": "#2c74c2",
+        "metalness": 0.85
+      }
     },
     "demo_extends_library": {
       "type": "customShader",
-      "extends": { "type": "library", "path": "procedural/pit_grid" },
-      "props": { "roughness": 0.25 },
+      "extends": {
+        "type": "library",
+        "path": "procedural/pit_grid"
+      },
+      "props": {
+        "roughness": 0.25
+      },
       "shaders": {
         "constants": {
-          "PG_SHAPE": { "type": "int", "value": 2 }
+          "PG_SHAPE": {
+            "type": "int",
+            "value": 2
+          }
         }
       }
     },
     "demo_extends_geotoy": {
       "type": "customShader",
-      "extends": { "type": "geotoy", "materialId": 7 },
-      "props": { "metalness": 0.9, "roughness": 0.2 }
+      "extends": {
+        "type": "geotoy",
+        "materialId": 7
+      },
+      "props": {
+        "metalness": 0.9,
+        "roughness": 0.2
+      }
     }
   }
 }

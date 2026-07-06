@@ -100,7 +100,8 @@
         "ambientLightScale": 2,
         "uvScale": [0.23, 0.23],
         "map": "shiny_patchwork_stone_diffuse",
-        "normalMap": "shiny_patchwork_stone_normal"
+        "normalMap": "shiny_patchwork_stone_normal",
+        "envMapIntensity": 0.8
       },
       "options": {
         "useTriplanarMapping": true
@@ -115,7 +116,8 @@
         "normalScale": 0.72,
         "uvScale": [0.1, 0.1],
         "map": "rusty_metal_1_diffuse",
-        "normalMap": "gravel_1_normal"
+        "normalMap": "gravel_1_normal",
+        "envMapIntensity": 0.5
       },
       "options": {
         "useTriplanarMapping": true
@@ -130,7 +132,8 @@
         "normalScale": 1.2,
         "uvScale": [0.13, 0.13],
         "map": "rusty_metal_1_diffuse",
-        "normalMap": "rusty_metal_2_normal"
+        "normalMap": "rusty_metal_2_normal",
+        "envMapIntensity": 0.43
       },
       "options": {
         "useTriplanarMapping": true
@@ -145,7 +148,8 @@
         "normalScale": 1,
         "uvScale": [0.2, 0.2],
         "map": "rocky_soil_diffuse",
-        "normalMap": "rocky_soil_normal"
+        "normalMap": "rocky_soil_normal",
+        "envMapIntensity": 0.3
       },
       "options": {
         "useTriplanarMapping": true

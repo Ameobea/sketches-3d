@@ -17,6 +17,7 @@ It has already caught two real bugs the GPU bench missed:
 node scripts/pomMarcherHarness/grateTrench.mjs
 node scripts/pomMarcherHarness/groovedPlastic.mjs
 node scripts/pomMarcherHarness/raisedTiles.mjs
+node scripts/pomMarcherHarness/moulding.mjs
 ```
 
 No deps, no build. Each prints a small table comparing the fixed march, the safeStep

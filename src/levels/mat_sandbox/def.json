@@ -22,6 +22,11 @@
       "code": "export mesh = box(20, 0.5, 20)",
       "_meta": { "runtimeMs": 0.1, "count": 5, "codeHash": "f62d2760" }
     },
+    "trim_arch": {
+      "type": "geoscript",
+      "code": "export mesh = rail_sweep(spine_resolution=200, ring_resolution=48, spine=|u| v3(cos(pi*(1-u))*12, sin(pi*(1-u))*12, 0), profile=|u, v| v2(cos(v*2*pi), sin(v*2*pi)) * 1.2, frame_mode='rmf', capped=true, split_seams=true)",
+      "_meta": { "runtimeMs": 185.8, "count": 5, "codeHash": "b118eece", "asyncDeps": [ "cgal" ] }
+    },
     "csg_plat": {
       "type": "csg",
       "tree": {

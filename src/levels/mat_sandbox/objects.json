@@ -210,6 +210,70 @@
       "scale": [1, 1, 1]
     },
     {
+      "id": "bricks_gallery",
+      "children": [
+        {
+          "id": "bricks_wall",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/bricks",
+          "position": [-11, 7.7, 50],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "bricks_red_wall",
+          "asset": "plat",
+          "material": "bricks_red",
+          "position": [11, 7.7, 50],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [1, 1, 1]
+        }
+      ],
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "trim_gallery",
+      "children": [
+        {
+          "id": "moulding_wall",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/moulding",
+          "position": [-11, 7.7, -57.4723],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [1, 3.7138, 1]
+        },
+        {
+          "id": "shape_strip_wall",
+          "asset": "plat",
+          "material": "__ASSETS__/materials/procedural/shape_strip",
+          "position": [11, 7.7, -57.4723],
+          "rotation": [-1.5708, 0, 0],
+          "scale": [1, 3.7138, 1]
+        },
+        {
+          "id": "moulding_arch",
+          "asset": "trim_arch",
+          "material": "moulding_uv",
+          "position": [0, -2.3, -50.4723],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        {
+          "id": "shape_strip_arch",
+          "asset": "trim_arch",
+          "material": "shape_strip_uv",
+          "position": [0, -2.3, -44.4723],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        }
+      ],
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
       "id": "sparse_seams_backdrop",
       "asset": "plat",
       "material": "__ASSETS__/materials/procedural/sparse_seams",

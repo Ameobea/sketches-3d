@@ -2,11 +2,9 @@ use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
 use bitvec::prelude::*;
 
-use fxhash::{FxHashMap, FxHashSet};
+use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{
-    mesh_flags, Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey,
-  },
+  linked_mesh::{mesh_flags, Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey},
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -77,6 +75,7 @@ fn calculate_tangents(points: &[Vec3]) -> Vec<Vec3> {
 pub(crate) fn calculate_spine_frames(
   points: &[Vec3],
   frame_mode: FrameMode,
+  closed: bool,
 ) -> Result<Vec<SpineFrame>, ErrorStack> {
   if points.len() < 2 {
     return Err(ErrorStack::new(format!(
@@ -85,7 +84,23 @@ pub(crate) fn calculate_spine_frames(
     )));
   }
 
-  let tangents = calculate_tangents(points);
+  let mut tangents = calculate_tangents(points);
+  let n = points.len();
+  // Inclusively-sampled closed spines duplicate the endpoint; both end rings must share a
+  // wrap-aware tangent so they live in the same plane and the holonomy correction below can
+  // close the frame exactly.
+  let dup_end = closed
+    && n >= 3
+    && (points[0] - points[n - 1]).norm_squared()
+      < 1e-6 * (points[1] - points[0]).norm_squared().max(1e-12);
+  if dup_end {
+    let wrap = points[1] - points[n - 2];
+    if wrap.norm_squared() > FRAME_EPSILON {
+      let t = wrap.normalize();
+      tangents[0] = t;
+      tangents[n - 1] = t;
+    }
+  }
   let mut frames = Vec::with_capacity(points.len());
 
   match frame_mode {
@@ -129,6 +144,29 @@ pub(crate) fn calculate_spine_frames(
           normal,
           binormal,
         });
+      }
+
+      // Closed spines: RMF transport around the loop returns twisted by the holonomy angle θ
+      // relative to the start frame, which otherwise gets dumped entirely into the closure
+      // segment (twisted seam quads, mismatched seam attributes). Distribute the corrective
+      // twist progressively so every segment carries θ/segs; with a duplicated endpoint the
+      // final frame then matches the first exactly.
+      if closed && n >= 3 {
+        let t0 = frames[0].tangent;
+        let n0 = frames[0].normal;
+        let nl = frames[n - 1].normal;
+        let mut n_wrap = nl - t0 * t0.dot(&nl);
+        if n_wrap.norm_squared() > FRAME_EPSILON {
+          n_wrap = n_wrap.normalize();
+          let theta = n0.cross(&n_wrap).dot(&t0).atan2(n0.dot(&n_wrap));
+          let segs = if dup_end { (n - 1) as f32 } else { n as f32 };
+          for (i, frame) in frames.iter_mut().enumerate().skip(1) {
+            let (fnorm, fbinorm) =
+              apply_twist(frame.normal, frame.binormal, -theta * i as f32 / segs);
+            frame.normal = fnorm;
+            frame.binormal = fbinorm;
+          }
+        }
       }
     }
     FrameMode::Up(up) => {
@@ -852,21 +890,77 @@ fn group_end_ring_loops(
 }
 
 /// Attaches the analytic `uv` (U = cumulative spine arc length, V = profile parameter ∈ [0,1)) and
-/// `tangent` (spine direction) vertex channels to a freshly-built sweep mesh, indexed by the dense
-/// `vkey(i + 1, 1)` layout `from_indexed_vertices` produces.
+/// `tangent` (spine direction + glTF handedness `w`) vertex channels to a freshly-built sweep mesh,
+/// indexed by the dense `vkey(i + 1, 1)` layout `from_indexed_vertices` produces.
+///
+/// `w` makes `cross(N, T) * w` point along +V so normal maps perturb the right way regardless of
+/// profile winding or cap orientation: per vertex, a majority vote of sign(det[N_face, T, dP/dV])
+/// over incident faces. Pre-split ring-wrap faces (V-span > 0.5) have a garbage UV jacobian and are
+/// excluded; vertices touching only excluded faces (large planar cap spans) fall back to all faces.
 fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents: &[Vec3]) {
   let mut uv_ch = Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity);
   let mut tan_ch = Channel::new(
-    Arity::Vec3,
-    Interp::LerpNormalize,
+    Arity::Vec4,
+    Interp::Lerp,
     FlipXform::Negate,
     SpatialXform::Direction,
   );
+  let (mut u_min, mut u_max) = (f32::INFINITY, f32::NEG_INFINITY);
   for (i, (uv, tan)) in uvs.iter().zip(tangents).enumerate() {
     let key = vkey(i as u32 + 1, 1);
     uv_ch.set(key, [uv[0], uv[1], 0., 0.]);
-    tan_ch.set(key, [tan.x, tan.y, tan.z, 0.]);
+    tan_ch.set(key, [tan.x, tan.y, tan.z, 1.]);
+    u_min = u_min.min(uv[0]);
+    u_max = u_max.max(uv[0]);
   }
+  // Wrap faces have garbage UV jacobians and must not vote: V-wrap (pre-split ring seam) and
+  // U-wrap (closed-spine closure quads bridging full arc length back to 0).
+  let u_wrap_span = 0.5 * (u_max - u_min).max(f32::EPSILON);
+
+  let mut votes: FxHashMap<VertexKey, (f32, f32)> = FxHashMap::default();
+  for face in mesh.faces.values() {
+    let vs = &face.vertices;
+    let (Some(uv0), Some(uv1), Some(uv2)) = (uv_ch.get(vs[0]), uv_ch.get(vs[1]), uv_ch.get(vs[2]))
+    else {
+      continue;
+    };
+    let duv1 = [uv1[0] - uv0[0], uv1[1] - uv0[1]];
+    let duv2 = [uv2[0] - uv0[0], uv2[1] - uv0[1]];
+    let det = duv1[0] * duv2[1] - duv1[1] * duv2[0];
+    if det.abs() < 1e-12 {
+      continue;
+    }
+    let p0 = mesh.vertices[vs[0]].position;
+    let dp1 = mesh.vertices[vs[1]].position - p0;
+    let dp2 = mesh.vertices[vs[2]].position - p0;
+    // dP/dV of the face's UV mapping, up to a positive scale (only the sign votes)
+    let bit = (dp2 * duv1[0] - dp1 * duv2[0]) * det.signum();
+    let n_face = dp1.cross(&dp2);
+    let v_span = uv0[1].max(uv1[1]).max(uv2[1]) - uv0[1].min(uv1[1]).min(uv2[1]);
+    let u_span = uv0[0].max(uv1[0]).max(uv2[0]) - uv0[0].min(uv1[0]).min(uv2[0]);
+    for &k in vs.iter() {
+      let Some(t) = tan_ch.get(k) else { continue };
+      let s = n_face.cross(&Vec3::new(t[0], t[1], t[2])).dot(&bit);
+      if s == 0. {
+        continue;
+      }
+      let e = votes.entry(k).or_insert((0., 0.));
+      if v_span <= 0.5 && u_span <= u_wrap_span {
+        e.0 += s.signum();
+      }
+      e.1 += s.signum();
+    }
+  }
+  for (key, (filtered, all)) in votes {
+    let w = if filtered != 0. { filtered } else { all };
+    if w < 0. {
+      if let Some(mut t) = tan_ch.get(key) {
+        t[3] = -1.;
+        tan_ch.set(key, t);
+      }
+    }
+  }
+
   mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
   mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
 }
@@ -913,19 +1007,27 @@ fn dup_cap_ring(
 /// also touch a last-column vertex. Runs after `attach_sweep_attributes` so the `uv` channel exists.
 fn split_profile_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (usize, usize)>) {
   let rings: Vec<(usize, usize)> = rings.filter(|&(_, count)| count >= 3).collect();
-  let last_col: FxHashSet<VertexKey> = rings
-    .iter()
-    .map(|&(start, count)| vkey((start + count - 1) as u32 + 1, 1))
-    .collect();
   for &(start, _) in &rings {
     let seam_key = vkey(start as u32 + 1, 1);
     let mut wrap_faces: Vec<FaceKey> = Vec::new();
-    for &edge_key in &mesh.vertices[seam_key].edges {
-      for &face_key in &mesh.edges[edge_key].faces {
-        if mesh.faces[face_key].vertices.iter().any(|v| last_col.contains(v))
-          && !wrap_faces.contains(&face_key)
-        {
-          wrap_faces.push(face_key);
+    {
+      // The DP stitcher can close the ring with a whole fan at the seam (ring alignment
+      // rotates columns), so a wrap face is any face whose other corners lie on the
+      // high-V side — a membership test against the single last-column vertex misses
+      // the rest of the fan, leaving those faces crushed across `V≈1 → 0`.
+      let Some(uv_ch) = mesh.vertex_channels.get("uv") else {
+        return;
+      };
+      for &edge_key in &mesh.vertices[seam_key].edges {
+        for &face_key in &mesh.edges[edge_key].faces {
+          if mesh.faces[face_key]
+            .vertices
+            .iter()
+            .any(|&v| uv_ch.get(v).is_some_and(|uv| uv[1] > 0.5))
+            && !wrap_faces.contains(&face_key)
+          {
+            wrap_faces.push(face_key);
+          }
         }
       }
     }
@@ -942,13 +1044,81 @@ fn split_profile_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (u
   }
 }
 
+/// Closed spines duplicate the endpoint ring (the U-attribute seam), so each copy's smooth normal
+/// only averages faces on its own side — a faint crease around the closure. Average coincident
+/// pairs across the two end rings so both read the full-loop normal. Matching is positional
+/// (quantized + 27-neighborhood probe), so twisted / u-varying closures whose end rings genuinely
+/// differ are left alone.
+fn average_closed_seam_normals(
+  mesh: &mut LinkedMesh<()>,
+  first: std::ops::Range<usize>,
+  last: std::ops::Range<usize>,
+) {
+  const QUANT: f32 = 1e3;
+  let quant = |p: Vec3| {
+    (
+      (p.x * QUANT).round() as i64,
+      (p.y * QUANT).round() as i64,
+      (p.z * QUANT).round() as i64,
+    )
+  };
+  let mut by_pos: FxHashMap<(i64, i64, i64), VertexKey> = FxHashMap::default();
+  for i in first {
+    let k = vkey(i as u32 + 1, 1);
+    if let Some(v) = mesh.vertices.get(k) {
+      by_pos.insert(quant(v.position), k);
+    }
+  }
+  for i in last {
+    let k = vkey(i as u32 + 1, 1);
+    let Some(v) = mesh.vertices.get(k) else {
+      continue;
+    };
+    let p = v.position;
+    let (qx, qy, qz) = quant(p);
+    let mut matched: Option<VertexKey> = None;
+    'probe: for dx in -1..=1 {
+      for dy in -1..=1 {
+        for dz in -1..=1 {
+          if let Some(&fk) = by_pos.get(&(qx + dx, qy + dy, qz + dz)) {
+            if (mesh.vertices[fk].position - p).norm_squared() < (2. / QUANT) * (2. / QUANT) {
+              matched = Some(fk);
+              break 'probe;
+            }
+          }
+        }
+      }
+    }
+    let Some(fk) = matched else {
+      continue;
+    };
+    let (Some(a), Some(b)) = (mesh.shading_normal(fk), mesh.shading_normal(k)) else {
+      continue;
+    };
+    let avg = a + b;
+    if avg.norm_squared() > 1e-12 {
+      let avg = avg.normalize();
+      mesh.set_shading_normal(fk, Some(avg));
+      mesh.set_shading_normal(k, Some(avg));
+    }
+  }
+}
+
 /// Finalize a `split_seams` mesh: compute shading normals with the seam still SHARED (so it stays
 /// smooth), then split the profile seam — each clone inherits its source's smooth normal, so the
-/// seam reads seamless. The complete shading normals make the render pipeline skip its auto-smooth
-/// recompute; `NO_WELD` additionally stops its merge-by-distance from welding the coincident seam/cap
-/// duplicates back together.
-fn finalize_split_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (usize, usize)>) {
+/// seam reads seamless. The closed-spine end-ring averaging runs between the two (clones must
+/// inherit the averaged normals). The complete shading normals make the render pipeline skip its
+/// auto-smooth recompute; `NO_WELD` additionally stops its merge-by-distance from welding the
+/// coincident seam/cap duplicates back together.
+fn finalize_split_seams(
+  mesh: &mut LinkedMesh<()>,
+  rings: impl Iterator<Item = (usize, usize)>,
+  closed_end_rings: Option<(std::ops::Range<usize>, std::ops::Range<usize>)>,
+) {
   mesh.separate_vertices_and_compute_normals();
+  if let Some((first, last)) = closed_end_rings {
+    average_closed_seam_normals(mesh, first, last);
+  }
   split_profile_seams(mesh, rings);
   mesh.flags |= mesh_flags::NO_WELD;
 }
@@ -979,7 +1149,7 @@ pub fn rail_sweep(
     )));
   }
 
-  let frames = calculate_spine_frames(spine_points, frame_mode)?;
+  let frames = calculate_spine_frames(spine_points, frame_mode, closed)?;
   let v_samples = build_topology_samples(
     ring_resolution,
     profile_guides,
@@ -1159,9 +1329,15 @@ pub fn rail_sweep(
   let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
   attach_sweep_attributes(&mut mesh, &uvs, &tangents);
   if split_seams {
+    let closed_end_rings = (closed && ring_infos.len() >= 2).then(|| {
+      let f = &ring_infos[0].loops[0];
+      let l = &ring_infos[ring_infos.len() - 1].loops[0];
+      (f.start..f.start + f.count, l.start..l.start + l.count)
+    });
     finalize_split_seams(
       &mut mesh,
       ring_infos.iter().map(|r| (r.loops[0].start, r.loops[0].count)),
+      closed_end_rings,
     );
   }
   Ok(mesh)
@@ -1183,7 +1359,7 @@ fn rail_sweep_dynamic(
   split_seams: bool,
   cap_uv_scale: Vec2,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
-  let frames = calculate_spine_frames(spine_points, frame_mode)?;
+  let frames = calculate_spine_frames(spine_points, frame_mode, closed)?;
   let u_denom = (frames.len() - 1) as f32;
 
   let mut ring_contexts: Vec<RingContext> = Vec::with_capacity(frames.len());
@@ -1523,6 +1699,17 @@ fn rail_sweep_dynamic(
 
   attach_sweep_attributes(&mut mesh, &uvs, &tangents);
   if split_seams {
+    let ring_span = |r: &RingInfo| {
+      let start = r.loops.iter().map(|l| l.start).min().unwrap_or(0);
+      let end = r.loops.iter().map(|l| l.start + l.count).max().unwrap_or(0);
+      start..end
+    };
+    let closed_end_rings = (closed && sampled_rings.len() >= 2).then(|| {
+      (
+        ring_span(&sampled_rings[0]),
+        ring_span(&sampled_rings[sampled_rings.len() - 1]),
+      )
+    });
     // Only closed loops have a wrap seam to split; open loops already span V∈[0,1].
     finalize_split_seams(
       &mut mesh,
@@ -1531,6 +1718,7 @@ fn rail_sweep_dynamic(
         .flat_map(|r| r.loops.iter())
         .filter(|l| l.closed)
         .map(|l| (l.start, l.count)),
+      closed_end_rings,
     );
   }
   Ok(mesh)

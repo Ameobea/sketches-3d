@@ -15,6 +15,11 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   vec2 chebDir = bd.x <= bd.y ? vec2(sign(cl.x), 0.) : vec2(0., sign(cl.y));
   vec2 gradUV = -dCarveDb * chebDir * ptReliefFade(bd);
 
+#if PT_UV_MODE == 1
+  // Dominant-axis mapping switches basis mid-surface on curved sweeps (visible
+  // relief-flip line); map through the actual UV directions instead.
+  vec3 gw = depth * (gradUV.x * uvFrameT + gradUV.y * uvFrameB);
+#else
   vec3 na = abs(N);
   vec3 gradW;
   if (na.y >= na.x && na.y >= na.z) {
@@ -24,7 +29,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
   } else {
     gradW = vec3(gradUV.x, gradUV.y, 0.);
   }
-
   vec3 gw = depth * gradW;
+#endif
   return normalize(N + (gw - dot(gw, N) * N));
 }

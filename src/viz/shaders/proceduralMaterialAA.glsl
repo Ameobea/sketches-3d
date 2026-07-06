@@ -26,6 +26,14 @@ const float AA_RELIEF_HI  = 1.2;  // ... and completes at HI×featureWidth
 float aaWorldFootprint = 0.;
 vec2 aaUvFootprint = vec2(0.);
 
+// World-space directions of increasing vUv.x / vUv.y (unit, cotangent-frame from
+// screen derivatives), filled with the footprints. UV-keyed materials map their
+// pattern-space relief gradients through these instead of the dominant world axis
+// of N — that mapping switches basis mid-surface on curved geometry, flipping the
+// relief direction along a visible line.
+vec3 uvFrameT = vec3(1., 0., 0.);
+vec3 uvFrameB = vec3(0., 1., 0.);
+
 // AA'd hard step at `edge`: a sharp region boundary softened over the footprint.
 float aaStep(float edge, float x, float aa) {
   return smoothstep(edge - AA_EDGE_WIDTH * aa, edge + AA_EDGE_WIDTH * aa, x);
