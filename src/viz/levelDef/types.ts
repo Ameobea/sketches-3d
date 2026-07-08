@@ -57,12 +57,27 @@ export type GeoscriptAssetMeta = z.infer<typeof GeoscriptAssetMetaSchema>;
  * `input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,
  * an int (0xRRGGBB), or a "#rrggbb" hex string (the latter two normalized to a 0..1 triple).
  */
+export const Transform3JsonSchema = z.object({
+  pos: Vec3Tuple,
+  rot: Vec3Tuple,
+  scale: Vec3Tuple,
+});
+export type Transform3Json = z.infer<typeof Transform3JsonSchema>;
+
+/**
+ * `vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an
+ * `input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one
+ * composition node when the bare name is ambiguous.
+ */
 export const InputValueJsonSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('float'), value: z.number() }),
   z.object({ type: z.literal('int'), value: z.number().int() }),
   z.object({ type: z.literal('bool'), value: z.boolean() }),
   z.object({ type: z.literal('color'), value: z.union([Vec3Tuple, ColorInputSchema]) }),
   z.object({ type: z.literal('select'), value: z.string() }),
+  z.object({ type: z.literal('vec3'), value: Vec3Tuple }),
+  z.object({ type: z.literal('transform'), value: Transform3JsonSchema }),
+  z.object({ type: z.literal('spline'), value: z.array(Vec3Tuple) }),
 ]);
 export type InputValueJson = z.infer<typeof InputValueJsonSchema>;
 export const InputsJsonSchema = z.record(z.string(), InputValueJsonSchema);

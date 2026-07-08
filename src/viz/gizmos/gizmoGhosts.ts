@@ -66,6 +66,26 @@ export class GizmoGhosts {
     }
   }
 
+  /** Position-only refresh when the handle set/colors are unchanged; else a full rebuild.
+   *  Keeps meshes (and hover state) stable across mesh rebuilds and per-frame tracking. */
+  syncGhosts(specs: GhostSpec[]): void {
+    const sameSet =
+      specs.length === this.meshes.length &&
+      specs.every((s, i) => {
+        const m = this.meshes[i].spec;
+        return m.handleId === s.handleId && m.kind === s.kind && m.color === s.color;
+      });
+    if (!sameSet) {
+      this.setGhosts(specs);
+      return;
+    }
+    for (let i = 0; i < specs.length; i++) {
+      this.meshes[i].spec = specs[i];
+      const p = specs[i].position;
+      this.meshes[i].mesh.position.set(p[0], p[1], p[2]);
+    }
+  }
+
   /** Per-frame: keep a constant on-screen size. */
   update(): void {
     if (this.meshes.length === 0) return;

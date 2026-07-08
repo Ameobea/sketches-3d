@@ -44,7 +44,9 @@ struct StripOptions {
   planar_fallback: bool,
 }
 
-fn parse_strip_options(options: Option<&FxHashMap<String, Value>>) -> Result<StripOptions, ErrorStack> {
+fn parse_strip_options(
+  options: Option<&FxHashMap<String, Value>>,
+) -> Result<StripOptions, ErrorStack> {
   let mut out = StripOptions {
     strip_angle_rad: None,
     layout: Layout::Stack,
@@ -150,7 +152,11 @@ fn boundary_edges(m: &LinkedMesh<()>, f: FaceKey) -> Vec<EdgeKey> {
 }
 
 fn shared_edge(m: &LinkedMesh<()>, f: FaceKey, g: FaceKey) -> Option<EdgeKey> {
-  m.faces[f].edges.iter().copied().find(|&e| m.edges[e].faces.contains(&g))
+  m.faces[f]
+    .edges
+    .iter()
+    .copied()
+    .find(|&e| m.edges[e].faces.contains(&g))
 }
 
 fn faces_of_vertex(m: &LinkedMesh<()>, v: VertexKey) -> FxHashSet<FaceKey> {
@@ -193,7 +199,12 @@ struct Island {
 }
 
 /// Flip V if the UV winding is mirrored relative to the 3D face winding.
-fn mirror_fix(m: &LinkedMesh<()>, faces: &[FaceKey], uvs: &mut [(VertexKey, [f32; 2])], v_span: f32) {
+fn mirror_fix(
+  m: &LinkedMesh<()>,
+  faces: &[FaceKey],
+  uvs: &mut [(VertexKey, [f32; 2])],
+  v_span: f32,
+) {
   let map: FxHashMap<VertexKey, [f32; 2]> = uvs.iter().copied().collect();
   let signed: f32 = faces
     .iter()
@@ -210,7 +221,12 @@ fn mirror_fix(m: &LinkedMesh<()>, faces: &[FaceKey], uvs: &mut [(VertexKey, [f32
   }
 }
 
-fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &StripOptions) -> Option<Island> {
+fn try_strip(
+  m: &mut LinkedMesh<()>,
+  faces: &[FaceKey],
+  scale: f32,
+  opts: &StripOptions,
+) -> Option<Island> {
   let n = faces.len();
   if n < 2 {
     return None;
@@ -220,7 +236,11 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
       return None;
     }
   }
-  let ends: Vec<FaceKey> = faces.iter().copied().filter(|&f| face_nbrs(m, f).len() <= 1).collect();
+  let ends: Vec<FaceKey> = faces
+    .iter()
+    .copied()
+    .filter(|&f| face_nbrs(m, f).len() <= 1)
+    .collect();
   let (start, closed) = match ends.len() {
     2 => (ends[0], false),
     0 => (faces[0], true),
@@ -252,7 +272,9 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
     let best = (0..n).min_by(|&i, &j| {
       let score = |i: usize| -> f32 {
         let (f, g) = (ordered[i], ordered[(i + 1) % n]);
-        let Some(e) = shared_edge(m, f, g) else { return f32::MAX };
+        let Some(e) = shared_edge(m, f, g) else {
+          return f32::MAX;
+        };
         let [a, b] = m.edges[e].vertices;
         match (
           (vp(m, b) - vp(m, a)).try_normalize(1e-12),
@@ -266,7 +288,8 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
     })?;
     ordered.rotate_left(best + 1);
     let e_cut = shared_edge(m, ordered[n - 1], ordered[0])?;
-    let widx: FxHashMap<FaceKey, usize> = ordered.iter().enumerate().map(|(i, &f)| (f, i)).collect();
+    let widx: FxHashMap<FaceKey, usize> =
+      ordered.iter().enumerate().map(|(i, &f)| (f, i)).collect();
     let [va, vbk] = m.edges[e_cut].vertices;
     let mut clones = Vec::with_capacity(2);
     for v in [va, vbk] {
@@ -301,17 +324,18 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
     }
     set.len()
   };
-  let rails_for = |start_rung: EdgeKey, end_rung: EdgeKey| -> Option<(Vec<VertexKey>, Vec<VertexKey>)> {
-    let stop = m.edges[end_rung].vertices;
-    let [sa, sb] = m.edges[start_rung].vertices;
-    let rail_a = walk_rail(m, &vb, sa, start_rung, stop)?;
-    let rail_b = walk_rail(m, &vb, sb, start_rung, stop)?;
-    (rail_a.len() >= 2
-      && rail_b.len() >= 2
-      && rail_a.last() != rail_b.last()
-      && rail_a.len() + rail_b.len() == n_verts)
-      .then_some((rail_a, rail_b))
-  };
+  let rails_for =
+    |start_rung: EdgeKey, end_rung: EdgeKey| -> Option<(Vec<VertexKey>, Vec<VertexKey>)> {
+      let stop = m.edges[end_rung].vertices;
+      let [sa, sb] = m.edges[start_rung].vertices;
+      let rail_a = walk_rail(m, &vb, sa, start_rung, stop)?;
+      let rail_b = walk_rail(m, &vb, sb, start_rung, stop)?;
+      (rail_a.len() >= 2
+        && rail_b.len() >= 2
+        && rail_a.last() != rail_b.last()
+        && rail_a.len() + rail_b.len() == n_verts)
+        .then_some((rail_a, rail_b))
+    };
 
   let area: f32 = ordered.iter().map(|&f| farea(m, f)).sum();
   let patch_edges: Vec<EdgeKey> = {
@@ -377,7 +401,14 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
       num += ((ua[0] - ub[0]).hypot(ua[1] - ub[1]) - l3).abs();
       den += l3;
     }
-    Some(Reading { rail_a, rail_b, arcs_a, arcs_b, w, err: num / den.max(1e-12) })
+    Some(Reading {
+      rail_a,
+      rail_b,
+      arcs_a,
+      arcs_b,
+      w,
+      err: num / den.max(1e-12),
+    })
   };
 
   let reading = match cut_rungs {
@@ -414,14 +445,22 @@ fn try_strip(m: &mut LinkedMesh<()>, faces: &[FaceKey], scale: f32, opts: &Strip
   ] {
     let total = arcs.last().unwrap() * u_scale;
     // integer repeat count keeps a tiling texture seamless across the ring's cut
-    let fac = if closed && total > 1e-6 { total.round().max(1.) / total } else { 1. };
+    let fac = if closed && total > 1e-6 {
+      total.round().max(1.) / total
+    } else {
+      1.
+    };
     u_extent = u_extent.max(total * fac);
     for (i, &vk) in rail.iter().enumerate() {
       uvs.push((vk, [arcs[i] * u_scale * fac, v]));
     }
   }
   mirror_fix(m, &ordered, &mut uvs, v_span);
-  Some(Island { uvs, v_span, u_extent })
+  Some(Island {
+    uvs,
+    v_span,
+    u_extent,
+  })
 }
 
 fn planar_island(m: &LinkedMesh<()>, faces: &[FaceKey], scale: f32, layout: Layout) -> Island {
@@ -477,7 +516,9 @@ pub(crate) fn strip_uvs(
   let opts = parse_strip_options(options)?;
   let mut m = (*mesh.mesh).clone();
   if m.faces.is_empty() {
-    return Err(ErrorStack::new("`compute_uvs(type='strip')`: mesh has no faces"));
+    return Err(ErrorStack::new(
+      "`compute_uvs(type='strip')`: mesh has no faces",
+    ));
   }
 
   // Sharp-split first: afterwards faces across sharp edges share no vertices, so smooth patches
@@ -597,18 +638,23 @@ mod tests {
     uv.values().copied().collect()
   }
 
-  const SQUARE_PIPE: &str = "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0), \
-                             adaptive_path_sampling=false)";
+  const SQUARE_PIPE: &str =
+    "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0), adaptive_path_sampling=false)";
 
   #[test]
   fn strip_on_square_pipe() {
-    let mesh = rendered_mesh(&format!("{SQUARE_PIPE} | compute_uvs(type='strip') | render"));
+    let mesh = rendered_mesh(&format!(
+      "{SQUARE_PIPE} | compute_uvs(type='strip') | render"
+    ));
     assert!(mesh.has_flag(mesh_flags::NO_WELD));
     assert!(mesh.vertex_channels.contains_key("tangent"));
 
     let all = uvs(&mesh);
     for uv in &all {
-      assert!(uv[0].is_finite() && uv[1].is_finite(), "non-finite UV {uv:?}");
+      assert!(
+        uv[0].is_finite() && uv[1].is_finite(),
+        "non-finite UV {uv:?}"
+      );
     }
     // strips mapped STRAIGHT: every vertex sits on a rail, so V takes at most 2 distinct values
     // per island (6 islands: 4 sides + 2 caps).  A curved/conformal unwrap would produce a
@@ -619,10 +665,16 @@ mod tests {
         distinct_v.push(uv[1]);
       }
     }
-    assert!(distinct_v.len() <= 12, "expected <=2 V values per island, got {distinct_v:?}");
+    assert!(
+      distinct_v.len() <= 12,
+      "expected <=2 V values per island, got {distinct_v:?}"
+    );
     // U runs the full length of the pipe in world units (path length > 55)
     let max_u = all.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
-    assert!(max_u > 50., "U should span the strip arc length, got max {max_u}");
+    assert!(
+      max_u > 50.,
+      "U should span the strip arc length, got max {max_u}"
+    );
 
     // near-isometry: a mis-paired rail reading passes the V check but shears U, stretching every
     // rung ~15%+; the true reading is within ~1%
@@ -639,24 +691,36 @@ mod tests {
       den += l3;
     }
     let distortion = num / den;
-    assert!(distortion < 0.05, "strip map should be near-isometric, got distortion {distortion}");
+    assert!(
+      distortion < 0.05,
+      "strip map should be near-isometric, got distortion {distortion}"
+    );
   }
 
   #[test]
   fn strip_closed_ring_integer_wrap() {
-    let src = "extrude_pipe(2, 4, 0..32 -> |i| { a = i / 32 * pi * 2\n v3(cos(a)*8, sin(a)*8, 0) }, \
-               connect_ends=true, close_ends=false, adaptive_path_sampling=false) \
-               | compute_uvs(type='strip') | render";
+    let src = "extrude_pipe(2, 4, 0..32 -> |i| { a = i / 32 * pi * 2\n v3(cos(a)*8, sin(a)*8, 0) \
+               }, connect_ends=true, close_ends=false, adaptive_path_sampling=false) | \
+               compute_uvs(type='strip') | render";
     let mesh = rendered_mesh(src);
     let all = uvs(&mesh);
     for uv in &all {
-      assert!(uv[0].is_finite() && uv[1].is_finite(), "non-finite UV {uv:?}");
+      assert!(
+        uv[0].is_finite() && uv[1].is_finite(),
+        "non-finite UV {uv:?}"
+      );
     }
     // each of the 4 ring strips is cut + rounded to an integer repeat count: every rail's max U
     // is a whole number, and no face straddles the cut with a huge U span
     let max_u = all.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
-    assert!(max_u > 10., "ring circumference ~50, expected large U extent, got {max_u}");
-    assert!((max_u - max_u.round()).abs() < 1e-3, "closed strip U should be integer, got {max_u}");
+    assert!(
+      max_u > 10.,
+      "ring circumference ~50, expected large U extent, got {max_u}"
+    );
+    assert!(
+      (max_u - max_u.round()).abs() < 1e-3,
+      "closed strip U should be integer, got {max_u}"
+    );
     let uv_ch = &mesh.vertex_channels["uv"];
     let mut worst = 0f32;
     for (_, face) in mesh.iter_faces() {
@@ -677,9 +741,11 @@ mod tests {
     // candidate-retry must classify them regardless of how trig ulps break the tie, so
     // fallback:'error' succeeds on a capped pipe.
     for src in [
-      format!("{SQUARE_PIPE} | compute_uvs(type='strip', options={{ fallback: 'error' }}) | render"),
-      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, 0, 0)) \
-       | compute_uvs(type='strip', options={ fallback: 'error' }) | render"
+      format!(
+        "{SQUARE_PIPE} | compute_uvs(type='strip', options={{ fallback: 'error' }}) | render"
+      ),
+      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, 0, 0)) | compute_uvs(type='strip', options={ \
+       fallback: 'error' }) | render"
         .to_owned(),
     ] {
       crate::parse_and_eval_program(src).unwrap();
@@ -692,14 +758,20 @@ mod tests {
     let src = "cylinder(1, 4, 24) | compute_uvs(type='strip') | render";
     let mesh = rendered_mesh(src);
     for uv in uvs(&mesh) {
-      assert!(uv[0].is_finite() && uv[1].is_finite(), "non-finite UV {uv:?}");
+      assert!(
+        uv[0].is_finite() && uv[1].is_finite(),
+        "non-finite UV {uv:?}"
+      );
     }
 
     let err = crate::parse_and_eval_program(
       "cylinder(1, 4, 24) | compute_uvs(type='strip', options={ fallback: 'error' }) | render",
     )
     .unwrap_err();
-    assert!(format!("{err}").contains("not a quad/tri strip"), "got: {err}");
+    assert!(
+      format!("{err}").contains("not a quad/tri strip"),
+      "got: {err}"
+    );
   }
 
   /// UV inspection utility: evals `GEO_STRIP_DEBUG_SRC` (default: the verbatim square pipe) and
@@ -712,8 +784,8 @@ mod tests {
       return;
     };
     let src = std::env::var("GEO_STRIP_DEBUG_SRC").unwrap_or_else(|_| {
-      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0)) \
-       | compute_uvs(type='strip') | render"
+      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0)) | compute_uvs(type='strip') \
+       | render"
         .to_owned()
     });
     let ctx = crate::EvalCtx::default();
@@ -730,7 +802,10 @@ mod tests {
         idx.insert(k, base + idx.len());
         let p = v.position;
         out.push_str(&format!("v {} {} {}\n", p.x, p.y, p.z));
-        let uv = uv_ch.and_then(|c| c.get(k)).map(|v| [v[0], v[1]]).unwrap_or([0., 0.]);
+        let uv = uv_ch
+          .and_then(|c| c.get(k))
+          .map(|v| [v[0], v[1]])
+          .unwrap_or([0., 0.]);
         out.push_str(&format!("vt {} {}\n", uv[0], uv[1]));
       }
       for (_, f) in m.iter_faces() {

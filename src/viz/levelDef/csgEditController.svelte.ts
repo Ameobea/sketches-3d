@@ -2,7 +2,9 @@ import * as THREE from 'three';
 
 import type { CsgAssetDef, CsgTreeNode, CsgOpNode } from './types';
 import type { LevelObject } from './loadLevelDef';
+import type { LevelSceneNode } from './levelSceneTypes';
 import { cloneTree, getNodeAtPath, insertAfterPath, isOpNode, splitPath } from './csgTreeUtils';
+import type { EditorMode } from './editorMode';
 import type { LevelEditor } from './LevelEditor.svelte';
 import { UndoSystem } from '../util/undoSystem';
 import { round } from './mathUtils';
@@ -29,7 +31,8 @@ interface CsgRootTransformUndoEntry {
 
 type CsgUndoEntry = CsgTreeUndoEntry | CsgRootTransformUndoEntry;
 
-export class CsgEditController {
+export class CsgEditController implements EditorMode {
+  readonly suppressSelectionHighlights = true;
   private _isActive = false;
   private editLevelObj: LevelObject | null = null;
   private editGroup: THREE.Group | null = null;
@@ -76,6 +79,43 @@ export class CsgEditController {
 
   get isEditorOpen(): boolean {
     return this.panelController.isOpen;
+  }
+
+  onKeyDown(e: KeyboardEvent): boolean {
+    const ctrl = e.ctrlKey || e.metaKey;
+    if (e.key === 'z' && ctrl && !e.shiftKey) {
+      e.preventDefault();
+      this.undo();
+      return true;
+    }
+    if (((e.key === 'z' || e.key === 'Z') && ctrl && e.shiftKey) || (e.key === 'y' && ctrl)) {
+      e.preventDefault();
+      this.redo();
+      return true;
+    }
+    if (e.key === 'c' && ctrl) {
+      this.copySelectedNode();
+      return true;
+    }
+    if (e.key === 'v' && ctrl) {
+      if (this.csgClipboard) {
+        e.preventDefault();
+        void this.pasteNode();
+      }
+      return true;
+    }
+    if (e.key === 'Escape') {
+      if (this.selectedNodePath !== null) this.deselectNode();
+      else this.exit();
+      return true;
+    }
+    return false;
+  }
+
+  /** Exit when the selection moves to a different object (or a group). */
+  onSelectNode(node: LevelSceneNode) {
+    const levelObj = isLevelGroup(node) ? null : node;
+    if (this.editLevelObj !== levelObj) this.exit();
   }
 
   undo(): boolean {
@@ -150,8 +190,8 @@ export class CsgEditController {
     }
   }
 
-  /** Handle live transform updates in CSG edit mode (called on every objectChange). */
-  onObjectChange() {
+  /** Handle live transform updates in CSG edit mode (called on every drag frame). */
+  onDrag() {
     if (this.selectedNodePath === '') {
       // Root selected — keep editGroup in sync with the level object
       if (this.editGroup && this.editLevelObj) {
@@ -163,16 +203,6 @@ export class CsgEditController {
     } else if (this.selectedNodePath) {
       this.onNodeTransformUpdate();
     }
-  }
-
-  handleEscape(): boolean {
-    if (!this._isActive) return false;
-    if (this.selectedNodePath !== null) {
-      this.deselectNode();
-    } else {
-      this.exit();
-    }
-    return true;
   }
 
   /**
@@ -255,8 +285,8 @@ export class CsgEditController {
     await this.onTreeChange(newTree);
   }
 
-  /** Raycast against CSG node previews. Returns true if handled. */
-  doRaycast(raycaster: THREE.Raycaster): boolean {
+  /** Raycast against CSG node previews. Consumes every click while active. */
+  interceptClick(raycaster: THREE.Raycaster, _event: PointerEvent): boolean {
     if (!this._isActive) return false;
     const hit = this.previewScene.pickNode(raycaster);
     if (hit !== undefined) {
@@ -271,6 +301,7 @@ export class CsgEditController {
     if (this._isActive) this.exit();
 
     this._isActive = true;
+    this.editor.activeMode = this;
     this.undoSystem.clear();
     this.editLevelObj = levelObj;
     this.editor.selectedNode = levelObj;
@@ -323,6 +354,7 @@ export class CsgEditController {
     this.runtime.terminateAssetWorker();
 
     this._isActive = false;
+    if (this.editor.activeMode === this) this.editor.activeMode = null;
     const levelObj = this.editLevelObj;
     this.editLevelObj = null;
 

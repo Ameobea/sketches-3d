@@ -469,7 +469,8 @@ impl PathSampler for TransformedCallableSampler {
 
 /// Restricts an arbitrary path callable to the sub-range `[start_t, start_t + span]` of its `t`
 /// domain, remapped back to `[0, 1]`. Fallback for `trim_path` on non-tracer paths (black-box
-/// `|t|: vec2` callables, `lerp_paths`, `catmull_rom`) where exact geometric slicing isn't possible.
+/// `|t|: vec2` callables, `lerp_paths`, `catmull_rom`) where exact geometric slicing isn't
+/// possible.
 pub(crate) struct TrimmedPathSampler {
   pub inner: Rc<Callable>,
   pub start_t: f32,
@@ -1016,7 +1017,9 @@ impl PathSegment {
   /// Maps a local arc length into the segment's native curve parameter in [0, 1].
   fn param_for_length(&self, length: f32) -> f32 {
     match self {
-      PathSegment::Line { length: seg_len, .. } => {
+      PathSegment::Line {
+        length: seg_len, ..
+      } => {
         if *seg_len <= LENGTH_EPSILON {
           0.0
         } else {
@@ -1029,9 +1032,9 @@ impl PathSegment {
     }
   }
 
-  /// Returns the sub-segment covering the native-parameter range `[u, v]` (with `0 <= u <= v <= 1`),
-  /// preserving the curve type exactly (lines stay lines, beziers stay beziers, arcs stay arcs).
-  /// `None` when the resulting piece is degenerate.
+  /// Returns the sub-segment covering the native-parameter range `[u, v]` (with `0 <= u <= v <=
+  /// 1`), preserving the curve type exactly (lines stay lines, beziers stay beziers, arcs stay
+  /// arcs). `None` when the resulting piece is degenerate.
   fn slice(&self, u: f32, v: f32) -> Option<PathSegment> {
     if u <= LENGTH_EPSILON && v >= 1.0 - LENGTH_EPSILON {
       return Some(self.clone());
@@ -1041,9 +1044,15 @@ impl PathSegment {
         let s = *start + (*end - *start) * u;
         let e = *start + (*end - *start) * v;
         let length = (e - s).norm();
-        (length > LENGTH_EPSILON).then_some(PathSegment::Line { start: s, end: e, length })
+        (length > LENGTH_EPSILON).then_some(PathSegment::Line {
+          start: s,
+          end: e,
+          length,
+        })
       }
-      PathSegment::Quadratic { start, ctrl, end, .. } => {
+      PathSegment::Quadratic {
+        start, ctrl, end, ..
+      } => {
         let (s, c, e) = quadratic_subsegment(*start, *ctrl, *end, u, v);
         let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| quadratic_bezier(s, c, e, t));
         (table.total() > LENGTH_EPSILON).then_some(PathSegment::Quadratic {
@@ -1053,7 +1062,13 @@ impl PathSegment {
           table,
         })
       }
-      PathSegment::Cubic { start, ctrl1, ctrl2, end, .. } => {
+      PathSegment::Cubic {
+        start,
+        ctrl1,
+        ctrl2,
+        end,
+        ..
+      } => {
         let (s, c1, c2, e) = cubic_subsegment(*start, *ctrl1, *ctrl2, *end, u, v);
         let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| cubic_bezier(s, c1, c2, e, t));
         (table.total() > LENGTH_EPSILON).then_some(PathSegment::Cubic {
@@ -1076,9 +1091,27 @@ impl PathSegment {
       } => {
         let new_theta_start = theta_start + theta_delta * u;
         let new_theta_delta = theta_delta * (v - u);
-        let new_end = arc_point(*center, *rx, *ry, *cos_phi, *sin_phi, *theta_start, *theta_delta, v);
+        let new_end = arc_point(
+          *center,
+          *rx,
+          *ry,
+          *cos_phi,
+          *sin_phi,
+          *theta_start,
+          *theta_delta,
+          v,
+        );
         let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
-          arc_point(*center, *rx, *ry, *cos_phi, *sin_phi, new_theta_start, new_theta_delta, t)
+          arc_point(
+            *center,
+            *rx,
+            *ry,
+            *cos_phi,
+            *sin_phi,
+            new_theta_start,
+            new_theta_delta,
+            t,
+          )
         });
         (table.total() > LENGTH_EPSILON).then_some(PathSegment::Arc {
           end: new_end,
@@ -1097,7 +1130,12 @@ impl PathSegment {
 }
 
 /// Returns the control points of the two halves of a quadratic bezier split at parameter `t`.
-fn split_quadratic(p0: Vec2, p1: Vec2, p2: Vec2, t: f32) -> ((Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2)) {
+fn split_quadratic(
+  p0: Vec2,
+  p1: Vec2,
+  p2: Vec2,
+  t: f32,
+) -> ((Vec2, Vec2, Vec2), (Vec2, Vec2, Vec2)) {
   let a = p0 + (p1 - p0) * t;
   let b = p1 + (p2 - p1) * t;
   let m = a + (b - a) * t;
@@ -1107,7 +1145,11 @@ fn split_quadratic(p0: Vec2, p1: Vec2, p2: Vec2, t: f32) -> ((Vec2, Vec2, Vec2),
 /// Control points of the quadratic sub-bezier on `[u, v]` (`0 <= u <= v <= 1`).
 fn quadratic_subsegment(p0: Vec2, p1: Vec2, p2: Vec2, u: f32, v: f32) -> (Vec2, Vec2, Vec2) {
   let ((l0, l1, l2), _) = split_quadratic(p0, p1, p2, v);
-  let uu = if v > LENGTH_EPSILON { (u / v).clamp(0.0, 1.0) } else { 0.0 };
+  let uu = if v > LENGTH_EPSILON {
+    (u / v).clamp(0.0, 1.0)
+  } else {
+    0.0
+  };
   let (_, right) = split_quadratic(l0, l1, l2, uu);
   right
 }
@@ -1129,18 +1171,34 @@ fn split_cubic(
 }
 
 /// Control points of the cubic sub-bezier on `[u, v]` (`0 <= u <= v <= 1`).
-fn cubic_subsegment(p0: Vec2, p1: Vec2, p2: Vec2, p3: Vec2, u: f32, v: f32) -> (Vec2, Vec2, Vec2, Vec2) {
+fn cubic_subsegment(
+  p0: Vec2,
+  p1: Vec2,
+  p2: Vec2,
+  p3: Vec2,
+  u: f32,
+  v: f32,
+) -> (Vec2, Vec2, Vec2, Vec2) {
   let ((l0, l1, l2, l3), _) = split_cubic(p0, p1, p2, p3, v);
-  let uu = if v > LENGTH_EPSILON { (u / v).clamp(0.0, 1.0) } else { 0.0 };
+  let uu = if v > LENGTH_EPSILON {
+    (u / v).clamp(0.0, 1.0)
+  } else {
+    0.0
+  };
   let (_, right) = split_cubic(l0, l1, l2, l3, uu);
   right
 }
 
-/// Builds a new tracer covering the sampling-`t` range `[start_t, end_t]` (`0 <= start_t < end_t <= 1`)
-/// of `tracer`, slicing partial segments at the boundaries so sharp corners and curve detail are
-/// preserved exactly. Trimming runs in the global arc-length parameterization spanning all subpaths;
-/// a subpath fully inside the range keeps its `closed` flag, partially-covered ones become open.
-pub(crate) fn trim_tracer(tracer: &PathTracerCallable, start_t: f32, end_t: f32) -> PathTracerCallable {
+/// Builds a new tracer covering the sampling-`t` range `[start_t, end_t]` (`0 <= start_t < end_t <=
+/// 1`) of `tracer`, slicing partial segments at the boundaries so sharp corners and curve detail
+/// are preserved exactly. Trimming runs in the global arc-length parameterization spanning all
+/// subpaths; a subpath fully inside the range keeps its `closed` flag, partially-covered ones
+/// become open.
+pub(crate) fn trim_tracer(
+  tracer: &PathTracerCallable,
+  start_t: f32,
+  end_t: f32,
+) -> PathTracerCallable {
   // The tracer's reverse flag maps user-facing sampling-`t` to forward arc-length `t` via `1 - t`.
   let (a_t, b_t) = if tracer.reverse {
     (1.0 - end_t, 1.0 - start_t)
@@ -2515,9 +2573,7 @@ impl PathSampler for PathTracerCallable {
       self
         .subpaths
         .iter()
-        .map(|sp| SubpathTopology {
-          closed: sp.closed,
-        })
+        .map(|sp| SubpathTopology { closed: sp.closed })
         .collect(),
     )
   }
@@ -2529,7 +2585,10 @@ impl PathSampler for PathTracerCallable {
     let mut spans = Vec::with_capacity(self.subpaths.len());
     let mut offset = 0.0f32;
     for &cum in self.subpath_cumulative_lengths.iter() {
-      spans.push(((offset / self.total_length).clamp(0., 1.), (cum / self.total_length).clamp(0., 1.)));
+      spans.push((
+        (offset / self.total_length).clamp(0., 1.),
+        (cum / self.total_length).clamp(0., 1.),
+      ));
       offset = cum;
     }
     if self.reverse {
@@ -2804,13 +2863,19 @@ pub(crate) fn map_to_draw_command(
     "circle" => Ok(DrawCommand::Circle {
       center: get_vec2(map, "center")?,
       radius: get_float(map, "radius")?,
-      reversed: map.get("reversed").and_then(|v| v.as_bool()).unwrap_or(false),
+      reversed: map
+        .get("reversed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false),
     }),
     "rect" => Ok(DrawCommand::Rect {
       center: get_vec2(map, "center")?,
       width: get_float(map, "width")?,
       height: get_float(map, "height")?,
-      reversed: map.get("reversed").and_then(|v| v.as_bool()).unwrap_or(false),
+      reversed: map
+        .get("reversed")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false),
     }),
     "close" => Ok(DrawCommand::Close),
     other => Err(ErrorStack::new(format!(
@@ -2880,7 +2945,8 @@ pub fn discretize_path_impl(
     ))
   })?;
 
-  let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[1].resolve(args, kwargs)) as f64;
+  let curve_angle_degrees =
+    ctx.resolve_curve_angle_degrees(arg_refs[1].resolve(args, kwargs)) as f64;
   if curve_angle_degrees <= 0.0 {
     return Err(ErrorStack::new(format!(
       "Invalid curve_angle_degrees for `discretize_path`; expected > 0, found: \
@@ -3908,6 +3974,49 @@ mesh = tessellate_path(path)
   }
 
   #[test]
+  fn test_tessellate_path_plane_override() {
+    // Asymmetric triangle so the u/v axis assignment is observable: 2 units along u, 1 along v.
+    fn tessellate(plane: Option<&str>, engine: &str) -> (Vec<Vector3<f32>>, Vector3<f32>) {
+      let arg = plane.map(|p| format!(", plane=\"{p}\"")).unwrap_or_default();
+      let src = format!(
+        "path = [vec2(0, 0), vec2(2, 0), vec2(0, 1)]\nmesh = tessellate_path(path{arg}, engine=\"{engine}\")\n"
+      );
+      let ctx = parse_and_eval_program(&src).unwrap();
+      let mesh_val = ctx.get_global("mesh").unwrap();
+      let lm = &mesh_val.as_mesh().unwrap().mesh;
+      let positions = lm.vertices.values().map(|v| v.position).collect();
+      let normal = lm.faces.values().next().unwrap().normal(&lm.vertices);
+      (positions, normal)
+    }
+
+    let approx = |a: f32, b: f32| (a - b).abs() < 1e-5;
+    let extent = |ps: &[Vector3<f32>], axis: usize| ps.iter().map(|p| p[axis]).fold(0f32, f32::max);
+    // Both engines must land the mesh in the same plane and face the same +normal axis.
+    let check = |plane: Option<&str>, flat_axis: usize, u_axis: usize, v_axis: usize, normal: usize| {
+      for engine in ["cgal", "lyon"] {
+        let (ps, n) = tessellate(plane, engine);
+        assert!(ps.iter().all(|p| approx(p[flat_axis], 0.)), "{plane:?} {engine} flat");
+        assert!(approx(extent(&ps, u_axis), 2.), "{plane:?} {engine} u extent");
+        assert!(approx(extent(&ps, v_axis), 1.), "{plane:?} {engine} v extent");
+        let mut want = Vector3::zeros();
+        want[normal] = 1.;
+        assert!((n - want).norm() < 1e-5, "{plane:?} {engine} normal {n:?}");
+      }
+    };
+
+    // (flat, u→, v→, +normal): default XZ ⇒ u→x, v→z, faces +Y.
+    check(None, 1, 0, 2, 1);
+    check(Some("xz"), 1, 0, 2, 1);
+    check(Some("xy"), 2, 0, 1, 2);
+    check(Some("yz"), 0, 1, 2, 0);
+    // "zx" mirrors "xz": u→z, v→x, still faces +Y.
+    check(Some("zx"), 1, 2, 0, 1);
+
+    let src = "mesh = tessellate_path([vec2(0,0), vec2(1,0), vec2(0,1)], plane=\"xx\")\n";
+    assert!(parse_and_eval_program(src).is_err());
+  }
+
+  #[test]
   fn test_subpaths_builtin() {
     let src = r#"
 // Create a path with two disconnected subpaths via two move commands
@@ -4644,10 +4753,22 @@ blackbox = path_len(|t| v2(t * 10, 0))
     let ctx = parse_and_eval_program(src).unwrap();
     let g = |name: &str| ctx.get_global(name).unwrap().as_float().unwrap();
 
-    assert!((g("poly_len") - 7.0).abs() < 1e-4, "poly_len = {}", g("poly_len"));
+    assert!(
+      (g("poly_len") - 7.0).abs() < 1e-4,
+      "poly_len = {}",
+      g("poly_len")
+    );
     // Uniform 2x scale doubles the measured length; `apply_transform=false` recovers the original.
-    assert!((g("scaled_world") - 14.0).abs() < 1e-4, "scaled_world = {}", g("scaled_world"));
-    assert!((g("scaled_local") - 7.0).abs() < 1e-4, "scaled_local = {}", g("scaled_local"));
+    assert!(
+      (g("scaled_world") - 14.0).abs() < 1e-4,
+      "scaled_world = {}",
+      g("scaled_world")
+    );
+    assert!(
+      (g("scaled_local") - 7.0).abs() < 1e-4,
+      "scaled_local = {}",
+      g("scaled_local")
+    );
     assert!(
       (g("fast") - g("slow")).abs() < 1e-3,
       "fast={} slow={}",
@@ -4659,7 +4780,11 @@ blackbox = path_len(|t| v2(t * 10, 0))
       "circle len {} not ~= circumference",
       g("fast")
     );
-    assert!((g("blackbox") - 10.0).abs() < 1e-3, "blackbox = {}", g("blackbox"));
+    assert!(
+      (g("blackbox") - 10.0).abs() < 1e-3,
+      "blackbox = {}",
+      g("blackbox")
+    );
   }
 
   #[test]
@@ -4681,9 +4806,18 @@ tlen = path_len(t)
 types = path_segments(t) -> |s, _i| s.type
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
-    assert_vec2_close(*ctx.get_global("a").unwrap().as_vec2().unwrap(), Vec2::new(2.0, 0.0));
-    assert_vec2_close(*ctx.get_global("mid").unwrap().as_vec2().unwrap(), Vec2::new(4.0, 0.0));
-    assert_vec2_close(*ctx.get_global("b").unwrap().as_vec2().unwrap(), Vec2::new(4.0, 2.0));
+    assert_vec2_close(
+      *ctx.get_global("a").unwrap().as_vec2().unwrap(),
+      Vec2::new(2.0, 0.0),
+    );
+    assert_vec2_close(
+      *ctx.get_global("mid").unwrap().as_vec2().unwrap(),
+      Vec2::new(4.0, 0.0),
+    );
+    assert_vec2_close(
+      *ctx.get_global("b").unwrap().as_vec2().unwrap(),
+      Vec2::new(4.0, 2.0),
+    );
 
     let tlen = ctx.get_global("tlen").unwrap().as_float().unwrap();
     assert!((tlen - 4.0).abs() < 1e-4, "trimmed length = {tlen}");

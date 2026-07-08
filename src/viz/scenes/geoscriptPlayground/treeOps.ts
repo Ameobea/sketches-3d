@@ -1,6 +1,8 @@
 // Pure functions for mutating a `TreeDef`. Svelte-free so the logic is
 // unit-testable under plain node.
 
+import type * as THREE from 'three';
+
 import type { ControlValue, GizmoValue, NodeDef, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import {
   ROOT_NODE_NAME,
@@ -9,6 +11,7 @@ import {
   buildInstance,
   cloneTransform3,
 } from 'src/geoscript/geotoyAPIClient';
+import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
 
 const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const RESERVED_NAMES: ReadonlySet<string> = new Set([ROOT_NODE_NAME, '_globals']);
@@ -349,4 +352,22 @@ export const getNodeAncestorChain = (tree: TreeDef, nodeId: string): NodeDef[] |
     cur = parent.get(cur) ?? null;
   }
   return null;
+};
+
+/**
+ * Multiplies the node's representative (instance-0) world onto `out`, root → node
+ * inclusive. `out` should already hold the base (identity, or a placement's world
+ * matrix); `scratch` is a caller-owned Matrix4. Returns false, leaving `out` as the
+ * base, when `nodeId` is absent from the tree.
+ */
+export const composeInstance0World = (
+  tree: TreeDef,
+  nodeId: string,
+  out: THREE.Matrix4,
+  scratch: THREE.Matrix4
+): boolean => {
+  const chain = getNodeAncestorChain(tree, nodeId);
+  if (!chain) return false;
+  for (let i = chain.length - 1; i >= 0; i--) out.multiply(composeTransform3(scratch, chain[i].instances[0]));
+  return true;
 };

@@ -14,9 +14,8 @@ pub fn extrude_path(
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   let mut mesh = LinkedMesh::new(0, 0, None);
 
-  let push_vtx = |mesh: &mut LinkedMesh<()>, pos: Vec3| -> VertexKey {
-    mesh.vertices.insert(Vertex::new(pos))
-  };
+  let push_vtx =
+    |mesh: &mut LinkedMesh<()>, pos: Vec3| -> VertexKey { mesh.vertices.insert(Vertex::new(pos)) };
 
   for (subpath_ix, (points, is_closed)) in subpaths.into_iter().enumerate() {
     if is_closed {
@@ -29,7 +28,10 @@ pub fn extrude_path(
     }
 
     let bottom: Vec<VertexKey> = points.iter().map(|p| push_vtx(&mut mesh, *p)).collect();
-    let top: Vec<VertexKey> = points.iter().map(|p| push_vtx(&mut mesh, *p + up)).collect();
+    let top: Vec<VertexKey> = points
+      .iter()
+      .map(|p| push_vtx(&mut mesh, *p + up))
+      .collect();
 
     for i in 0..points.len() - 1 {
       let b0 = bottom[i];
@@ -80,8 +82,7 @@ mod tests {
       Vec3::new(1., 0., 2.),
       Vec3::new(2., 0., 2.),
     ];
-    let mesh =
-      extrude_path(vec![(a, false), (b, false)], Vec3::new(0., 1., 0.), false).unwrap();
+    let mesh = extrude_path(vec![(a, false), (b, false)], Vec3::new(0., 1., 0.), false).unwrap();
     assert_eq!(mesh.vertices.len(), 4 + 6);
     assert_eq!(mesh.faces.len(), 2 + 4);
   }

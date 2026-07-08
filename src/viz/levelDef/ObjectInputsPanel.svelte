@@ -26,7 +26,7 @@
     }
     return out;
   });
-  const settings = $derived(uniqueControls.map(c => controlToSetting(c, c.handleId)));
+  const settings = $derived(uniqueControls.map(c => controlToSetting(c, c.handleId)).filter(s => s !== null));
 
   const inputJsonToPanelValue = (c: RenderedControl, v: InputValueJson): any => {
     const w = reifyInput(v);
@@ -55,6 +55,9 @@
         return { type: 'color', value: value as [number, number, number] };
       case 'select':
         return { type: 'select', value: value as string };
+      case 'spline':
+        // Splines never route through the ControlPanel; edits flow via the viewport overlay.
+        return { type: 'spline', value: value as [number, number, number][] };
     }
   };
 
@@ -80,7 +83,9 @@
 </script>
 
 <div class="object-inputs-panel">
-  <ControlPanel {settings} bind:state={panelState} onChange={handleChange} title="inputs" width={252} />
+  {#if settings.length > 0}
+    <ControlPanel {settings} bind:state={panelState} onChange={handleChange} title="inputs" width={252} />
+  {/if}
 </div>
 
 <style>

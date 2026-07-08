@@ -609,8 +609,8 @@ impl<'a> AnalysisWalker<'a> {
 
   /// Pipeline operator `lhs | rhs`.  At runtime the rhs is evaluated to a value first: a callable
   /// (closure / partial application) is invoked with lhs appended, otherwise `|` degrades to
-  /// `bit_or(lhs, rhs)`.  We mirror that here — `lhs | f(args)` is a call append only when `f(args)`
-  /// is a partial application; a fully-applied `f(args)` makes it a `bit_or` instead.
+  /// `bit_or(lhs, rhs)`.  We mirror that here — `lhs | f(args)` is a call append only when
+  /// `f(args)` is a partial application; a fully-applied `f(args)` makes it a `bit_or` instead.
   fn walk_pipeline(&mut self, lhs: &Expr, rhs: &Expr) -> AbstractType {
     let lhs_ty = self.walk_expr(lhs);
 
@@ -629,8 +629,15 @@ impl<'a> AnalysisWalker<'a> {
             self.reference_symbol(*name, *loc);
           }
 
-          let (return_ty, matched_sig_ix) =
-            self.walk_pipeline_call(*name, is_shadowed, call, &arg_types, &kwarg_types, lhs_ty, *loc);
+          let (return_ty, matched_sig_ix) = self.walk_pipeline_call(
+            *name,
+            is_shadowed,
+            call,
+            &arg_types,
+            &kwarg_types,
+            lhs_ty,
+            *loc,
+          );
 
           self.function_calls.push(FunctionCallInfo {
             name: *name,
@@ -760,8 +767,8 @@ impl<'a> AnalysisWalker<'a> {
       end_col: col + name_str.len().max(1) as u32,
       severity: DiagnosticSeverity::Error,
       message: format!(
-        "no valid `|` operation: `{name_str}` is fully applied (not a callable to pipe into), \
-         and `bit_or` has no overload for ({}, {})",
+        "no valid `|` operation: `{name_str}` is fully applied (not a callable to pipe into), and \
+         `bit_or` has no overload for ({}, {})",
         lhs_c.as_str(),
         rhs_c.as_str()
       ),

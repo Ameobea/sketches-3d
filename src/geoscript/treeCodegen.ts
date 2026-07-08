@@ -84,6 +84,8 @@ export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
     }
     case 'select':
       return { kind: 'select', str_value: v.value as string };
+    case 'spline':
+      return { kind: 'spline', value: (v.value as [number, number, number][]).flat() };
   }
 };
 

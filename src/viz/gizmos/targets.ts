@@ -209,7 +209,7 @@ export class PivotTarget implements GizmoTarget {
 
 import type { GizmoValue, Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
-import { getNodeAncestorChain } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { composeInstance0World, getNodeAncestorChain } from 'src/viz/scenes/geoscriptPlayground/treeOps';
 
 export interface InstanceTargetCallbacks {
   onChange?(phase: 'preview' | 'commit', nodeId: string, instanceId: string, transform: ApiTransform3): void;
@@ -275,6 +275,10 @@ export class InstanceTarget implements GizmoTarget {
 
 export interface HandleTargetCallbacks {
   onChange?(phase: 'preview' | 'commit', nodeId: string, handleId: string, value: GizmoValue): void;
+  /** Extra world transform composed before the node chain (e.g. a level placement's matrix). */
+  getBaseMatrix?(): THREE.Matrix4 | null;
+  /** Current handle value override; defaults to the tree's `node.handles[handleId]`. */
+  getStoredValue?(): GizmoValue | undefined;
 }
 
 /**
@@ -283,6 +287,9 @@ export interface HandleTargetCallbacks {
  * with the node's representative (instance 0) world matrix. vec3 handles are translate-only;
  * `delta` handles store the offset from `origin`, `absolute` ones store the position itself.
  * `origin` is the runtime-reported anchor (from the rendered-gizmos channel).
+ *
+ * `getTree` may return null for single-module programs with no tree (level-def geoscript
+ * assets); the base matrix is then the whole node-world transform.
  */
 export class HandleTarget implements GizmoTarget {
   constructor(
@@ -291,23 +298,25 @@ export class HandleTarget implements GizmoTarget {
     // Resolved fresh each frame — origin/mode/transform follow the run channel without
     // rebuilding the target, so the gizmo never holds a stale anchor.
     private readonly getContext: () => HandleContext | null,
-    private readonly getTree: () => TreeDef,
+    private readonly getTree: () => TreeDef | null,
     private readonly callbacks: HandleTargetCallbacks = {}
   ) {}
 
-  // Full world of the node's representative (instance 0) copy, root → node inclusive.
+  // Full world of the node's representative (instance 0) copy, root → node inclusive,
+  // composed onto the optional base matrix.
   private nodeWorld(out: THREE.Matrix4): boolean {
-    const chain = getNodeAncestorChain(this.getTree(), this.nodeId);
-    if (!chain) return false;
     out.identity();
-    for (let i = chain.length - 1; i >= 0; i--) {
-      out.multiply(composeTransform3(_scratchMat, chain[i].instances[0]));
-    }
-    return true;
+    const base = this.callbacks.getBaseMatrix?.();
+    if (base) out.copy(base);
+    const tree = this.getTree();
+    if (!tree) return true;
+    return composeInstance0World(tree, this.nodeId, out, _scratchMat);
   }
 
   private localTransform(out: Transform3, ctx: HandleContext): Transform3 {
-    const stored = this.getTree().nodes[this.nodeId]?.handles?.[this.handleId];
+    const stored = this.callbacks.getStoredValue
+      ? this.callbacks.getStoredValue()
+      : this.getTree()?.nodes[this.nodeId]?.handles?.[this.handleId];
     if (ctx.kind === 'transform') {
       const src = (stored?.value as ApiTransform3 | undefined) ??
         ctx.transform ?? { pos: [...ctx.origin], rot: [0, 0, 0], scale: [1, 1, 1] };

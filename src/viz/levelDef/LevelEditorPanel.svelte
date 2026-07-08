@@ -1,10 +1,12 @@
 <script lang="ts">
   import AssetTreePicker from './AssetTreePicker.svelte';
   import CompositionMaterialPanel from './CompositionMaterialPanel.svelte';
+  import GizmoHandlesPanel from './GizmoHandlesPanel.svelte';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import InfoPanel from './InfoPanel.svelte';
   import LightInfoPanel from './LightInfoPanel.svelte';
   import ObjectInputsPanel from './ObjectInputsPanel.svelte';
+  import SplineControlsSection from 'src/viz/UI/SplineControlsSection.svelte';
   import type { LevelEditorPanelActions, LevelEditorPanelViewState } from './levelEditorPanelTypes';
   import type { LightDef } from './types';
 
@@ -197,6 +199,14 @@
         info={view.objectInputs}
         nodeId={view.selectedNodeId}
         onchange={actions.setObjectInput}
+      />
+      <SplineControlsSection controls={view.objectInputs.controls} spline={view.splineCtx} />
+    {/if}
+    {#if view.gizmoHandles}
+      <GizmoHandlesPanel
+        rows={view.gizmoHandles}
+        onarm={actions.armGizmoHandle}
+        onreset={actions.resetGizmoHandle}
       />
     {/if}
     {#if view.compositionMaterials}

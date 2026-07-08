@@ -4,7 +4,9 @@ use bitvec::prelude::*;
 
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{mesh_flags, Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey},
+  linked_mesh::{
+    mesh_flags, Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey,
+  },
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -440,9 +442,9 @@ fn build_loop_specs(sampler: &Callable) -> Result<Vec<LoopSpec>, ErrorStack> {
         .collect();
       if !open.is_empty() {
         return Err(ErrorStack::new(format!(
-          "multi-subpath rail_sweep profiles must be all closed, but subpath(s) {open:?} are open. \
-           A single open subpath is a valid open profile; mixing open and closed subpaths, or \
-           having several open subpaths, is not supported."
+          "multi-subpath rail_sweep profiles must be all closed, but subpath(s) {open:?} are \
+           open. A single open subpath is a valid open profile; mixing open and closed subpaths, \
+           or having several open subpaths, is not supported."
         )));
       }
       Ok(
@@ -898,7 +900,12 @@ fn group_end_ring_loops(
 /// over incident faces. Pre-split ring-wrap faces (V-span > 0.5) have a garbage UV jacobian and are
 /// excluded; vertices touching only excluded faces (large planar cap spans) fall back to all faces.
 fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents: &[Vec3]) {
-  let mut uv_ch = Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity);
+  let mut uv_ch = Channel::new(
+    Arity::Vec2,
+    Interp::Lerp,
+    FlipXform::Identity,
+    SpatialXform::Identity,
+  );
   let mut tan_ch = Channel::new(
     Arity::Vec4,
     Interp::Lerp,
@@ -974,9 +981,9 @@ fn loop_perimeter(pts: &[Vec3]) -> f32 {
 /// Duplicate a boundary ring `[ring_start, ring_start+count)` into cap-owned verts carrying planar
 /// cap-frame UVs (`offset` projected onto the `PlaneFrame`, scaled by `cap_uv_scale`) + an in-plane
 /// tangent (`u_axis`). Callers pre-divide `cap_uv_scale.y` by the cap's mean loop arc length so cap
-/// V lives in the body's perimeter-normalized V space (matched texel density across the seam). Keeps
-/// the body's arc-length UV / spine tangent intact on the shared ring and gives the cap edge a sharp
-/// normal (cap verts touch only cap faces). Returns the first dup index.
+/// V lives in the body's perimeter-normalized V space (matched texel density across the seam).
+/// Keeps the body's arc-length UV / spine tangent intact on the shared ring and gives the cap edge
+/// a sharp normal (cap verts touch only cap faces). Returns the first dup index.
 fn dup_cap_ring(
   verts: &mut Vec<Vec3>,
   uvs: &mut Vec<[f32; 2]>,
@@ -1000,11 +1007,12 @@ fn dup_cap_ring(
   cap_start
 }
 
-/// Post-normal closed-profile seam split: every ring wraps `last → first` (`v` runs `[0,1)`), so the
-/// wrap quad bridges `V≈(n-1)/n` back to the `V=0` seam vertex and crushes the texture across it. For
-/// each full ring we clone the seam vertex (inheriting the already-computed smooth normal, so no
-/// crease) onto a `V=1` copy and repoint just the wrap faces — those incident to the seam vertex that
-/// also touch a last-column vertex. Runs after `attach_sweep_attributes` so the `uv` channel exists.
+/// Post-normal closed-profile seam split: every ring wraps `last → first` (`v` runs `[0,1)`), so
+/// the wrap quad bridges `V≈(n-1)/n` back to the `V=0` seam vertex and crushes the texture across
+/// it. For each full ring we clone the seam vertex (inheriting the already-computed smooth normal,
+/// so no crease) onto a `V=1` copy and repoint just the wrap faces — those incident to the seam
+/// vertex that also touch a last-column vertex. Runs after `attach_sweep_attributes` so the `uv`
+/// channel exists.
 fn split_profile_seams(mesh: &mut LinkedMesh<()>, rings: impl Iterator<Item = (usize, usize)>) {
   let rings: Vec<(usize, usize)> = rings.filter(|&(_, count)| count >= 3).collect();
   for &(start, _) in &rings {
@@ -1336,7 +1344,9 @@ pub fn rail_sweep(
     });
     finalize_split_seams(
       &mut mesh,
-      ring_infos.iter().map(|r| (r.loops[0].start, r.loops[0].count)),
+      ring_infos
+        .iter()
+        .map(|r| (r.loops[0].start, r.loops[0].count)),
       closed_end_rings,
     );
   }
@@ -1421,8 +1431,7 @@ fn rail_sweep_dynamic(
     };
     // Collapse-to-apex only applies to single-loop profiles; a vanishing loop in a multi-loop
     // ring is a genus change and is rejected during sampling instead.
-    ring.collapsed =
-      ring.profile_data.loops.len() == 1 && ring_is_collapsed_dynamic(ctx, &ring)?;
+    ring.collapsed = ring.profile_data.loops.len() == 1 && ring_is_collapsed_dynamic(ctx, &ring)?;
     ring_contexts.push(ring);
   }
 
@@ -1520,7 +1529,11 @@ fn rail_sweep_dynamic(
           return Err(ErrorStack::new(format!(
             "dynamic_profile subpath {k} at u_ix={u_ix} has {} winding but nesting depth {depth}; \
              outers (even depth) must be CCW and holes (odd depth) CW (see notes/paths.md)",
-            if loops[k].winding_positive { "CCW" } else { "CW" },
+            if loops[k].winding_positive {
+              "CCW"
+            } else {
+              "CW"
+            },
           )));
         }
       }
@@ -1556,7 +1569,9 @@ fn rail_sweep_dynamic(
         continue;
       }
       if lb.count == 1 {
-        stitch_apex_to_row(lb.start, la.start, la.count, la.closed, false, false, indices);
+        stitch_apex_to_row(
+          lb.start, la.start, la.count, la.closed, false, false, indices,
+        );
         continue;
       }
       let v_closed = la.closed;
@@ -1620,7 +1635,8 @@ fn rail_sweep_dynamic(
         // reuse the shared ring verts (2-manifold).
         let cap_bases: Vec<usize> = if split_seams {
           // Normalize cap V by the group's mean loop arc length so cap texel density matches the
-          // walls, whose V spans [0,1] per loop; a holed cap lands between outer/inner wall density.
+          // walls, whose V spans [0,1] per loop; a holed cap lands between outer/inner wall
+          // density.
           let mean_perimeter = {
             let sum: f32 = loop_meta
               .iter()
@@ -1632,7 +1648,15 @@ fn rail_sweep_dynamic(
           loop_meta
             .iter()
             .map(|&(start, count)| {
-              dup_cap_ring(&mut verts, &mut uvs, &mut tangents, start, count, &frame, scale)
+              dup_cap_ring(
+                &mut verts,
+                &mut uvs,
+                &mut tangents,
+                start,
+                count,
+                &frame,
+                scale,
+              )
             })
             .collect()
         } else {
@@ -2720,14 +2744,24 @@ mod tests {
     for (ring_ix, expected_u) in [0f32, 1., 2.].iter().enumerate() {
       let v0 = vkey((ring_ix * res) as u32 + 1, 1);
       let [u, v] = uv[v0];
-      assert!((u - expected_u).abs() < 1e-5, "ring {ring_ix} U: {u} vs {expected_u}");
-      assert!((v - samples[0]).abs() < 1e-5, "ring {ring_ix} V: {v} vs {}", samples[0]);
+      assert!(
+        (u - expected_u).abs() < 1e-5,
+        "ring {ring_ix} U: {u} vs {expected_u}"
+      );
+      assert!(
+        (v - samples[0]).abs() < 1e-5,
+        "ring {ring_ix} V: {v} vs {}",
+        samples[0]
+      );
     }
 
     // Tangent tracks the spine direction (+Z) for every vertex.
     for t in tan.values() {
       let dir = Vec3::new(t[0], t[1], t[2]);
-      assert!((dir - Vec3::new(0., 0., 1.)).norm() < 1e-5, "tangent not +Z: {dir:?}");
+      assert!(
+        (dir - Vec3::new(0., 0., 1.)).norm() < 1e-5,
+        "tangent not +Z: {dir:?}"
+      );
     }
   }
 
@@ -2736,7 +2770,9 @@ mod tests {
   fn coincident_normal_groups(mesh: &mesh::LinkedMesh<()>) -> Vec<Vec<Vec3>> {
     let mut map: FxHashMap<[u32; 3], Vec<Vec3>> = FxHashMap::default();
     for (k, v) in mesh.vertices.iter() {
-      let n = mesh.shading_normal(k).expect("every vertex has a shading normal");
+      let n = mesh
+        .shading_normal(k)
+        .expect("every vertex has a shading normal");
       let p = v.position;
       map
         .entry([p.x.to_bits(), p.y.to_bits(), p.z.to_bits()])
@@ -2794,15 +2830,27 @@ mod tests {
         .filter(|g| max_pairwise_angle_deg(g) > 45.)
         .count()
     };
-    assert_eq!(creases(&mesh), 0, "rail_sweep should bake fully-smooth normals");
+    assert_eq!(
+      creases(&mesh),
+      0,
+      "rail_sweep should bake fully-smooth normals"
+    );
 
     mesh.recompute_shading_normals_preserving_seams(45f32.to_radians());
 
     // The 90° profile corners now carry sharp (split) normals...
-    assert!(creases(&mesh) >= 4, "expected creased profile corners, got {}", creases(&mesh));
+    assert!(
+      creases(&mesh) >= 4,
+      "expected creased profile corners, got {}",
+      creases(&mesh)
+    );
     // ...while the procedural UV wrap survives untouched: every vertex keeps a uv and V still spans
     // the 0→1 seam.
-    assert_eq!(mesh.shading_normals.len(), mesh.vertices.len(), "normals complete");
+    assert_eq!(
+      mesh.shading_normals.len(),
+      mesh.vertices.len(),
+      "normals complete"
+    );
     let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
       panic!("uv channel missing after compute_normals");
     };
@@ -2842,12 +2890,18 @@ mod tests {
     mesh.recompute_shading_normals_preserving_seams(45f32.to_radians());
 
     // Uncapped smooth circle: the only coincident verts are the V-seam clones. The seam-preserving
-    // pass re-averages each clone pair to a shared normal, so no lighting crease appears at the seam
-    // (a plain re-separate would leave a ~11° discontinuity here).
+    // pass re-averages each clone pair to a shared normal, so no lighting crease appears at the
+    // seam (a plain re-separate would leave a ~11° discontinuity here).
     let groups = coincident_normal_groups(&mesh);
     assert!(!groups.is_empty(), "expected V-seam clones to inspect");
-    let worst = groups.iter().map(|g| max_pairwise_angle_deg(g)).fold(0f32, f32::max);
-    assert!(worst < 1., "smooth profile seam should stay smooth, worst angle {worst}°");
+    let worst = groups
+      .iter()
+      .map(|g| max_pairwise_angle_deg(g))
+      .fold(0f32, f32::max);
+    assert!(
+      worst < 1.,
+      "smooth profile seam should stay smooth, worst angle {worst}°"
+    );
   }
 
   #[test]
@@ -2865,9 +2919,19 @@ rail_sweep(
     let binding = ctx.rendered_meshes.into_inner();
     let mesh = &binding[0].mesh.mesh;
 
-    assert_eq!(mesh.shading_normals.len(), mesh.vertices.len(), "normals complete");
-    assert!(mesh.has_flag(mesh_flags::NO_WELD), "compute_normals keeps seams");
-    assert!(mesh.vertex_channels.contains_key("uv"), "procedural uv preserved");
+    assert_eq!(
+      mesh.shading_normals.len(),
+      mesh.vertices.len(),
+      "normals complete"
+    );
+    assert!(
+      mesh.has_flag(mesh_flags::NO_WELD),
+      "compute_normals keeps seams"
+    );
+    assert!(
+      mesh.vertex_channels.contains_key("uv"),
+      "procedural uv preserved"
+    );
 
     // 90° corners of the 4-sided ring crease into split normals.
     let creases = coincident_normal_groups(mesh)
@@ -2914,11 +2978,26 @@ rail_sweep(
 
     let (min_u_plain, normals_plain, flags_plain) = build(false);
     let (min_u_split, normals_split, flags_split) = build(true);
-    assert!(min_u_plain >= -1e-6, "without split_seams caps reuse tube UV (U = arc length >= 0)");
-    assert!(!normals_plain, "without split_seams normals are left to the render pipeline");
-    assert_eq!(flags_plain, 0, "without split_seams the mesh gets default render finalize");
-    assert!(min_u_split < -1.0, "with split_seams caps carry planar profile-coord UVs (reach -1.5)");
-    assert!(normals_split, "with split_seams every vertex carries a finalized shading normal");
+    assert!(
+      min_u_plain >= -1e-6,
+      "without split_seams caps reuse tube UV (U = arc length >= 0)"
+    );
+    assert!(
+      !normals_plain,
+      "without split_seams normals are left to the render pipeline"
+    );
+    assert_eq!(
+      flags_plain, 0,
+      "without split_seams the mesh gets default render finalize"
+    );
+    assert!(
+      min_u_split < -1.0,
+      "with split_seams caps carry planar profile-coord UVs (reach -1.5)"
+    );
+    assert!(
+      normals_split,
+      "with split_seams every vertex carries a finalized shading normal"
+    );
     assert!(
       flags_split & mesh_flags::NO_WELD != 0,
       "with split_seams the mesh opts out of the distance-weld to preserve its seam duplicates"
@@ -3631,7 +3710,10 @@ rail_sweep(
         _ctx: &EvalCtx,
       ) -> Result<Value, ErrorStack> {
         let mut map = FxHashMap::default();
-        map.insert("sampler".to_owned(), Value::Callable(Rc::clone(&self.sampler)));
+        map.insert(
+          "sampler".to_owned(),
+          Value::Callable(Rc::clone(&self.sampler)),
+        );
         map.insert("closed".to_owned(), Value::Bool(false));
         Ok(Value::Map(Rc::new(map)))
       }
@@ -3690,7 +3772,10 @@ rail_sweep(
     let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
       panic!("uv channel missing");
     };
-    let max_v = uv.values().map(|uv| uv[1]).fold(f32::NEG_INFINITY, f32::max);
+    let max_v = uv
+      .values()
+      .map(|uv| uv[1])
+      .fold(f32::NEG_INFINITY, f32::max);
     assert!(
       (max_v - 1.0).abs() < 1e-5,
       "open profile V should reach 1.0, got {max_v}"
@@ -3733,7 +3818,9 @@ mesh = rail_sweep(
   fn eval_rail_sweep_mesh(src: &str) -> Result<Rc<mesh::LinkedMesh<()>>, ErrorStack> {
     let ctx = crate::parse_and_eval_program(src)?;
     let mesh_val = ctx.get_global("mesh").expect("program must assign `mesh`");
-    Ok(Rc::clone(&mesh_val.as_mesh().expect("`mesh` must be a mesh").mesh))
+    Ok(Rc::clone(
+      &mesh_val.as_mesh().expect("`mesh` must be a mesh").mesh,
+    ))
   }
 
   /// Two disjoint CCW squares swept along a straight spine (uncapped) build two independent open
@@ -3764,10 +3851,14 @@ mesh = rail_sweep(
       eval_rail_sweep_mesh(&src).unwrap()
     };
 
-    let one_12 =
-      build(r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#, "12");
-    let one_6 =
-      build(r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#, "6");
+    let one_12 = build(
+      r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#,
+      "12",
+    );
+    let one_6 = build(
+      r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#,
+      "6",
+    );
     let two = build(TWO_SQUARES, "12");
 
     two
@@ -4031,6 +4122,10 @@ mesh = rail_sweep(
     let v = mesh.vertices.len() as i64;
     let e = mesh.edges.len() as i64;
     let f = mesh.faces.len() as i64;
-    assert_eq!(v - e + f, 0, "capped hollow tube has Euler characteristic 0 (genus 1)");
+    assert_eq!(
+      v - e + f,
+      0,
+      "capped hollow tube has Euler characteristic 0 (genus 1)"
+    );
   }
 }

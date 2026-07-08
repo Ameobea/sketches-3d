@@ -56,9 +56,9 @@ export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight;
 /** A handle value the host injects per-run, keyed `moduleName → handleId`. Covers both
  *  draggable gizmos and control-panel inputs (they share the injection store). `value`
  *  carries the numeric payload (3 for `vec3`/`color`, 16 col-major for `transform`, 1 for
- *  `float`/`int`/`bool`); `str_value` carries the `string`/`select` payload. */
+ *  `float`/`int`/`bool`, 3·N for `spline`); `str_value` carries the `string`/`select` payload. */
 export interface GizmoValueWire {
-  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select';
+  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select' | 'spline';
   value?: number[];
   str_value?: string;
 }
@@ -68,10 +68,10 @@ export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>
 export interface RenderedControl {
   sourceModule: string | null;
   handleId: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
   /** Display label override; falls back to `handleId` when null. */
   label: string | null;
-  /** Numeric payload (float/int: 1 num; color: 3 rgb). Empty for select. */
+  /** Numeric payload (float/int: 1 num; color: 3 rgb; spline: 3·N points). Empty for select. */
   value: number[];
   /** Chosen option for `select`; null otherwise. */
   str_value: string | null;

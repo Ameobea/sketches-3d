@@ -1,8 +1,4 @@
-#![feature(
-  impl_trait_in_bindings,
-  adt_const_params,
-  likely_unlikely
-)]
+#![feature(impl_trait_in_bindings, adt_const_params, likely_unlikely)]
 #![cfg_attr(target_arch = "wasm32", feature(unsafe_cell_access))]
 #![cfg_attr(not(target_arch = "wasm32"), feature(thread_local))]
 
@@ -85,12 +81,16 @@ static mut USED_ASYNC_DEPS: u32 = 0;
 #[cfg(target_arch = "wasm32")]
 #[inline(always)]
 pub fn or_async_dep_bit(bit: u32) {
-  unsafe { USED_ASYNC_DEPS |= bit; }
+  unsafe {
+    USED_ASYNC_DEPS |= bit;
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
 pub fn reset_async_dep_bits() {
-  unsafe { USED_ASYNC_DEPS = 0; }
+  unsafe {
+    USED_ASYNC_DEPS = 0;
+  }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -449,6 +449,7 @@ impl Callable {
             | "input_bool"
             | "input_color"
             | "input_select"
+            | "input_spline"
         )
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
@@ -1588,6 +1589,7 @@ pub enum ControlKind {
   Bool,
   Color,
   Select,
+  Spline,
 }
 
 /// An `input_*(...)` value site reported to the host so it can render a control-panel
@@ -1609,6 +1611,12 @@ pub struct RenderedControl {
 }
 
 type RenderedControls = AppendOnlyBuffer<RenderedControl>;
+
+/// Host-side constructor for an eager sequence value; used by the repl boundary to
+/// inject spline control values (`EagerSeq` itself is crate-private).
+pub fn eager_seq_value(values: Vec<Value>) -> Value {
+  Value::Sequence(Rc::new(seq::EagerSeq { inner: values }))
+}
 
 #[derive(Default, Debug)]
 pub struct Scope {
@@ -1691,7 +1699,12 @@ impl Scope {
 
   /// This scope's own bindings, excluding the parent chain.
   pub fn own_bindings(&self) -> Vec<(Sym, Value)> {
-    self.vars.borrow().iter().map(|(k, v)| (*k, v.clone())).collect()
+    self
+      .vars
+      .borrow()
+      .iter()
+      .map(|(k, v)| (*k, v.clone()))
+      .collect()
   }
 
   /// Keys of this scope's own bindings, excluding the parent chain.
@@ -1941,7 +1954,8 @@ pub struct EvalCtx {
   pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
-  /// Default `curve_angle_degrees` for discretizing continuous path features when the kwarg is omitted.
+  /// Default `curve_angle_degrees` for discretizing continuous path features when the kwarg is
+  /// omitted.
   pub default_curve_angle_degrees: RefCell<f32>,
   pub const_eval_cache: RefCell<ConstEvalCache>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
@@ -3332,6 +3346,21 @@ impl EvalCtx {
         hasher.write_u8(6);
         hasher.write(s.as_bytes());
       }
+      // Injected sequences (splines) are always host-built `EagerSeq`s of vec3, so
+      // consuming here is cheap and side-effect-free.
+      Some(Value::Sequence(seq)) => {
+        hasher.write_u8(7);
+        for item in seq.consume(self) {
+          match item {
+            Ok(Value::Vec3(v)) => {
+              for c in [v.x, v.y, v.z] {
+                hasher.write_u32(c.to_bits());
+              }
+            }
+            _ => hasher.write_u8(0),
+          }
+        }
+      }
       _ => hasher.write_u8(0),
     }
     hasher.finish()
@@ -3585,7 +3614,8 @@ impl EvalCtx {
     self.source_map.borrow_mut().prelude_line_count = prev_offset;
 
     let module_scope = self.fresh_module_scope();
-    let mut ast = parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
+    let mut ast =
+      parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
     optimizer::optimize_ast(self, &mut ast)
       .map_err(|err| err.wrap(&format!("Error optimizing module \"{module_name}\"")))?;
 
@@ -3642,35 +3672,60 @@ impl EvalCtx {
       .inner
       .borrow()
       .get(renders_before..)
-      .map(|s| s.iter().filter(|m| is_own(&m.source_module)).cloned().collect())
+      .map(|s| {
+        s.iter()
+          .filter(|m| is_own(&m.source_module))
+          .cloned()
+          .collect()
+      })
       .unwrap_or_default();
     let own_lights: Vec<RenderedLight> = self
       .rendered_lights
       .inner
       .borrow()
       .get(lights_before..)
-      .map(|s| s.iter().filter(|l| is_own(&l.source_module)).cloned().collect())
+      .map(|s| {
+        s.iter()
+          .filter(|l| is_own(&l.source_module))
+          .cloned()
+          .collect()
+      })
       .unwrap_or_default();
     let own_paths: Vec<RenderedPath> = self
       .rendered_paths
       .inner
       .borrow()
       .get(paths_before..)
-      .map(|s| s.iter().filter(|p| is_own(&p.source_module)).cloned().collect())
+      .map(|s| {
+        s.iter()
+          .filter(|p| is_own(&p.source_module))
+          .cloned()
+          .collect()
+      })
       .unwrap_or_default();
     let own_gizmos: Vec<RenderedGizmo> = self
       .rendered_gizmos
       .inner
       .borrow()
       .get(gizmos_before..)
-      .map(|s| s.iter().filter(|g| is_own(&g.source_module)).cloned().collect())
+      .map(|s| {
+        s.iter()
+          .filter(|g| is_own(&g.source_module))
+          .cloned()
+          .collect()
+      })
       .unwrap_or_default();
     let own_controls: Vec<RenderedControl> = self
       .rendered_controls
       .inner
       .borrow()
       .get(controls_before..)
-      .map(|s| s.iter().filter(|c| is_own(&c.source_module)).cloned().collect())
+      .map(|s| {
+        s.iter()
+          .filter(|c| is_own(&c.source_module))
+          .cloned()
+          .collect()
+      })
       .unwrap_or_default();
     let gizmo_reads: Vec<(String, u64)> = self
       .current_module_gizmo_reads
@@ -3809,13 +3864,20 @@ fn check_adjacent_tight_array_literal(
       continue;
     }
     let between = &src[prev_end..next_start];
-    if between.bytes().any(|b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == b';') {
+    if between
+      .bytes()
+      .any(|b| b == b' ' || b == b'\t' || b == b'\n' || b == b'\r' || b == b';')
+    {
       continue;
     }
     if between.contains("//") {
       continue;
     }
-    let prev_last_byte = if prev_end == 0 { None } else { Some(bytes[prev_end - 1]) };
+    let prev_last_byte = if prev_end == 0 {
+      None
+    } else {
+      Some(bytes[prev_end - 1])
+    };
     let is_expr_ender = matches!(
       prev_last_byte,
       Some(b) if b.is_ascii_alphanumeric() || b == b'_' || b == b')' || b == b']' || b == b'}',
@@ -3828,8 +3890,8 @@ fn check_adjacent_tight_array_literal(
     return Err(
       ErrorStack::new(
         "`[…]` after an expression must be tight and contain a single value; saw multiple \
-         comma-separated values. To write an array literal instead, separate the statements \
-         with `;` or a newline.",
+         comma-separated values. To write an array literal instead, separate the statements with \
+         `;` or a newline.",
       )
       .with_loc(orig_line, orig_col),
     );
@@ -4082,9 +4144,10 @@ fn test_render_path_survives_rerun() {
 #[test]
 fn test_set_default_material_survives_rerun() {
   let mut ctx = EvalCtx::default();
-  ctx
-    .materials
-    .insert("mat".to_owned(), Rc::new(Material::External("mat".to_owned())));
+  ctx.materials.insert(
+    "mat".to_owned(),
+    Rc::new(Material::External("mat".to_owned())),
+  );
   let mut ast = parse_program_src(&ctx, r#"set_default_material("mat")"#).unwrap();
 
   for run in 1..=2 {
@@ -4121,7 +4184,10 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("arr.a.b.c", ParseOutcome::Ok(1)),
   ("arr [0]", ParseOutcome::Err("no whitespace before `[`")),
   ("{ 1 } [0]", ParseOutcome::Err("no whitespace before `[`")),
-  ("arr[1,2,3]", ParseOutcome::Err("must be tight and contain a single value")),
+  (
+    "arr[1,2,3]",
+    ParseOutcome::Err("must be tight and contain a single value"),
+  ),
   // `\n[`/`\n(` — preprocessor splits into two statements.
   ("arr\n[0]", ParseOutcome::Ok(2)),
   ("arr\n[1,2,3]", ParseOutcome::Ok(2)),
@@ -4179,7 +4245,9 @@ fn test_parser_parity_pest() {
         Ok(p) => format!("Ok({} statements)", p.statements.len()),
         Err(e) => format!("Err({})", format!("{e}").lines().next().unwrap_or("")),
       };
-      failures.push(format!("  {src:?} — expected {expected:?}, got {actual_desc}"));
+      failures.push(format!(
+        "  {src:?} — expected {expected:?}, got {actual_desc}"
+      ));
     }
   }
   assert!(
@@ -4281,7 +4349,10 @@ fn test_dir_light_shadow_camera_auto() {
   use crate::lights::Light;
 
   let dir = |src: &str| -> crate::lights::DirectionalLight {
-    let lights = parse_and_eval_program(src).unwrap().rendered_lights.into_inner();
+    let lights = parse_and_eval_program(src)
+      .unwrap()
+      .rendered_lights
+      .into_inner();
     assert_eq!(lights.len(), 1);
     match lights.into_iter().next().unwrap().light {
       Light::Directional(d) => d,
@@ -4289,8 +4360,16 @@ fn test_dir_light_shadow_camera_auto() {
     }
   };
 
-  assert!(dir(r#"dir_light(shadow_camera="auto") | render"#).shadow_camera.auto);
-  assert!(dir(r#"dir_light(shadow_camera=nil) | render"#).shadow_camera.auto);
+  assert!(
+    dir(r#"dir_light(shadow_camera="auto") | render"#)
+      .shadow_camera
+      .auto
+  );
+  assert!(
+    dir(r#"dir_light(shadow_camera=nil) | render"#)
+      .shadow_camera
+      .auto
+  );
   assert!(dir(r#"dir_light() | render"#).shadow_camera.auto);
 
   let explicit = dir(
@@ -4560,7 +4639,10 @@ angles = look_at(vec3(0,0,0), vec3(1, 0, 0))
   };
   let t = &m.transform;
   let forward = -t.column(2).xyz().normalize();
-  assert!((forward - Vec3::new(1., 0., 0.)).norm() < 1e-5, "forward={forward:?}");
+  assert!(
+    (forward - Vec3::new(1., 0., 0.)).norm() < 1e-5,
+    "forward={forward:?}"
+  );
   assert!((t.column(3).xyz() - Vec3::new(0., 5., 0.)).norm() < 1e-5);
   assert!((t.column(0).norm() - 2.).abs() < 1e-5, "scale preserved");
 
@@ -4594,19 +4676,28 @@ d = box() | align(from=v3(1,1,1), to=v3(0,1,0), up_from=v3(1,-1,1), up_to=v3(1,0
   let fwd = -a.transform.column(2).xyz().normalize();
   assert!((fwd - Vec3::new(1., 0., 0.)).norm() < 1e-5, "fwd={fwd:?}");
   assert!((a.transform.column(3).xyz() - Vec3::new(2., 0., 0.)).norm() < 1e-5);
-  assert!((a.transform.column(0).norm() - 3.).abs() < 1e-5, "scale preserved");
+  assert!(
+    (a.transform.column(0).norm() - 3.).abs() < 1e-5,
+    "scale preserved"
+  );
 
   let Value::Mesh(b) = ctx.get_global("b").unwrap() else {
     panic!("expected Mesh");
   };
   let local_z = b.transform.column(2).xyz().normalize();
-  assert!((local_z - Vec3::new(0., 1., 0.)).norm() < 1e-5, "local_z={local_z:?}");
+  assert!(
+    (local_z - Vec3::new(0., 1., 0.)).norm() < 1e-5,
+    "local_z={local_z:?}"
+  );
 
   let Value::Mesh(c) = ctx.get_global("c").unwrap() else {
     panic!("expected Mesh");
   };
   let fwd_c = -c.transform.column(2).xyz().normalize();
-  assert!((fwd_c - Vec3::new(1., 0., 0.)).norm() < 1e-5, "fwd_c={fwd_c:?}");
+  assert!(
+    (fwd_c - Vec3::new(1., 0., 0.)).norm() < 1e-5,
+    "fwd_c={fwd_c:?}"
+  );
 
   let Value::Mesh(d) = ctx.get_global("d").unwrap() else {
     panic!("expected Mesh");
@@ -4619,7 +4710,10 @@ d = box() | align(from=v3(1,1,1), to=v3(0,1,0), up_from=v3(1,-1,1), up_to=v3(1,0
   );
   // (1,-1,1) corner rolled so its horizontal projection lands on +X (z≈0, x>0)
   let x_corner = basis * Vec3::new(1., -1., 1.);
-  assert!(x_corner.z.abs() < 1e-5 && x_corner.x > 0., "x_corner={x_corner:?}");
+  assert!(
+    x_corner.z.abs() < 1e-5 && x_corner.x > 0.,
+    "x_corner={x_corner:?}"
+  );
 }
 
 #[test]
@@ -4660,10 +4754,18 @@ all_manifold = is_manifold(oct) and is_manifold(dia) and is_manifold(cub) and is
   // octahedron: all verts on the circumsphere of radius 2, with a vertex straight up
   let oct = get("oct");
   for v in oct.mesh.vertices.values() {
-    assert!((v.position.norm() - 2.).abs() < 1e-4, "vtx off sphere: {:?}", v.position);
+    assert!(
+      (v.position.norm() - 2.).abs() < 1e-4,
+      "vtx off sphere: {:?}",
+      v.position
+    );
   }
   assert!(
-    oct.mesh.vertices.values().any(|v| (v.position - Vec3::new(0., 2., 0.)).norm() < 1e-4),
+    oct
+      .mesh
+      .vertices
+      .values()
+      .any(|v| (v.position - Vec3::new(0., 2., 0.)).norm() < 1e-4),
     "octahedron should have a vertex pointing straight up"
   );
 }
@@ -5185,7 +5287,9 @@ fn check_all_repo_geo_files_parse() {
   use std::path::PathBuf;
 
   fn collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else { return };
+    let Ok(entries) = fs::read_dir(dir) else {
+      return;
+    };
     for entry in entries.flatten() {
       let p = entry.path();
       if p.is_dir() {
@@ -6276,7 +6380,10 @@ render(m)
     .iter()
     .map(|(_, v)| v.position.y)
     .fold(f32::NEG_INFINITY, f32::max);
-  assert!((max_y - 2.0).abs() < 1e-5, "expected top at y=2, got {max_y}");
+  assert!(
+    (max_y - 2.0).abs() < 1e-5,
+    "expected top at y=2, got {max_y}"
+  );
 }
 
 #[test]
@@ -6644,7 +6751,10 @@ fn test_gizmo2d_projects_to_vec2_and_records_mask() {
   assert_eq!(v, Vec2::new(1., 3.));
 
   let gizmos = ctx.rendered_gizmos.inner.borrow();
-  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [true, false, true]);
+  assert_eq!(
+    gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes,
+    [true, false, true]
+  );
 }
 
 #[test]
@@ -6664,17 +6774,20 @@ fn test_gizmo1d_projects_to_num_with_y_default() {
   .unwrap();
   assert_eq!(ctx.get_global("result").unwrap().as_float().unwrap(), 2.);
   let gizmos = ctx.rendered_gizmos.inner.borrow();
-  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [false, true, false]);
+  assert_eq!(
+    gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes,
+    [false, true, false]
+  );
 }
 
 /// `axes=` override + the `giz2d` alias both resolve to the same masked, projected result.
 #[test]
 fn test_gizmo2d_axes_override_via_alias() {
   let ctx = EvalCtx::default();
-  ctx
-    .module_sources
-    .borrow_mut()
-    .insert("node".to_string(), "export p = giz2d(\"g\", axes=\"xy\")".to_string());
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export p = giz2d(\"g\", axes=\"xy\")".to_string(),
+  );
   inject_gizmo(&ctx, "node", "g", Value::Vec3(Vec3::new(1., 2., 3.)));
 
   parse_and_eval_program_with_ctx(
@@ -6688,7 +6801,10 @@ fn test_gizmo2d_axes_override_via_alias() {
   };
   assert_eq!(v, Vec2::new(1., 2.));
   let gizmos = ctx.rendered_gizmos.inner.borrow();
-  assert_eq!(gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes, [true, true, false]);
+  assert_eq!(
+    gizmos.iter().find(|g| g.handle_id == "g").unwrap().axes,
+    [true, true, false]
+  );
 }
 
 #[test]
@@ -6696,7 +6812,8 @@ fn test_gizmo_ghost_kwarg_passthrough() {
   let ctx = EvalCtx::default();
   ctx.module_sources.borrow_mut().insert(
     "node".to_string(),
-    "export a = gizmo(\"on\", ghost=true)\nexport b = gizmo(\"off\", ghost=false)\nexport c = gizmo(\"def\")"
+    "export a = gizmo(\"on\", ghost=true)\nexport b = gizmo(\"off\", ghost=false)\nexport c = \
+     gizmo(\"def\")"
       .to_string(),
   );
   parse_and_eval_program_with_ctx(
@@ -6762,7 +6879,9 @@ fn test_input_bool_and_color_defaults() {
   let ctx = EvalCtx::default();
   ctx.module_sources.borrow_mut().insert(
     "node".to_string(),
-    "export b = input_bool(\"flag\", default=true)\nexport c = input_color(\"col\", default=vec3(0.25, 0.5, 0.75))".to_string(),
+    "export b = input_bool(\"flag\", default=true)\nexport c = input_color(\"col\", \
+     default=vec3(0.25, 0.5, 0.75))"
+      .to_string(),
   );
   parse_and_eval_program_with_ctx(
     "import { b, c } from \"node\"\nrb = b\nrc = c".to_string(),
@@ -6797,7 +6916,12 @@ fn test_input_select_validates_and_defaults() {
       false,
     )
     .unwrap();
-    ctx.get_global("result").unwrap().as_str().unwrap().to_owned()
+    ctx
+      .get_global("result")
+      .unwrap()
+      .as_str()
+      .unwrap()
+      .to_owned()
   };
   assert_eq!(run(None), "b");
   assert_eq!(run(Some("c")), "c");
@@ -6809,7 +6933,9 @@ fn test_rendered_control_carries_config() {
   let ctx = EvalCtx::default();
   ctx.module_sources.borrow_mut().insert(
     "node".to_string(),
-    "export a = input_float(\"amp\", min=0, max=2, step=0.5, style=\"knob\")\nexport s = input_select(\"mode\", options=[\"x\", \"y\"])".to_string(),
+    "export a = input_float(\"amp\", min=0, max=2, step=0.5, style=\"knob\")\nexport s = \
+     input_select(\"mode\", options=[\"x\", \"y\"])"
+      .to_string(),
   );
   parse_and_eval_program_with_ctx(
     "import { a, s } from \"node\"\nra = a\nrs = s".to_string(),
@@ -6819,7 +6945,10 @@ fn test_rendered_control_carries_config() {
   .unwrap();
   let controls = ctx.rendered_controls.inner.borrow();
   let amp = controls.iter().find(|c| c.handle_id == "amp").unwrap();
-  assert_eq!((amp.min, amp.max, amp.step), (Some(0.), Some(2.), Some(0.5)));
+  assert_eq!(
+    (amp.min, amp.max, amp.step),
+    (Some(0.), Some(2.), Some(0.5))
+  );
   assert_eq!(amp.style.as_deref(), Some("knob"));
   assert!(matches!(amp.kind, ControlKind::Float));
   let mode = controls.iter().find(|c| c.handle_id == "mode").unwrap();
@@ -6832,7 +6961,8 @@ fn test_set_curve_angle_threshold_sets_default_and_explicit_overrides() {
   let ctx = EvalCtx::default();
   assert_eq!(ctx.resolve_curve_angle_degrees(&Value::Nil), 1.0);
 
-  parse_and_eval_program_with_ctx("set_curve_angle_threshold(12)".to_string(), &ctx, false).unwrap();
+  parse_and_eval_program_with_ctx("set_curve_angle_threshold(12)".to_string(), &ctx, false)
+    .unwrap();
   assert_eq!(*ctx.default_curve_angle_degrees.borrow(), 12.0);
   // Omitted (nil) follows the runtime default; an explicit value overrides it.
   assert_eq!(ctx.resolve_curve_angle_degrees(&Value::Nil), 12.0);
@@ -6842,7 +6972,10 @@ fn test_set_curve_angle_threshold_sets_default_and_explicit_overrides() {
 #[test]
 fn test_set_curve_angle_threshold_rejects_nonpositive() {
   let ctx = EvalCtx::default();
-  assert!(parse_and_eval_program_with_ctx("set_curve_angle_threshold(0)".to_string(), &ctx, false).is_err());
+  assert!(
+    parse_and_eval_program_with_ctx("set_curve_angle_threshold(0)".to_string(), &ctx, false)
+      .is_err()
+  );
 }
 
 #[test]
@@ -6854,10 +6987,7 @@ fn test_apply_mat4_accepts_mat4_overload() {
     false,
   )
   .unwrap();
-  assert!(matches!(
-    ctx.get_global("result").unwrap(),
-    Value::Mesh(_)
-  ));
+  assert!(matches!(ctx.get_global("result").unwrap(), Value::Mesh(_)));
 }
 
 #[test]
@@ -6960,9 +7090,7 @@ fn test_evaluate_module_to_scope() {
   assert_eq!(scope.get(b_sym).unwrap().as_int().unwrap(), 14);
 
   // Exports are assigned into the scope like any other binding.
-  let scope = ctx
-    .evaluate_module_to_scope("export foo = 42")
-    .unwrap();
+  let scope = ctx.evaluate_module_to_scope("export foo = 42").unwrap();
   let foo_sym = ctx.interned_symbols.intern("foo");
   assert_eq!(scope.get(foo_sym).unwrap().as_int().unwrap(), 42);
 }
@@ -6976,10 +7104,10 @@ fn test_ambient_scope_visible_in_imported_module() {
   ctx.set_ambient_scope(ambient);
 
   // A module's body should see `my_const` via the ambient scope.
-  ctx
-    .module_sources
-    .borrow_mut()
-    .insert("user_mod".to_string(), "export val = my_const + 1".to_string());
+  ctx.module_sources.borrow_mut().insert(
+    "user_mod".to_string(),
+    "export val = my_const + 1".to_string(),
+  );
 
   let src = r#"
 import { val } from "user_mod"
@@ -7016,7 +7144,10 @@ export x = y"#
 
   let src = r#"import { y } from "a""#;
   let result = parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
-  assert!(result.is_err(), "circular import should fail, not infinite-loop");
+  assert!(
+    result.is_err(),
+    "circular import should fail, not infinite-loop"
+  );
   let err = format!("{}", result.unwrap_err());
   assert!(
     err.contains("Circular module import"),

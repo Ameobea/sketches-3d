@@ -46,6 +46,20 @@
       },
       "_meta": { "runtimeMs": 1.3, "count": 5, "codeHash": "c9bb1304" }
     },
+    "gizmo_tower": {
+      "type": "geoscript",
+      "code": "h = input_float(\"height\", min=4, max=20, default=10)\ncap = gizmo(\"cap\", absolute=true, default=v3(0, 11, 0))\ntip = gizmo(\"tip\", origin=v3(0, 2, 0), default=v3(2, 0, 0))\ncolumn = cylinder(radius=1, height=h, radial_segments=24) | translate(v3(0, h/2, 0))\ncapbox = box(3, 1, 3) | translate(cap)\nspike = cylinder(radius=0.25, height=4, radial_segments=12) | rot(v3(0, 0, pi/2)) | apply_transforms | translate(v3(0, 2, 0) + tip)\nexport mesh = [column, capbox, spike] | join",
+      "_meta": { "runtimeMs": 0.7, "count": 5, "codeHash": "58f5f248" }
+    },
+    "pipe_run": {
+      "type": "geoscript",
+      "code": "pts = input_spline(\"path\", default=[v3(0,0,0), v3(0,4,0), v3(4,6,0), v3(8,6,4)])\nsmoothed = fillet_path_3d(pts, radius=1.2)\nexport mesh = extrude_pipe(radius=0.5, resolution=12, path=smoothed) | apply_transforms",
+      "_meta": { "runtimeMs": 3.6, "count": 5, "codeHash": "ea21e279", "asyncDeps": [ "cgal" ] }
+    },
+    "pipes_comp": {
+      "type": "geotoyComposition",
+      "compositionId": 120
+    },
     "csg_plat": {
       "type": "csg",
       "tree": {

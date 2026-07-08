@@ -367,15 +367,18 @@ impl Plane {
               // The face we're splitting is the only one that uses this edge, we can just
               // add the new vertex to the mesh
               let position = vi.position.lerp(&vj.position, t);
-              let shading_normal = match (mesh.shading_normal(vi_key), mesh.shading_normal(vj_key)) {
+              let shading_normal = match (mesh.shading_normal(vi_key), mesh.shading_normal(vj_key))
+              {
                 (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
                 _ => None,
               };
-              let displacement_normal =
-                match (mesh.displacement_normal(vi_key), mesh.displacement_normal(vj_key)) {
-                  (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
-                  _ => None,
-                };
+              let displacement_normal = match (
+                mesh.displacement_normal(vi_key),
+                mesh.displacement_normal(vj_key),
+              ) {
+                (Some(n0), Some(n1)) => Some(n0.lerp(&n1, t).normalize()),
+                _ => None,
+              };
 
               let key = mesh.vertices.insert(linked_mesh::Vertex::new(position));
               mesh.set_shading_normal(key, shading_normal);

@@ -99,10 +99,15 @@ export class ParamVariantResolver {
           fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
         });
         replaceLeafInstance(editor, levelObj, clone);
-        if (editor.selectedObject === levelObj) {
+        if (
+          editor.selectedObject === levelObj &&
+          editor.gizmoHandles.armed === null &&
+          editor.activeMode === null
+        ) {
           editor.transformControls?.attach(levelObj.object);
         }
       }
+      editor.gizmoHandles.onAssetDataRefreshed(node);
     } catch (err) {
       console.error(`[ParamVariantResolver] rebuild of "${node.id}" failed:`, err);
       this.slot.terminate();
@@ -131,6 +136,8 @@ export class ParamVariantResolver {
       return null;
     }
     if (result.controls.length > 0) this.editor.assetControls.set(eid, result.controls);
+    if (result.gizmos.length > 0) this.editor.assetGizmos.set(eid, result.gizmos);
+    else this.editor.assetGizmos.delete(eid);
 
     const meshes = meshesFromRunObjects(result.objects, LEVEL_PLACEHOLDER_MAT);
     if (meshes.length !== 1) {
@@ -173,6 +180,8 @@ export class ParamVariantResolver {
       return null;
     }
     if (result.controls.length > 0) this.editor.assetControls.set(eid, result.controls);
+    if (result.gizmos.length > 0) this.editor.assetGizmos.set(eid, result.gizmos);
+    else this.editor.assetGizmos.delete(eid);
     return bakeCompositionMeshes(def.tree, result.objects);
   }
 

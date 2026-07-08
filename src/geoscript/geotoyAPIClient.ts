@@ -90,8 +90,8 @@ export interface GizmoValue {
 
 /** An `input_*(...)` control value keyed by handleId; sparse. Written by the control panel. */
 export interface ControlValue {
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
-  value: number | boolean | [number, number, number] | string;
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
+  value: number | boolean | [number, number, number] | string | [number, number, number][];
 }
 
 export interface NodeDef {

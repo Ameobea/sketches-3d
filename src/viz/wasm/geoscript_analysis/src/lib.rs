@@ -171,7 +171,14 @@ impl AnalysisCtx {
     include_prelude: bool,
     ambient_src: &str,
   ) -> Option<HoverInfo> {
-    hover::hover(self, src, target_line, target_col, include_prelude, ambient_src)
+    hover::hover(
+      self,
+      src,
+      target_line,
+      target_col,
+      include_prelude,
+      ambient_src,
+    )
   }
 
   /// Get completions at a given source location.
@@ -183,7 +190,14 @@ impl AnalysisCtx {
     include_prelude: bool,
     ambient_src: &str,
   ) -> Vec<CompletionItem> {
-    completions::completions(self, src, target_line, target_col, include_prelude, ambient_src)
+    completions::completions(
+      self,
+      src,
+      target_line,
+      target_col,
+      include_prelude,
+      ambient_src,
+    )
   }
 
   /// Get the definition location for the symbol at the given position.
@@ -195,7 +209,14 @@ impl AnalysisCtx {
     include_prelude: bool,
     ambient_src: &str,
   ) -> Option<DefinitionLocation> {
-    goto::goto_definition(self, src, target_line, target_col, include_prelude, ambient_src)
+    goto::goto_definition(
+      self,
+      src,
+      target_line,
+      target_col,
+      include_prelude,
+      ambient_src,
+    )
   }
 }
 
@@ -290,7 +311,8 @@ mod tests {
     // untyped (Unknown) coords the shorter overload would wildcard-bind and wrongly classify the
     // rhs as fully applied; but the pipe appends the path, so it resolves to the 3-arg overload as
     // a partial application — no false `bit_or` error.
-    let src = "f = |spine| {\n  p = spine(0)\n  build_path(path { move(0, 0) line(1, 1) }) | path_trans(p.x, p.y)\n}";
+    let src = "f = |spine| {\n  p = spine(0)\n  build_path(path { move(0, 0) line(1, 1) }) | \
+               path_trans(p.x, p.y)\n}";
     let result = analyze(src);
     assert!(
       result.diagnostics.is_empty(),
@@ -536,7 +558,9 @@ y = x
     }
 
     // A bare `reduce(union)` is a partial application, not a Mesh.
-    let hover = ctx.hover("m = reduce(union)", 1, 1, false, "").expect("hover for `m`");
+    let hover = ctx
+      .hover("m = reduce(union)", 1, 1, false, "")
+      .expect("hover for `m`");
     assert!(
       !hover.content.contains("mesh"),
       "expected partial application (not `mesh`) for `reduce(union)`, got: {}",
@@ -641,7 +665,8 @@ y = x
 
   #[test]
   fn test_map_over_unknown_no_false_overload_error() {
-    // `reduce(union)` returns `Any`, so `walls` is Unknown; mapping over it must not assume `Sequence`.
+    // `reduce(union)` returns `Any`, so `walls` is Unknown; mapping over it must not assume
+    // `Sequence`.
     let src = "\
 walls = 0..4
   -> |i| { box() }
@@ -671,9 +696,12 @@ out = (walls)
     let src = "x = 1\ny = 2\nm = box(0.8, 0.8, 20) | v3(x, y, 10)";
     let result = analyze(src);
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("bit_or")
-        && d.message.contains("mesh")
-        && d.message.contains("vec3")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("bit_or")
+          && d.message.contains("mesh")
+          && d.message.contains("vec3")),
       "expected a bit_or no-overload error for `mesh | vec3`, got: {:?}",
       result.diagnostics
     );
@@ -686,7 +714,10 @@ out = (walls)
     let src = "f = |x, y| box(0.8, 0.8, 20) | v3(x, y, 10)";
     let result = analyze(src);
     assert!(
-      result.diagnostics.iter().any(|d| d.message.contains("bit_or")),
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("bit_or")),
       "expected bit_or error even with unknown v3 args, got: {:?}",
       result.diagnostics
     );
@@ -712,7 +743,9 @@ out = (walls)
   #[test]
   fn test_hover_binop_int_addition() {
     let ctx = AnalysisCtx::new();
-    let hover = ctx.hover("x = 1 + 2", 1, 1, false, "").expect("hover for `x`");
+    let hover = ctx
+      .hover("x = 1 + 2", 1, 1, false, "")
+      .expect("hover for `x`");
     assert!(
       hover.content.contains("int"),
       "expected `int` type for int+int, got: {}",
@@ -843,7 +876,13 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // f = translate(vec3); m = f(box())  — calling the PAF should yield Mesh
     let hover = ctx
-      .hover("f = translate(vec3(1, 0, 0))\nm = f(box())", 2, 1, false, "")
+      .hover(
+        "f = translate(vec3(1, 0, 0))\nm = f(box())",
+        2,
+        1,
+        false,
+        "",
+      )
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),
@@ -857,7 +896,13 @@ out = (walls)
     let ctx = AnalysisCtx::new();
     // f = translate(vec3); m = box() | f  — piping into the PAF should yield Mesh
     let hover = ctx
-      .hover("f = translate(vec3(1, 0, 0))\nm = box() | f", 2, 1, false, "")
+      .hover(
+        "f = translate(vec3(1, 0, 0))\nm = box() | f",
+        2,
+        1,
+        false,
+        "",
+      )
       .expect("hover for `m`");
     assert!(
       hover.content.contains("mesh"),

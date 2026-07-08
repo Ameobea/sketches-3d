@@ -3,7 +3,12 @@ import type * as THREE from 'three';
 import type { GizmoValue, Transform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
 import { HandleTarget, InstanceTarget } from 'src/viz/gizmos/targets';
-import { type GizmoTargetRef, type HandleContext, gizmoTargetRefsEqual } from 'src/viz/gizmos/gizmoTypes';
+import {
+  type GizmoTarget,
+  type GizmoTargetRef,
+  type HandleContext,
+  gizmoTargetRefsEqual,
+} from 'src/viz/gizmos/gizmoTypes';
 
 export type { HandleContext };
 
@@ -86,6 +91,15 @@ export class TransformGizmo {
 
   setHandleContextResolver(fn: (nodeId: string, handleId: string) => HandleContext | null): void {
     this.handleContextResolver = fn;
+  }
+
+  /** Bind an arbitrary target (spline points etc.); null releases. Bypasses ref tracking —
+   *  the caller must keep `syncTo` from firing while a custom target is attached. */
+  setCustomTarget(target: GizmoTarget | null): void {
+    if (this.gizmo.isDragging()) return;
+    this.attachedRef = null;
+    this.gizmo.setAxisMask([true, true, true]);
+    this.gizmo.setTarget(target);
   }
 
   private detach(): void {

@@ -19,7 +19,11 @@ pub fn serialize_value_to_json(ctx: &EvalCtx, val: &Value, sample_count: usize) 
 }
 
 /// Serialize a name→value map (e.g. a module's exports) as a JSON object of tagged values.
-pub fn serialize_bindings_to_json(ctx: &EvalCtx, bindings: &[(String, Value)], sample_count: usize) -> String {
+pub fn serialize_bindings_to_json(
+  ctx: &EvalCtx,
+  bindings: &[(String, Value)],
+  sample_count: usize,
+) -> String {
   let mut out = String::from("{");
   for (i, (name, val)) in bindings.iter().enumerate() {
     if i > 0 {
@@ -165,7 +169,11 @@ fn write_value(out: &mut String, ctx: &EvalCtx, val: &Value, sample_count: usize
           if i > 0 {
             out.push(',');
           }
-          let t = if sample_count == 1 { 0. } else { i as f32 / (sample_count as f32 - 1.) };
+          let t = if sample_count == 1 {
+            0.
+          } else {
+            i as f32 / (sample_count as f32 - 1.)
+          };
           out.push_str("{\"t_in\":");
           write_f32(out, t);
           match ctx.invoke_callable(c, &[Value::Float(t)], EMPTY_KWARGS) {

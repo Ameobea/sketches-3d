@@ -1676,7 +1676,14 @@ fn optimize_statement<'a>(
       expr,
       type_hint,
       ..
-    } => optimize_simple_assignment(ctx, local_scope, *name, expr, *type_hint, allow_rng_const_eval),
+    } => optimize_simple_assignment(
+      ctx,
+      local_scope,
+      *name,
+      expr,
+      *type_hint,
+      allow_rng_const_eval,
+    ),
     Statement::DestructureAssignment { lhs, rhs } => {
       // insert a placeholder for assigned variables in the local scope to support recursive calls
       // unless we're assigning to an existing variables
@@ -1740,7 +1747,14 @@ fn optimize_top_level_statement<'a>(
       expr,
       type_hint,
       ..
-    } => optimize_simple_assignment(ctx, local_scope, *name, expr, *type_hint, allow_rng_const_eval),
+    } => optimize_simple_assignment(
+      ctx,
+      local_scope,
+      *name,
+      expr,
+      *type_hint,
+      allow_rng_const_eval,
+    ),
     TopLevelStatement::Import { bindings, .. } => {
       // Cannot const-fold imports; mark all bound names as dynamic
       for name in bindings.iter_idents() {
@@ -1873,11 +1887,17 @@ fn | call | print
 #[test]
 fn test_threshold_setters_not_const_folded() {
   let ctx = EvalCtx::default();
-  for code in ["set_curve_angle_threshold(7)", "set_sharp_angle_threshold(30)"] {
+  for code in [
+    "set_curve_angle_threshold(7)",
+    "set_sharp_angle_threshold(30)",
+  ] {
     let mut ast = crate::parse_program_src(&ctx, code).unwrap();
     optimize_ast(&ctx, &mut ast).unwrap();
     let TopLevelStatement::Statement(Statement::Expr(expr)) = &ast.statements[0] else {
-      panic!("expected an expression statement for `{code}`, got: {:?}", ast.statements[0]);
+      panic!(
+        "expected an expression statement for `{code}`, got: {:?}",
+        ast.statements[0]
+      );
     };
     assert!(
       matches!(expr, Expr::Call { .. }),
@@ -1909,7 +1929,8 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[1] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[1]
+  else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -1934,7 +1955,8 @@ y = fn(2, a)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2]
+  else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -1994,7 +2016,8 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
 
-  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2]
+  else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));
@@ -2108,7 +2131,8 @@ y = fn(2)
   let mut ast = crate::parse_program_src(&ctx, src).unwrap();
   optimize_ast(&ctx, &mut ast).unwrap();
 
-  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2] else {
+  let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2]
+  else {
     panic!("Expected second statement to be an assignment");
   };
   assert_eq!(*name, ctx.interned_symbols.intern("y"));

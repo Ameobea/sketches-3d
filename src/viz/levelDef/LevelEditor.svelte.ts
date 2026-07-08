@@ -16,8 +16,12 @@ import type {
   LightDef,
   ObjectDef,
 } from './types';
-import type { RenderedControl } from 'src/geoscript/runner/types';
+import type { RenderedControl, RenderedGizmo } from 'src/geoscript/runner/types';
+import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
+import { buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
 import { ParamVariantResolver } from './paramVariantResolver';
+import { GizmoHandlesController } from './gizmoHandlesController';
+import { SplineEditMode } from './splineEditMode.svelte';
 import type { LevelLight, LevelObject, LevelSceneNode } from './levelSceneTypes';
 import { isLevelGroup, isEditable, isCompositionNode } from './levelSceneTypes';
 import { hasAsset } from './levelDefTreeUtils';
@@ -43,6 +47,7 @@ import LevelEditorPanel from './LevelEditorPanel.svelte';
 import { LevelEditorApi } from './levelEditorApi';
 import { UndoSystem } from '../util/undoSystem';
 import { MaterialEditorController } from './materialEditorController';
+import type { EditorMode } from './editorMode';
 import { CsgEditController } from './csgEditController.svelte';
 import { focusCamera } from '../util/focusCamera';
 import { clearPhysicsBinding } from '../util/physics';
@@ -103,6 +108,8 @@ export interface LevelEditorInit {
   effectiveAssetId: (def: ObjectDef) => string;
   /** `input_*` control declarations per effective asset id, for the param UI. */
   assetControls: Map<string, RenderedControl[]>;
+  /** `gizmo(...)` sites per effective asset id, for the handle overlay. */
+  assetGizmos: Map<string, RenderedGizmo[]>;
 }
 
 export class LevelEditor {
@@ -127,6 +134,7 @@ export class LevelEditor {
   /** Def → effective (param-variant) asset id for prototype/baked-mesh lookups. */
   effectiveAssetId: (def: ObjectDef) => string;
   assetControls: Map<string, RenderedControl[]>;
+  assetGizmos: Map<string, RenderedGizmo[]>;
 
   api: LevelEditorApi;
   private undoSystem = new UndoSystem<UndoEntry>();
@@ -220,7 +228,15 @@ export class LevelEditor {
   private panelTarget: HTMLDivElement | null = null;
 
   private csgController = new CsgEditController(this);
-  private paramResolver = new ParamVariantResolver(this);
+  readonly paramResolver = new ParamVariantResolver(this);
+  readonly gizmoHandles = new GizmoHandlesController(this);
+  readonly splineMode = new SplineEditMode(this);
+  /** The mode currently hijacking input dispatch; set/cleared by the mode's own enter/exit. */
+  activeMode: EditorMode | null = null;
+
+  private exitActiveMode() {
+    this.activeMode?.exit();
+  }
 
   private bookmarks = new Map<number, EditorBookmark>();
 
@@ -235,6 +251,7 @@ export class LevelEditor {
     this.resolveAssetPrototype = init.resolveAssetPrototype;
     this.effectiveAssetId = init.effectiveAssetId;
     this.assetControls = init.assetControls;
+    this.assetGizmos = init.assetGizmos;
     this.allLevelObjects = init.objects;
     this.rootNodes = init.rootNodes;
     this.nodeById = init.nodeById;
@@ -356,12 +373,13 @@ export class LevelEditor {
 
     if (!this.isEditMode) return;
 
+    if (!isTypingInput && this.activeMode?.onKeyDown(e)) return;
+
     // Undo / Redo
     if (!isTypingInput) {
       if (e.key === 'z' && (e.ctrlKey || e.metaKey) && !e.shiftKey) {
         e.preventDefault();
-        if (this.csgController.isActive) this.csgController.undo();
-        else this.undoSystem.undo(this.applyUndoEntry);
+        this.undoSystem.undo(this.applyUndoEntry);
         return;
       }
       if (
@@ -369,33 +387,23 @@ export class LevelEditor {
         (e.key === 'y' && (e.ctrlKey || e.metaKey))
       ) {
         e.preventDefault();
-        if (this.csgController.isActive) this.csgController.redo();
-        else this.undoSystem.redo(this.applyUndoEntry);
+        this.undoSystem.redo(this.applyUndoEntry);
         return;
       }
     }
 
     // Copy / Paste
     if (e.key === 'c' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      if (this.csgController.isActive) {
-        this.csgController.copySelectedNode();
-      } else {
-        const nodes = this.selection.selectedNodes.filter(isEditable);
-        if (nodes.length > 0) {
-          this.clipboard = nodes.map(node =>
-            this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
-          );
-        }
+      const nodes = this.selection.selectedNodes.filter(isEditable);
+      if (nodes.length > 0) {
+        this.clipboard = nodes.map(node =>
+          this.mutationController.captureClipboardEntry(node, snapshotWorldTransform(node.object))
+        );
       }
       return;
     }
     if (e.key === 'v' && (e.ctrlKey || e.metaKey) && !isTypingInput) {
-      if (this.csgController.isActive) {
-        if (this.csgController.hasClipboard) {
-          e.preventDefault();
-          void this.csgController.pasteNode();
-        }
-      } else if (this.clipboard.length > 0) {
+      if (this.clipboard.length > 0) {
         e.preventDefault();
         void this.pasteObject();
       }
@@ -421,9 +429,7 @@ export class LevelEditor {
     } else if (e.key === '.') {
       this.focusSelected();
     } else if (e.key === 'Escape') {
-      if (!this.csgController.handleEscape()) {
-        this.deselect();
-      }
+      if (!this.gizmoHandles.disarmIfArmed()) this.deselect();
     } else if (e.key === 'Delete') {
       if (this.selectedLight) {
         e.preventDefault();
@@ -501,20 +507,21 @@ export class LevelEditor {
           this.syncTransformFromNode();
         },
         onObjectChange: () => this.syncTransformFromNode(),
-        onCsgDragStart: () => this.csgController.onDragStart(),
-        onCsgDragEnd: () => this.csgController.onDragEnd(),
-        onCsgObjectChange: () => this.csgController.onObjectChange(),
+        onModeDragStart: () => this.activeMode?.onDragStart?.(),
+        onModeDragEnd: () => this.activeMode?.onDragEnd?.(),
+        onModeDrag: () => this.activeMode?.onDrag?.(),
+        isModeActive: () => this.activeMode !== null,
         onLightObjectChange: () => this.syncLightPositionFromObject(),
         onLightDragComplete: () => {
           if (this.selectedLight) this.saveLightPosition(this.selectedLight);
         },
-        isCsgActive: () => this.csgController.isActive,
         isLightSelected: () => this.selectedLight !== null,
       }
     );
 
     this.viz.registerBeforeRenderCb(this.tickOrbitControls);
     this.viz.registerBeforeRenderCb(this.tickTransformHandler);
+    this.gizmoHandles.start();
 
     const canvas = this.viz.renderer.domElement;
     this.installSafePointerCapture(canvas);
@@ -539,7 +546,7 @@ export class LevelEditor {
   private exitEditMode() {
     this.isEditMode = false;
 
-    if (this.csgController.isActive) this.csgController.exit();
+    this.exitActiveMode();
     this.deselect();
     this.materialEditor.close();
     this.csgController.closeEditor();
@@ -552,6 +559,7 @@ export class LevelEditor {
     this.savedSceneFog = null;
     this.viz.postprocessingController?.setFogEnabled(true);
 
+    this.gizmoHandles.stop();
     this.viz.unregisterBeforeRenderCb(this.tickOrbitControls);
     this.orbitControls?.dispose();
     this.orbitControls = null;
@@ -646,6 +654,15 @@ export class LevelEditor {
         }
         return { placementCount, rows };
       },
+      get gizmoHandles() {
+        void state.selectedNodeIds;
+        void state.treeVersion;
+        void state.gizmosVersion;
+        return self.gizmoHandles.panelRows();
+      },
+      get splineCtx() {
+        return self.splineMode.ctx;
+      },
       get objectInputs(): ObjectInputsInfo | null {
         void state.selectedNodeIds;
         void state.treeVersion;
@@ -717,6 +734,11 @@ export class LevelEditor {
       changeMaterial: matId => void this.onObjectMaterialChange(matId),
       mapCompositionMaterial: (geotoyName, matId) => void this.onCompositionMaterialMap(geotoyName, matId),
       setObjectInput: (handleId, value) => this.setObjectInput(handleId, value),
+      armGizmoHandle: key => {
+        if (key === null) this.gizmoHandles.disarm();
+        else this.gizmoHandles.arm(key);
+      },
+      resetGizmoHandle: key => this.gizmoHandles.resetOverride(key),
       applyTransform: snap => this.applyTransformInput(snap),
       deleteSelection: () => this.deleteSelected(),
       toggleMaterialEditor: () => {
@@ -761,9 +783,10 @@ export class LevelEditor {
     }
     this.selection.syncState({ isCsgAsset: this.csgController.isEditorOpen });
     this.clearSelectionHighlights();
-    if (!this.csgController.isActive) {
+    if (!this.activeMode?.suppressSelectionHighlights) {
       this.applySelectionHighlights();
     }
+    this.gizmoHandles.onSelectionChanged();
   }
 
   /** Reads the current Three.js object transform into selectionState. Called at all points
@@ -810,7 +833,8 @@ export class LevelEditor {
   };
 
   private handleSceneClick = (raycaster: THREE.Raycaster, event: PointerEvent) => {
-    if (this.csgController.doRaycast(raycaster)) return;
+    if (this.activeMode?.interceptClick(raycaster, event)) return;
+    if (this.gizmoHandles.interceptClick(raycaster)) return;
 
     const isToggle = event.ctrlKey || event.metaKey;
 
@@ -885,21 +909,21 @@ export class LevelEditor {
   }
 
   select(node: LevelSceneNode) {
-    if (this.csgController.isActive) {
-      const levelObj = isLevelGroup(node) ? null : node;
-      if (this.csgController.editingLevelObj !== levelObj) {
-        this.csgController.exit();
-      }
-    }
+    this.activeMode?.onSelectNode?.(node);
 
     this.selection.select(node);
     this.syncAfterSelectionChange();
   }
 
   toggleSelect(node: LevelSceneNode) {
-    if (this.csgController.isActive) this.csgController.exit();
+    this.exitActiveMode();
 
     this.selection.toggleSelect(node);
+    this.syncAfterSelectionChange();
+  }
+
+  /** Re-run selection sync (gizmo re-attachment etc.) without changing the selection. */
+  resyncSelection() {
     this.syncAfterSelectionChange();
   }
 
@@ -970,9 +994,7 @@ export class LevelEditor {
   }
 
   private deselect() {
-    if (this.csgController.isActive) {
-      this.csgController.exit();
-    }
+    this.exitActiveMode();
     if (this.selectedLight) {
       this.deselectLight();
       return;
@@ -991,9 +1013,7 @@ export class LevelEditor {
   private focusSelected() {
     if (!this.orbitControls) return;
 
-    const obj = this.csgController.isActive
-      ? this.csgController.getFocusTarget()
-      : (this.selectedNode?.object ?? null);
+    const obj = this.activeMode ? this.activeMode.getFocusTarget() : (this.selectedNode?.object ?? null);
     if (!obj) return;
 
     const box = new THREE.Box3().setFromObject(obj);
@@ -1042,8 +1062,8 @@ export class LevelEditor {
   }
 
   selectLight(levelLight: LevelLight) {
-    // Deselect any active scene node / CSG first
-    if (this.csgController.isActive) this.csgController.exit();
+    // Deselect any active scene node / mode first
+    this.exitActiveMode();
     this.csgController.closeEditor();
 
     this.selection.selectLight(levelLight);
@@ -1218,6 +1238,8 @@ export class LevelEditor {
       this.paramResolver.queueRebuild(entry.node);
       void this.api.saveInputs(entry.node.id, def.inputs);
       this.select(entry.node);
+      this.gizmoHandles.onInputsChanged(entry.node);
+      this.activeMode?.onInputsChanged?.(entry.node);
     } else if (entry.type === 'structural') {
       const nodeToSelect = this.mutationController.applyStructuralUndoEntry(entry, direction);
       this.selectionState.treeVersion++;
@@ -1229,10 +1251,27 @@ export class LevelEditor {
   };
 
   /** The def carrying a placement's per-object `inputs`: composition pointer or leaf def. */
-  private paramInputsDef(node: LevelSceneNode): ObjectDef | null {
+  paramInputsDef(node: LevelSceneNode): ObjectDef | null {
     if (isCompositionNode(node)) return node.compositionDef;
     if (!isLevelGroup(node)) return node.def;
     return null;
+  }
+
+  /** The selected placement's backing geoscript/composition asset context, or null. */
+  resolveSelectedAsset(): {
+    node: LevelSceneNode;
+    def: ObjectDef;
+    tree: TreeDef | null;
+    moduleToNodeId: Record<string, string>;
+  } | null {
+    const node = this.selectedNode;
+    if (!node || !isEditable(node)) return null;
+    const def = this.paramInputsDef(node);
+    if (!def?.asset) return null;
+    const assetDef = this.levelDef.assets[def.asset];
+    if (!assetDef || (assetDef.type !== 'geoscript' && assetDef.type !== 'geotoyComposition')) return null;
+    const tree = assetDef.type === 'geotoyComposition' ? assetDef.tree : null;
+    return { node, def, tree, moduleToNodeId: tree ? buildModuleNameToNodeId(tree) : {} };
   }
 
   // Coalesce a burst of edits to one input (e.g. a slider drag) into a single undo entry,
@@ -1254,7 +1293,7 @@ export class LevelEditor {
     this.undoSystem.push({ type: 'inputs', node: p.node, handleId: p.handleId, before: p.before, after });
   }
 
-  private setObjectInput(handleId: string, value: InputValueJson) {
+  setObjectInput(handleId: string, value: InputValueJson | undefined) {
     const node = this.selectedNode;
     if (!node || !isEditable(node)) return;
     const def = this.paramInputsDef(node);
@@ -1270,7 +1309,10 @@ export class LevelEditor {
       this.inputsUndoPending = { node, handleId, before: def.inputs?.[handleId] };
     }
 
-    def.inputs = { ...(def.inputs ?? {}), [handleId]: value };
+    const inputs = { ...(def.inputs ?? {}) };
+    if (value === undefined) delete inputs[handleId];
+    else inputs[handleId] = value;
+    def.inputs = Object.keys(inputs).length > 0 ? inputs : undefined;
     this.paramResolver.queueRebuild(node);
 
     clearTimeout(this.inputsUndoTimer);
@@ -1607,8 +1649,8 @@ export class LevelEditor {
 
     this.selectionState.treeVersion++;
 
-    // CSG editing is incompatible with multi-select; exit before re-selecting.
-    if (this.csgController.isActive) this.csgController.exit();
+    // Modal editing is incompatible with multi-select; exit before re-selecting.
+    this.exitActiveMode();
 
     if (newNodes.length === 1) {
       this.select(newNodes[0]);

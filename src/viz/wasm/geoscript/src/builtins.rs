@@ -68,10 +68,10 @@ use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod catmull_rom;
 pub(crate) mod fillet_path;
-pub mod fn_defs;
-pub(crate) mod lerp_path;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod flat_memo;
+pub mod fn_defs;
+pub(crate) mod lerp_path;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -742,7 +742,9 @@ pub(crate) fn warp_impl(
       let vtx_keys: Vec<_> = new_mesh.vertices.keys().collect();
       for vtx_key in vtx_keys {
         let position = new_mesh.vertices[vtx_key].position;
-        let displacement_normal = new_mesh.displacement_normal(vtx_key).unwrap_or(Vec3::zeros());
+        let displacement_normal = new_mesh
+          .displacement_normal(vtx_key)
+          .unwrap_or(Vec3::zeros());
         let warped_pos = ctx
           .invoke_callable(
             warp_fn,
@@ -1114,8 +1116,9 @@ fn dir_light_impl(
       let shadow_map_type = arg_refs[7].resolve(args, kwargs).as_str().unwrap();
       let shadow_map_bias = arg_refs[8].resolve(args, kwargs).as_float().unwrap();
       let shadow_camera = match arg_refs[9].resolve(args, kwargs) {
-        Value::Map(map) => ShadowCamera::from_map(map)
-          .map_err(|err| err.wrap("Invalid shadow camera parameters"))?,
+        Value::Map(map) => {
+          ShadowCamera::from_map(map).map_err(|err| err.wrap("Invalid shadow camera parameters"))?
+        }
         Value::Nil => ShadowCamera::auto(),
         Value::String(s) if s.as_str() == "auto" => ShadowCamera::auto(),
         other => {
@@ -2150,8 +2153,8 @@ fn tessellate_path_impl(
       .map(|deg| -> Result<f32, ErrorStack> {
         if deg < 0.0 || deg > MIN_ANGLE_DEGREES_CAP {
           return Err(ErrorStack::new(format!(
-            "Invalid min_angle_degrees for `tessellate_path`: {deg} is out of range \
-             [0, {MIN_ANGLE_DEGREES_CAP}].  CGAL's Delaunay refinement is only guaranteed to \
+            "Invalid min_angle_degrees for `tessellate_path`: {deg} is out of range [0, \
+             {MIN_ANGLE_DEGREES_CAP}].  CGAL's Delaunay refinement is only guaranteed to \
              terminate up to ~20.7°; pass 0 to disable the shape criterion entirely."
           )));
         }
@@ -2159,6 +2162,22 @@ fn tessellate_path_impl(
         Ok(sin * sin)
       })
       .transpose()?;
+
+      let plane = match arg_refs[9].resolve(args, kwargs) {
+        Value::Nil => crate::mesh_ops::tessellate_polygon::TessPlane::default(),
+        Value::String(s) => crate::mesh_ops::tessellate_polygon::TessPlane::parse(s.as_str())
+          .ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Invalid plane for `tessellate_path`; expected a two-axis swizzle of distinct axes \
+               (\"xz\", \"zx\", \"xy\", \"yx\", \"yz\", \"zy\"), found: \"{s}\""
+            ))
+          })?,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid plane for `tessellate_path`; expected String or Nil, found: {other:?}"
+          )))
+        }
+      };
 
       if (max_edge_len.is_some() || min_angle_squared_sine.is_some())
         && requested_engine == TessEngine::Lyon
@@ -2214,7 +2233,7 @@ fn tessellate_path_impl(
                   .or(sampler_lyon_fr)
                   .unwrap_or(lyon_tessellation::FillRule::NonZero);
                 let mesh = crate::mesh_ops::tessellate_polygon::tessellate_lyon_path(
-                  &lyon_path, fill_rule, flipped,
+                  &lyon_path, fill_rule, flipped, plane,
                 )?;
                 return Ok(Value::Mesh(Rc::new(MeshHandle {
                   mesh: Rc::new(mesh),
@@ -2393,9 +2412,9 @@ fn tessellate_path_impl(
       if requested_engine == TessEngine::Cgal {
         if let Some(fr) = cgal_incompatible_fr {
           return Err(ErrorStack::new(format!(
-            "`tessellate_path` with engine=\"cgal\" does not support the {fr:?} fill rule combined \
-             with multiple subpaths (CGAL uses nesting-based fill, equivalent to evenodd); use \
-             engine=\"lyon\" or change the fill_rule"
+            "`tessellate_path` with engine=\"cgal\" does not support the {fr:?} fill rule \
+             combined with multiple subpaths (CGAL uses nesting-based fill, equivalent to \
+             evenodd); use engine=\"lyon\" or change the fill_rule"
           )));
         }
       }
@@ -2403,8 +2422,7 @@ fn tessellate_path_impl(
       // Route to lyon only when explicitly requested, or when CGAL can't honor the requested
       // fill rule.  Otherwise prefer CGAL (cleaner topology, no T-junctions, supports holes via
       // nesting, and is the only backend that can run mesh refinement).
-      let use_lyon =
-        requested_engine == TessEngine::Lyon || cgal_incompatible_fr.is_some();
+      let use_lyon = requested_engine == TessEngine::Lyon || cgal_incompatible_fr.is_some();
 
       let mesh = if use_lyon {
         let lyon_fill_rule = fill_rule_override
@@ -2415,13 +2433,16 @@ fn tessellate_path_impl(
           &paths,
           lyon_fill_rule,
           flipped,
+          plane,
         )?
       } else {
         let options = crate::mesh_ops::tessellate_polygon::CgalCdtOptions {
           max_edge_len,
           min_angle_squared_sine,
         };
-        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_multi(&paths, flipped, options)?
+        crate::mesh_ops::tessellate_polygon::tessellate_2d_paths_multi(
+          &paths, flipped, plane, options,
+        )?
       };
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
@@ -2524,8 +2545,8 @@ fn extrude_path_impl(
             Ok(Value::Vec3(v)) => Ok(v),
             Ok(Value::Vec2(v)) => Ok(Vec3::new(v.x, 0., v.y)),
             Ok(other) => Err(ErrorStack::new(format!(
-              "Invalid element at index {ix} in sequence passed to `extrude_path`; expected \
-               Vec2 or Vec3, found: {other:?}"
+              "Invalid element at index {ix} in sequence passed to `extrude_path`; expected Vec2 \
+               or Vec3, found: {other:?}"
             ))),
             Err(err) => Err(err),
           })
@@ -2567,8 +2588,8 @@ fn extrude_path_impl(
         )));
       };
 
-      let mesh = extrude_path(subpaths, up, flipped)
-        .map_err(|err| err.wrap("Error in `extrude_path`"))?;
+      let mesh =
+        extrude_path(subpaths, up, flipped).map_err(|err| err.wrap("Error in `extrude_path`"))?;
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(mesh),
         transform: Matrix4::identity(),
@@ -3293,7 +3314,8 @@ fn extrude_along_normals_impl(
             .invoke_callable(cb, &[Value::Vec3(vtx)], EMPTY_KWARGS)
             .map_err(|err| {
               err.wrap(
-                "Error calling user-provided cb passed to `distance` arg in `extrude_along_normals`",
+                "Error calling user-provided cb passed to `distance` arg in \
+                 `extrude_along_normals`",
               )
             })?;
           out.as_float().ok_or_else(|| {
@@ -4191,9 +4213,9 @@ fn subdivide_by_line_impl(
 
       if mesh_handle.transform != Matrix4::identity() {
         return Err(ErrorStack::new(
-          "subdivide_by_line does not currently support meshes with transforms.  Either call \
-           this function before transforming or use `apply_transforms` to bake the transforms \
-           into the mesh vertex positions.",
+          "subdivide_by_line does not currently support meshes with transforms.  Either call this \
+           function before transforming or use `apply_transforms` to bake the transforms into the \
+           mesh vertex positions.",
         ));
       }
 
@@ -4468,7 +4490,13 @@ fn gizmo_nd_impl(
 
   let value = match injected_gizmo_value(ctx, &module, &handle_id) {
     Some(Value::Vec3(v)) => v,
-    _ => if absolute { origin } else { Vec3::zeros() },
+    _ => {
+      if absolute {
+        origin
+      } else {
+        Vec3::zeros()
+      }
+    }
   };
 
   record_gizmo_read(ctx, &handle_id);
@@ -4585,7 +4613,12 @@ fn input_common(
     .map(str::to_owned);
   let injected = injected_gizmo_value(ctx, &module, &handle_id);
   record_gizmo_read(ctx, &handle_id);
-  Ok(InputCommon { handle_id, module, label, injected })
+  Ok(InputCommon {
+    handle_id,
+    module,
+    label,
+    injected,
+  })
 }
 
 fn input_numeric_impl(
@@ -4596,13 +4629,30 @@ fn input_numeric_impl(
   is_int: bool,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 5)?;
-  let min = arg_refs[1].resolve(args, kwargs).as_float().map(|f| f as f64);
-  let max = arg_refs[2].resolve(args, kwargs).as_float().map(|f| f as f64);
-  let step = arg_refs[3].resolve(args, kwargs).as_float().map(|f| f as f64);
+  let min = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_float()
+    .map(|f| f as f64);
+  let max = arg_refs[2]
+    .resolve(args, kwargs)
+    .as_float()
+    .map(|f| f as f64);
+  let step = arg_refs[3]
+    .resolve(args, kwargs)
+    .as_float()
+    .map(|f| f as f64);
   let default = arg_refs[4].resolve(args, kwargs).as_float();
-  let style = arg_refs[6].resolve(args, kwargs).as_str().map(str::to_owned);
+  let style = arg_refs[6]
+    .resolve(args, kwargs)
+    .as_str()
+    .map(str::to_owned);
 
-  let mut f = c.injected.as_ref().and_then(|v| v.as_float()).or(default).unwrap_or(0.);
+  let mut f = c
+    .injected
+    .as_ref()
+    .and_then(|v| v.as_float())
+    .or(default)
+    .unwrap_or(0.);
   if let Some(m) = min {
     f = f.max(m as f32);
   }
@@ -4638,7 +4688,12 @@ fn input_bool_impl(
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
   let default = arg_refs[1].resolve(args, kwargs).as_bool();
-  let b = c.injected.as_ref().and_then(|v| v.as_bool()).or(default).unwrap_or(false);
+  let b = c
+    .injected
+    .as_ref()
+    .and_then(|v| v.as_bool())
+    .or(default)
+    .unwrap_or(false);
   let value = Value::Bool(b);
   ctx.rendered_controls.push(crate::RenderedControl {
     source_module: c.module,
@@ -4683,6 +4738,40 @@ fn input_color_impl(
   Ok(value)
 }
 
+fn input_spline_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let source = match &c.injected {
+    Some(Value::Sequence(seq)) => Some(Rc::clone(seq)),
+    _ => arg_refs[1].resolve(args, kwargs).as_sequence(),
+  };
+  let points = match source {
+    Some(seq) => seq.consume(ctx).collect::<Result<Vec<_>, _>>()?,
+    None => Vec::new(),
+  };
+  if points.iter().any(|p| p.as_vec3().is_none()) {
+    return Err(ErrorStack::new("`input_spline` points must all be vec3"));
+  }
+  let value = crate::eager_seq_value(points);
+  ctx.rendered_controls.push(crate::RenderedControl {
+    source_module: c.module,
+    handle_id: c.handle_id,
+    kind: crate::ControlKind::Spline,
+    label: c.label,
+    current_value: value.clone(),
+    min: None,
+    max: None,
+    step: None,
+    style: None,
+    options: Vec::new(),
+  });
+  Ok(value)
+}
+
 fn input_select_impl(
   ctx: &EvalCtx,
   arg_refs: &[ArgRef],
@@ -4697,8 +4786,15 @@ fn input_select_impl(
       .collect(),
     None => Vec::new(),
   };
-  let default = arg_refs[2].resolve(args, kwargs).as_str().map(str::to_owned);
-  let injected = c.injected.as_ref().and_then(|v| v.as_str()).map(str::to_owned);
+  let default = arg_refs[2]
+    .resolve(args, kwargs)
+    .as_str()
+    .map(str::to_owned);
+  let injected = c
+    .injected
+    .as_ref()
+    .and_then(|v| v.as_str())
+    .map(str::to_owned);
   let in_opts = |s: &String| options.iter().any(|o| o == s);
   let chosen = injected
     .filter(&in_opts)
@@ -5630,7 +5726,9 @@ fn platonic_impl(
   build: fn(f32) -> LinkedMesh<()>,
 ) -> Result<Value, ErrorStack> {
   let radius = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-  Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(build(radius))))))
+  Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(build(
+    radius,
+  ))))))
 }
 
 fn bipyramid_impl(
@@ -6025,7 +6123,11 @@ fn look_at_rotation(dir: Vec3, up: Vec3) -> Matrix3<f32> {
   let f = dir.normalize();
   let mut up = up.normalize();
   if f.cross(&up).norm() < 1e-6 {
-    up = if f.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
+    up = if f.x.abs() < 0.9 {
+      Vec3::x()
+    } else {
+      Vec3::y()
+    };
   }
   let s = f.cross(&up).normalize();
   let u = s.cross(&f);
@@ -6824,9 +6926,9 @@ fn path_reverse_impl(
           Ok(Value::Map(Rc::new(new_map)))
         }
         other => Err(ErrorStack::new(format!(
-          "path_reverse: cannot reverse draw command of type \"{other}\"; only `rect` and `circle` \
-           support per-shape reversal.  To reverse an entire built path, pass the path tracer \
-           callable instead."
+          "path_reverse: cannot reverse draw command of type \"{other}\"; only `rect` and \
+           `circle` support per-shape reversal.  To reverse an entire built path, pass the path \
+           tracer callable instead."
         ))),
       }
     }
@@ -7068,15 +7170,20 @@ fn invoke_path_point(ctx: &EvalCtx, cb: &Rc<Callable>, t: f32) -> Result<Vec2, E
   let out = ctx
     .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
     .map_err(|e| e.wrap("path_len: error sampling path"))?;
-  out
-    .as_vec2()
-    .copied()
-    .ok_or_else(|| ErrorStack::new(format!("path_len: callable returned a non-Vec2 value: {out:?}")))
+  out.as_vec2().copied().ok_or_else(|| {
+    ErrorStack::new(format!(
+      "path_len: callable returned a non-Vec2 value: {out:?}"
+    ))
+  })
 }
 
 /// Sums chord lengths of `samples` uniform samples — the sampling fallback used by `path_len` and
 /// `trim_path` (distance unit) for black-box callables that don't expose segment topology.
-fn estimate_path_length(ctx: &EvalCtx, cb: &Rc<Callable>, samples: usize) -> Result<f32, ErrorStack> {
+fn estimate_path_length(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  samples: usize,
+) -> Result<f32, ErrorStack> {
   let n = samples.max(2);
   let mut prev = invoke_path_point(ctx, cb, 0.0)?;
   let mut total = 0.0;
@@ -7096,9 +7203,11 @@ fn path_len_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new(format!("path_len: expected a path callable, found: {path_val:?}")))?;
+  let cb = path_val.as_callable().ok_or_else(|| {
+    ErrorStack::new(format!(
+      "path_len: expected a path callable, found: {path_val:?}"
+    ))
+  })?;
   let apply_transform = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
   if let Some(tracer) = extract_path_tracer(cb) {
@@ -7110,7 +7219,11 @@ fn path_len_impl(
     return Ok(Value::Float(len));
   }
 
-  let samples = arg_refs[1].resolve(args, kwargs).as_int().unwrap_or(512).max(2) as usize;
+  let samples = arg_refs[1]
+    .resolve(args, kwargs)
+    .as_int()
+    .unwrap_or(512)
+    .max(2) as usize;
   Ok(Value::Float(estimate_path_length(ctx, cb, samples)?))
 }
 
@@ -7147,7 +7260,9 @@ fn trim_path_impl(
 ) -> Result<Value, ErrorStack> {
   let path_val = arg_refs[0].resolve(args, kwargs);
   let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!("trim_path: expected a path callable, found: {path_val:?}"))
+    ErrorStack::new(format!(
+      "trim_path: expected a path callable, found: {path_val:?}"
+    ))
   })?;
 
   let start = arg_refs[1].resolve(args, kwargs).as_float();
@@ -8761,6 +8876,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "input_color" => builtin_fn!(input_color, |_def_ix, arg_refs, args, kwargs, ctx| {
     input_color_impl(ctx, arg_refs, args, kwargs)
   }),
+  "input_spline" => builtin_fn!(input_spline, |_def_ix, arg_refs, args, kwargs, ctx| {
+    input_spline_impl(ctx, arg_refs, args, kwargs)
+  }),
   "input_select" => builtin_fn!(input_select, |_def_ix, arg_refs, args, kwargs, ctx| {
     input_select_impl(ctx, arg_refs, args, kwargs)
   }),
@@ -9146,8 +9264,14 @@ diag = reflect(vec3(1, 0, 0), 3, b)
       xmin = xmin.min(v.position.x);
       xmax = xmax.max(v.position.x);
     }
-    assert!((zmin - 3.).abs() < 1e-4 && (zmax - 9.).abs() < 1e-4, "z not mirrored: {zmin}..{zmax}");
-    assert!((xmin + 1.).abs() < 1e-4 && (xmax - 1.).abs() < 1e-4, "x should be untouched");
+    assert!(
+      (zmin - 3.).abs() < 1e-4 && (zmax - 9.).abs() < 1e-4,
+      "z not mirrored: {zmin}..{zmax}"
+    );
+    assert!(
+      (xmin + 1.).abs() < 1e-4 && (xmax - 1.).abs() < 1e-4,
+      "x should be untouched"
+    );
 
     // `reflect(vec3(1,0,0), 3)` mirrors x across x = 3, matching `reflect_x(3)`.
     let diag = ctx.get_global("diag").unwrap();
@@ -9157,7 +9281,10 @@ diag = reflect(vec3(1, 0, 0), 3, b)
       dxmin = dxmin.min(v.position.x);
       dxmax = dxmax.max(v.position.x);
     }
-    assert!((dxmin - 5.).abs() < 1e-4 && (dxmax - 7.).abs() < 1e-4, "x not mirrored: {dxmin}..{dxmax}");
+    assert!(
+      (dxmin - 5.).abs() < 1e-4 && (dxmax - 7.).abs() < 1e-4,
+      "x not mirrored: {dxmin}..{dxmax}"
+    );
   }
 
   #[test]
@@ -9184,7 +9311,8 @@ nparts = len(parts)
         .collect()
     };
 
-    // Bool predicate -> exactly two meshes that together hold every original face (a cube is 12 tris).
+    // Bool predicate -> exactly two meshes that together hold every original face (a cube is 12
+    // tris).
     let parts = face_counts("parts");
     assert_eq!(parts.len(), 2);
     assert_eq!(parts.iter().sum::<usize>(), 12);
@@ -9219,7 +9347,11 @@ mod combine_flag_tests {
 
   fn mesh_value(flags: u32) -> Value {
     let mut m = LinkedMesh::from_indexed_vertices(
-      &[Vec3::new(0., 0., 0.), Vec3::new(1., 0., 0.), Vec3::new(0., 1., 0.)],
+      &[
+        Vec3::new(0., 0., 0.),
+        Vec3::new(1., 0., 0.),
+        Vec3::new(0., 1., 0.),
+      ],
       &[0, 1, 2],
       None,
       None,
@@ -9232,7 +9364,8 @@ mod combine_flag_tests {
   fn combine_ors_no_weld_from_either_operand() {
     let plain = mesh_value(0);
     let seamed = mesh_value(mesh_flags::NO_WELD);
-    // A seamed operand's NO_WELD must survive the combine regardless of side (def_ix 4 = mesh + mesh).
+    // A seamed operand's NO_WELD must survive the combine regardless of side (def_ix 4 = mesh +
+    // mesh).
     for (lhs, rhs) in [(&plain, &seamed), (&seamed, &plain)] {
       let out = add_impl(4, lhs, rhs).unwrap();
       assert!(out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));

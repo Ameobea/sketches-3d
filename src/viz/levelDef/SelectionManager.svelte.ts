@@ -30,6 +30,8 @@ export class SelectionManager {
     lightPosition: [0, 0, 0] as [number, number, number],
     /** Incremented whenever rootNodes changes — triggers hierarchy panel re-render. */
     treeVersion: 0,
+    /** Incremented on gizmo-handle arm/value/ghost changes — triggers handle panel re-render. */
+    gizmosVersion: 0,
     /** Incremented when a new asset is added — triggers asset list re-render. */
     assetsVersion: 0,
     libFolders: [] as AssetLibFolder[],

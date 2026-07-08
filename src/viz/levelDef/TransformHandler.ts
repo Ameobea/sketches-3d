@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 
 import { CustomGizmo } from 'src/viz/gizmos/customGizmo';
+import type { GizmoTarget } from 'src/viz/gizmos/gizmoTypes';
 import { Object3DTarget, PivotTarget } from 'src/viz/gizmos/targets';
 
 import type { LevelSceneNode } from './levelSceneTypes';
@@ -38,24 +39,21 @@ export interface TransformHandlerCallbacks {
   onDragComplete(result: TransformDragResult): void;
   /** Called during drag for live preview (e.g. syncing transform display). */
   onObjectChange(): void;
-  /** Called when CSG controller should handle drag start. */
-  onCsgDragStart(): void;
-  /** Called when CSG controller should handle drag end. */
-  onCsgDragEnd(): void;
-  /** Called when CSG controller should handle object change. */
-  onCsgObjectChange(): void;
+  /** Drag routing while an EditorMode is active (the mode owns whatever the gizmo is attached to). */
+  onModeDragStart(): void;
+  onModeDragEnd(): void;
+  onModeDrag(): void;
+  isModeActive(): boolean;
   /** Called during light drag for live preview. */
   onLightObjectChange(): void;
   /** Called when a light drag completes. */
   onLightDragComplete(): void;
-  /** Whether CSG mode is active. */
-  isCsgActive(): boolean;
   /** Whether a light is currently selected. */
   isLightSelected(): boolean;
 }
 
 /**
- * Wraps `CustomGizmo` with editor-specific routing: CSG / light / regular-object
+ * Wraps `CustomGizmo` with editor-specific routing: mode / light / regular-object
  * drags fan out to different callback channels.
  */
 export class TransformHandler {
@@ -68,6 +66,8 @@ export class TransformHandler {
   /** Empty when attached to a non-node Object3D (light, CSG sub-mesh). */
   private attachedNodes: LevelSceneNode[] = [];
   private pivotTarget: PivotTarget | null = null;
+  /** True while a caller-supplied `GizmoTarget` is attached; drag routing is bypassed. */
+  private customTargetActive = false;
 
   lastReplayableAction: ReplayableTransformDelta | null = null;
 
@@ -126,21 +126,40 @@ export class TransformHandler {
 
   /** For non-LevelSceneNode targets (lights, CSG sub-meshes). */
   attach(object: THREE.Object3D) {
-    this.attachedNodes = [];
-    this.pivotTarget = null;
+    this.resetAttachment();
     this.gizmo.setTarget(new Object3DTarget(object));
   }
 
+  /**
+   * Attach an arbitrary `GizmoTarget` (gizmo handles, spline points). The target receives
+   * preview/commit phases directly via `applyLocalTransform`, so the owner handles
+   * write-back/undo itself and the mode/light/object drag routing is bypassed.
+   */
+  attachTarget(target: GizmoTarget, axisMask?: [boolean, boolean, boolean]) {
+    this.resetAttachment();
+    this.customTargetActive = true;
+    this.gizmo.setAxisMask(axisMask ?? [true, true, true]);
+    this.gizmo.setTarget(target);
+  }
+
   detach() {
+    this.resetAttachment();
+    this.gizmo.setTarget(null);
+  }
+
+  private resetAttachment() {
     this.attachedNodes = [];
     this.pivotTarget = null;
-    this.gizmo.setTarget(null);
+    if (this.customTargetActive) {
+      this.customTargetActive = false;
+      this.gizmo.setAxisMask([true, true, true]);
+    }
   }
 
   /** Single → `Object3DTarget`; multi → `PivotTarget` at the centroid. */
   attachToSelection(nodes: LevelSceneNode[]) {
+    this.resetAttachment();
     this.attachedNodes = nodes;
-    this.pivotTarget = null;
 
     if (nodes.length === 0) {
       this.gizmo.setTarget(null);
@@ -159,9 +178,10 @@ export class TransformHandler {
 
   private onDragStart() {
     this.callbacks.onDraggingChanged(true);
+    if (this.customTargetActive) return;
 
-    if (this.callbacks.isCsgActive()) {
-      this.callbacks.onCsgDragStart();
+    if (this.callbacks.isModeActive()) {
+      this.callbacks.onModeDragStart();
       return;
     }
 
@@ -177,8 +197,9 @@ export class TransformHandler {
   }
 
   private onDrag() {
-    if (this.callbacks.isCsgActive()) {
-      this.callbacks.onCsgObjectChange();
+    if (this.customTargetActive) return;
+    if (this.callbacks.isModeActive()) {
+      this.callbacks.onModeDrag();
     } else if (this.callbacks.isLightSelected()) {
       this.callbacks.onLightObjectChange();
     } else {
@@ -188,9 +209,10 @@ export class TransformHandler {
 
   private onDragEnd() {
     this.callbacks.onDraggingChanged(false);
+    if (this.customTargetActive) return;
 
-    if (this.callbacks.isCsgActive()) {
-      this.callbacks.onCsgDragEnd();
+    if (this.callbacks.isModeActive()) {
+      this.callbacks.onModeDragEnd();
       return;
     }
 

@@ -15,14 +15,12 @@ fn maybe_init() {
   wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 }
 
-/// Create a new analysis context.  Returns a pointer to be passed to all other functions.
 #[wasm_bindgen]
 pub fn analysis_init() -> *mut AnalysisCtx {
   maybe_init();
   Box::into_raw(Box::new(AnalysisCtx::new()))
 }
 
-/// Free an analysis context.
 #[wasm_bindgen]
 pub fn analysis_free(ctx: *mut AnalysisCtx) {
   if !ctx.is_null() {
@@ -32,7 +30,6 @@ pub fn analysis_free(ctx: *mut AnalysisCtx) {
   }
 }
 
-/// Run diagnostics analysis on source code.  Returns JSON-serialized `AnalysisResult`.
 #[wasm_bindgen]
 pub fn analysis_analyze(
   ctx: *const AnalysisCtx,

@@ -4045,6 +4045,21 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "input_spline" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Sequence), default_value: DefaultValue::Optional(|| Value::Nil), description: "Sequence of vec3 control points returned when the control is unset." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "An interactively-editable sequence of vec3 control points (a polyline/spline). Edited in the viewport in Geotoy and the level editor; injectable from level defs. Returns the stored points, or `default`/empty when unset. Feed into `extrude_pipe`, `fillet_path_3d`, `catmull_rom_3d`, etc.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
   "render_path" => FnDef {
     module: "core",
     examples: &[],
@@ -7739,8 +7754,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Lower bound (in degrees) on the smallest angle in any triangle after refinement.  Triangles with a smaller angle are split.  Range: [0, ~20.7]; 0 disables the shape criterion entirely (refinement then driven purely by `max_edge_len`).\n\nThe upper limit comes from CGAL: Delaunay refinement only provably terminates for aspect bounds up to 0.125 (squared sine), i.e. min angle ≲ 20.7°.  When this kwarg is omitted but `max_edge_len` is set, CGAL's default ~20.6° applies.  Narrow regions (e.g. slivers between holes) can then split well below `max_edge_len`.  Pass 0 if you want only the edge-length constraint."
           },
+          ArgDef {
+            name: "plane",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Coordinate plane the mesh is triangulated into, as a two-axis swizzle mapping the 2D (u, v) point to two of x/y/z (the remaining axis is 0).  Order matters: \"xz\" (default) maps u→x, v→z; \"zx\" maps u→z, v→x (a mirror embedding).  Any two distinct axes are accepted (\"xy\", \"yx\", \"xz\", \"zx\", \"yz\", \"zy\").  The default front face points along the +remaining axis (+Y for \"xz\"); use `flipped` to reverse it."
+          },
         ],
-        description: "Tessellates a 2D path into a triangle mesh in the XZ plane.\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
+        description: "Tessellates a 2D path into a triangle mesh, by default in the XZ plane (override with `plane`).\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
         return_type: &[ArgType::Mesh],
       }
     ],

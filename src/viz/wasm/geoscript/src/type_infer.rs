@@ -304,7 +304,8 @@ pub fn is_valid_partial_prefix(
   false
 }
 
-/// How a standalone builtin call `f(args)` resolves, used to model the pipeline operator `lhs | rhs`.
+/// How a standalone builtin call `f(args)` resolves, used to model the pipeline operator `lhs |
+/// rhs`.
 ///
 /// The runtime evaluates `rhs` to a value *before* deciding how `|` behaves: when `f(args)` is a
 /// partial application the value is a callable and the pipeline invokes it with `lhs`; when
@@ -312,11 +313,13 @@ pub fn is_valid_partial_prefix(
 /// concrete arg types act as wildcards so e.g. `v3(x, y, 10)` with unknown `x`/`y` still classifies
 /// as a complete `vec3`.
 pub enum PipeRhsKind {
-  /// `f(args)` fully binds a signature → a concrete value of this type (and the matched def index).
+  /// `f(args)` fully binds a signature → a concrete value of this type (and the matched def
+  /// index).
   Complete { ty: AbstractType, def_ix: usize },
   /// No signature fully binds but the args are a valid prefix → a callable to pipe into.
   Partial,
-  /// Concrete args fit no signature, neither complete nor as a prefix → the call itself is invalid.
+  /// Concrete args fit no signature, neither complete nor as a prefix → the call itself is
+  /// invalid.
   NoMatch,
   /// Not a resolvable builtin, or it has dynamic signatures we can't reason about.
   Indeterminate,
@@ -648,7 +651,8 @@ pub fn infer_map_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) ->
 /// Result type of `lhs | rhs` when `rhs` is not callable: `|` falls through from pipeline to
 /// `bit_or` — a boolean union for meshes, a bitwise-or for ints.
 pub fn infer_bitor_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) -> AbstractType {
-  let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type()) else {
+  let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type())
+  else {
     return AbstractType::Unknown;
   };
   let Some(entry_ix) = get_builtin_fn_sig_entry_ix("bit_or") else {
@@ -709,7 +713,9 @@ pub fn infer_reduce_fold_result(
   if is_local(*name) {
     return None;
   }
-  let name_str = ctx.interned_symbols.with_resolved(*name, |s| s.to_string())?;
+  let name_str = ctx
+    .interned_symbols
+    .with_resolved(*name, |s| s.to_string())?;
   let canonical = FUNCTION_ALIASES
     .get(name_str.as_str())
     .copied()
@@ -725,7 +731,9 @@ pub fn infer_reduce_fold_result(
   let reducer_expr = call.args.get(reducer_idx)?;
   let reducer_ty = arg_types.get(reducer_idx)?;
   let bare_builtin_name = match reducer_expr {
-    Expr::Ident { name: reducer_name, .. } if !is_local(*reducer_name) => ctx
+    Expr::Ident {
+      name: reducer_name, ..
+    } if !is_local(*reducer_name) => ctx
       .interned_symbols
       .with_resolved(*reducer_name, |s| s.to_string()),
     _ => None,
@@ -803,7 +811,8 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
             _ => AbstractType::Unknown,
           }
         } else {
-          let resolved = resolve_builtin_call(ctx, *name, &piped, &kwarg_types).into_abstract_type();
+          let resolved =
+            resolve_builtin_call(ctx, *name, &piped, &kwarg_types).into_abstract_type();
           infer_reduce_fold_result(ctx, call, &piped, piped.len(), |s| env.contains(s))
             .unwrap_or(resolved)
         }
@@ -858,7 +867,8 @@ fn infer_call_expr(ctx: &EvalCtx, env: &mut TypeEnv, call: &FunctionCall) -> Abs
           _ => AbstractType::Unknown,
         }
       } else {
-        let resolved = resolve_builtin_call(ctx, *name, &arg_types, &kwarg_types).into_abstract_type();
+        let resolved =
+          resolve_builtin_call(ctx, *name, &arg_types, &kwarg_types).into_abstract_type();
         infer_reduce_fold_result(ctx, call, &arg_types, call.args.len(), |s| env.contains(s))
           .unwrap_or(resolved)
       }

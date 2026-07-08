@@ -4,7 +4,8 @@ use mesh::linked_mesh::LinkedMesh;
 // corners are touched by only a single triangle of a face. That lone triangle is a smooth fan
 // bounded by two sharp edges, and the edge-driven fan walk used to orphan it — leaving its corner
 // carrying an adjacent (perpendicular) face's normal, which showed up as triplanar streaks. Every
-// triangle here lies in an axis plane, so all three of its corner normals must agree with each other.
+// triangle here lies in an axis plane, so all three of its corner normals must agree with each
+// other.
 #[test]
 fn sharp_fan_split_does_not_orphan_single_triangle_fans() {
   #[rustfmt::skip]
@@ -26,9 +27,16 @@ fn sharp_fan_split_does_not_orphan_single_triangle_fans() {
   let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 
   for t in 0..out.indices.len() / 3 {
-    let [a, b, c] = [out.indices[t * 3], out.indices[t * 3 + 1], out.indices[t * 3 + 2]];
+    let [a, b, c] = [
+      out.indices[t * 3],
+      out.indices[t * 3 + 1],
+      out.indices[t * 3 + 2],
+    ];
     let [na, nb, nc] = [nrm(a), nrm(b), nrm(c)];
     let min_dot = dot(na, nb).min(dot(nb, nc)).min(dot(na, nc));
-    assert!(min_dot > 0.999, "tri {t} corner normals disagree: {na:?} {nb:?} {nc:?}");
+    assert!(
+      min_dot > 0.999,
+      "tri {t} corner normals disagree: {na:?} {nb:?} {nc:?}"
+    );
   }
 }

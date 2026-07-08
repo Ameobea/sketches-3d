@@ -14,11 +14,21 @@ use wasm_bindgen::prelude::wasm_bindgen;
 use crate::{ErrorStack, ManifoldHandle, MeshHandle, Value};
 
 pub(crate) fn new_uv_channel() -> Channel<VertexKey> {
-  Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity)
+  Channel::new(
+    Arity::Vec2,
+    Interp::Lerp,
+    FlipXform::Identity,
+    SpatialXform::Identity,
+  )
 }
 
 pub(crate) fn new_tangent_channel() -> Channel<VertexKey> {
-  Channel::new(Arity::Vec4, Interp::Lerp, FlipXform::Negate, SpatialXform::Direction)
+  Channel::new(
+    Arity::Vec4,
+    Interp::Lerp,
+    FlipXform::Negate,
+    SpatialXform::Direction,
+  )
 }
 
 pub(crate) fn orthonormal_basis(normal: Vec3) -> (Vec3, Vec3) {
@@ -100,9 +110,14 @@ pub fn compute_uvs(
       "`compute_uvs(type='toroidal')` (closed genus-1) is not yet implemented; for a capped \
        tube-like mesh use type='tube'",
     )),
-    UvType::Auto | UvType::Unwrap | UvType::Disk | UvType::Sphere => {
-      bff_uvs(mesh, uv_type, scale, n_cones, island_rotation, sharp_threshold_rad)
-    }
+    UvType::Auto | UvType::Unwrap | UvType::Disk | UvType::Sphere => bff_uvs(
+      mesh,
+      uv_type,
+      scale,
+      n_cones,
+      island_rotation,
+      sharp_threshold_rad,
+    ),
   }
 }
 
@@ -148,7 +163,9 @@ fn bff_uvs(
     island_rotation,
   );
   if !err.is_empty() {
-    return Err(ErrorStack::new(format!("`compute_uvs` BFF unwrap failed: {err}")));
+    return Err(ErrorStack::new(format!(
+      "`compute_uvs` BFF unwrap failed: {err}"
+    )));
   }
 
   let out_verts = uv_unwrap_get_verts();
@@ -199,14 +216,19 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
   }
 
   let (u_axis, v_axis) = orthonormal_basis(average_face_normal(&out));
-  let centroid = out.iter_vertices().fold(Vec3::zeros(), |acc, (_, v)| acc + v.position)
+  let centroid = out
+    .iter_vertices()
+    .fold(Vec3::zeros(), |acc, (_, v)| acc + v.position)
     / out.vertices.len() as f32;
 
   let mut uv_ch = new_uv_channel();
   let mut tan_ch = new_tangent_channel();
   for (key, v) in out.iter_vertices() {
     let d = v.position - centroid;
-    uv_ch.set(key, [d.dot(&u_axis) * scale, d.dot(&v_axis) * scale, 0., 0.]);
+    uv_ch.set(
+      key,
+      [d.dot(&u_axis) * scale, d.dot(&v_axis) * scale, 0., 0.],
+    );
     tan_ch.set(key, [u_axis.x, u_axis.y, u_axis.z, 1.]);
   }
   out.vertex_channels.insert("uv".to_owned(), uv_ch);
@@ -223,23 +245,24 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn attach_uv_tangent(
-  mesh: &mut LinkedMesh<()>,
-  uvs: &[f32],
-  tangents: Option<&[f32]>,
-  scale: f32,
-) {
+fn attach_uv_tangent(mesh: &mut LinkedMesh<()>, uvs: &[f32], tangents: Option<&[f32]>, scale: f32) {
   let vtx_count = uvs.len() / 2;
   let mut uv_ch = new_uv_channel();
   for i in 0..vtx_count {
-    uv_ch.set(vkey(i as u32 + 1, 1), [uvs[i * 2] * scale, uvs[i * 2 + 1] * scale, 0., 0.]);
+    uv_ch.set(
+      vkey(i as u32 + 1, 1),
+      [uvs[i * 2] * scale, uvs[i * 2 + 1] * scale, 0., 0.],
+    );
   }
   mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
 
   if let Some(t) = tangents.filter(|t| t.len() == vtx_count * 4) {
     let mut tan_ch = new_tangent_channel();
     for i in 0..vtx_count {
-      tan_ch.set(vkey(i as u32 + 1, 1), [t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]]);
+      tan_ch.set(
+        vkey(i as u32 + 1, 1),
+        [t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]],
+      );
     }
     mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
   }
@@ -297,8 +320,9 @@ fn cylinder_axis(mesh: &LinkedMesh<()>) -> Result<Vec3, ErrorStack> {
 }
 
 struct CylindricalOptions {
-  /// Stretch V to span 0..1 across the axial extent instead of the isotropic (circumference-scaled)
-  /// default.  Useful for mapping a texture exactly once along the length of the tube.
+  /// Stretch V to span 0..1 across the axial extent instead of the isotropic
+  /// (circumference-scaled) default.  Useful for mapping a texture exactly once along the length
+  /// of the tube.
   normalize_v: bool,
 }
 
@@ -323,12 +347,12 @@ fn parse_cylindrical_options(
   Ok(out)
 }
 
-/// Native cylindrical projection.  U wraps the auto-detected axis exactly once (seamless 0/1, meridian
-/// seam split).  V is scaled by the tube circumference so texels stay square (isotropic) by default;
-/// the `normalize_v` option instead stretches V to span 0..1 across the axial extent.  Cap faces
-/// (normal ≈ ±axis) are split off and given a planar disk projection at the tube's texel density,
-/// mirroring `rail_sweep`'s cap handling.  `scale` multiplies the whole map uniformly (integer values
-/// preserve the seam).
+/// Native cylindrical projection.  U wraps the auto-detected axis exactly once (seamless 0/1,
+/// meridian seam split).  V is scaled by the tube circumference so texels stay square (isotropic)
+/// by default; the `normalize_v` option instead stretches V to span 0..1 across the axial extent.
+/// Cap faces (normal ≈ ±axis) are split off and given a planar disk projection at the tube's texel
+/// density, mirroring `rail_sweep`'s cap handling.  `scale` multiplies the whole map uniformly
+/// (integer values preserve the seam).
 fn cylindrical_uvs(
   mesh: &MeshHandle,
   scale: f32,
@@ -375,7 +399,11 @@ fn cylindrical_uvs(
     axial_min = axial_min.min(ax);
     axial_max = axial_max.max(ax);
   }
-  let radius = if radius_count > 0 { radius_sum / radius_count as f32 } else { 1. };
+  let radius = if radius_count > 0 {
+    radius_sum / radius_count as f32
+  } else {
+    1.
+  };
   let circumference = (TAU * radius).max(1e-6);
   let axial_span = (axial_max - axial_min).max(1e-6);
 
@@ -420,7 +448,11 @@ fn cylindrical_uvs(
   let mut verts = raw.vertices.clone();
   let mut indices: Vec<u32> = raw.indices.iter().map(|&i| i as u32).collect();
   let push_vert = |verts: &mut Vec<f32>, o: usize| {
-    verts.extend_from_slice(&[raw.vertices[3 * o], raw.vertices[3 * o + 1], raw.vertices[3 * o + 2]]);
+    verts.extend_from_slice(&[
+      raw.vertices[3 * o],
+      raw.vertices[3 * o + 1],
+      raw.vertices[3 * o + 2],
+    ]);
   };
 
   // Tube meridian seam split: wrapping tube tris get their low-U corners cloned at U+1.
@@ -452,8 +484,8 @@ fn cylindrical_uvs(
     }
   }
 
-  // Caps: planar disk projection at the tube's texel density (÷circumference).  Shared rim verts are
-  // cloned into cap-owned verts; cap-only verts (the fan centers) are re-projected in place.
+  // Caps: planar disk projection at the tube's texel density (÷circumference).  Shared rim verts
+  // are cloned into cap-owned verts; cap-only verts (the fan centers) are re-projected in place.
   let disk = |o: usize| -> ([f32; 2], [f32; 4]) {
     let d = pos(o) - center;
     (
@@ -530,14 +562,26 @@ mod tests {
     let ctx =
       crate::parse_and_eval_program("box(2, 2, 2) | compute_uvs(type='planar') | render").unwrap();
     let mesh = &ctx.rendered_meshes.into_inner()[0].mesh.mesh;
-    assert!(mesh.vertex_channels.contains_key("uv"), "planar attaches a uv channel");
-    assert!(mesh.vertex_channels.contains_key("tangent"), "planar attaches a tangent channel");
+    assert!(
+      mesh.vertex_channels.contains_key("uv"),
+      "planar attaches a uv channel"
+    );
+    assert!(
+      mesh.vertex_channels.contains_key("tangent"),
+      "planar attaches a tangent channel"
+    );
 
     let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
       panic!("uv channel should be Vec2");
     };
-    let spread = uv.values().map(|v| v[0].abs().max(v[1].abs())).fold(0f32, f32::max);
-    assert!(spread > 0.1, "planar UVs should span the projection plane, got spread {spread}");
+    let spread = uv
+      .values()
+      .map(|v| v[0].abs().max(v[1].abs()))
+      .fold(0f32, f32::max);
+    assert!(
+      spread > 0.1,
+      "planar UVs should span the projection plane, got spread {spread}"
+    );
     // planar authors no seams/normals, so it keeps default render finalize (weld + recompute).
     assert_eq!(mesh.flags, 0, "planar should not set any mesh flags");
   }
@@ -552,7 +596,10 @@ mod tests {
         .fold(0f32, f32::max)
     };
     let (a, b) = (max_radius("1"), max_radius("3"));
-    assert!((b / a - 3.).abs() < 1e-3, "scale=3 should triple UVs: {a} -> {b}");
+    assert!(
+      (b / a - 3.).abs() < 1e-3,
+      "scale=3 should triple UVs: {a} -> {b}"
+    );
   }
 
   #[test]
@@ -565,7 +612,10 @@ mod tests {
   fn v_bounds(uv: &[[f32; 2]]) -> (f32, f32) {
     let (mut min_v, mut max_v) = (f32::MAX, f32::MIN);
     for v in uv {
-      assert!(v[0].is_finite() && v[1].is_finite(), "UV must be finite, got {v:?}");
+      assert!(
+        v[0].is_finite() && v[1].is_finite(),
+        "UV must be finite, got {v:?}"
+      );
       min_v = min_v.min(v[1]);
       max_v = max_v.max(v[1]);
     }
@@ -573,7 +623,8 @@ mod tests {
   }
 
   /// Widest U spread of any face — the seam split's job is to keep this below 0.5 (no face bridges
-  /// the U = 0/1 discontinuity), which is the property that actually makes a tiling texture seamless.
+  /// the U = 0/1 discontinuity), which is the property that actually makes a tiling texture
+  /// seamless.
   fn max_face_u_span(mesh: &mesh::LinkedMesh<()>) -> f32 {
     let uv = &mesh.vertex_channels["uv"];
     let mut worst = 0f32;
@@ -601,12 +652,20 @@ mod tests {
     use mesh::linked_mesh::mesh_flags;
 
     // Tall cylinder (height 4 > diameter 2) so face-normal PCA reliably resolves the axis.
-    let ctx =
-      crate::parse_and_eval_program("cylinder(1, 4, 24) | compute_uvs(type='cylindrical') | render")
-        .unwrap();
+    let ctx = crate::parse_and_eval_program(
+      "cylinder(1, 4, 24) | compute_uvs(type='cylindrical') | render",
+    )
+    .unwrap();
     let mesh = &ctx.rendered_meshes.into_inner()[0].mesh.mesh;
-    assert!(mesh.has_flag(mesh_flags::NO_WELD), "cylindrical opts out of the weld to keep its seam");
-    assert!(max_face_u_span(mesh) < 0.5, "a face bridges the U seam: {}", max_face_u_span(mesh));
+    assert!(
+      mesh.has_flag(mesh_flags::NO_WELD),
+      "cylindrical opts out of the weld to keep its seam"
+    );
+    assert!(
+      max_face_u_span(mesh) < 0.5,
+      "a face bridges the U seam: {}",
+      max_face_u_span(mesh)
+    );
 
     let (min_v, max_v) = v_bounds(&collect_uvs(mesh));
     // Isotropic V: circumference-scaled (≈axial/2π ≈ ±0.32 here), NOT the raw ±2 world height.
@@ -619,14 +678,21 @@ mod tests {
   #[test]
   fn cylindrical_normalize_v_spans_unit() {
     let ctx = crate::parse_and_eval_program(
-      "cylinder(1, 4, 24) | compute_uvs(type='cylindrical', options={ normalize_v: true }) | render",
+      "cylinder(1, 4, 24) | compute_uvs(type='cylindrical', options={ normalize_v: true }) | \
+       render",
     )
     .unwrap();
     let mesh = &ctx.rendered_meshes.into_inner()[0].mesh.mesh;
-    assert!(max_face_u_span(mesh) < 0.5, "seam split still holds in normalize_v mode");
+    assert!(
+      max_face_u_span(mesh) < 0.5,
+      "seam split still holds in normalize_v mode"
+    );
     // V is stretched to span the full axial extent (tube reaches ~1), unlike the isotropic ~0.32.
     let (_, max_v) = v_bounds(&collect_uvs(mesh));
-    assert!(max_v > 0.9, "normalize_v should stretch V toward 1, got max_v {max_v}");
+    assert!(
+      max_v > 0.9,
+      "normalize_v should stretch V toward 1, got max_v {max_v}"
+    );
   }
 
   #[test]
@@ -640,10 +706,9 @@ mod tests {
 
   #[test]
   fn nonpositive_scale_errors() {
-    let err = crate::parse_and_eval_program(
-      "box(1, 1, 1) | compute_uvs(type='planar', scale=0) | render",
-    )
-    .unwrap_err();
+    let err =
+      crate::parse_and_eval_program("box(1, 1, 1) | compute_uvs(type='planar', scale=0) | render")
+        .unwrap_err();
     assert!(format!("{err}").contains("scale"), "got: {err}");
   }
 }

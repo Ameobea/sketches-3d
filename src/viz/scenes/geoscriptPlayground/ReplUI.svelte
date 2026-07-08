@@ -50,7 +50,7 @@
   import ControlsPanel from './ControlsPanel.svelte';
   import { buildEvalResultJson } from './evalResult';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
-  import { buildParentMap, computeMeshCounts, findParentId, getNodeAncestorChain } from './treeOps';
+  import { buildParentMap, composeInstance0World, computeMeshCounts, findParentId } from './treeOps';
   import HierarchyPanel from './HierarchyPanel.svelte';
   import NodeInspector from './NodeInspector.svelte';
   import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
@@ -58,6 +58,8 @@
   import { scanGizmoHandleIds, scanGizmoHandleOrder, scanControlHandleIds } from 'src/geoscript/gizmoScan';
   import { GizmoGhosts, type GhostSpec } from 'src/viz/gizmos/gizmoGhosts';
   import { gizmoColorForIndex } from 'src/viz/gizmos/gizmoPalette';
+  import { SplineOverlay, type SplinePoint } from 'src/viz/gizmos/splineOverlay';
+  import { controlKey, splineControlPoints } from 'src/geoscript/controlsUi';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
@@ -67,7 +69,7 @@
     buildWorldMatrixCache,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
-  import { decomposeTransform3, composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
+  import { decomposeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
   import type { MatEntry, RenderedObject, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
   import {
     buildCustomMaterials,
@@ -292,6 +294,104 @@
     controlRunPending = false;
     runOrFast();
   };
+  // Spline-control viewport editing (input_spline): one control editable at a time; the
+  // shared SplineOverlay owns markers/polyline/point-gizmo, we own persistence + the panel
+  // bridge. Reactive bits live in a `$state` object so the panel's getter reads track
+  // through the deep proxy (a reassigned `$state` local wouldn't cross the prop boundary).
+  const splineState = $state({
+    activeKey: null as string | null,
+    points: [] as SplinePoint[],
+    selectedIx: null as number | null,
+  });
+  let splineEdit: { key: string; nodeId: string; handleId: string } | null = null;
+  let splineOverlay: SplineOverlay | null = null;
+  let splineTick: (() => void) | null = null;
+
+  const splineKeyOf = controlKey;
+
+  const exitSplineEdit = () => {
+    if (!splineEdit) return;
+    splineEdit = null;
+    splineState.activeKey = null;
+    splineState.selectedIx = null;
+    if (splineTick) {
+      viz.unregisterBeforeRenderCb(splineTick);
+      splineTick = null;
+    }
+    splineOverlay?.dispose();
+    splineOverlay = null;
+  };
+
+  const enterSplineEdit = (c: RenderedControl) => {
+    exitSplineEdit();
+    const nodeId = c.sourceModule ? lastModuleNameToNodeId[c.sourceModule] : undefined;
+    const g = gizmo;
+    if (!nodeId || !g) return;
+    treeState.setSelected(nodeId);
+    splineEdit = { key: splineKeyOf(c), nodeId, handleId: c.handleId };
+    splineState.activeKey = splineEdit.key;
+    armedRef = null;
+    const overlay = new SplineOverlay({
+      overlayScene: viz.overlayScene,
+      camera: viz.camera,
+      canvas: viz.renderer.domElement,
+      getBaseMatrix: out => out.copy(nodeWorldMatrix(nodeId)),
+      attachGizmo: target => {
+        setGizmoMode('translate');
+        g.setCustomTarget(target);
+      },
+      detachGizmo: () => g.setCustomTarget(null),
+      isDraggingGizmo: () => g.dragging(),
+      onChange: (points, phase) => {
+        splineState.points = points;
+        if (phase === 'commit') commitSplineValue(nodeId, c.handleId, points);
+      },
+      onSelectionChange: ix => {
+        splineState.selectedIx = ix;
+      },
+    });
+    splineOverlay = overlay;
+    const pts = splineControlPoints(c);
+    overlay.setPoints(pts);
+    splineState.points = pts;
+    splineTick = () => overlay.tick();
+    viz.registerBeforeRenderCb(splineTick);
+  };
+
+  const commitSplineValue = (nodeId: string, handleId: string, points: SplinePoint[]) => {
+    const before = treeState.captureControl(nodeId, handleId);
+    treeState.setControl(nodeId, handleId, { kind: 'spline', value: points });
+    treeState.recordControlChange(nodeId, handleId, before, treeState.captureControl(nodeId, handleId));
+    isDirty = true;
+    runOrFast();
+  };
+
+  const splinePanelCtx = {
+    get activeKey() {
+      return splineState.activeKey;
+    },
+    get points() {
+      return splineState.points;
+    },
+    get selectedIx() {
+      return splineState.selectedIx;
+    },
+    toggle: (c: RenderedControl) => {
+      if (splineEdit?.key === splineKeyOf(c)) exitSplineEdit();
+      else enterSplineEdit(c);
+    },
+    select: (ix: number) => splineOverlay?.selectPoint(ix),
+    setPoint: (ix: number, p: [number, number, number]) => splineOverlay?.setPoint(ix, p),
+    add: () => splineOverlay?.addPointAfter(),
+    remove: (ix: number) => splineOverlay?.deletePoint(ix),
+  };
+
+  // Exit spline editing when the selection moves off the owning node.
+  $effect(() => {
+    const sel = treeState.state.selectedId;
+    if (splineEdit && sel !== splineEdit.nodeId) untrack(exitSplineEdit);
+  });
+
   let showGizmoGhosts = $state(localStorage.getItem('geoscript-gizmo-ghosts') !== 'false');
   let ghosts: GizmoGhosts | null = null;
   let ghostTick: (() => void) | null = null;
@@ -398,6 +498,7 @@
         getCandidates: () =>
           renderedObjects.filter(o => o instanceof THREE.Mesh && !!o.userData.sourceNodeId),
         interceptClick: raycaster => {
+          if (splineOverlay?.interceptClick(raycaster)) return true;
           const hit = gh.pickGhost(raycaster);
           if (!hit) return false;
           gizmoEditorHooks.arm(hit.handleId, hit.kind);
@@ -445,6 +546,7 @@
     })();
     return () => {
       cancelled = true;
+      exitSplineEdit();
       raycastDisposer?.();
       raycastDisposer = null;
       if (gizmoTick) viz.unregisterBeforeRenderCb(gizmoTick);
@@ -484,9 +586,11 @@
 
   // Keep the gizmo bound to whatever is armed; re-sync after each run (ancestor world
   // transforms refresh). Reading `armedRef`/`lastRunTree` subscribes the effect to both.
+  // Suspended while spline editing owns the gizmo via a custom target (re-fires on exit).
   $effect(() => {
     void armedRef;
     void lastRunTree;
+    if (splineState.activeKey !== null) return;
     gizmo?.syncTo(armedRef, treeState.state.tree);
   });
 
@@ -563,11 +667,7 @@
   const _ghostScratch = new THREE.Matrix4();
   const nodeWorldMatrix = (nodeId: string): THREE.Matrix4 => {
     _ghostWorld.identity();
-    const chain = getNodeAncestorChain(treeState.state.tree, nodeId);
-    if (!chain) return _ghostWorld;
-    for (let i = chain.length - 1; i >= 0; i -= 1) {
-      _ghostWorld.multiply(composeTransform3(_ghostScratch, chain[i].instances[0]));
-    }
+    composeInstance0World(treeState.state.tree, nodeId, _ghostWorld, _ghostScratch);
     return _ghostWorld;
   };
 
@@ -1351,6 +1451,17 @@
       hasAnyGizmos = result.gizmos.length > 0;
       lastControls = result.controls;
       lastModuleNameToNodeId = moduleNameToNodeId;
+      // Refresh the active spline editor from the run channel (or exit if its control vanished).
+      if (splineEdit) {
+        const sc = result.controls.find(c => splineKeyOf(c) === splineEdit!.key);
+        if (!sc || sc.kind !== 'spline') {
+          exitSplineEdit();
+        } else if (!(gizmo?.dragging() ?? false)) {
+          const pts = splineControlPoints(sc);
+          splineOverlay?.setPoints(pts);
+          splineState.points = pts;
+        }
+      }
       publishGizmoReadouts();
       // GC orphaned handles: keep ids the channel reported this run (covers dynamic names
       // the static scan can't see), plus the static handle ids in each node's source
@@ -1786,6 +1897,7 @@
     {treeState}
     moduleNameToNodeId={lastModuleNameToNodeId}
     onEdit={scheduleControlRun}
+    spline={splinePanelCtx}
   />
 {/if}
 

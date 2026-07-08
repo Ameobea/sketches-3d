@@ -2,12 +2,17 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use geoscript::{
-  eval_program_into_scope, materials::Material, optimizer::optimize_ast,
+  eval_program_into_scope,
+  materials::Material,
+  optimizer::optimize_ast,
   parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls,
   value_json::{serialize_bindings_to_json, serialize_value_to_json},
-  ErrorStack, EvalCtx, Program, Scope, Sym, Value, PRELUDE,
+  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, Value, PRELUDE,
 };
-use mesh::{linked_mesh::mesh_flags, OwnedIndexedMesh};
+use mesh::{
+  linked_mesh::{mesh_flags, Vec3},
+  OwnedIndexedMesh,
+};
 use nanoserde::{DeJson, SerJson};
 use wasm_bindgen::prelude::*;
 
@@ -28,7 +33,7 @@ fn maybe_init() {
   }
 
   assert_eq!(
-    std::mem::size_of::<geoscript::Value>(),
+    std::mem::size_of::<Value>(),
     16,
     "would like to keep this 16 bytes"
   );
@@ -78,11 +83,12 @@ impl GeoscriptReplCtx {
       let mesh_handle = rendered.mesh;
       let mut mesh = (*mesh_handle.mesh).clone();
 
-      // Weld and normal-recompute are decided independently. A complete set of shading normals means
-      // the mesh authored its own — skip the auto-smooth recompute. Welding can't be inferred from
-      // normals: a mesh with attribute seams (UV cuts, duplicated rings) has position-coincident
-      // verts that must stay distinct, so `rail_sweep`/`compute_uvs` set `NO_WELD`. A complete-normal
-      // mesh also skips welding for back-compat (it never re-welds an authored mesh).
+      // Weld and normal-recompute are decided independently. A complete set of shading normals
+      // means the mesh authored its own — skip the auto-smooth recompute. Welding can't be
+      // inferred from normals: a mesh with attribute seams (UV cuts, duplicated rings) has
+      // position-coincident verts that must stay distinct, so `rail_sweep`/`compute_uvs` set
+      // `NO_WELD`. A complete-normal mesh also skips welding for back-compat (it never
+      // re-welds an authored mesh).
       let complete_normals =
         !mesh.shading_normals.is_empty() && mesh.shading_normals.len() == mesh.vertices.len();
       let skip_weld = mesh.has_flag(mesh_flags::NO_WELD) || complete_normals;
@@ -101,7 +107,8 @@ impl GeoscriptReplCtx {
             .borrow()
             .to_radians(),
         );
-        // `mesh` is a throwaway clone, so the consuming finalize's inconsistent topology never escapes.
+        // `mesh` is a throwaway clone, so the consuming finalize's inconsistent topology never
+        // escapes.
         mesh.separate_normals_and_finalize(true, false, false)
       } else {
         mesh.to_raw_indexed(true, false, false)
@@ -111,7 +118,7 @@ impl GeoscriptReplCtx {
         mesh: owned_mesh,
         material: match &mesh_handle.material {
           Some(mat) => match &**mat {
-            geoscript::materials::Material::External(name) => Some(name.clone()),
+            Material::External(name) => Some(name.clone()),
           },
           None => None,
         },
@@ -275,9 +282,13 @@ pub fn geoscript_repl_take_prints(ctx: *mut GeoscriptReplCtx) -> Vec<String> {
 #[wasm_bindgen]
 pub fn geoscript_repl_get_used_async_deps(_ctx: *const GeoscriptReplCtx) -> u32 {
   #[cfg(target_arch = "wasm32")]
-  { geoscript::get_async_dep_bits() }
+  {
+    geoscript::get_async_dep_bits()
+  }
   #[cfg(not(target_arch = "wasm32"))]
-  { 0 }
+  {
+    0
+  }
 }
 
 #[wasm_bindgen]
@@ -343,17 +354,17 @@ pub fn geoscript_repl_set_module_sources(
   // source actually changed (or were removed) get evicted from `module_exports`.
   let mut new_hashes: fxhash::FxHashMap<String, u64> = fxhash::FxHashMap::default();
   for (name, source) in module_names.iter().zip(module_sources.iter()) {
-    new_hashes.insert(
-      name.clone(),
-      geoscript::EvalCtx::compute_source_hash(source),
-    );
+    new_hashes.insert(name.clone(), EvalCtx::compute_source_hash(source));
   }
 
   {
     let mut exports = ctx.geo_ctx.module_exports.borrow_mut();
     let mut lru = ctx.geo_ctx.module_exports_lru.borrow_mut();
     exports.retain(|name, entry| {
-      new_hashes.get(name).map(|h| *h == entry.source_hash).unwrap_or(false)
+      new_hashes
+        .get(name)
+        .map(|h| *h == entry.source_hash)
+        .unwrap_or(false)
     });
     lru.retain(|name| exports.contains_key(name));
   }
@@ -390,7 +401,7 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
     }
     s
   };
-  let new_hash = geoscript::EvalCtx::compute_source_hash(&combined);
+  let new_hash = EvalCtx::compute_source_hash(&combined);
   let prev_hash = *ctx.geo_ctx.last_ambient_hash.borrow();
 
   ctx.geo_ctx.clear_ambient_scope();
@@ -485,7 +496,7 @@ pub fn geoscript_repl_get_rendered_mesh_indices_with_material(
       }
       None => match &*ctx.geo_ctx.default_material.borrow() {
         Some(mat) => match &**mat {
-          geoscript::materials::Material::External(name) => {
+          Material::External(name) => {
             if name == mat_name {
               Some(ix)
             } else {
@@ -574,10 +585,7 @@ pub fn geoscript_repl_get_rendered_mesh_source_module(
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_get_rendered_mesh_id(
-  ctx: *const GeoscriptReplCtx,
-  mesh_ix: usize,
-) -> u32 {
+pub fn geoscript_repl_get_rendered_mesh_id(ctx: *const GeoscriptReplCtx, mesh_ix: usize) -> u32 {
   let ctx = unsafe { &*ctx };
   ctx.output_meshes[mesh_ix].mesh_id
 }
@@ -594,7 +602,7 @@ pub fn geoscript_repl_get_rendered_mesh_material(
     .clone()
     .unwrap_or_else(|| match &*ctx.geo_ctx.default_material.borrow() {
       Some(mat) => match &**mat {
-        geoscript::materials::Material::External(name) => name.clone(),
+        Material::External(name) => name.clone(),
       },
       None => String::new(),
     })
@@ -609,7 +617,11 @@ pub fn geoscript_get_rendered_path_count(ctx: *const GeoscriptReplCtx) -> usize 
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_path(ctx: *const GeoscriptReplCtx, path_ix: usize) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let path = { ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix].points.clone() };
+  let path = {
+    ctx.geo_ctx.rendered_paths.inner.borrow()[path_ix]
+      .points
+      .clone()
+  };
   let raw_path: Vec<f32> =
     unsafe { std::slice::from_raw_parts(path.as_ptr() as *const f32, path.len() * 3).to_vec() };
   std::mem::forget(path);
@@ -674,7 +686,7 @@ pub fn geoscript_repl_set_gizmo_values(
   values_json: Vec<String>,
 ) {
   let ctx = unsafe { &mut *ctx };
-  let mut map: FxHashMap<String, FxHashMap<String, geoscript::Value>> = FxHashMap::default();
+  let mut map: FxHashMap<String, FxHashMap<String, Value>> = FxHashMap::default();
   for ((module, handle), vjson) in module_names
     .iter()
     .zip(handle_ids.iter())
@@ -684,17 +696,25 @@ pub fn geoscript_repl_set_gizmo_values(
       continue;
     };
     let value = match wire.kind.as_str() {
-      "vec3" | "color" if wire.value.len() >= 3 => geoscript::Value::Vec3(
-        mesh::linked_mesh::Vec3::new(wire.value[0], wire.value[1], wire.value[2]),
-      ),
-      "transform" if wire.value.len() >= 16 => {
-        geoscript::Value::Mat4(Rc::new(geoscript::Mat4::from_column_slice(&wire.value[..16])))
+      "vec3" | "color" if wire.value.len() >= 3 => {
+        Value::Vec3(Vec3::new(wire.value[0], wire.value[1], wire.value[2]))
       }
-      "float" if !wire.value.is_empty() => geoscript::Value::Float(wire.value[0]),
-      "int" if !wire.value.is_empty() => geoscript::Value::Int(wire.value[0] as i64),
-      "bool" if !wire.value.is_empty() => geoscript::Value::Bool(wire.value[0] != 0.),
+      "transform" if wire.value.len() >= 16 => {
+        Value::Mat4(Rc::new(Mat4::from_column_slice(&wire.value[..16])))
+      }
+      "float" if !wire.value.is_empty() => Value::Float(wire.value[0]),
+      "int" if !wire.value.is_empty() => Value::Int(wire.value[0] as i64),
+      "bool" if !wire.value.is_empty() => Value::Bool(wire.value[0] != 0.),
+      // Spline: flat 3·N floats → eager sequence of vec3 points.
+      "spline" => geoscript::eager_seq_value(
+        wire
+          .value
+          .chunks_exact(3)
+          .map(|c| Value::Vec3(Vec3::new(c[0], c[1], c[2])))
+          .collect(),
+      ),
       "string" | "select" => match wire.str_value {
-        Some(s) => geoscript::Value::String(s),
+        Some(s) => Value::String(s),
         None => continue,
       },
       _ => continue,
@@ -731,16 +751,16 @@ pub fn geoscript_repl_get_rendered_gizmo(ctx: *const GeoscriptReplCtx, gizmo_ix:
   let gizmos = ctx.geo_ctx.rendered_gizmos.inner.borrow();
   let g = &gizmos[gizmo_ix];
   let (kind, value) = match g.kind {
-    geoscript::GizmoKind::Vec3 => {
+    GizmoKind::Vec3 => {
       let v = match &g.current_value {
-        geoscript::Value::Vec3(v) => vec![v.x, v.y, v.z],
+        Value::Vec3(v) => vec![v.x, v.y, v.z],
         _ => vec![0., 0., 0.],
       };
       ("vec3".to_owned(), v)
     }
-    geoscript::GizmoKind::Transform => {
+    GizmoKind::Transform => {
       let v = match &g.current_value {
-        geoscript::Value::Mat4(m) => m.as_slice().to_vec(),
+        Value::Mat4(m) => m.as_slice().to_vec(),
         _ => Vec::new(),
       };
       ("transform".to_owned(), v)
@@ -750,7 +770,11 @@ pub fn geoscript_repl_get_rendered_gizmo(ctx: *const GeoscriptReplCtx, gizmo_ix:
     source_module: g.source_module.clone(),
     handle_id: g.handle_id.clone(),
     kind,
-    origin: vec![g.resolved_origin.x, g.resolved_origin.y, g.resolved_origin.z],
+    origin: vec![
+      g.resolved_origin.x,
+      g.resolved_origin.y,
+      g.resolved_origin.z,
+    ],
     value,
     absolute: g.absolute,
     axes: g.axes.to_vec(),
@@ -781,7 +805,10 @@ struct RenderedControlWire {
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_get_rendered_control(ctx: *const GeoscriptReplCtx, control_ix: usize) -> String {
+pub fn geoscript_repl_get_rendered_control(
+  ctx: *const GeoscriptReplCtx,
+  control_ix: usize,
+) -> String {
   let ctx = unsafe { &*ctx };
   let controls = ctx.geo_ctx.rendered_controls.inner.borrow();
   let c = &controls[control_ix];
@@ -791,14 +818,25 @@ pub fn geoscript_repl_get_rendered_control(ctx: *const GeoscriptReplCtx, control
     geoscript::ControlKind::Bool => "bool",
     geoscript::ControlKind::Color => "color",
     geoscript::ControlKind::Select => "select",
+    geoscript::ControlKind::Spline => "spline",
   }
   .to_owned();
   let (value, str_value): (Vec<f32>, Option<String>) = match &c.current_value {
-    geoscript::Value::Float(f) => (vec![*f], None),
-    geoscript::Value::Int(i) => (vec![*i as f32], None),
-    geoscript::Value::Bool(b) => (vec![if *b { 1. } else { 0. }], None),
-    geoscript::Value::Vec3(v) => (vec![v.x, v.y, v.z], None),
-    geoscript::Value::String(s) => (Vec::new(), Some(s.clone())),
+    Value::Float(f) => (vec![*f], None),
+    Value::Int(i) => (vec![*i as f32], None),
+    Value::Bool(b) => (vec![if *b { 1. } else { 0. }], None),
+    Value::Vec3(v) => (vec![v.x, v.y, v.z], None),
+    Value::String(s) => (Vec::new(), Some(s.clone())),
+    // Spline: eager sequence of vec3 → flat 3·N floats.
+    Value::Sequence(seq) => {
+      let mut flat = Vec::new();
+      for item in seq.consume(&ctx.geo_ctx) {
+        if let Ok(Value::Vec3(v)) = item {
+          flat.extend_from_slice(&[v.x, v.y, v.z]);
+        }
+      }
+      (flat, None)
+    }
     _ => (Vec::new(), None),
   };
   RenderedControlWire {
@@ -820,10 +858,10 @@ pub fn geoscript_repl_get_rendered_control(ctx: *const GeoscriptReplCtx, control
 #[wasm_bindgen]
 pub fn geoscript_set_default_material(ctx: *mut GeoscriptReplCtx, material_name: Option<String>) {
   let ctx = unsafe { &mut *ctx };
-  ctx.geo_ctx.default_material.replace(
-    material_name
-      .map(|material_name| Rc::new(geoscript::materials::Material::External(material_name))),
-  );
+  ctx
+    .geo_ctx
+    .default_material
+    .replace(material_name.map(|material_name| Rc::new(Material::External(material_name))));
 }
 
 #[wasm_bindgen]
@@ -834,10 +872,7 @@ pub fn geoscript_set_materials(
   let ctx = unsafe { &mut *ctx };
   let mut new_materials: FxHashMap<String, Rc<Material>> = FxHashMap::default();
   for material in materials {
-    new_materials.insert(
-      material.clone(),
-      Rc::new(geoscript::materials::Material::External(material)),
-    );
+    new_materials.insert(material.clone(), Rc::new(Material::External(material)));
   }
   let materials_changed = ctx.geo_ctx.materials.len() != new_materials.len()
     || new_materials
@@ -881,8 +916,8 @@ mod tests {
 
   use super::*;
 
-  /// Flat quad split into two tris that DUPLICATE the shared diagonal edge — 6 verts at 4 positions,
-  /// i.e. a UV-seam-like coincident-vertex pair that distance-welding would collapse.
+  /// Flat quad split into two tris that DUPLICATE the shared diagonal edge — 6 verts at 4
+  /// positions, i.e. a UV-seam-like coincident-vertex pair that distance-welding would collapse.
   fn seam_quad() -> LinkedMesh<()> {
     let verts = [
       Vec3::new(0., 0., 0.),
@@ -918,8 +953,8 @@ mod tests {
     // Default finalize welds the coincident diagonal verts (6 -> 4) while recomputing normals.
     assert_eq!(finalized_vertex_count(seam_quad()), 4);
 
-    // `NO_WELD` keeps the seam duplicates distinct — normals are still recomputed (the mesh authored
-    // none), proving the two decisions are independent.
+    // `NO_WELD` keeps the seam duplicates distinct — normals are still recomputed (the mesh
+    // authored none), proving the two decisions are independent.
     let mut seamed = seam_quad();
     seamed.flags |= mesh_flags::NO_WELD;
     assert_eq!(finalized_vertex_count(seamed), 6);

@@ -121,7 +121,14 @@ export const scanGizmoHandleOrder = (source: string): string[] =>
     .filter(s => !s.dynamic)
     .map(s => s.handleId);
 
-const INPUT_CALLEES = new Set(['input_float', 'input_int', 'input_bool', 'input_color', 'input_select']);
+const INPUT_CALLEES = new Set([
+  'input_float',
+  'input_int',
+  'input_bool',
+  'input_color',
+  'input_select',
+  'input_spline',
+]);
 
 /** Static `input_*` control handle ids in a node's source; used for orphaned-control GC. */
 export const scanControlHandleIds = (source: string): Set<string> => {

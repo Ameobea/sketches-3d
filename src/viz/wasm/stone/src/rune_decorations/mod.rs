@@ -178,8 +178,11 @@ impl RuneGenCtx {
     'outer: loop {
       let (start_pos, start_delta_angle, start_dir) = if self.segments.is_empty() {
         let start_pos = point(0.0, 0.0);
-        let start_dir =
-          vector(self.rng.random_range(-1.0..1.0), self.rng.random_range(-1.0..1.0)).normalize();
+        let start_dir = vector(
+          self.rng.random_range(-1.0..1.0),
+          self.rng.random_range(-1.0..1.0),
+        )
+        .normalize();
         let start_dir = dir_to_angle(start_dir);
         (start_pos, None, start_dir)
       } else {

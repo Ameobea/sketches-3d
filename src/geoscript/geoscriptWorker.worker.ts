@@ -21,7 +21,7 @@ interface RawRenderedGizmo {
 interface RawRenderedControl {
   source_module: string | null;
   handle_id: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
   label: string | null;
   value: number[];
   str_value: string | null;

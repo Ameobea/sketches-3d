@@ -44,3 +44,29 @@ test('injectInputs is a no-op when there are no inputs', () => {
   assert.equal(injectInputs(base, undefined, ['code']), base);
   assert.equal(injectInputs(base, {}, ['code']), base);
 });
+
+test('reifyInput converts gizmo overrides: vec3 verbatim, transform to a col-major mat4', () => {
+  assert.deepEqual(reifyInput({ type: 'vec3', value: [1, 2, 3] }), { kind: 'vec3', value: [1, 2, 3] });
+  const w = reifyInput({
+    type: 'transform',
+    value: { pos: [1, 2, 3], rot: [0, 0, 0], scale: [1, 1, 1] },
+  });
+  assert.equal(w.kind, 'transform');
+  assert.equal(w.value?.length, 16);
+  assert.deepEqual(w.value?.slice(12, 15), [1, 2, 3]);
+});
+
+test('injectInputs routes module-qualified keys to just that module; unknown prefixes spread', () => {
+  const map = injectInputs(
+    {},
+    {
+      'trunk/bend': { type: 'vec3', value: [0.5, 0, 0] },
+      'not_a_module/x': { type: 'float', value: 1 },
+    },
+    ['trunk', 'branches', '_root']
+  );
+  assert.deepEqual(Object.keys(map.trunk).sort(), ['bend', 'not_a_module/x']);
+  assert.deepEqual(map.branches, { 'not_a_module/x': { kind: 'float', value: [1] } });
+  assert.equal(map._root['trunk/bend' as never], undefined);
+  assert.deepEqual(map.trunk.bend, { kind: 'vec3', value: [0.5, 0, 0] });
+});

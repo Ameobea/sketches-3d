@@ -347,11 +347,61 @@ pub fn tessellate_ring_cap_with_holes(
   Ok(indices)
 }
 
+/// Coordinate-plane embedding for a 2D tessellation, given as a two-axis swizzle: the 2D `(u, v)`
+/// maps to `u_axis` and `v_axis` respectively (the remaining axis = 0).  Order matters — "xz" and
+/// "zx" are mirror embeddings.  The default front face points along the +remaining axis; `flipped`
+/// reverses it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct TessPlane {
+  u_axis: u8,
+  v_axis: u8,
+}
+
+impl Default for TessPlane {
+  fn default() -> Self {
+    TessPlane { u_axis: 0, v_axis: 2 }
+  }
+}
+
+impl TessPlane {
+  pub fn parse(s: &str) -> Option<Self> {
+    let axis = |b: u8| match b.to_ascii_lowercase() {
+      b'x' => Some(0u8),
+      b'y' => Some(1),
+      b'z' => Some(2),
+      _ => None,
+    };
+    let bytes = s.as_bytes();
+    if bytes.len() != 2 {
+      return None;
+    }
+    let u_axis = axis(bytes[0])?;
+    let v_axis = axis(bytes[1])?;
+    if u_axis == v_axis {
+      return None;
+    }
+    Some(TessPlane { u_axis, v_axis })
+  }
+
+  fn embed(self, u: f32, v: f32) -> Vec3 {
+    let mut p = Vec3::zeros();
+    p[self.u_axis as usize] = u;
+    p[self.v_axis as usize] = v;
+    p
+  }
+
+  /// Whether a param-space CCW triangle embedded here already faces the +remaining axis (true iff
+  /// `(u_axis, v_axis, remaining)` is an even permutation of `(x, y, z)`).
+  fn ccw_faces_positive(self) -> bool {
+    (self.v_axis + 3 - self.u_axis) % 3 == 1
+  }
+}
+
 pub fn tessellate_2d_paths(
   paths: &[Vec<Vec2>],
   flipped: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
-  tessellate_2d_paths_multi(paths, flipped, CgalCdtOptions::default())
+  tessellate_2d_paths_multi(paths, flipped, TessPlane::default(), CgalCdtOptions::default())
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -398,8 +448,8 @@ fn run_triangulation_with_holes(
     min_angle_squared_sine,
     refine,
   ) {
-    let err = cgal_get_last_error()
-      .unwrap_or_else(|| "CGAL multi-subpath triangulation failed".to_owned());
+    let err =
+      cgal_get_last_error().unwrap_or_else(|| "CGAL multi-subpath triangulation failed".to_owned());
     return Err(ErrorStack::new(err).wrap("Error triangulating multi-subpath polygon with CGAL"));
   }
 
@@ -449,6 +499,7 @@ fn run_triangulation_with_holes(
 pub fn tessellate_2d_paths_multi(
   paths: &[Vec<Vec2>],
   flipped: bool,
+  plane: TessPlane,
   options: CgalCdtOptions,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   if paths.is_empty() {
@@ -479,16 +530,13 @@ pub fn tessellate_2d_paths_multi(
 
   let mut verts: Vec<Vec3> = Vec::with_capacity(out_vertices_xy.len() / 2);
   for xy in out_vertices_xy.chunks_exact(2) {
-    verts.push(Vec3::new(xy[0], 0.0, xy[1]));
+    verts.push(plane.embed(xy[0], xy[1]));
   }
 
-  // CGAL winding is CCW in the XY plane.  When dropped onto XZ via (x, 0, y), the apparent
-  // orientation flips, so we swap to keep faces facing +Y by default — matching the old
-  // tessellate_2d_paths behavior.  `flipped` then opts back into the other side.
-  for tri in indices.chunks_mut(3) {
-    tri.swap(0, 2);
-  }
-  if flipped {
+  // CGAL emits CCW triangles in param space; embedding into the target plane flips apparent
+  // orientation for some planes.  Swap so the default face points along the plane's +remaining
+  // axis (+Y for the legacy XZ default); `flipped` opts into the other side.
+  if (!plane.ccw_faces_positive()) ^ flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -499,7 +547,7 @@ pub fn tessellate_2d_paths_multi(
   ))
 }
 
-/// Tessellates a pre-built lyon `Path` into a flat XZ-plane mesh.
+/// Tessellates a pre-built lyon `Path` into a flat mesh in the given coordinate plane.
 ///
 /// Output vertices are deduplicated by exact float position before building the `LinkedMesh`,
 /// guarding against lyon emitting two vertices at the same coordinate for touching subpaths
@@ -508,6 +556,7 @@ pub fn tessellate_lyon_path(
   lyon_path: &lyon_tessellation::path::Path,
   fill_rule: lyon_tessellation::FillRule,
   flipped: bool,
+  plane: TessPlane,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   use std::collections::HashMap;
 
@@ -540,7 +589,7 @@ pub fn tessellate_lyon_path(
     let key = (p.x.to_bits(), p.y.to_bits());
     let idx = *pos_to_idx.entry(key).or_insert_with(|| {
       let idx = deduped_verts.len() as u32;
-      deduped_verts.push(Vec3::new(p.x, 0., p.y));
+      deduped_verts.push(plane.embed(p.x, p.y));
       idx
     });
     vert_remap.push(idx);
@@ -552,7 +601,9 @@ pub fn tessellate_lyon_path(
     .map(|&i| vert_remap[i as usize])
     .collect();
 
-  if flipped {
+  // Lyon's param-space winding is opposite CGAL's, so the base swap is inverted here to reach the
+  // same default face (+remaining axis); `flipped` opts into the other side.
+  if plane.ccw_faces_positive() ^ flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -566,7 +617,8 @@ pub fn tessellate_lyon_path(
   ))
 }
 
-/// Tessellates one or more closed 2D paths (as `Vec<Vec2>` polylines) into a flat XZ-plane mesh.
+/// Tessellates one or more closed 2D paths (as `Vec<Vec2>` polylines) into a flat mesh in the
+/// given coordinate plane.
 ///
 /// Multiple paths are treated as subpaths under the given fill rule. For `PathSampler` callables
 /// (e.g. from `trace_path`), prefer `tessellate_lyon_path` with a path built via
@@ -576,6 +628,7 @@ pub fn tessellate_2d_paths_with_lyon(
   paths: &[Vec<Vec2>],
   fill_rule: lyon_tessellation::FillRule,
   flipped: bool,
+  plane: TessPlane,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   use lyon_tessellation::{geom::Point, path::Path};
 
@@ -598,7 +651,7 @@ pub fn tessellate_2d_paths_with_lyon(
     builder.end(true);
   }
 
-  tessellate_lyon_path(&builder.build(), fill_rule, flipped)
+  tessellate_lyon_path(&builder.build(), fill_rule, flipped, plane)
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -627,8 +680,7 @@ mod native_tests {
     let frame = xy_plane_frame();
     for reverse in [false, true] {
       let via_frame = tessellate_ring_cap_with_frame(&square, 10, reverse, &frame).unwrap();
-      let via_holes =
-        tessellate_ring_cap_with_holes(&[&square], &[10], reverse, &frame).unwrap();
+      let via_holes = tessellate_ring_cap_with_holes(&[&square], &[10], reverse, &frame).unwrap();
       assert_eq!(via_frame, via_holes, "reverse={reverse}");
     }
   }

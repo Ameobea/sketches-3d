@@ -13,7 +13,7 @@ import {
   instantiateLevelObject,
   meshesFromRunObjects,
 } from './levelObjectUtils';
-import type { GeneratedObject, RenderedControl } from 'src/geoscript/runner/types';
+import type { GeneratedObject, RenderedControl, RenderedGizmo } from 'src/geoscript/runner/types';
 import type {
   AssetDef,
   BehaviorSpec,
@@ -381,7 +381,8 @@ const resolveScriptAssets = async (
   sceneName: string,
   providedExecutor?: GeoscriptExecutor,
   variantIds?: ReadonlySet<string>,
-  controlsOut?: Map<string, RenderedControl[]>
+  controlsOut?: Map<string, RenderedControl[]>,
+  gizmosOut?: Map<string, RenderedGizmo[]>
 ): Promise<void> => {
   const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
   if (scriptIds.length === 0) {
@@ -428,8 +429,9 @@ const resolveScriptAssets = async (
         return;
       }
       const gdef = assets[id];
-      if (gdef.type === 'geoscript') warnUnmatchedInputs(id, gdef.inputs, res.controls);
+      if (gdef.type === 'geoscript') warnUnmatchedInputs(id, gdef.inputs, res.controls, res.gizmos);
       if (controlsOut && res.controls.length > 0) controlsOut.set(id, res.controls);
+      if (gizmosOut && res.gizmos.length > 0) gizmosOut.set(id, res.gizmos);
       const prototype = extractPrototype(res.objects);
       if (!prototype) {
         console.warn(`[levelDef] Asset "${id}" produced no meshes`);
@@ -549,6 +551,7 @@ export const loadLevelDef = (
   const compositionBaked = new Map<string, BakedCompositionMesh[]>();
   // `input_*` control declarations per effective asset id, retained for the editor's param UI.
   const assetControls = new Map<string, RenderedControl[]>();
+  const assetGizmos = new Map<string, RenderedGizmo[]>();
   const builtMaterials = new Map<string, THREE.Material>();
   const loadedTextures = new Map<string, THREE.Texture>();
   const assetPrototypes = new Map<string, THREE.Mesh>();
@@ -1021,8 +1024,9 @@ export const loadLevelDef = (
             return;
           }
           const def = assetDefs[id] as GeotoyCompositionAssetDef;
-          warnUnmatchedInputs(id, def.inputs, res.controls);
+          warnUnmatchedInputs(id, def.inputs, res.controls, res.gizmos);
           if (res.controls.length > 0) assetControls.set(id, res.controls);
+          if (res.gizmos.length > 0) assetGizmos.set(id, res.gizmos);
           const baked = bakeCompositionMeshes(def.tree, res.objects);
           compositionBaked.set(id, baked);
           if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
@@ -1145,7 +1149,8 @@ export const loadLevelDef = (
     viz.sceneName,
     sharedExecutor,
     paramVariants.variantIds,
-    assetControls
+    assetControls,
+    assetGizmos
   );
 
   // Composition jobs share the worker ctx with script assets, so run them after the script
@@ -1295,6 +1300,7 @@ export const loadLevelDef = (
           compositionBaked,
           effectiveAssetId,
           assetControls,
+          assetGizmos,
         });
 
         forwardEditorSelectable = visual => editor.registerExternalSelectable(visual);
@@ -1353,7 +1359,8 @@ export const loadLevelDef = (
             viz.sceneName,
             sharedExecutor,
             paramVariants.variantIds,
-            assetControls
+            assetControls,
+            assetGizmos
           );
         });
 

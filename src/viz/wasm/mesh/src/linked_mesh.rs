@@ -350,10 +350,11 @@ pub struct LinkedMesh<FaceData = ()> {
   pub flags: u32,
 }
 
-/// Opt-in per-mesh flags. Whether to recompute shading normals is decided from ground truth (are the
-/// `shading_normals` complete), but welding coincident vertices can't be inferred that way — a mesh
-/// with attribute seams (UV cuts, duplicated boundary rings) has position-coincident verts that must
-/// stay distinct. Ops that author such seams set `NO_WELD` to opt out of the distance-weld.
+/// Opt-in per-mesh flags. Whether to recompute shading normals is decided from ground truth (are
+/// the `shading_normals` complete), but welding coincident vertices can't be inferred that way — a
+/// mesh with attribute seams (UV cuts, duplicated boundary rings) has position-coincident verts
+/// that must stay distinct. Ops that author such seams set `NO_WELD` to opt out of the
+/// distance-weld.
 pub mod mesh_flags {
   /// Skip `merge_vertices_by_distance` at render finalize.
   pub const NO_WELD: u32 = 1 << 0;
@@ -2588,12 +2589,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Recomputes shading normals with dihedral auto-smooth creasing (`mark_edge_sharpness` +
-  /// `separate_vertices_and_compute_normals`) while keeping authored attribute seams smooth. Any set
-  /// of position-coincident verts present *before* the split (a UV seam cut, a duplicated boundary
-  /// ring) is re-averaged per normal cluster afterward, so a seam running through a smooth region
-  /// reads seamless while genuine geometric creases and cap edges keep their crisp split normals.
-  /// Passive channels (uv/tangent) are cloned onto split verts by the separation pass and never
-  /// touched here, so procedural UVs survive intact.
+  /// `separate_vertices_and_compute_normals`) while keeping authored attribute seams smooth. Any
+  /// set of position-coincident verts present *before* the split (a UV seam cut, a duplicated
+  /// boundary ring) is re-averaged per normal cluster afterward, so a seam running through a
+  /// smooth region reads seamless while genuine geometric creases and cap edges keep their crisp
+  /// split normals. Passive channels (uv/tangent) are cloned onto split verts by the separation
+  /// pass and never touched here, so procedural UVs survive intact.
   ///
   /// Coincidence is bit-exact on position, matching the way seam ops (`rail_sweep`, `compute_uvs`)
   /// author their duplicates.
@@ -2606,8 +2607,11 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     for v in self.vertices.values() {
       *counts.entry(pos_key(v.position)).or_insert(0) += 1;
     }
-    let seam_positions: FxHashSet<[u32; 3]> =
-      counts.into_iter().filter(|&(_, n)| n > 1).map(|(k, _)| k).collect();
+    let seam_positions: FxHashSet<[u32; 3]> = counts
+      .into_iter()
+      .filter(|&(_, n)| n > 1)
+      .map(|(k, _)| k)
+      .collect();
 
     self.mark_edge_sharpness(sharp_edge_threshold_rads);
     self.separate_vertices_and_compute_normals();
@@ -2639,7 +2643,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         let Some(n) = self.shading_normal(vk) else {
           continue;
         };
-        match clusters.iter_mut().find(|(rep, _)| rep.dot(&n) >= cos_threshold) {
+        match clusters
+          .iter_mut()
+          .find(|(rep, _)| rep.dot(&n) >= cos_threshold)
+        {
           Some((_, members)) => members.push(vk),
           None => clusters.push((n, vec![vk])),
         }
@@ -2648,7 +2655,10 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         if members.len() < 2 {
           continue;
         }
-        let sum: Vec3 = members.iter().filter_map(|&vk| self.shading_normal(vk)).sum();
+        let sum: Vec3 = members
+          .iter()
+          .filter_map(|&vk| self.shading_normal(vk))
+          .sum();
         if let Some(avg) = sum.try_normalize(1e-12) {
           for &vk in members {
             self.set_shading_normal(vk, Some(avg));

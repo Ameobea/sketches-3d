@@ -90,12 +90,8 @@ fn cap_one_end(
 
   let frame = compute_cap_frame(this_ring_verts, outward_dir);
 
-  let cap_indices = tessellate_ring_cap_with_indices(
-    this_ring_verts,
-    this_ring_indices,
-    flip_normals,
-    &frame,
-  )?;
+  let cap_indices =
+    tessellate_ring_cap_with_indices(this_ring_verts, this_ring_indices, flip_normals, &frame)?;
   indices.extend(cap_indices);
   Ok(())
 }
@@ -318,7 +314,13 @@ pub fn parametric_surface(
       let v0_centroid = compute_centroid(&v0_ring);
       let v_end_centroid = compute_centroid(&v_end_ring);
 
-      cap_one_end(&v0_indices, &v0_ring, v_end_centroid, flip_normals, &mut indices)?;
+      cap_one_end(
+        &v0_indices,
+        &v0_ring,
+        v_end_centroid,
+        flip_normals,
+        &mut indices,
+      )?;
       cap_one_end(
         &v_end_indices,
         &v_end_ring,
@@ -341,7 +343,13 @@ pub fn parametric_surface(
       let u0_centroid = compute_centroid(&u0_ring);
       let u_end_centroid = compute_centroid(&u_end_ring);
 
-      cap_one_end(&u0_indices, &u0_ring, u_end_centroid, flip_normals, &mut indices)?;
+      cap_one_end(
+        &u0_indices,
+        &u0_ring,
+        u_end_centroid,
+        flip_normals,
+        &mut indices,
+      )?;
       cap_one_end(
         &u_end_indices,
         &u_end_ring,
@@ -436,9 +444,18 @@ mod tests {
   #[test]
   fn test_parametric_surface_simple_plane() {
     // Simple plane: z = 0, x and y from 0 to 1
-    let mesh = parametric_surface(2, 2, false, false, false, false, false, false, false, |u, v| {
-      Ok(Vec3::new(u, v, 0.0))
-    })
+    let mesh = parametric_surface(
+      2,
+      2,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      |u, v| Ok(Vec3::new(u, v, 0.0)),
+    )
     .unwrap();
 
     // 3x3 grid of vertices
@@ -449,10 +466,21 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_cylinder() {
-    let mesh = parametric_surface(2, 8, false, true, true, false, false, false, false, |u, v| {
-      let angle = v * 2.0 * PI;
-      Ok(Vec3::new(angle.cos(), u, angle.sin()))
-    })
+    let mesh = parametric_surface(
+      2,
+      8,
+      false,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      |u, v| {
+        let angle = v * 2.0 * PI;
+        Ok(Vec3::new(angle.cos(), u, angle.sin()))
+      },
+    )
     .unwrap();
 
     // 3 rows of 8 vertices each
@@ -463,16 +491,29 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_capped_cylinder() {
-    let mesh = parametric_surface(2, 8, false, true, true, true, false, false, false, |u, v| {
-      let angle = v * 2.0 * PI;
-      Ok(Vec3::new(angle.cos(), u, angle.sin()))
-    })
+    let mesh = parametric_surface(
+      2,
+      8,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      |u, v| {
+        let angle = v * 2.0 * PI;
+        Ok(Vec3::new(angle.cos(), u, angle.sin()))
+      },
+    )
     .unwrap();
 
     assert_eq!(mesh.vertices.len(), 24);
     // 32 side tris + (8-2)*2 cap tris
     assert_eq!(mesh.faces.len(), 44);
-    mesh.check_is_manifold::<true>().expect("capped cylinder should be manifold");
+    mesh
+      .check_is_manifold::<true>()
+      .expect("capped cylinder should be manifold");
   }
 
   #[test]
@@ -491,15 +532,26 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_sphere_with_poles() {
-    let mesh = parametric_surface(4, 8, false, true, false, false, false, false, false, |u, v| {
-      let phi = u * PI; // 0 to PI (south to north)
-      let theta = v * 2.0 * PI; // 0 to 2PI (around)
-      Ok(Vec3::new(
-        phi.sin() * theta.cos(),
-        phi.cos(),
-        phi.sin() * theta.sin(),
-      ))
-    })
+    let mesh = parametric_surface(
+      4,
+      8,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      |u, v| {
+        let phi = u * PI; // 0 to PI (south to north)
+        let theta = v * 2.0 * PI; // 0 to 2PI (around)
+        Ok(Vec3::new(
+          phi.sin() * theta.cos(),
+          phi.cos(),
+          phi.sin() * theta.sin(),
+        ))
+      },
+    )
     .unwrap();
 
     // At u=0 (south pole) and u=1 (north pole), all v vertices collapse
@@ -521,16 +573,27 @@ mod tests {
     // flip_normals=true for outward-facing normals with this parameterization
     let major_r = 2.0;
     let minor_r = 0.5;
-    let mesh = parametric_surface(8, 8, true, true, true, false, false, false, false, |u, v| {
-      let theta = u * 2.0 * PI; // around the major circle
-      let phi = v * 2.0 * PI; // around the minor circle
-      let r = major_r + minor_r * phi.cos();
-      Ok(Vec3::new(
-        r * theta.cos(),
-        minor_r * phi.sin(),
-        r * theta.sin(),
-      ))
-    })
+    let mesh = parametric_surface(
+      8,
+      8,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      false,
+      |u, v| {
+        let theta = u * 2.0 * PI; // around the major circle
+        let phi = v * 2.0 * PI; // around the minor circle
+        let r = major_r + minor_r * phi.cos();
+        Ok(Vec3::new(
+          r * theta.cos(),
+          minor_r * phi.sin(),
+          r * theta.sin(),
+        ))
+      },
+    )
     .unwrap();
 
     // 8x8 grid, both closed = 8*8 = 64 vertices
@@ -541,14 +604,32 @@ mod tests {
 
   #[test]
   fn test_parametric_surface_error_on_zero_resolution() {
-    let result = parametric_surface(0, 4, false, false, false, false, false, false, false, |u, v| {
-      Ok(Vec3::new(u, v, 0.0))
-    });
+    let result = parametric_surface(
+      0,
+      4,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      |u, v| Ok(Vec3::new(u, v, 0.0)),
+    );
     assert!(result.is_err());
 
-    let result = parametric_surface(4, 0, false, false, false, false, false, false, false, |u, v| {
-      Ok(Vec3::new(u, v, 0.0))
-    });
+    let result = parametric_surface(
+      4,
+      0,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      |u, v| Ok(Vec3::new(u, v, 0.0)),
+    );
     assert!(result.is_err());
   }
 

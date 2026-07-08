@@ -200,7 +200,8 @@ impl ConduitParticlesState {
 
     let mut new_velocity = [0.0f32; 3];
     for coord in &mut new_velocity {
-      *coord += self.rng.random_range(-10.01..10.01) + cur_time_secs.sin() * self.conf.conduit_radius;
+      *coord +=
+        self.rng.random_range(-10.01..10.01) + cur_time_secs.sin() * self.conf.conduit_radius;
     }
     self.velocities[particle_ix] = Vec3::new(new_velocity[0], new_velocity[1], new_velocity[2]);
   }

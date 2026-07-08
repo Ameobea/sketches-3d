@@ -1,8 +1,9 @@
-//! Harmonic tube unwrap for closed genus-0 tube-like meshes (bent/deformed pipes, trim, extrusions).
-//! U wraps the cross-section once (like `cylindrical`); V runs along the tube, arc-length uniform.
-//! Method: cotan-Laplacian harmonic field between the two Fiedler-detected ends -> Dijkstra cut ->
-//! slit to disk -> second harmonic solve between the slit banks.  Caps (crease-bounded transverse
-//! terminal patches) become separate planar islands at body texel density.
+//! Harmonic tube unwrap for closed genus-0 tube-like meshes (bent/deformed pipes, trim,
+//! extrusions). U wraps the cross-section once (like `cylindrical`); V runs along the tube,
+//! arc-length uniform. Method: cotan-Laplacian harmonic field between the two Fiedler-detected ends
+//! -> Dijkstra cut -> slit to disk -> second harmonic solve between the slit banks.  Caps
+//! (crease-bounded transverse terminal patches) become separate planar islands at body texel
+//! density.
 
 use std::{cell::RefCell, cmp::Reverse, collections::BinaryHeap, rc::Rc};
 
@@ -39,7 +40,9 @@ pub(crate) struct TubeOptions {
   detwist: bool,
 }
 
-fn parse_tube_options(options: Option<&FxHashMap<String, Value>>) -> Result<TubeOptions, ErrorStack> {
+fn parse_tube_options(
+  options: Option<&FxHashMap<String, Value>>,
+) -> Result<TubeOptions, ErrorStack> {
   let mut out = TubeOptions {
     caps: true,
     cap_angle_rad: None,
@@ -65,9 +68,9 @@ fn parse_tube_options(options: Option<&FxHashMap<String, Value>>) -> Result<Tube
         }
       }
       "cap_angle" => {
-        let deg = val
-          .as_float()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `cap_angle` must be a number (degrees)"))?;
+        let deg = val.as_float().ok_or_else(|| {
+          ErrorStack::new("`compute_uvs` option `cap_angle` must be a number (degrees)")
+        })?;
         out.cap_angle_rad = Some(deg.to_radians());
       }
       "cap_max_span" => {
@@ -88,10 +91,9 @@ fn parse_tube_options(options: Option<&FxHashMap<String, Value>>) -> Result<Tube
           .ok_or_else(|| ErrorStack::new("`compute_uvs` option `normalize_v` must be a boolean"))?;
       }
       "seam_straightness" => {
-        out.seam_straightness = val
-          .as_float()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `seam_straightness` must be a number"))?
-          as f64;
+        out.seam_straightness = val.as_float().ok_or_else(|| {
+          ErrorStack::new("`compute_uvs` option `seam_straightness` must be a number")
+        })? as f64;
       }
       "detwist" => {
         out.detwist = val
@@ -127,11 +129,20 @@ fn cotan_triplets(pos: &[V3], tris: &[[usize; 3]]) -> Vec<(usize, usize, f64)> {
   trips
 }
 
-fn sparse_llt(n: usize, lower: &[Triplet<usize, usize, f64>]) -> Result<Llt<usize, f64>, ErrorStack> {
-  let a = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, lower)
-    .map_err(|e| ErrorStack::new(format!("`compute_uvs`: failed to assemble Laplacian: {e:?}")))?;
-  let sym = SymbolicLlt::try_new(a.symbolic(), Side::Lower)
-    .map_err(|e| ErrorStack::new(format!("`compute_uvs`: symbolic factorization failed: {e:?}")))?;
+fn sparse_llt(
+  n: usize,
+  lower: &[Triplet<usize, usize, f64>],
+) -> Result<Llt<usize, f64>, ErrorStack> {
+  let a = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, lower).map_err(|e| {
+    ErrorStack::new(format!(
+      "`compute_uvs`: failed to assemble Laplacian: {e:?}"
+    ))
+  })?;
+  let sym = SymbolicLlt::try_new(a.symbolic(), Side::Lower).map_err(|e| {
+    ErrorStack::new(format!(
+      "`compute_uvs`: symbolic factorization failed: {e:?}"
+    ))
+  })?;
   Llt::try_new_with_symbolic(sym, a.as_ref(), Side::Lower).map_err(|e| {
     ErrorStack::new(format!(
       "`compute_uvs`: Cholesky factorization failed (degenerate mesh?): {e:?}"
@@ -179,14 +190,24 @@ fn harmonic_interp(
   let sol = b.col_as_slice(0);
   Ok(
     (0..n)
-      .map(|i| if pinned[i].is_nan() { sol[fi[i]] } else { pinned[i] })
+      .map(|i| {
+        if pinned[i].is_nan() {
+          sol[fi[i]]
+        } else {
+          pinned[i]
+        }
+      })
       .collect(),
   )
 }
 
-/// Fiedler vector (2nd-smallest Laplacian eigenvector) via inverse iteration on L + sigma*I with the
-/// constant nullspace deflated each step.  Its argmin/argmax are the tube's two ends.
-fn fiedler_ends(n: usize, l_full: &[(usize, usize, f64)], pos: &[V3]) -> Result<(usize, usize), ErrorStack> {
+/// Fiedler vector (2nd-smallest Laplacian eigenvector) via inverse iteration on L + sigma*I with
+/// the constant nullspace deflated each step.  Its argmin/argmax are the tube's two ends.
+fn fiedler_ends(
+  n: usize,
+  l_full: &[(usize, usize, f64)],
+  pos: &[V3],
+) -> Result<(usize, usize), ErrorStack> {
   let mut diag_mean = 0f64;
   for &(r, c, v) in l_full {
     if r == c {
@@ -233,7 +254,9 @@ fn fiedler_ends(n: usize, l_full: &[(usize, usize, f64)], pos: &[V3]) -> Result<
     }
   }
   if lo == hi {
-    return Err(ErrorStack::new("`compute_uvs(type='tube')`: end detection failed (degenerate mesh?)"));
+    return Err(ErrorStack::new(
+      "`compute_uvs(type='tube')`: end detection failed (degenerate mesh?)",
+    ));
   }
   Ok((lo, hi))
 }
@@ -342,7 +365,13 @@ fn left_face(m: &LinkedMesh<()>, a: VertexKey, b: VertexKey) -> Option<FaceKey> 
 }
 
 /// Faces in the fan around `c` from `e_start` (beginning at `start_face`) up to `e_stop`.
-fn fan_arc(m: &LinkedMesh<()>, c: VertexKey, e_start: EdgeKey, start_face: FaceKey, e_stop: EdgeKey) -> Vec<FaceKey> {
+fn fan_arc(
+  m: &LinkedMesh<()>,
+  c: VertexKey,
+  e_start: EdgeKey,
+  start_face: FaceKey,
+  e_stop: EdgeKey,
+) -> Vec<FaceKey> {
   let mut arc = Vec::new();
   let (mut cur_edge, mut cur_face) = (e_start, start_face);
   loop {
@@ -360,7 +389,11 @@ fn fan_arc(m: &LinkedMesh<()>, c: VertexKey, e_start: EdgeKey, start_face: FaceK
     if faces.len() < 2 {
       break;
     }
-    cur_face = if faces[0] == cur_face { faces[1] } else { faces[0] };
+    cur_face = if faces[0] == cur_face {
+      faces[1]
+    } else {
+      faces[0]
+    };
     cur_edge = next;
   }
   arc
@@ -376,7 +409,9 @@ pub(crate) fn tube_uvs(
   let mut m = (*mesh.mesh).clone();
 
   if m.vertices.len() < 4 {
-    return Err(ErrorStack::new("`compute_uvs(type='tube')`: mesh has too few vertices"));
+    return Err(ErrorStack::new(
+      "`compute_uvs(type='tube')`: mesh has too few vertices",
+    ));
   }
   let euler = m.vertices.len() as i64 - m.edges.len() as i64 + m.faces.len() as i64;
   if euler != 2 {
@@ -398,7 +433,13 @@ pub(crate) fn tube_uvs(
   let tris: Vec<[usize; 3]> = m
     .faces
     .iter()
-    .map(|(_, f)| [k2i[&f.vertices[0]], k2i[&f.vertices[1]], k2i[&f.vertices[2]]])
+    .map(|(_, f)| {
+      [
+        k2i[&f.vertices[0]],
+        k2i[&f.vertices[1]],
+        k2i[&f.vertices[2]],
+      ]
+    })
     .collect();
 
   // U (along-tube harmonic): Fiedler ends pinned 0/1
@@ -441,7 +482,9 @@ pub(crate) fn tube_uvs(
     let (Some(e_p), Some(e_q)) = (m.get_edge_key([c, p]), m.get_edge_key([c, q])) else {
       continue;
     };
-    let Some(start) = left_face(&m, q, c) else { continue };
+    let Some(start) = left_face(&m, q, c) else {
+      continue;
+    };
     moved.push((c, fan_arc(&m, c, e_q, start, e_p)));
   }
   let mut banks: Vec<(VertexKey, VertexKey)> = Vec::new();
@@ -465,10 +508,13 @@ pub(crate) fn tube_uvs(
     let Some(&(_, nb_clone)) = banks.iter().find(|&&(o, _)| o == nb) else {
       continue;
     };
-    let (Some(e_o), Some(e_c)) = (m.get_edge_key([tip, nb]), m.get_edge_key([tip, nb_clone])) else {
+    let (Some(e_o), Some(e_c)) = (m.get_edge_key([tip, nb]), m.get_edge_key([tip, nb_clone]))
+    else {
       continue;
     };
-    let Some(&start) = m.edges[e_c].faces.first() else { continue };
+    let Some(&start) = m.edges[e_c].faces.first() else {
+      continue;
+    };
     let fan = fan_arc(&m, tip, e_c, start, e_o);
     if fan.len() >= 4 {
       tip_clones.push((tip, m.split_off_faces(tip, &fan[..fan.len() / 2])));
@@ -488,13 +534,22 @@ pub(crate) fn tube_uvs(
   let tris2: Vec<[usize; 3]> = m
     .faces
     .iter()
-    .map(|(_, f)| [k2i2[&f.vertices[0]], k2i2[&f.vertices[1]], k2i2[&f.vertices[2]]])
+    .map(|(_, f)| {
+      [
+        k2i2[&f.vertices[0]],
+        k2i2[&f.vertices[1]],
+        k2i2[&f.vertices[2]],
+      ]
+    })
     .collect();
   let n2 = pos2.len();
 
   // pre-slit identity for each slit vert (clones inherit their source)
-  let clone2orig: FxHashMap<VertexKey, VertexKey> =
-    banks.iter().chain(tip_clones.iter()).map(|&(c, cl)| (cl, c)).collect();
+  let clone2orig: FxHashMap<VertexKey, VertexKey> = banks
+    .iter()
+    .chain(tip_clones.iter())
+    .map(|&(c, cl)| (cl, c))
+    .collect();
   let weld: Vec<usize> = keys2
     .iter()
     .map(|k| k2i[clone2orig.get(k).unwrap_or(k)])
@@ -535,9 +590,14 @@ pub(crate) fn tube_uvs(
       let nb_ = filled.len();
       let mut frames: Vec<(V3, V3)> = Vec::with_capacity(nb_);
       for (j, _) in filled.iter().enumerate() {
-        let t = (cent(filled[(j + 1).min(nb_ - 1)]) - cent(filled[j.saturating_sub(1)])).normalize();
+        let t =
+          (cent(filled[(j + 1).min(nb_ - 1)]) - cent(filled[j.saturating_sub(1)])).normalize();
         let r = if j == 0 {
-          let seed = if t.x.abs() < 0.9 { V3::new(1., 0., 0.) } else { V3::new(0., 1., 0.) };
+          let seed = if t.x.abs() < 0.9 {
+            V3::new(1., 0., 0.)
+          } else {
+            V3::new(0., 1., 0.)
+          };
           (seed - t * seed.dot(&t)).normalize()
         } else {
           let rp = frames[j - 1].1;
@@ -565,7 +625,10 @@ pub(crate) fn tube_uvs(
         let (t, r) = frames[j];
         let d = pos2[i] - cent(filled[j]);
         let phi = d.dot(&t.cross(&r)).atan2(d.dot(&r));
-        for (acc, th) in [(&mut sm[j], tau * around[i] - phi), (&mut sp[j], tau * around[i] + phi)] {
+        for (acc, th) in [
+          (&mut sm[j], tau * around[i] - phi),
+          (&mut sp[j], tau * around[i] + phi),
+        ] {
           acc.0 += th.sin();
           acc.1 += th.cos();
         }
@@ -578,7 +641,10 @@ pub(crate) fn tube_uvs(
         offs[j] -= (d / tau).round() * tau;
       }
       let base = offs[0];
-      let xs: Vec<f64> = filled.iter().map(|&b| (b as f64 + 0.5) / KB as f64).collect();
+      let xs: Vec<f64> = filled
+        .iter()
+        .map(|&b| (b as f64 + 0.5) / KB as f64)
+        .collect();
       let off_at = |a: f64| -> f64 {
         if a <= xs[0] {
           return offs[0];
@@ -650,10 +716,14 @@ pub(crate) fn tube_uvs(
   if opts.caps {
     // adjacency in pre-slit identity so patch growth sees the original closed topology (our own
     // seam/tip cuts run through cap interiors and must not fragment them)
-    let mut edge_adj: FxHashMap<(usize, usize), smallvec::SmallVec<[usize; 2]>> = FxHashMap::default();
+    let mut edge_adj: FxHashMap<(usize, usize), smallvec::SmallVec<[usize; 2]>> =
+      FxHashMap::default();
     for (fi, t) in tris2.iter().enumerate() {
       for k in 0..3 {
-        let (x, y) = (weld[t[k]].min(weld[t[(k + 1) % 3]]), weld[t[k]].max(weld[t[(k + 1) % 3]]));
+        let (x, y) = (
+          weld[t[k]].min(weld[t[(k + 1) % 3]]),
+          weld[t[k]].max(weld[t[(k + 1) % 3]]),
+        );
         edge_adj.entry((x, y)).or_default().push(fi);
       }
     }
@@ -691,9 +761,15 @@ pub(crate) fn tube_uvs(
         while let Some(fi) = queue.pop() {
           let t = tris2[fi];
           for k in 0..3 {
-            let (x, y) = (weld[t[k]].min(weld[t[(k + 1) % 3]]), weld[t[k]].max(weld[t[(k + 1) % 3]]));
+            let (x, y) = (
+              weld[t[k]].min(weld[t[(k + 1) % 3]]),
+              weld[t[k]].max(weld[t[(k + 1) % 3]]),
+            );
             for &nb in &edge_adj[&(x, y)] {
-              if nb != fi && !patch.contains(&nb) && fnorm(&tris2[nb]).dot(&fnorm(&tris2[fi])) > sharp_cos {
+              if nb != fi
+                && !patch.contains(&nb)
+                && fnorm(&tris2[nb]).dot(&fnorm(&tris2[fi])) > sharp_cos
+              {
                 patch.push(nb);
                 queue.push(nb);
               }
@@ -737,10 +813,19 @@ pub(crate) fn tube_uvs(
   for p in &pos2 {
     verts.extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
   }
-  let mut indices: Vec<u32> = tris2.iter().flat_map(|t| t.iter().map(|&i| i as u32)).collect();
-  let v_scale = if opts.normalize_v { 1. } else { spine_len / xsec_perim };
+  let mut indices: Vec<u32> = tris2
+    .iter()
+    .flat_map(|t| t.iter().map(|&i| i as u32))
+    .collect();
+  let v_scale = if opts.normalize_v {
+    1.
+  } else {
+    spine_len / xsec_perim
+  };
   let mut us: Vec<f32> = (0..n2).map(|i| around[i] as f32).collect();
-  let mut vs: Vec<f32> = (0..n2).map(|i| (u2arc(along[i]) * v_scale) as f32).collect();
+  let mut vs: Vec<f32> = (0..n2)
+    .map(|i| (u2arc(along[i]) * v_scale) as f32)
+    .collect();
 
   // per-vertex tangent along +U (the around direction) from per-face gradients of `around`; the
   // slit-mesh duplicates make the gradient seam-consistent
@@ -761,7 +846,11 @@ pub(crate) fn tube_uvs(
       .iter()
       .map(|g| {
         let l = g.norm();
-        let t = if l > 1e-12 { g / l } else { V3::new(1., 0., 0.) };
+        let t = if l > 1e-12 {
+          g / l
+        } else {
+          V3::new(1., 0., 0.)
+        };
         [t.x as f32, t.y as f32, t.z as f32, 1.]
       })
       .collect()
@@ -778,7 +867,9 @@ pub(crate) fn tube_uvs(
     }
   }
   for end in 0..2 {
-    let cap_tris: Vec<usize> = (0..tris2.len()).filter(|&fi| face_end[fi] == end as i8).collect();
+    let cap_tris: Vec<usize> = (0..tris2.len())
+      .filter(|&fi| face_end[fi] == end as i8)
+      .collect();
     if cap_tris.is_empty() {
       continue;
     }
@@ -790,7 +881,10 @@ pub(crate) fn tube_uvs(
         if !cverts.contains(&t[k]) {
           cverts.push(t[k]);
         }
-        let (x, y) = (weld[t[k]].min(weld[t[(k + 1) % 3]]), weld[t[k]].max(weld[t[(k + 1) % 3]]));
+        let (x, y) = (
+          weld[t[k]].min(weld[t[(k + 1) % 3]]),
+          weld[t[k]].max(weld[t[(k + 1) % 3]]),
+        );
         *edge_count.entry((x, y)).or_insert(0) += 1;
       }
     }
@@ -801,7 +895,11 @@ pub(crate) fn tube_uvs(
       .sum::<f64>()
       .max(1e-9);
     let center = cverts.iter().map(|&i| pos2[i]).sum::<V3>() / cverts.len() as f64;
-    let axis32 = Vec3::new(cap_axes[end].x as f32, cap_axes[end].y as f32, cap_axes[end].z as f32);
+    let axis32 = Vec3::new(
+      cap_axes[end].x as f32,
+      cap_axes[end].y as f32,
+      cap_axes[end].z as f32,
+    );
     let (b1, b2) = orthonormal_basis(axis32);
     let (b1d, b2d) = (
       V3::new(b1.x as f64, b1.y as f64, b1.z as f64),
@@ -896,35 +994,61 @@ mod tests {
     let mesh = rendered_mesh("cylinder(1, 4, 24) | compute_uvs(type='tube') | render");
     assert!(mesh.has_flag(mesh_flags::NO_WELD));
     assert!(mesh.vertex_channels.contains_key("tangent"));
-    assert!(max_face_u_span(&mesh) < 0.5, "face bridges U seam: {}", max_face_u_span(&mesh));
+    assert!(
+      max_face_u_span(&mesh) < 0.5,
+      "face bridges U seam: {}",
+      max_face_u_span(&mesh)
+    );
     for uv in uvs(&mesh) {
-      assert!(uv[0].is_finite() && uv[1].is_finite(), "non-finite UV {uv:?}");
+      assert!(
+        uv[0].is_finite() && uv[1].is_finite(),
+        "non-finite UV {uv:?}"
+      );
     }
     // height 4 / circumference 2pi -> isotropic V spans ~0.64; caps' islands stay near origin
     let max_v = uvs(&mesh).iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(max_v > 0.3 && max_v < 2., "isotropic V should be arc/perimeter-scaled, got {max_v}");
+    assert!(
+      max_v > 0.3 && max_v < 2.,
+      "isotropic V should be arc/perimeter-scaled, got {max_v}"
+    );
   }
 
   #[test]
   fn tube_on_bent_pipe() {
-    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube') | render";
+    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n \
+               v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube') | render";
     let mesh = rendered_mesh(src);
-    assert!(max_face_u_span(&mesh) < 0.5, "face bridges U seam: {}", max_face_u_span(&mesh));
+    assert!(
+      max_face_u_span(&mesh) < 0.5,
+      "face bridges U seam: {}",
+      max_face_u_span(&mesh)
+    );
     let all = uvs(&mesh);
     for uv in &all {
-      assert!(uv[0].is_finite() && uv[1].is_finite(), "non-finite UV {uv:?}");
+      assert!(
+        uv[0].is_finite() && uv[1].is_finite(),
+        "non-finite UV {uv:?}"
+      );
     }
     // long thin tube: isotropic V must span multiple wraps (spine_len >> cross-section perimeter)
     let max_v = all.iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(max_v > 1.5, "expected multiple V wraps on a long tube, got max_v {max_v}");
+    assert!(
+      max_v > 1.5,
+      "expected multiple V wraps on a long tube, got max_v {max_v}"
+    );
   }
 
   #[test]
   fn tube_normalize_v() {
-    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube', options={ normalize_v: true }) | render";
+    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n \
+               v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube', options={ normalize_v: \
+               true }) | render";
     let mesh = rendered_mesh(src);
     let max_v = uvs(&mesh).iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(max_v > 0.9 && max_v < 1.6, "normalize_v should make V span ~0..1, got max_v {max_v}");
+    assert!(
+      max_v > 0.9 && max_v < 1.6,
+      "normalize_v should make V span ~0..1, got max_v {max_v}"
+    );
   }
 
   #[test]
@@ -933,11 +1057,9 @@ mod tests {
       return;
     }
     // C-shaped arc tube (mesh CSG is wasm-only, so build the ring class via extrude_pipe)
-    let src = "extrude_pipe(radius=0.7, resolution=8, path=0..49 -> |i| {\n\
-                 t = 0.05 + 0.9 * (i / 48)\n\
-                 a = t * pi * 2\n\
-                 v3(cos(a) * 4, 0, sin(a) * 4)\n\
-               }) | compute_uvs(type='tube') | render";
+    let src = "extrude_pipe(radius=0.7, resolution=8, path=0..49 -> |i| {\nt = 0.05 + 0.9 * (i / \
+               48)\na = t * pi * 2\nv3(cos(a) * 4, 0, sin(a) * 4)\n}) | compute_uvs(type='tube') \
+               | render";
     crate::parse_and_eval_program(src).unwrap();
   }
 
@@ -952,7 +1074,11 @@ mod tests {
       for j in 0..nv {
         let b = j as f32 / nv as f32 * std::f32::consts::TAU;
         let r = 3. + b.cos();
-        verts.push(mesh::linked_mesh::Vec3::new(a.cos() * r, b.sin(), a.sin() * r));
+        verts.push(mesh::linked_mesh::Vec3::new(
+          a.cos() * r,
+          b.sin(),
+          a.sin() * r,
+        ));
       }
     }
     let mut idx: Vec<u32> = Vec::new();

@@ -1361,7 +1361,7 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       (0, false),                                              // RangeInclusive
       (get_builtin_fn_sig_entry_ix("bit_or").unwrap(), false), // Pipeline
       (get_builtin_fn_sig_entry_ix("map").unwrap(), true),
-      (0, false),                                              // Nullish
+      (0, false), // Nullish
     ];
 
     UNOP_DEF_IX_TABLE = [
@@ -1391,9 +1391,7 @@ impl BinOp {
       }
       BinOp::Range => return eval_range(lhs, Some(rhs), false),
       BinOp::RangeInclusive => return eval_range(lhs, Some(rhs), true),
-      BinOp::Nullish => {
-        return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }.clone())
-      }
+      BinOp::Nullish => return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }.clone()),
       _ => (),
     }
 
@@ -2266,8 +2264,8 @@ fn parse_chained_term(ctx: &EvalCtx, chained: Pair<Rule>) -> Result<Expr, ErrorS
           let (line, col) = access.line_col();
           return Err(
             ErrorStack::new(
-              "dynamic field access `[...]` must directly follow the preceding expression \
-               with no whitespace before `[`",
+              "dynamic field access `[...]` must directly follow the preceding expression with no \
+               whitespace before `[`",
             )
             .with_loc(line as u32, col as u32),
           );

@@ -17,8 +17,10 @@ use mesh::linked_mesh::{
 };
 use mesh::OwnedIndexedMesh;
 
-const SNAPSHOT_PATH: &str =
-  concat!(env!("CARGO_MANIFEST_DIR"), "/tests/snapshots/attribute_export.snap");
+const SNAPSHOT_PATH: &str = concat!(
+  env!("CARGO_MANIFEST_DIR"),
+  "/tests/snapshots/attribute_export.snap"
+);
 
 /// Generous enough to absorb cross-platform float noise (last-ULP normalize/trig
 /// differences) while any real attribute regression is orders of magnitude larger.
@@ -46,7 +48,11 @@ fn build_snapshot() -> String {
     });
     m.mark_edge_sharpness(0.8);
     m.separate_vertices_and_compute_normals_with_displacement();
-    serialize_case("box_subdivided", &m.to_raw_indexed(true, true, false), &mut out);
+    serialize_case(
+      "box_subdivided",
+      &m.to_raw_indexed(true, true, false),
+      &mut out,
+    );
   }
 
   // Closed smooth surface: dihedral angles stay below threshold, so vertices are
@@ -55,7 +61,11 @@ fn build_snapshot() -> String {
     let mut m: LinkedMesh<()> = LinkedMesh::new_icosphere(1., 1);
     m.mark_edge_sharpness(0.8);
     m.separate_vertices_and_compute_normals_with_displacement();
-    serialize_case("icosphere_smooth", &m.to_raw_indexed(true, true, false), &mut out);
+    serialize_case(
+      "icosphere_smooth",
+      &m.to_raw_indexed(true, true, false),
+      &mut out,
+    );
   }
 
   // Same sharp box, then normals flipped — covers the flip negate/rewind path.
@@ -64,7 +74,11 @@ fn build_snapshot() -> String {
     m.mark_edge_sharpness(0.8);
     m.separate_vertices_and_compute_normals_with_displacement();
     m.flip_normals();
-    serialize_case("box_flipped", &m.to_raw_indexed(true, true, false), &mut out);
+    serialize_case(
+      "box_flipped",
+      &m.to_raw_indexed(true, true, false),
+      &mut out,
+    );
   }
 
   // Displacement-normal-only export path (the other real export config), on a
@@ -124,7 +138,10 @@ fn attribute_export_snapshot() {
   }
 
   let expected = std::fs::read_to_string(SNAPSHOT_PATH).unwrap_or_else(|e| {
-    panic!("missing snapshot {SNAPSHOT_PATH}: {e}\nrun `BLESS=1 cargo test -p mesh --test attribute_snapshot` to generate it");
+    panic!(
+      "missing snapshot {SNAPSHOT_PATH}: {e}\nrun `BLESS=1 cargo test -p mesh --test \
+       attribute_snapshot` to generate it"
+    );
   });
 
   compare(&expected, &actual);
@@ -146,7 +163,10 @@ fn compare(expected: &str, actual: &str) {
   for (i, (e, a)) in el.iter().zip(&al).enumerate() {
     let (e_label, e_rest) = e.split_once(' ').unwrap_or((e, ""));
     let (a_label, a_rest) = a.split_once(' ').unwrap_or((a, ""));
-    assert_eq!(e_label, a_label, "line {i}: label mismatch\n  expected: {e}\n  actual:   {a}");
+    assert_eq!(
+      e_label, a_label,
+      "line {i}: label mismatch\n  expected: {e}\n  actual:   {a}"
+    );
 
     let is_floats = matches!(e_label, "pos" | "shading" | "displacement") && e_rest != "none";
     if is_floats {
@@ -187,10 +207,24 @@ fn box_corners_split_into_axis_aligned_face_normals() {
   m.separate_vertices_and_compute_normals();
   let raw = m.to_raw_indexed(true, true, false);
 
-  let shading = raw.shading_normals.as_ref().expect("shading normals present");
-  assert_eq!(shading.len() / 3, 24, "expected 8 corners × 3 fans = 24 verts");
+  let shading = raw
+    .shading_normals
+    .as_ref()
+    .expect("shading normals present");
+  assert_eq!(
+    shading.len() / 3,
+    24,
+    "expected 8 corners × 3 fans = 24 verts"
+  );
 
-  let axes = [Vec3::x(), -Vec3::x(), Vec3::y(), -Vec3::y(), Vec3::z(), -Vec3::z()];
+  let axes = [
+    Vec3::x(),
+    -Vec3::x(),
+    Vec3::y(),
+    -Vec3::y(),
+    Vec3::z(),
+    -Vec3::z(),
+  ];
   let mut counts = [0usize; 6];
   for n in shading.chunks_exact(3) {
     let n = Vec3::new(n[0], n[1], n[2]);
@@ -216,13 +250,22 @@ fn removal_clears_channel_entries() {
   let edge_key = m.edges.keys().next().unwrap();
   assert!(m.displacement_normals.get(vtx_key).is_some());
   assert!(m.edge_displacement_normals.get(edge_key).is_some());
-  let (verts_before, edges_before) = (m.displacement_normals.len(), m.edge_displacement_normals.len());
+  let (verts_before, edges_before) = (
+    m.displacement_normals.len(),
+    m.edge_displacement_normals.len(),
+  );
 
   m.remove_vertex(vtx_key);
   m.remove_edge(edge_key);
 
-  assert!(m.displacement_normals.get(vtx_key).is_none(), "vertex channel entry not cleared");
-  assert!(m.edge_displacement_normals.get(edge_key).is_none(), "edge channel entry not cleared");
+  assert!(
+    m.displacement_normals.get(vtx_key).is_none(),
+    "vertex channel entry not cleared"
+  );
+  assert!(
+    m.edge_displacement_normals.get(edge_key).is_none(),
+    "edge channel entry not cleared"
+  );
   assert_eq!(m.displacement_normals.len(), verts_before - 1);
   assert_eq!(m.edge_displacement_normals.len(), edges_before - 1);
 }
@@ -264,11 +307,23 @@ fn set_tangent(m: &mut LinkedMesh<()>, k: VertexKey, v: [f32; 3]) {
 #[test]
 fn passive_channels_propagate_and_flip() {
   let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
-  m.vertex_channels
-    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity));
+  m.vertex_channels.insert(
+    "uv".into(),
+    Channel::new(
+      Arity::Vec2,
+      Interp::Lerp,
+      FlipXform::Identity,
+      SpatialXform::Identity,
+    ),
+  );
   m.vertex_channels.insert(
     "tangent".into(),
-    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate, SpatialXform::Direction),
+    Channel::new(
+      Arity::Vec3,
+      Interp::LerpNormalize,
+      FlipXform::Negate,
+      SpatialXform::Direction,
+    ),
   );
 
   let keys: Vec<VertexKey> = m.vertices.keys().collect();
@@ -292,7 +347,11 @@ fn passive_channels_propagate_and_flip() {
   let uv_a = uv(&m, a);
   m.flip_normals();
   assert_eq!(uv(&m, a), uv_a, "uv (Identity) must survive flip unchanged");
-  assert_eq!(tangent(&m, a), Some([-1., 0., 0.]), "tangent (Negate) must flip");
+  assert_eq!(
+    tangent(&m, a),
+    Some([-1., 0., 0.]),
+    "tangent (Negate) must flip"
+  );
 
   // removal sweeps the registry too.
   m.remove_vertex(a);
@@ -302,11 +361,21 @@ fn passive_channels_propagate_and_flip() {
 fn with_uv_and_tangent(m: &mut LinkedMesh<()>) {
   m.vertex_channels.insert(
     "uv".into(),
-    Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity),
+    Channel::new(
+      Arity::Vec2,
+      Interp::Lerp,
+      FlipXform::Identity,
+      SpatialXform::Identity,
+    ),
   );
   m.vertex_channels.insert(
     "tangent".into(),
-    Channel::new(Arity::Vec3, Interp::LerpNormalize, FlipXform::Negate, SpatialXform::Direction),
+    Channel::new(
+      Arity::Vec3,
+      Interp::LerpNormalize,
+      FlipXform::Negate,
+      SpatialXform::Direction,
+    ),
   );
 }
 
@@ -330,7 +399,10 @@ fn reflect_mirrors_tangents_and_normals() {
   // tangent (a,a,0): Householder -> (a,-a,0), then orientation-flip negate -> (-a,a,0).
   // A flip-only (no Householder) impl would instead give (-a,-a,0).
   let t = tangent(&m, k).unwrap();
-  assert!((t[0] + a).abs() < TOL && (t[1] - a).abs() < TOL && t[2].abs() < TOL, "tangent {t:?}");
+  assert!(
+    (t[0] + a).abs() < TOL && (t[1] - a).abs() < TOL && t[2].abs() < TOL,
+    "tangent {t:?}"
+  );
 
   // shading normal mirrored to -Y; uv (Identity) untouched.
   let n = m.shading_normal(k).unwrap();
@@ -358,7 +430,10 @@ fn bake_transform_rotation_carries_directions() {
 
   let k = m.vertices.keys().next().unwrap();
   let t = tangent(&m, k).unwrap();
-  assert!((t[0]).abs() < TOL && (t[1] - 1.).abs() < TOL, "tangent {t:?}");
+  assert!(
+    (t[0]).abs() < TOL && (t[1] - 1.).abs() < TOL,
+    "tangent {t:?}"
+  );
   let n = m.shading_normal(k).unwrap();
   assert!((n - Vec3::new(0., 1., 0.)).norm() < TOL, "normal {n:?}");
 }
@@ -375,10 +450,18 @@ fn partition_preserves_channels() {
 
   let parts = m.partition_faces(2, |_| Ok::<usize, ()>(0)).unwrap();
   let p0 = &parts[0];
-  assert_eq!(p0.faces.len(), m.faces.len(), "all faces routed to partition 0");
+  assert_eq!(
+    p0.faces.len(),
+    m.faces.len(),
+    "all faces routed to partition 0"
+  );
   for k in p0.vertices.keys() {
     assert_eq!(uv(p0, k), Some([2., 4.]), "uv dropped by partition");
-    assert_eq!(tangent(p0, k), Some([0., 0., 1.]), "tangent dropped by partition");
+    assert_eq!(
+      tangent(p0, k),
+      Some([0., 0., 1.]),
+      "tangent dropped by partition"
+    );
   }
 }
 
@@ -387,8 +470,15 @@ fn partition_preserves_channels() {
 #[test]
 fn separate_vertices_clones_passive_channels_onto_split_duplicates() {
   let mut m: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
-  m.vertex_channels
-    .insert("uv".into(), Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity));
+  m.vertex_channels.insert(
+    "uv".into(),
+    Channel::new(
+      Arity::Vec2,
+      Interp::Lerp,
+      FlipXform::Identity,
+      SpatialXform::Identity,
+    ),
+  );
   for k in m.vertices.keys().collect::<Vec<_>>() {
     set_uv(&mut m, k, [7., 9.]);
   }
@@ -399,6 +489,10 @@ fn separate_vertices_clones_passive_channels_onto_split_duplicates() {
   // all-sharp box: 8 corners each split into 3 → 24 verts, every one carrying the cloned uv.
   assert_eq!(m.vertices.len(), 24);
   for k in m.vertices.keys() {
-    assert_eq!(uv(&m, k), Some([7., 9.]), "split duplicate missing cloned uv");
+    assert_eq!(
+      uv(&m, k),
+      Some([7., 9.]),
+      "split duplicate missing cloned uv"
+    );
   }
 }

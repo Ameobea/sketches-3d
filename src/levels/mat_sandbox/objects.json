@@ -352,6 +352,46 @@
       "scale": [1, 1, 1]
     },
     {
+      "id": "gizmo_tower_demo",
+      "asset": "gizmo_tower",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "position": [-70, 3, 40],
+      "rotation": [0, 0.4, 0],
+      "scale": [1, 1, 1],
+      "inputs": {
+        "cap": {
+          "type": "vec3",
+          "value": [0, 14.0987, 0]
+        }
+      }
+    },
+    {
+      "id": "pipes_comp_demo",
+      "asset": "pipes_comp",
+      "position": [-85, 3, 22],
+      "rotation": [0, 0.2, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "pipe_run_demo",
+      "asset": "pipe_run",
+      "material": "__ASSETS__/materials/procedural/grooved_plastic",
+      "position": [-70, 3, 22],
+      "rotation": [0, 0.3, 0],
+      "scale": [1, 1, 1],
+      "inputs": {
+        "path": {
+          "type": "spline",
+          "value": [
+            [0, 0, 0],
+            [1.5719, 4.9796, 2.0139],
+            [4.2227, 3.809, 0.0689],
+            [5.378, 7.457, 3.1889]
+          ]
+        }
+      }
+    },
+    {
       "id": "tower_ring",
       "generator": "tower_ring",
       "children": [],
