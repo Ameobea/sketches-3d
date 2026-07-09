@@ -5708,6 +5708,51 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "deriv" => FnDef {
+    module: "fn",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "f",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Single-parameter closure to differentiate.  Its parameter must carry an explicit type annotation (numeric, vec2, or vec3)."
+          },
+          ArgDef {
+            name: "dir",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Vec3, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Tangent direction seeding the forward-mode derivative; must match the closure's parameter type."
+          },
+        ],
+        description: "Forward-mode automatic differentiation.  Returns a new closure computing the directional derivative (JVP) of `f` seeded by `dir` — e.g. for an embedding `phi = |p: vec2|: vec3`, `deriv(phi, vec2(1, 0))` computes the partial `d phi / d u`.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "grad" => FnDef {
+    module: "fn",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "f",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Single-parameter, scalar-output closure to differentiate.  Its parameter must carry an explicit type annotation."
+          },
+        ],
+        description: "Returns a closure computing the gradient of a scalar-output function `f`.  For a vec2/vec3 input the result returns the vector of partial derivatives; for a scalar input it is just `f'`.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
   "compose" => FnDef {
     module: "fn",
     examples: &[FnExample { composition_id: 34 }],
@@ -7763,6 +7808,67 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Tessellates a 2D path into a triangle mesh, by default in the XZ plane (override with `plane`).\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
+        return_type: &[ArgType::Mesh],
+      }
+    ],
+  },
+  "embed_path" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A filled 2D region to embed and thicken.  A sequence of Vec2 points, a sequence of Vec2 sequences (outer + holes via subpath nesting), or a path callable `|t: num|: vec2` (e.g. from `trace_path`).  Holes drilled through the plate come straight from subpath nesting, exactly like `tessellate_path`."
+          },
+          ArgDef {
+            name: "embed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "The map φ used to embed the region into 3D: `|uv: vec2|: vec3`.  Receives the path's native 2D coordinates (not normalized), so `|p| v3(p.x, 0, p.y)` reproduces a flat plate in the XZ plane.  Make it follow a curve, spline, helix, or analytic surface to bend the plate."
+          },
+          ArgDef {
+            name: "thickness",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "How far to thicken the embedded surface into a closed solid, offset along the per-vertex embedded normal.  A number for uniform thickness, or a callable `|pos: vec3|: num` for per-vertex thickness (like `extrude_along_normals`)."
+          },
+          ArgDef {
+            name: "flipped",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, flips the cap winding, reversing which side the thickness grows toward."
+          },
+          ArgDef {
+            name: "tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Distortion-aware cap refinement tolerance, in world units: the maximum allowed deviation between the faceted cap and the true embedded surface.  When nil (default), the cap is a single coarse triangulation of the input path (fast, but a straight domain edge that bends under `embed` will facet into long slivers).  When set to a positive number, each boundary loop is densified under `embed` so straight edges resolve into their true 3D curves, and the interior is Delaunay-refined until every triangle is within tolerance.  Smaller values give a finer, more faithful surface at the cost of more triangles.\n\nDistinct from `curve_angle_degrees`: that controls how finely the input path's own 2D curves are sampled *before* embedding; `tolerance` controls how finely the embedded 3D surface is resolved *after*.  They compose."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing the input path's 2D curves (beziers/arcs/circles from `trace_path` etc.) into the boundary polyline that gets embedded.  Falls back to the runtime default (settable via `set_curve_angle_threshold`, seeded by the prelude) when nil.  Only affects callable/`PathSampler` inputs with actual curve features; a raw `Seq<Vec2>` is used as-is."
+          },
+          ArgDef {
+            name: "normal_mode",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "How the surface normal is computed, used both for the thickening offset direction and for the cap's authored (smooth) shading normals.  Nil (default) picks the best available: exact symbolic autodiff of `embed` when it is differentiable, otherwise finite differences.  \"autodiff\" forces exact derivatives (errors if `embed` isn't differentiable), \"finite_diff\" forces central differences, and \"mesh\" reverts to topological face-weighted normals with no authored shading normals (the classic welded output).  The explicit modes are handy for validation and debugging.  In the analytic modes the caps get exact smooth normals and a crisp cap/wall crease, so the output is a seam-split (NO_WELD) mesh rather than a fully-welded one."
+          },
+        ],
+        description: "Embeds a filled 2D path into 3D through an arbitrary map φ: ℝ²→ℝ³ and thickens it into a closed 2-manifold solid.  Generalizes `tessellate_path` from an affine coordinate-plane embedding to any nonlinear map, and fuses in `extrude_along_normals`-style thickening in a single pass.\n\nThe region is constrained-Delaunay-triangulated (holes via subpath nesting), each vertex is mapped through `embed`, and the resulting surface is offset along its per-vertex normals and stitched into a watertight solid.  A hole in the path becomes a hole drilled through the thickness of the plate.\n\nBy default the cap is a single coarse triangulation, so strongly-curved embeddings facet; set `tolerance` for distortion-aware refinement that resolves the true warped shape (densifies boundary curves under `embed` and refines the interior to tolerance).\n\nThe cap's surface normals come from `normal_mode` (default: exact autodiff of `embed` when possible, else finite differences), giving smooth analytic shading; pass \"mesh\" for the classic topological-normal behavior.",
         return_type: &[ArgType::Mesh],
       }
     ],

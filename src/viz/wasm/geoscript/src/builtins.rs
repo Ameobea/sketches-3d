@@ -12,6 +12,7 @@ use std::{cell::RefCell, fmt::Display};
 use fxhash::FxHashMap;
 use mesh::{
   linked_mesh::{mesh_flags, DisplacementNormalMethod, FaceKey, Plane, Vec3, Vertex, VertexKey},
+  slotmap_utils::{vkey, vkey_ix},
   LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
@@ -43,7 +44,7 @@ use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight, ShadowCamera},
   mesh_ops::{
-    extrude::{extrude, extrude_along_normals},
+    extrude::{extrude, extrude_along_normals, extrude_along_normals_with_normal_override},
     extrude_path::extrude_path,
     extrude_pipe::{extrude_pipe, EndMode},
     fan_fill::{fan_fill, fan_fill_subpaths},
@@ -62,7 +63,7 @@ use crate::{
     ApplyTransformsSeq, ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq,
     PointDistributeSeq, ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
-  seq_as_eager, ArgRef, Callable, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
+  seq_as_eager, ArgRef, Callable, Closure, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
 };
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
@@ -2457,6 +2458,474 @@ fn tessellate_path_impl(
   }
 }
 
+/// Discretizes a fillable path (Seq<Vec2>, Seq<Seq<Vec2>>, or a path callable) into cleaned,
+/// closed 2D subpaths ready for constrained triangulation.  Mirrors `tessellate_path`'s cleanup
+/// (dedup coincident points, drop the closing duplicate, require >= 3 points) and reuses
+/// `sample_path_subpaths` for the callable case.
+fn discretize_fillable_paths(
+  ctx: &EvalCtx,
+  path_val: &Value,
+  curve_angle_radians: f32,
+  sample_count: usize,
+  fn_name: &str,
+) -> Result<Vec<Vec<Vec2>>, ErrorStack> {
+  const DEDUP_EPSILON: f32 = 1e-5;
+  let dedup_eps_sq = DEDUP_EPSILON * DEDUP_EPSILON;
+
+  let mut paths: Vec<Vec<Vec2>> = Vec::new();
+  let mut push_clean = |points: Vec<Vec2>, label: &str| -> Result<(), ErrorStack> {
+    let mut cleaned: Vec<Vec2> = Vec::with_capacity(points.len());
+    for point in points {
+      if cleaned
+        .last()
+        .map(|last| (*last - point).norm_squared() <= dedup_eps_sq)
+        .unwrap_or(false)
+      {
+        continue;
+      }
+      cleaned.push(point);
+    }
+    if cleaned.len() >= 2 && (cleaned[0] - *cleaned.last().unwrap()).norm_squared() <= dedup_eps_sq {
+      cleaned.pop();
+    }
+    if cleaned.len() < 3 {
+      return Err(ErrorStack::new(format!(
+        "Cannot fill path with fewer than 3 points after cleanup in {label} for `{fn_name}`; got {}",
+        cleaned.len()
+      )));
+    }
+    paths.push(cleaned);
+    Ok(())
+  };
+
+  if let Some(seq) = path_val.as_sequence() {
+    let mut flat_points: Vec<Vec2> = Vec::new();
+    let mut saw_nested = false;
+    let mut saw_points = false;
+
+    for (ix, res) in seq.consume(ctx).enumerate() {
+      match res? {
+        Value::Vec2(v) => {
+          if saw_nested {
+            return Err(ErrorStack::new(format!(
+              "Invalid path sequence for `{fn_name}`; found mixed Vec2 and Sequence entries"
+            )));
+          }
+          saw_points = true;
+          flat_points.push(Vec2::new(v.x, v.y));
+        }
+        Value::Sequence(inner) => {
+          if saw_points {
+            return Err(ErrorStack::new(format!(
+              "Invalid path sequence for `{fn_name}`; found mixed Vec2 and Sequence entries"
+            )));
+          }
+          saw_nested = true;
+          let points = inner
+            .consume(ctx)
+            .enumerate()
+            .map(|(inner_ix, res)| match res {
+              Ok(Value::Vec2(v)) => Ok(Vec2::new(v.x, v.y)),
+              Ok(other) => Err(ErrorStack::new(format!(
+                "Expected Vec2 in nested path sequence for `{fn_name}` at [{ix}][{inner_ix}], \
+                 found: {other:?}"
+              ))),
+              Err(err) => Err(err),
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+          push_clean(points, &format!("subpath {ix}"))?;
+        }
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid path sequence for `{fn_name}`; expected Vec2 or Sequence, found: {other:?}"
+          )))
+        }
+      }
+    }
+
+    if saw_points {
+      push_clean(flat_points, "path sequence")?;
+    }
+  } else if let Some(cb) = path_val.as_callable() {
+    let subpaths = sample_path_subpaths(ctx, cb, curve_angle_radians, sample_count, Some(true), fn_name)?;
+    for (ix, (points, _closed)) in subpaths.into_iter().enumerate() {
+      push_clean(points, &format!("subpath {ix}"))?;
+    }
+  } else {
+    return Err(ErrorStack::new(format!(
+      "Invalid path argument for `{fn_name}`; expected Sequence or Callable, found: {path_val:?}"
+    )));
+  }
+
+  if paths.is_empty() {
+    return Err(ErrorStack::new(format!(
+      "`{fn_name}` produced no fillable subpaths from the given path"
+    )));
+  }
+  Ok(paths)
+}
+
+/// Domain step for finite-difference embedding frames when autodiff is unavailable.
+const EMBED_FRAME_FD_STEP: f32 = 1e-3;
+
+/// A unit vector perpendicular to `n` (arbitrary in-plane direction), for degenerate-tangent fallback.
+fn any_perp(n: Vec3) -> Vec3 {
+  let axis = if n.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
+  let t = axis - n * n.dot(&axis);
+  if t.norm() > 1e-9 {
+    t.normalize()
+  } else {
+    Vec3::x()
+  }
+}
+
+/// Walks the border edges of a cap mesh (keyed `vkey(i+1, 1)`) into ordered loops, returning per
+/// boundary vertex its cumulative 3D arc-length along the loop and its loop-tangent direction
+/// (interior vertices stay `None`), plus, per loop, its closure at the seam vertex: `(last vertex,
+/// perimeter)` keyed by the loop's start index (all other entries `None`).  Feeds `embed_path`'s
+/// walls `rail_sweep`-style arc-length × thickness UVs, a boundary-following tangent, and the wrap
+/// seam to split.
+fn embed_boundary_arclen_tangents(
+  cap: &LinkedMesh<()>,
+  positions: &[Vec3],
+) -> (Vec<Option<f32>>, Vec<Option<Vec3>>, Vec<Option<(usize, f32)>>) {
+  let n = positions.len();
+  let mut adj: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+  for edge in cap.edges.values() {
+    if edge.faces.len() != 1 {
+      continue;
+    }
+    let a = vkey_ix(&edge.vertices[0]) as usize - 1;
+    let b = vkey_ix(&edge.vertices[1]) as usize - 1;
+    adj.entry(a).or_default().push(b);
+    adj.entry(b).or_default().push(a);
+  }
+
+  let mut arclen = vec![None; n];
+  let mut btan = vec![None; n];
+  let mut closure = vec![None; n];
+  let mut visited = vec![false; n];
+  for start in 0..n {
+    if visited[start] || !adj.contains_key(&start) {
+      continue;
+    }
+    let mut order = Vec::new();
+    let (mut cur, mut prev) = (start, usize::MAX);
+    loop {
+      visited[cur] = true;
+      order.push(cur);
+      let nbrs = &adj[&cur];
+      let next = nbrs.iter().copied().find(|&x| x != prev).unwrap_or(nbrs[0]);
+      if next == start || visited[next] {
+        break;
+      }
+      prev = cur;
+      cur = next;
+    }
+    let m = order.len();
+    if m < 2 {
+      continue;
+    }
+    let mut cum = 0.;
+    for k in 0..m {
+      arclen[order[k]] = Some(cum);
+      cum += (positions[order[(k + 1) % m]] - positions[order[k]]).norm();
+    }
+    for k in 0..m {
+      let t = positions[order[(k + 1) % m]] - positions[order[(k + m - 1) % m]];
+      btan[order[k]] = Some(if t.norm() > 1e-9 { t.normalize() } else { Vec3::x() });
+    }
+    closure[order[0]] = Some((order[m - 1], cum));
+  }
+  (arclen, btan, closure)
+}
+
+fn embed_path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  use mesh::linked_mesh::{Arity, Channel, FlipXform, Interp, SpatialXform};
+
+  use crate::mesh_ops::tessellate_polygon::{
+    estimate_embed_frame, tessellate_2d_paths_embedded, tessellate_2d_paths_embedded_refined,
+    AutodiffEmbedFrame, CgalCdtOptions, NormalMode,
+  };
+
+  match def_ix {
+    0 => {
+      let path_val = arg_refs[0].resolve(args, kwargs).clone();
+      let embed_cb = arg_refs[1].resolve(args, kwargs).as_callable().unwrap().clone();
+      let thickness_val = arg_refs[2].resolve(args, kwargs).clone();
+      let flipped = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let tolerance: Option<f32> = match arg_refs[4].resolve(args, kwargs) {
+        Value::Nil => None,
+        Value::Int(n) if *n > 0 => Some(*n as f32),
+        Value::Float(f) if *f > 0.0 => Some(*f),
+        Value::Int(_) | Value::Float(_) => {
+          return Err(ErrorStack::new(
+            "Invalid tolerance for `embed_path`; expected a positive number or nil",
+          ))
+        }
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid tolerance for `embed_path`; expected number or nil, found: {other:?}"
+          )))
+        }
+      };
+      let normal_mode = match arg_refs[6].resolve(args, kwargs) {
+        Value::Nil => NormalMode::Auto,
+        v => match v.as_str() {
+          Some(s) => NormalMode::parse(s).ok_or_else(|| {
+            ErrorStack::new(format!(
+              "Invalid normal_mode for `embed_path`: {s:?}; expected \"auto\", \"autodiff\", \
+               \"finite_diff\", \"mesh\", or nil"
+            ))
+          })?,
+          None => {
+            return Err(ErrorStack::new(format!(
+              "Invalid normal_mode for `embed_path`; expected string or nil, found: {v:?}"
+            )))
+          }
+        },
+      };
+      if !matches!(
+        thickness_val,
+        Value::Int(_) | Value::Float(_) | Value::Callable(_)
+      ) {
+        return Err(ErrorStack::new(format!(
+          "Invalid thickness for `embed_path`; expected number or callable, found: {thickness_val:?}"
+        )));
+      }
+
+      let curve_angle_radians = ctx
+        .resolve_curve_angle_degrees(arg_refs[5].resolve(args, kwargs))
+        .to_radians();
+      let paths = discretize_fillable_paths(ctx, &path_val, curve_angle_radians, 64, "embed_path")?;
+
+      let embed = |uv: Vec2| -> Result<Vec3, ErrorStack> {
+        let out = ctx
+          .invoke_callable(&embed_cb, &[Value::Vec2(uv)], EMPTY_KWARGS)
+          .map_err(|err| err.wrap("Error produced by `embed` callable in `embed_path`"))?;
+        out.as_vec3().copied().ok_or_else(|| {
+          ErrorStack::new(format!(
+            "Expected Vec3 from `embed` callable in `embed_path`, found: {out:?}"
+          ))
+        })
+      };
+
+      let distance = |pos: Vec3| -> Result<f32, ErrorStack> {
+        match &thickness_val {
+          Value::Callable(cb) => {
+            let out = ctx
+              .invoke_callable(cb, &[Value::Vec3(pos)], EMPTY_KWARGS)
+              .map_err(|err| err.wrap("Error produced by `thickness` callable in `embed_path`"))?;
+            out.as_float().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected number from `thickness` callable in `embed_path`, found: {out:?}"
+              ))
+            })
+          }
+          _ => Ok(thickness_val.as_float().unwrap()),
+        }
+      };
+
+      let (mut mesh, domain_uvs) = match tolerance {
+        Some(tol) => tessellate_2d_paths_embedded_refined(&paths, flipped, tol, &embed)?,
+        None => tessellate_2d_paths_embedded(&paths, flipped, CgalCdtOptions::default(), &embed)?,
+      };
+
+      let n = domain_uvs.len();
+      let cap_positions: Vec<Vec3> = (0..n)
+        .map(|i| mesh.vertices[vkey(i as u32 + 1, 1)].position)
+        .collect();
+
+      if normal_mode == NormalMode::Mesh {
+        extrude_along_normals(&mut mesh, &distance)?;
+      } else {
+        let autodiff_frame = matches!(normal_mode, NormalMode::Auto | NormalMode::Autodiff)
+          .then(|| AutodiffEmbedFrame::try_build(ctx, &embed_cb))
+          .flatten();
+        if normal_mode == NormalMode::Autodiff && autodiff_frame.is_none() {
+          return Err(ErrorStack::new(
+            "`embed_path` normal_mode=\"autodiff\" requires an autodiff-differentiable `embed` \
+             closure (single typed `vec2` param, only supported builtins/operators); pass nil for \
+             automatic finite-difference fallback or use normal_mode=\"finite_diff\"",
+          ));
+        }
+
+        let (arclen, btan, closure) = embed_boundary_arclen_tangents(&mesh, &cap_positions);
+
+        let uv_by_key: FxHashMap<VertexKey, Vec2> = domain_uvs
+          .iter()
+          .enumerate()
+          .map(|(i, &uv)| (vkey(i as u32 + 1, 1), uv))
+          .collect();
+        // Per cap vertex: analytic (offset-aligned) surface normal + the partials φ_u, φ_v.
+        let frames = RefCell::new(vec![(Vec3::zeros(), Vec3::zeros(), Vec3::zeros()); n]);
+
+        extrude_along_normals_with_normal_override(&mut mesh, &distance, |vk, topo| {
+          let Some(&uv) = uv_by_key.get(&vk) else {
+            return Ok(None);
+          };
+          let frame = match &autodiff_frame {
+            Some(f) => f.frame(ctx, uv)?,
+            None => estimate_embed_frame(uv, EMBED_FRAME_FD_STEP, &embed)?,
+          };
+          if frame.normal.norm() < 1e-9 {
+            return Ok(None);
+          }
+          let normal = if frame.normal.dot(&topo) < 0. { -frame.normal } else { frame.normal };
+          frames.borrow_mut()[vkey_ix(&vk) as usize - 1] = (normal, frame.du, frame.dv);
+          Ok(Some(normal))
+        })?;
+
+        // Split the cap/wall seam via the standard auto-smooth pass (walls keep topological normals,
+        // the junction stays a crisp crease), then author analytic attributes onto each split vertex
+        // — matched by position, disambiguated cap-vs-wall by the fan's topological normal:
+        //   caps  -> exact analytic normal, domain-coord UVs, tangent = φ_u
+        //   walls -> arc-length × thickness UVs, tangent = boundary direction
+        // The complete normal set + `NO_WELD` make the render path use these verbatim.  glTF `w`
+        // handedness is derived analytically from the target bitangent (φ_v for caps, the thickness
+        // direction for walls).
+        let frames = frames.into_inner();
+        let thick: Vec<f32> = cap_positions
+          .iter()
+          .map(|&p| distance(p))
+          .collect::<Result<_, _>>()?;
+        mesh.mark_edge_sharpness(ctx.sharp_angle_threshold_degrees.borrow().to_radians());
+        mesh.separate_vertices_and_compute_normals();
+
+        let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+        let mut by_pos: FxHashMap<[u32; 3], (usize, bool)> = FxHashMap::default();
+        for i in 0..n {
+          let (a, ..) = frames[i];
+          if a.norm() < 1e-9 {
+            continue;
+          }
+          by_pos.insert(pos_key(cap_positions[i]), (i, false));
+          by_pos.insert(pos_key(cap_positions[i] + a * thick[i]), (i, true));
+        }
+
+        let mut uv_ch =
+          Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity);
+        let mut tan_ch =
+          Channel::new(Arity::Vec4, Interp::Lerp, FlipXform::Negate, SpatialXform::Direction);
+        for vk in mesh.vertices.keys().collect::<Vec<_>>() {
+          let p = mesh.vertices[vk].position;
+          let Some(&(i, is_top)) = by_pos.get(&pos_key(p)) else {
+            continue;
+          };
+          let (a, du, dv) = frames[i];
+          let cn = mesh.shading_normals.get(vk).copied().unwrap_or(a);
+          let is_cap = a.dot(&cn).abs() > 0.5;
+
+          let (uv, t_raw, n_shade, b_target) = if is_cap {
+            let nsign = if a.dot(&cn) < 0. { -a } else { a };
+            mesh.set_shading_normal(vk, Some(nsign));
+            (domain_uvs[i], du, nsign, dv)
+          } else {
+            let v = if is_top { thick[i] } else { 0. };
+            (
+              Vec2::new(arclen[i].unwrap_or(0.), v),
+              btan[i].unwrap_or_else(|| any_perp(cn)),
+              cn,
+              a,
+            )
+          };
+
+          let t = t_raw - n_shade * n_shade.dot(&t_raw);
+          let t = if t.norm() > 1e-9 { t.normalize() } else { any_perp(n_shade) };
+          let w = if n_shade.cross(&t).dot(&b_target) < 0. { -1. } else { 1. };
+          uv_ch.set(vk, [uv.x, uv.y, 0., 0.]);
+          tan_ch.set(vk, [t.x, t.y, t.z, w]);
+        }
+        mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
+        mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+
+        // Split each boundary loop's wall wrap-seam — the closure quad where U jumps perimeter→0 and
+        // crushes the texture.  Clone the seam-side wall verts onto just the closure faces and give
+        // the clones U=perimeter, à la `rail_sweep::split_profile_seams`.  `split_off_faces` carries
+        // the shading normal + channel slots to the clone, so the complete-normal set survives; a
+        // seam fan already isolated (a sharp corner) has its U set in place instead (no orphan).
+        let mut verts_by_pos: FxHashMap<[u32; 3], Vec<VertexKey>> = FxHashMap::default();
+        for vk in mesh.vertices.keys() {
+          verts_by_pos
+            .entry(pos_key(mesh.vertices[vk].position))
+            .or_default()
+            .push(vk);
+        }
+        for i in 0..n {
+          let Some((v_last, perim)) = closure[i] else {
+            continue;
+          };
+          let a_i = frames[i].0;
+          let vlast_keys = [
+            pos_key(cap_positions[v_last]),
+            pos_key(cap_positions[v_last] + frames[v_last].0 * thick[v_last]),
+          ];
+          for seam_pos in [cap_positions[i], cap_positions[i] + a_i * thick[i]] {
+            let Some(keys) = verts_by_pos.get(&pos_key(seam_pos)).cloned() else {
+              continue;
+            };
+            for vk in keys {
+              let cn = mesh.shading_normals.get(vk).copied().unwrap_or(a_i);
+              if a_i.dot(&cn).abs() > 0.5 {
+                continue; // cap fan
+              }
+              let mut incident: Vec<FaceKey> = Vec::new();
+              for &ek in &mesh.vertices[vk].edges {
+                for &fk in &mesh.edges[ek].faces {
+                  if !incident.contains(&fk) {
+                    incident.push(fk);
+                  }
+                }
+              }
+              let wrap: Vec<FaceKey> = incident
+                .iter()
+                .copied()
+                .filter(|&fk| {
+                  mesh.faces[fk]
+                    .vertices
+                    .iter()
+                    .any(|&fv| vlast_keys.contains(&pos_key(mesh.vertices[fv].position)))
+                })
+                .collect();
+              if wrap.is_empty() {
+                continue;
+              }
+              let target = if wrap.len() == incident.len() {
+                vk
+              } else {
+                mesh.split_off_faces(vk, &wrap)
+              };
+              if let Some(uv_ch) = mesh.vertex_channels.get_mut("uv") {
+                if let Some(mut uv) = uv_ch.get(vk) {
+                  uv[0] = perim;
+                  uv_ch.set(target, uv);
+                }
+              }
+            }
+          }
+        }
+        mesh.flags |= mesh_flags::NO_WELD;
+      }
+
+      Ok(Value::Mesh(Rc::new(MeshHandle {
+        mesh: Rc::new(mesh),
+        transform: Matrix4::identity(),
+        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+        aabb: RefCell::new(None),
+        trimesh: RefCell::new(None),
+        material: None,
+      })))
+    }
+    _ => unimplemented!(),
+  }
+}
+
 fn stitch_contours_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -4325,6 +4794,50 @@ fn compose_impl(
     }
     _ => unreachable!(),
   }
+}
+
+fn resolve_differentiable_closure<'a>(
+  fn_name: &str,
+  callable: &'a Value,
+) -> Result<&'a Closure, ErrorStack> {
+  let Some(callable) = callable.as_callable() else {
+    return Err(ErrorStack::new(format!(
+      "`{fn_name}` expects a callable as its first argument, found: {callable:?}"
+    )));
+  };
+  match &**callable {
+    Callable::Closure(closure) => Ok(closure),
+    _ => Err(ErrorStack::new(format!(
+      "`{fn_name}` can only differentiate a plain closure, not a builtin, partial application, or \
+       composed function"
+    ))),
+  }
+}
+
+fn deriv_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let f = arg_refs[0].resolve(args, kwargs);
+  let dir = arg_refs[1].resolve(args, kwargs).clone();
+  let closure = resolve_differentiable_closure("deriv", f)?;
+  let derivative = crate::autodiff::build_directional_derivative(ctx, closure, &dir)?;
+  Ok(Value::Callable(Rc::new(Callable::Closure(derivative))))
+}
+
+fn grad_impl(
+  ctx: &EvalCtx,
+  _def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let f = arg_refs[0].resolve(args, kwargs);
+  let closure = resolve_differentiable_closure("grad", f)?;
+  crate::autodiff::build_gradient(ctx, closure)
 }
 
 fn point_distribute_impl(
@@ -8888,6 +9401,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "compose" => builtin_fn!(compose, |def_ix, _arg_refs, args, kwargs, ctx| {
     compose_impl(ctx, def_ix, args, kwargs)
   }),
+  "deriv" => builtin_fn!(deriv, |def_ix, arg_refs, args, kwargs, ctx| {
+    deriv_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "grad" => builtin_fn!(grad, |def_ix, arg_refs, args, kwargs, ctx| {
+    grad_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "warp" => builtin_fn!(warp, |def_ix, arg_refs, args, kwargs, ctx| {
     warp_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -9124,6 +9643,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "tessellate_path" => builtin_fn!(tessellate_path, |def_ix, arg_refs, args, kwargs, ctx| {
     tessellate_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "embed_path" => builtin_fn!(embed_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    embed_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "simplify" => builtin_fn!(simplify, |def_ix, arg_refs, args, kwargs, _ctx| {
     simplify_impl(def_ix, arg_refs, args, kwargs)
@@ -9373,5 +9895,180 @@ mod combine_flag_tests {
     // Two plain operands stay weldable.
     let out = add_impl(4, &plain, &plain).unwrap();
     assert!(!out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));
+  }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod embed_path_tests {
+  use mesh::linked_mesh::{mesh_flags, ChannelStore};
+
+  use crate::parse_and_eval_program;
+
+  // `normal_mode="mesh"` keeps the classic welded output: a flat embedding + uniform thickness on
+  // the native (single-subpath fan-fill) backend welds into a closed 2-manifold box with no
+  // authored shading normals.
+  #[test]
+  fn embed_path_mesh_mode_is_welded_closed_solid() {
+    let src = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5,
+  normal_mode="mesh"
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let handle = ctx.get_global("mesh").unwrap();
+    let handle = handle.as_mesh().unwrap();
+    handle
+      .mesh
+      .check_is_manifold::<true>()
+      .expect("mesh-mode solid should be a closed 2-manifold");
+    // 4 cap verts duplicated by the thickening pass.
+    assert_eq!(handle.mesh.vertices.len(), 8);
+    assert!(handle.mesh.shading_normals.is_empty(), "mesh mode authors no normals");
+    assert!(!handle.mesh.has_flag(mesh_flags::NO_WELD));
+  }
+
+  // A per-vertex `thickness` callable is honored and still produces a watertight solid (mesh mode).
+  #[test]
+  fn embed_path_callable_thickness_is_watertight() {
+    let src = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=|pos| 0.25 + 0.1 * pos.x,
+  normal_mode="mesh"
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    ctx.get_global("mesh")
+      .unwrap()
+      .as_mesh()
+      .unwrap()
+      .mesh
+      .check_is_manifold::<true>()
+      .expect("callable-thickness solid should be a closed 2-manifold");
+  }
+
+  // Default mode authors a complete set of analytic cap shading normals (falling back to finite
+  // differences for this un-annotated embed) and marks the mesh NO_WELD.  For the flat plate the
+  // caps must carry the exact vertical plane normal while the walls stay horizontal — i.e. every
+  // shading normal is cleanly axis-separated, proving the caps got the analytic normal rather than
+  // a topological average, and the cap/wall crease survives.
+  #[test]
+  fn embed_path_default_authors_analytic_cap_normals() {
+    let src = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let handle = ctx.get_global("mesh").unwrap();
+    let m = &handle.as_mesh().unwrap().mesh;
+    assert!(m.has_flag(mesh_flags::NO_WELD), "analytic mode should be NO_WELD");
+    assert_eq!(
+      m.shading_normals.len(),
+      m.vertices.len(),
+      "analytic mode must author a complete normal set so the render path keeps it"
+    );
+    let (mut caps, mut walls) = (0, 0);
+    for n in m.shading_normals.values() {
+      assert!((n.norm() - 1.).abs() < 1e-4, "normals must be unit length");
+      if n.y.abs() > 0.99 {
+        caps += 1;
+      } else if n.y.abs() < 0.01 {
+        walls += 1;
+      } else {
+        panic!("normal neither cap-vertical nor wall-horizontal: {n:?}");
+      }
+    }
+    assert!(caps > 0 && walls > 0, "expected both cap and wall normals: caps={caps} walls={walls}");
+
+    // UV + tangent channels are authored, complete, and well-formed: caps carry the domain corner
+    // coords; walls span V=0 (bottom) to thickness (top); every tangent is unit with w=±1.
+    let ChannelStore::Vec2(uvs) = &m.vertex_channels["uv"].store else {
+      panic!("uv channel missing / wrong arity");
+    };
+    let ChannelStore::Vec4(tans) = &m.vertex_channels["tangent"].store else {
+      panic!("tangent channel missing / wrong arity");
+    };
+    assert_eq!(uvs.len(), m.vertices.len());
+    assert_eq!(tans.len(), m.vertices.len());
+
+    let corners = [(0., 0.), (2., 0.), (2., 2.), (0., 2.)];
+    let (mut top_wall, mut bot_wall) = (false, false);
+    let mut max_wall_u = 0f32;
+    for vk in m.vertices.keys() {
+      let t = tans[vk];
+      let tlen = (t[0] * t[0] + t[1] * t[1] + t[2] * t[2]).sqrt();
+      assert!((tlen - 1.).abs() < 1e-4, "tangent not unit: {t:?}");
+      assert!(t[3] == 1. || t[3] == -1., "tangent w not ±1: {}", t[3]);
+
+      let uv = uvs[vk];
+      if m.shading_normals[vk].y.abs() > 0.99 {
+        assert!(
+          corners
+            .iter()
+            .any(|&(u, v)| (uv[0] - u).abs() < 1e-4 && (uv[1] - v).abs() < 1e-4),
+          "cap UV not a domain corner: {uv:?}"
+        );
+      } else {
+        top_wall |= (uv[1] - 0.5).abs() < 1e-4;
+        bot_wall |= uv[1].abs() < 1e-4;
+        max_wall_u = max_wall_u.max(uv[0]);
+      }
+    }
+    assert!(top_wall && bot_wall, "walls should span V=0..thickness");
+    // The wrap seam was split: a seam-clone carries U = perimeter (8 for the 2×2 boundary), which
+    // no plain boundary vertex (arc-lengths 0/2/4/6) reaches.
+    assert!(
+      (max_wall_u - 8.).abs() < 1e-3,
+      "wall seam clone should reach perimeter=8, got {max_wall_u}"
+    );
+  }
+
+  // `normal_mode="autodiff"` on a differentiable curved embed runs the exact-derivative branch and
+  // still authors a complete NO_WELD normal set; on a non-differentiable embed it errors rather
+  // than silently falling back (the explicit-mode contract).
+  #[test]
+  fn embed_path_autodiff_mode_authors_and_validates() {
+    let ok = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p: vec2|: vec3 { vec3(p.x, exp(-(p.x*p.x + p.y*p.y)), p.y) },
+  thickness=0.3,
+  normal_mode="autodiff"
+)
+"#;
+    let ctx = parse_and_eval_program(ok).unwrap();
+    let handle = ctx.get_global("mesh").unwrap();
+    let m = &handle.as_mesh().unwrap().mesh;
+    assert!(m.has_flag(mesh_flags::NO_WELD));
+    assert_eq!(m.shading_normals.len(), m.vertices.len());
+    // Autodiff path authors complete uv + tangent channels too.
+    let ChannelStore::Vec2(uvs) = &m.vertex_channels["uv"].store else {
+      panic!("uv channel missing / wrong arity");
+    };
+    let ChannelStore::Vec4(tans) = &m.vertex_channels["tangent"].store else {
+      panic!("tangent channel missing / wrong arity");
+    };
+    assert_eq!(uvs.len(), m.vertices.len());
+    assert_eq!(tans.len(), m.vertices.len());
+
+    let bad = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) },
+  thickness=0.3,
+  normal_mode="autodiff"
+)
+"#;
+    assert!(
+      parse_and_eval_program(bad).is_err(),
+      "autodiff mode must reject a non-differentiable embed"
+    );
   }
 }

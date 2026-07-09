@@ -141,13 +141,25 @@ pub fn extrude_along_normals(
   mesh: &mut LinkedMesh<()>,
   distance: impl Fn(Vec3) -> Result<f32, ErrorStack>,
 ) -> Result<(), ErrorStack> {
+  extrude_along_normals_with_normal_override(mesh, distance, |_, _| Ok(None))
+}
+
+/// Like `extrude_along_normals`, but `normal_override(vtx, area_weighted_normal)` may replace a
+/// vertex's offset direction with a unit normal of its own (e.g. an exact analytic surface normal);
+/// returning `None` keeps the area-weighted normal.  The area-weighted normal is handed in so the
+/// caller can sign-align its replacement to it, keeping the offset side stable.
+pub fn extrude_along_normals_with_normal_override(
+  mesh: &mut LinkedMesh<()>,
+  distance: impl Fn(Vec3) -> Result<f32, ErrorStack>,
+  mut normal_override: impl FnMut(VertexKey, Vec3) -> Result<Option<Vec3>, ErrorStack>,
+) -> Result<(), ErrorStack> {
   let components = mesh.connected_components();
   for faces in components {
     let normals = compute_area_weighted_vertex_normals(mesh, &faces);
     let offsets = build_offsets_per_vertex(mesh, &faces, |vk, pos| {
-      let n = normals.get(&vk).copied().unwrap_or_else(Vec3::zeros);
-      let d = distance(pos)?;
-      Ok(n * d)
+      let topo = normals.get(&vk).copied().unwrap_or_else(Vec3::zeros);
+      let n = normal_override(vk, topo)?.unwrap_or(topo);
+      Ok(n * distance(pos)?)
     })?;
     extrude_with_offsets(mesh, &faces, &offsets);
   }

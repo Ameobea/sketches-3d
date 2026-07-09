@@ -1,5 +1,6 @@
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 
+use super::adaptive_sampler::DEFAULT_MIN_SEGMENT_LENGTH;
 use crate::{ErrorStack, Vec2};
 
 #[cfg(target_arch = "wasm32")]
@@ -17,6 +18,7 @@ extern "C" {
     max_edge_len: f32,
     min_angle_bound: f32,
     refine: bool,
+    interior_points: &[f32],
   ) -> bool;
   fn cgal_get_cdt2d_vertices() -> Vec<f32>;
   fn cgal_get_cdt2d_indices() -> Vec<u32>;
@@ -297,7 +299,7 @@ pub fn tessellate_ring_cap_with_holes(
 
   let input_vertex_count = input_to_flat.len();
   let (out_vertices_xy, out_indices, vertex_mapping) =
-    run_triangulation_with_holes(&coords, &subpath_lengths, CgalCdtOptions::default())?;
+    run_triangulation_with_holes(&coords, &subpath_lengths, CgalCdtOptions::default(), &[])?;
   if out_indices.is_empty() {
     return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
   }
@@ -429,6 +431,7 @@ fn run_triangulation_with_holes(
   vertices: &[f32],
   subpath_lengths: &[u32],
   options: CgalCdtOptions,
+  interior_points: &[f32],
 ) -> Result<(Vec<f32>, Vec<u32>, Vec<i32>), ErrorStack> {
   crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
   if !cgal_get_is_loaded() {
@@ -447,6 +450,7 @@ fn run_triangulation_with_holes(
     max_edge_len,
     min_angle_squared_sine,
     refine,
+    interior_points,
   ) {
     let err =
       cgal_get_last_error().unwrap_or_else(|| "CGAL multi-subpath triangulation failed".to_owned());
@@ -480,13 +484,14 @@ fn run_triangulation_with_holes(
   vertices: &[f32],
   subpath_lengths: &[u32],
   options: CgalCdtOptions,
+  interior_points: &[f32],
 ) -> Result<(Vec<f32>, Vec<u32>, Vec<i32>), ErrorStack> {
   // Native builds only support the single-subpath, non-refining case, matching the legacy
-  // fan-fill fallback that backed `tessellate_2d_paths`.  Real CDT and Delaunay refinement live
-  // in the CGAL wasm.
-  if subpath_lengths.len() != 1 || options.refine() {
+  // fan-fill fallback that backed `tessellate_2d_paths`.  Real CDT, Delaunay refinement, and
+  // interior-point insertion live in the CGAL wasm.
+  if subpath_lengths.len() != 1 || options.refine() || !interior_points.is_empty() {
     return Err(ErrorStack::new(
-      "Multi-subpath / refining CGAL triangulation is only available in wasm builds",
+      "Multi-subpath / refining / interior-point CGAL triangulation is only available in wasm builds",
     ));
   }
   let vertex_count = subpath_lengths[0] as usize;
@@ -523,7 +528,7 @@ pub fn tessellate_2d_paths_multi(
   }
 
   let (out_vertices_xy, mut indices, _vertex_mapping) =
-    run_triangulation_with_holes(&coords, &subpath_lengths, options)?;
+    run_triangulation_with_holes(&coords, &subpath_lengths, options, &[])?;
   if indices.is_empty() {
     return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
   }
@@ -545,6 +550,399 @@ pub fn tessellate_2d_paths_multi(
   Ok(LinkedMesh::from_indexed_vertices(
     &verts, &indices, None, None,
   ))
+}
+
+/// Constrained-Delaunay-triangulates `paths` (outer + holes via subpath nesting), then embeds each
+/// output 2D vertex into 3D through `embed`.  This is `tessellate_2d_paths_multi` generalized from an
+/// affine `TessPlane` to an arbitrary map φ: ℝ²→ℝ³.  Winding is CGAL's raw CCW-in-param order;
+/// `flipped` swaps it.  The resulting single-layer cap is what `embed_path` thickens.  Also returns
+/// each output vertex's 2D domain coordinate, aligned with the mesh's vertex order (`vkey(i+1, 1)`),
+/// so callers can recover φ's frame per vertex.
+pub fn tessellate_2d_paths_embedded(
+  paths: &[Vec<Vec2>],
+  flipped: bool,
+  options: CgalCdtOptions,
+  embed: impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+) -> Result<(LinkedMesh<()>, Vec<Vec2>), ErrorStack> {
+  if paths.is_empty() {
+    return Ok((LinkedMesh::default(), Vec::new()));
+  }
+
+  let mut coords: Vec<f32> = Vec::new();
+  let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
+  for (ix, path) in paths.iter().enumerate() {
+    if path.len() < 3 {
+      return Err(ErrorStack::new(format!(
+        "Cannot embed subpath {ix} with fewer than 3 points, found: {}",
+        path.len()
+      )));
+    }
+    for pt in path {
+      coords.push(pt.x);
+      coords.push(pt.y);
+    }
+    subpath_lengths.push(path.len() as u32);
+  }
+
+  let (out_vertices_xy, mut indices, _vertex_mapping) =
+    run_triangulation_with_holes(&coords, &subpath_lengths, options, &[])?;
+  if indices.is_empty() {
+    return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
+  }
+
+  let mut verts: Vec<Vec3> = Vec::with_capacity(out_vertices_xy.len() / 2);
+  let mut domain_uvs: Vec<Vec2> = Vec::with_capacity(out_vertices_xy.len() / 2);
+  for xy in out_vertices_xy.chunks_exact(2) {
+    let uv = Vec2::new(xy[0], xy[1]);
+    verts.push(embed(uv)?);
+    domain_uvs.push(uv);
+  }
+
+  if flipped {
+    for tri in indices.chunks_mut(3) {
+      tri.swap(0, 2);
+    }
+  }
+
+  Ok((
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None),
+    domain_uvs,
+  ))
+}
+
+const DENSIFY_MAX_DEPTH: u32 = 12;
+
+/// Recursively appends the strictly-interior subdivision points of the 2D segment `[a, b]` (with
+/// pre-embedded endpoints `ea`/`eb`) so that the embedded polyline tracks φ within `tol` — the
+/// deviation of the true embedded midpoint from the embedded-chord midpoint.  Standard chord-
+/// flattening, but measured in embedded (3D) space so a straight domain edge that bends under φ
+/// gets densified into its actual curve.
+fn densify_segment_under_embed(
+  a: Vec2,
+  b: Vec2,
+  ea: Vec3,
+  eb: Vec3,
+  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  tol: f32,
+  depth: u32,
+  out: &mut Vec<Vec2>,
+) -> Result<(), ErrorStack> {
+  if depth >= DENSIFY_MAX_DEPTH || (b - a).norm() <= DEFAULT_MIN_SEGMENT_LENGTH {
+    return Ok(());
+  }
+  let mid = (a + b) * 0.5;
+  let emid = embed(mid)?;
+  if (emid - (ea + eb) * 0.5).norm() <= tol {
+    return Ok(());
+  }
+  densify_segment_under_embed(a, mid, ea, emid, embed, tol, depth + 1, out)?;
+  out.push(mid);
+  densify_segment_under_embed(mid, b, emid, eb, embed, tol, depth + 1, out)?;
+  Ok(())
+}
+
+/// Densifies a closed boundary loop so its embedding under `embed` deviates from the true surface
+/// by at most `tol`.  Each input vertex is kept (constrained feature points ride through); interior
+/// points are inserted per segment, including the wrap segment.
+fn densify_loop_under_embed(
+  loop_2d: &[Vec2],
+  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  tol: f32,
+) -> Result<Vec<Vec2>, ErrorStack> {
+  let n = loop_2d.len();
+  let mut out = Vec::with_capacity(n * 2);
+  let mut embedded: Vec<Vec3> = Vec::with_capacity(n);
+  for &p in loop_2d {
+    embedded.push(embed(p)?);
+  }
+  for k in 0..n {
+    let j = (k + 1) % n;
+    out.push(loop_2d[k]);
+    densify_segment_under_embed(
+      loop_2d[k],
+      loop_2d[j],
+      embedded[k],
+      embedded[j],
+      embed,
+      tol,
+      0,
+      &mut out,
+    )?;
+  }
+  Ok(out)
+}
+
+/// Max deviation of the flat triangle `(a, b, c)` (embedded positions) from the true surface, probed
+/// at the three edge midpoints and the centroid.
+fn embedded_triangle_deviation(
+  a2: Vec2,
+  b2: Vec2,
+  c2: Vec2,
+  a3: Vec3,
+  b3: Vec3,
+  c3: Vec3,
+  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+) -> Result<f32, ErrorStack> {
+  let mut dev = 0f32;
+  for (m2, chord) in [
+    ((a2 + b2) * 0.5, (a3 + b3) * 0.5),
+    ((b2 + c2) * 0.5, (b3 + c3) * 0.5),
+    ((c2 + a2) * 0.5, (c3 + a3) * 0.5),
+    (
+      (a2 + b2 + c2) / 3.0,
+      (a3 + b3 + c3) / 3.0,
+    ),
+  ] {
+    dev = dev.max((embed(m2)? - chord).norm());
+  }
+  Ok(dev)
+}
+
+/// Converges by ≤25 iterations for the cases exercised so far, early-terminating at convergence;
+/// the cap only bites on pathological φ.  Kept generous because a too-low cap silently returns an
+/// under-refined mesh (over-tolerance triangles, no warning) rather than erroring.
+const REFINE_MAX_ITERS: u32 = 30;
+
+/// Distortion-aware version of `tessellate_2d_paths_embedded`: densifies each boundary loop under φ
+/// to `tol`, then refines the interior a-posteriori — constrained-Delaunay-triangulate → embed → drop
+/// a Steiner point at the centroid of every triangle still deviating from φ by more than `tol` →
+/// re-triangulate with the accumulated points → repeat until converged (or the iteration cap).
+/// Spatially adaptive: flat regions stay coarse, curved regions densify where they exceed tolerance.
+pub fn tessellate_2d_paths_embedded_refined(
+  paths: &[Vec<Vec2>],
+  flipped: bool,
+  tol: f32,
+  embed: impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+) -> Result<(LinkedMesh<()>, Vec<Vec2>), ErrorStack> {
+  if paths.is_empty() {
+    return Ok((LinkedMesh::default(), Vec::new()));
+  }
+
+  let mut coords: Vec<f32> = Vec::new();
+  let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
+  for (ix, path) in paths.iter().enumerate() {
+    if path.len() < 3 {
+      return Err(ErrorStack::new(format!(
+        "Cannot embed subpath {ix} with fewer than 3 points, found: {}",
+        path.len()
+      )));
+    }
+    let dense = densify_loop_under_embed(path, &embed, tol)?;
+    for pt in &dense {
+      coords.push(pt.x);
+      coords.push(pt.y);
+    }
+    subpath_lengths.push(dense.len() as u32);
+  }
+
+  let mut interior: Vec<f32> = Vec::new();
+  let mut result: Option<(Vec<Vec2>, Vec<Vec3>, Vec<u32>)> = None;
+
+  for _ in 0..REFINE_MAX_ITERS {
+    let (out_xy, indices, _mapping) =
+      run_triangulation_with_holes(&coords, &subpath_lengths, CgalCdtOptions::default(), &interior)?;
+    if indices.is_empty() {
+      return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
+    }
+
+    let verts_2d: Vec<Vec2> = out_xy
+      .chunks_exact(2)
+      .map(|xy| Vec2::new(xy[0], xy[1]))
+      .collect();
+    let verts_3d: Vec<Vec3> = verts_2d
+      .iter()
+      .map(|&p| embed(p))
+      .collect::<Result<_, _>>()?;
+
+    let mut fresh: Vec<f32> = Vec::new();
+    for tri in indices.chunks_exact(3) {
+      let (i, j, k) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
+      let dev = embedded_triangle_deviation(
+        verts_2d[i], verts_2d[j], verts_2d[k], verts_3d[i], verts_3d[j], verts_3d[k], &embed,
+      )?;
+      if dev > tol {
+        let c = (verts_2d[i] + verts_2d[j] + verts_2d[k]) / 3.;
+        fresh.push(c.x);
+        fresh.push(c.y);
+      }
+    }
+
+    result = Some((verts_2d, verts_3d, indices));
+    if fresh.is_empty() {
+      break;
+    }
+    interior.extend_from_slice(&fresh);
+  }
+
+  let (domain_uvs, verts, mut indices) = result.unwrap();
+  if flipped {
+    for tri in indices.chunks_mut(3) {
+      tri.swap(0, 2);
+    }
+  }
+  Ok((
+    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None),
+    domain_uvs,
+  ))
+}
+
+/// Which surface-normal source `embed_path` uses for both the thickening offset direction and the
+/// authored cap shading normals.  `Auto` picks the best available — exact symbolic autodiff of the
+/// embedding when it is differentiable, else finite differences.  The explicit variants force one
+/// method (validation/debugging); `Mesh` reverts to topological face-weighted normals with no
+/// authored shading normals, i.e. the classic welded output.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum NormalMode {
+  Auto,
+  Autodiff,
+  FiniteDiff,
+  Mesh,
+}
+
+impl NormalMode {
+  pub fn parse(s: &str) -> Option<Self> {
+    Some(match s {
+      "auto" => Self::Auto,
+      "autodiff" | "analytic" => Self::Autodiff,
+      "finite_diff" | "finite" | "numeric" => Self::FiniteDiff,
+      "mesh" | "topological" => Self::Mesh,
+      _ => return None,
+    })
+  }
+}
+
+/// A finite-difference tangent frame of the embedding φ at a domain point: position, the two partial
+/// derivatives, and the unit surface normal.  This is the fallback for a T2 analytic frame and the
+/// first-order basis for metric-tensor (`JᵀJ`) sizing; see design §10.
+#[derive(Clone, Copy, Debug)]
+pub struct EmbedFrame {
+  pub pos: Vec3,
+  pub du: Vec3,
+  pub dv: Vec3,
+  pub normal: Vec3,
+}
+
+/// Estimates φ's tangent frame at `uv` by central differences with domain step `h`.  Normal is
+/// `du × dv` (zero where the surface is locally degenerate).
+pub fn estimate_embed_frame(
+  uv: Vec2,
+  h: f32,
+  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+) -> Result<EmbedFrame, ErrorStack> {
+  let pos = embed(uv)?;
+  let du = (embed(uv + Vec2::new(h, 0.))? - embed(uv - Vec2::new(h, 0.))?) / (2. * h);
+  let dv = (embed(uv + Vec2::new(0., h))? - embed(uv - Vec2::new(0., h))?) / (2. * h);
+  let cross = du.cross(&dv);
+  let normal = if cross.norm() > 1e-12 {
+    cross.normalize()
+  } else {
+    Vec3::zeros()
+  };
+  Ok(EmbedFrame { pos, du, dv, normal })
+}
+
+/// Analytic embedding frame source: the exact partials φ_u, φ_v of an embedding closure obtained by
+/// forward-mode autodiff, evaluated per domain sample.  The two derivative closures are built once
+/// (via [`crate::autodiff::build_directional_derivative`]) and reused across samples — the top rung
+/// of the T2 frame-source ladder (`user frame > autodiff > finite-diff`).
+pub struct AutodiffEmbedFrame {
+  embed: std::rc::Rc<crate::Callable>,
+  du: std::rc::Rc<crate::Callable>,
+  dv: std::rc::Rc<crate::Callable>,
+}
+
+impl AutodiffEmbedFrame {
+  /// Build the analytic partials of `embed` (a `vec2 -> vec3` closure).  Returns `None` when `embed`
+  /// is not a plain closure or autodiff bails on some construct in its body — the caller then falls
+  /// back to [`estimate_embed_frame`].
+  pub fn try_build(
+    ctx: &crate::EvalCtx,
+    embed: &std::rc::Rc<crate::Callable>,
+  ) -> Option<AutodiffEmbedFrame> {
+    let crate::Callable::Closure(closure) = &**embed else {
+      return None;
+    };
+    let du = crate::autodiff::build_directional_derivative(ctx, closure, &crate::Value::Vec2(Vec2::new(1., 0.))).ok()?;
+    let dv = crate::autodiff::build_directional_derivative(ctx, closure, &crate::Value::Vec2(Vec2::new(0., 1.))).ok()?;
+    Some(AutodiffEmbedFrame {
+      embed: std::rc::Rc::clone(embed),
+      du: std::rc::Rc::new(crate::Callable::Closure(du)),
+      dv: std::rc::Rc::new(crate::Callable::Closure(dv)),
+    })
+  }
+
+  fn eval_vec3(
+    ctx: &crate::EvalCtx,
+    f: &std::rc::Rc<crate::Callable>,
+    uv: Vec2,
+    role: &str,
+  ) -> Result<Vec3, ErrorStack> {
+    let out = ctx.invoke_callable(f, &[crate::Value::Vec2(uv)], crate::EMPTY_KWARGS)?;
+    out.as_vec3().copied().ok_or_else(|| {
+      ErrorStack::new(format!(
+        "autodiff embed frame: expected Vec3 from {role}, found: {out:?}"
+      ))
+    })
+  }
+
+  /// The analytic frame at `uv`: position from φ, partials from φ_u/φ_v, normal `φ_u × φ_v`.
+  pub fn frame(&self, ctx: &crate::EvalCtx, uv: Vec2) -> Result<EmbedFrame, ErrorStack> {
+    let pos = Self::eval_vec3(ctx, &self.embed, uv, "embed")?;
+    let du = Self::eval_vec3(ctx, &self.du, uv, "d(embed)/du")?;
+    let dv = Self::eval_vec3(ctx, &self.dv, uv, "d(embed)/dv")?;
+    let cross = du.cross(&dv);
+    let normal = if cross.norm() > 1e-12 {
+      cross.normalize()
+    } else {
+      Vec3::zeros()
+    };
+    Ok(EmbedFrame { pos, du, dv, normal })
+  }
+}
+
+/// Max magnitude of principal normal curvature of the embedded surface at `uv`, from a 9-point
+/// second-difference stencil and the shape operator's eigenvalues.  0 where locally flat.  Governs
+/// deviation-based sizing: a facet with 2D edge `e` bows off the surface by ≈ `e²·κ/8`, so
+/// `e ≈ √(8·tol/κ)` keeps it within `tol`.
+pub fn estimate_embed_max_curvature(
+  uv: Vec2,
+  h: f32,
+  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+) -> Result<f32, ErrorStack> {
+  let c = embed(uv)?;
+  let (pu, mu) = (embed(uv + Vec2::new(h, 0.))?, embed(uv - Vec2::new(h, 0.))?);
+  let (pv, mv) = (embed(uv + Vec2::new(0., h))?, embed(uv - Vec2::new(0., h))?);
+  let du = (pu - mu) / (2. * h);
+  let dv = (pv - mv) / (2. * h);
+  let n = du.cross(&dv);
+  if n.norm() < 1e-12 {
+    return Ok(0.);
+  }
+  let n = n.normalize();
+
+  let h2 = h * h;
+  let duu = (pu - c * 2. + mu) / h2;
+  let dvv = (pv - c * 2. + mv) / h2;
+  let pp = embed(uv + Vec2::new(h, h))?;
+  let pm = embed(uv + Vec2::new(h, -h))?;
+  let mp = embed(uv + Vec2::new(-h, h))?;
+  let mm = embed(uv + Vec2::new(-h, -h))?;
+  let duv = (pp - pm - mp + mm) / (4. * h2);
+
+  // Second fundamental form (l, m, nn) and first (e, f, g); principal curvatures solve
+  // det(II − κ·I) = 0 → denom·κ² − b·κ + cc = 0.
+  let (l, m, nn) = (duu.dot(&n), duv.dot(&n), dvv.dot(&n));
+  let (e, f, g) = (du.dot(&du), du.dot(&dv), dv.dot(&dv));
+  let denom = e * g - f * f;
+  if denom.abs() < 1e-20 {
+    return Ok(0.);
+  }
+  let b = e * nn + g * l - 2. * f * m;
+  let cc = l * nn - m * m;
+  let disc = (b * b - 4. * denom * cc).max(0.).sqrt();
+  let k1 = (b + disc) / (2. * denom);
+  let k2 = (b - disc) / (2. * denom);
+  Ok(k1.abs().max(k2.abs()))
 }
 
 /// Tessellates a pre-built lyon `Path` into a flat mesh in the given coordinate plane.
@@ -664,6 +1062,117 @@ mod native_tests {
       u_axis: Vec3::new(1., 0., 0.),
       v_axis: Vec3::new(0., 1., 0.),
     }
+  }
+
+  // Finite-difference φ derivatives must match known analytic surfaces: a plane is flat (κ≈0) with
+  // axis-aligned tangents; a cylinder of radius R has one principal curvature 1/R and one 0, and a
+  // radial normal.
+  #[test]
+  fn embed_derivatives_match_analytic_surfaces() {
+    let plane = |p: Vec2| -> Result<Vec3, ErrorStack> { Ok(Vec3::new(p.x, 0., p.y)) };
+    let f = estimate_embed_frame(Vec2::new(0.3, -0.7), 0.01, &plane).unwrap();
+    assert!((f.du - Vec3::new(1., 0., 0.)).norm() < 1e-3);
+    assert!((f.dv - Vec3::new(0., 0., 1.)).norm() < 1e-3);
+    assert!(f.normal.y.abs() > 0.999); // ±Y
+    let k = estimate_embed_max_curvature(Vec2::new(0.3, -0.7), 0.02, &plane).unwrap();
+    assert!(k < 1e-3, "plane should be flat, got κ={k}");
+
+    let r = 2.0f32;
+    let cyl = |p: Vec2| -> Result<Vec3, ErrorStack> {
+      Ok(Vec3::new(r * (p.x / r).cos(), p.y, r * (p.x / r).sin()))
+    };
+    // At u=0: pos=(R,0,0), ∂u=(0,0,1), ∂v=(0,1,0), normal radial (±X).
+    let f = estimate_embed_frame(Vec2::new(0., 1.5), 0.01, &cyl).unwrap();
+    assert!((f.du - Vec3::new(0., 0., 1.)).norm() < 1e-3);
+    assert!(f.normal.x.abs() > 0.999);
+    let k = estimate_embed_max_curvature(Vec2::new(0., 1.5), 0.02, &cyl).unwrap();
+    assert!((k - 1.0 / r).abs() < 5e-3, "cylinder κ should be 1/R=0.5, got {k}");
+  }
+
+  // T2 frame-source ladder: the analytic (autodiff) frame of a curved embedding must agree with the
+  // finite-difference frame, and building it must fail gracefully (→ finite-diff fallback) when the
+  // embedding uses a builtin autodiff doesn't know.
+  #[test]
+  fn autodiff_embed_frame_matches_finite_diff() {
+    let src = r#"
+bump = |p: vec2|: vec3 {
+  r2 = p.x*p.x + p.y*p.y
+  vec3(p.x, exp(-r2), p.y)
+}
+opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
+"#;
+    let ctx = crate::parse_and_eval_program(src).unwrap();
+    let crate::Value::Callable(bump) = ctx.get_global("bump").unwrap() else {
+      panic!("bump not callable")
+    };
+
+    let analytic = AutodiffEmbedFrame::try_build(&ctx, &bump).expect("autodiff should handle bump");
+    let embed = |p: Vec2| -> Result<Vec3, ErrorStack> {
+      let r2 = p.x * p.x + p.y * p.y;
+      Ok(Vec3::new(p.x, (-r2).exp(), p.y))
+    };
+    for &(x, y) in &[(0.3, -0.6), (1.1, 0.4), (-0.7, 0.2)] {
+      let uv = Vec2::new(x, y);
+      let a = analytic.frame(&ctx, uv).unwrap();
+      let fd = estimate_embed_frame(uv, 1e-3, &embed).unwrap();
+      assert!((a.du - fd.du).norm() < 1e-2, "du @ {uv:?}: {:?} vs {:?}", a.du, fd.du);
+      assert!((a.dv - fd.dv).norm() < 1e-2, "dv @ {uv:?}");
+      assert!((a.normal - fd.normal).norm() < 1e-2, "normal @ {uv:?}");
+    }
+
+    // Graceful fallback: `floor` has no derivative rule, so `try_build` returns None.
+    let crate::Value::Callable(opaque) = ctx.get_global("opaque").unwrap() else {
+      panic!("opaque not callable")
+    };
+    assert!(
+      AutodiffEmbedFrame::try_build(&ctx, &opaque).is_none(),
+      "embedding with an unregistered builtin must fall back"
+    );
+  }
+
+  // Boundary densification (the φ-aware part of T1) must (a) honor the deviation tolerance on every
+  // emitted segment and (b) only densify edges that actually bend under the embedding — a straight
+  // domain edge that stays straight under φ should not gain points.
+  #[test]
+  fn densify_loop_tracks_embedding_within_tol() {
+    // Square whose x-edges bend under a sine embedding; whose y-edges (const x) stay straight.
+    let loop_2d = [
+      Vec2::new(0., 0.),
+      Vec2::new(4., 0.),
+      Vec2::new(4., 1.),
+      Vec2::new(0., 1.),
+    ];
+    let embed = |p: Vec2| -> Result<Vec3, ErrorStack> {
+      Ok(Vec3::new(p.x, (p.x * 2.0).sin() * 0.6, p.y))
+    };
+    let tol = 0.01;
+    let dense = densify_loop_under_embed(&loop_2d, &embed, tol).unwrap();
+
+    assert!(
+      dense.len() > loop_2d.len(),
+      "bending edges should add points; got {}",
+      dense.len()
+    );
+
+    // Every consecutive segment's embedded midpoint must sit within tol of the embedded chord.
+    for k in 0..dense.len() {
+      let a = dense[k];
+      let b = dense[(k + 1) % dense.len()];
+      let mid = embed((a + b) * 0.5).unwrap();
+      let chord = (embed(a).unwrap() + embed(b).unwrap()) * 0.5;
+      assert!(
+        (mid - chord).norm() <= tol + 1e-6,
+        "segment {k} exceeds tol"
+      );
+    }
+
+    // The x=0 edge (straight under φ) should contribute no interior points: no densified vertex may
+    // have x≈0 except the two original corners.
+    let interior_on_x0 = dense
+      .iter()
+      .filter(|p| p.x.abs() < 1e-4 && p.y > 1e-4 && p.y < 1.0 - 1e-4)
+      .count();
+    assert_eq!(interior_on_x0, 0, "straight edge must not densify");
   }
 
   /// For a single (hole-free) loop, the with-holes cap must remap to the exact same shared-vertex

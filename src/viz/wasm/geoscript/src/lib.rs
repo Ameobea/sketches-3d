@@ -50,6 +50,7 @@ use crate::{
 };
 
 pub mod ast;
+pub mod autodiff;
 pub mod builtins;
 pub mod lights;
 pub mod materials;

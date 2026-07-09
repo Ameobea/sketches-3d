@@ -9,8 +9,8 @@ use crate::{
   ast::{
     bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
     record_non_const_binding, BinOp, ClosureArg, DestructurePattern, Expr, FunctionCall,
-    FunctionCallTarget, MapLiteralEntry, ScopeTracker, SourceLoc, Statement, TopLevelStatement,
-    TrackedValue, TrackedValueRef,
+    FunctionCallTarget, MapLiteralEntry, PrefixOp, ScopeTracker, SourceLoc, Statement,
+    TopLevelStatement, TrackedValue, TrackedValueRef,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -19,7 +19,8 @@ use crate::{
   match_binop_by_arg_types,
   seq::EagerSeq,
   type_infer::infer_expr,
-  ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
+  ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2,
+  Vec3,
 };
 
 /// This is essentially a `-ffast-math` flag for the optimizer's constant folding of associative
@@ -740,6 +741,143 @@ pub(crate) fn optimize_expr<'a>(
   fold_constants(ctx, local_scope, expr, allow_rng_const_eval)
 }
 
+fn same_arg_type(a: Option<ArgType>, b: Option<ArgType>) -> bool {
+  match (a, b) {
+    (Some(a), Some(b)) => a.as_bitflags() == b.as_bitflags(),
+    _ => false,
+  }
+}
+
+fn is_scalar_zero(v: &Value) -> bool {
+  matches!(v, Value::Int(0)) || matches!(v, Value::Float(f) if *f == 0.)
+}
+
+fn is_scalar_one(v: &Value) -> bool {
+  matches!(v, Value::Int(1)) || matches!(v, Value::Float(f) if *f == 1.)
+}
+
+fn typed_zero(ty: ArgType) -> Option<Value> {
+  Some(match ty {
+    ArgType::Int => Value::Int(0),
+    ArgType::Float | ArgType::Numeric => Value::Float(0.),
+    ArgType::Vec2 => Value::Vec2(Vec2::new(0., 0.)),
+    ArgType::Vec3 => Value::Vec3(Vec3::zeros()),
+    _ => return None,
+  })
+}
+
+/// Type-preserving algebraic identities (`x±0→x`, `x*1→x`, `x*0→0`, `x/1→x`, `0/x→0`).  Only fires
+/// when exactly one operand is a literal, and never changes the result type (so vector widths are
+/// preserved).  `x*0→0` / `0/x→0` assume finite operands, matching the optimizer's existing
+/// fast-math folding.
+fn try_identity_peephole(
+  ctx: &EvalCtx,
+  scope: &mut ScopeTracker,
+  op: BinOp,
+  lhs: &Expr,
+  rhs: &Expr,
+  loc: SourceLoc,
+) -> Option<Expr> {
+  if !matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div) {
+    return None;
+  }
+  let lhs_lit = lhs.as_literal().cloned();
+  let rhs_lit = rhs.as_literal().cloned();
+  // Both-literal cases are handled exactly by the const-fold path below; skip them here.
+  if lhs_lit.is_some() && rhs_lit.is_some() {
+    return None;
+  }
+  if lhs_lit.is_none() && rhs_lit.is_none() {
+    return None;
+  }
+
+  let infer = |scope: &mut ScopeTracker, e: &Expr| {
+    let mut env = scope.build_type_env(ctx);
+    infer_expr(ctx, &mut env, e).as_single_arg_type()
+  };
+  let result_ty = {
+    let node = Expr::BinOp {
+      op,
+      lhs: Box::new(lhs.clone()),
+      rhs: Box::new(rhs.clone()),
+      pre_resolved_def_ix: None,
+      loc,
+    };
+    infer(scope, &node)
+  };
+
+  match op {
+    BinOp::Add => {
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty) {
+        return Some(lhs.clone());
+      }
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty) {
+        return Some(rhs.clone());
+      }
+    }
+    BinOp::Sub => {
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty) {
+        return Some(lhs.clone());
+      }
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty) {
+        return Some(Expr::PrefixOp {
+          op: PrefixOp::Neg,
+          expr: Box::new(rhs.clone()),
+          loc,
+        });
+      }
+    }
+    BinOp::Mul => {
+      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty) {
+        return Some(lhs.clone());
+      }
+      if lhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, rhs), result_ty) {
+        return Some(rhs.clone());
+      }
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero) || lhs_lit.as_ref().is_some_and(is_scalar_zero) {
+        if let Some(zero) = result_ty.and_then(typed_zero) {
+          return Some(zero.into_literal_expr(loc));
+        }
+      }
+    }
+    BinOp::Div => {
+      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty) {
+        return Some(lhs.clone());
+      }
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) {
+        if let Some(zero) = result_ty.and_then(typed_zero) {
+          return Some(zero.into_literal_expr(loc));
+        }
+      }
+    }
+    _ => {}
+  }
+  None
+}
+
+/// Optimize the body of a compiler-synthesized closure (e.g. an autodiff derivative).  Seeds the
+/// scope tracker with the closure's params (as args) and captured constants so `optimize_expr`
+/// resolves every identifier, then const-folds each statement in order.
+pub(crate) fn optimize_synthesized_closure_body(
+  ctx: &EvalCtx,
+  params: &[ClosureArg],
+  captured_consts: &[(Sym, Value)],
+  stmts: &mut [Statement],
+) -> Result<(), ErrorStack> {
+  let mut scope = ScopeTracker::default();
+  for (sym, val) in captured_consts {
+    scope
+      .vars
+      .entry(*sym)
+      .or_insert_with(|| TrackedValue::Const(val.clone()));
+  }
+  bind_closure_params_into_scope(&mut scope, params);
+  for stmt in stmts.iter_mut() {
+    optimize_statement(ctx, &mut scope, stmt, false)?;
+  }
+  Ok(())
+}
+
 fn fold_constants<'a>(
   ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
@@ -822,6 +960,11 @@ fn fold_constants<'a>(
         }
       }
 
+      if let Some(simplified) = try_identity_peephole(ctx, local_scope, *op, lhs, rhs, *loc) {
+        *expr = simplified;
+        return Ok(());
+      }
+
       let (Some(lhs_val), Some(rhs_val)) = (lhs.as_literal(), rhs.as_literal()) else {
         return Ok(());
       };
@@ -894,6 +1037,19 @@ fn fold_constants<'a>(
       loc,
     } => {
       optimize_expr(ctx, local_scope, inner, allow_rng_const_eval)?;
+
+      // `neg(neg x) -> x`
+      if matches!(op, PrefixOp::Neg) {
+        if let Expr::PrefixOp {
+          op: PrefixOp::Neg,
+          expr: inner_inner,
+          ..
+        } = inner.as_ref()
+        {
+          *expr = (**inner_inner).clone();
+          return Ok(());
+        }
+      }
 
       let Some(val) = inner.as_literal() else {
         return Ok(());

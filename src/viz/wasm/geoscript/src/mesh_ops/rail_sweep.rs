@@ -2730,7 +2730,8 @@ mod tests {
     let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
       panic!("uv channel missing or wrong arity");
     };
-    let ChannelStore::Vec3(tan) = &mesh.vertex_channels["tangent"].store else {
+    // Tangent is a glTF-style Vec4: xyz = spine direction, w = ±1 bitangent handedness.
+    let ChannelStore::Vec4(tan) = &mesh.vertex_channels["tangent"].store else {
       panic!("tangent channel missing or wrong arity");
     };
     // 3 rings x 4 verts, plus one V=1 seam clone per ring from the closed-profile seam split.
@@ -2755,14 +2756,21 @@ mod tests {
       );
     }
 
-    // Tangent tracks the spine direction (+Z) for every vertex.
+    // Tangent xyz tracks the spine direction (+Z); w is a valid, uniform handedness for this
+    // symmetric straight sweep.
     for t in tan.values() {
       let dir = Vec3::new(t[0], t[1], t[2]);
       assert!(
         (dir - Vec3::new(0., 0., 1.)).norm() < 1e-5,
         "tangent not +Z: {dir:?}"
       );
+      assert!(t[3] == 1. || t[3] == -1., "tangent w not ±1: {}", t[3]);
     }
+    let w0 = tan.values().next().unwrap()[3];
+    assert!(
+      tan.values().all(|t| t[3] == w0),
+      "handedness should be uniform across a symmetric straight sweep"
+    );
   }
 
   /// Groups verts by bit-exact position, keeping only positions shared by >1 vert (seam clones and

@@ -452,6 +452,9 @@ export const cgal_triangulate_polygon_2d = (vertices: Float32Array): boolean => 
  * @param refine if true, run Delaunay_mesher_2 refinement after marking the domain.  When false, the
  *   strict input-vertex-to-output-vertex mapping is preserved; when true, Steiner points may appear
  *   and the mapping is empty.
+ * @param interiorPoints flat [x0, y0, ...] of free interior points inserted (unconstrained) before
+ *   domain marking — used to drive distortion-aware interior refinement.  Must lie inside the domain.
+ *   Their presence empties the vertex mapping (like refinement).
  * @returns true on success; use cgal_get_cdt2d_* to retrieve the result
  */
 export const cgal_triangulate_polygon_2d_with_holes = (
@@ -459,7 +462,8 @@ export const cgal_triangulate_polygon_2d_with_holes = (
   subpathLengths: Uint32Array,
   maxEdgeLen: number,
   minAngleBound: number,
-  refine: boolean
+  refine: boolean,
+  interiorPoints: Float32Array
 ): boolean => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
@@ -504,19 +508,29 @@ export const cgal_triangulate_polygon_2d_with_holes = (
 
   const inputVec = vec_f32(vertices);
   const lensVec = vec_u32(subpathLengths);
+  const interiorVec = vec_f32(interiorPoints);
   let result: any;
 
   try {
-    result = CGAL.triangulatePolygon2DWithHoles(inputVec, lensVec, maxEdgeLen, minAngleBound, refine);
+    result = CGAL.triangulatePolygon2DWithHoles(
+      inputVec,
+      lensVec,
+      maxEdgeLen,
+      minAngleBound,
+      refine,
+      interiorVec
+    );
   } catch (err) {
     inputVec.delete();
     lensVec.delete();
+    interiorVec.delete();
     LastBuildPolymeshError = `CDT2DWithHoles exception: ${err}`;
     return false;
   }
 
   inputVec.delete();
   lensVec.delete();
+  interiorVec.delete();
 
   if (!result.success()) {
     LastBuildPolymeshError = result.getError();
