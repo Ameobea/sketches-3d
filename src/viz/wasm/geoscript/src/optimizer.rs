@@ -29,29 +29,68 @@ use crate::{
 /// unlikely to matter though.
 const FLOAT_ASSOC_FOLDING_ENABLED: bool = true;
 
+/// Which pieces of ambient interpreter state a hashed computation transitively consumes.  `rng`
+/// mirrors the historical `uses_rng` flag; `settings` covers the sharp/curve angle thresholds.
+#[derive(Clone, Copy, Default)]
+struct Uses {
+  rng: bool,
+  settings: bool,
+}
+
 #[derive(Clone, Copy)]
 struct ConstEvalCacheLookup {
   key: u128,
-  uses_rng: bool,
+  uses: Uses,
 }
 
 fn const_eval_cache_lookup_with(
   ctx: &EvalCtx,
   allow_rng_const_eval: bool,
-  hash_fn: impl FnOnce(&mut SipHasher, &mut bool) -> Option<()>,
+  hash_fn: impl FnOnce(&mut SipHasher, &mut Uses) -> Option<()>,
 ) -> Option<ConstEvalCacheLookup> {
   let mut hasher = SipHasher::new_with_keys(0, 0);
-  let mut uses_rng = false;
-  hash_fn(&mut hasher, &mut uses_rng)?;
-  if uses_rng {
+  let mut uses = Uses::default();
+  hash_fn(&mut hasher, &mut uses)?;
+  if uses.rng {
     if !allow_rng_const_eval {
       return None;
     }
     let rng_state = ctx.rng_state();
     hash_rng_state(&mut hasher, &rng_state);
   }
+  // Ambient settings are inputs to computations that read them; mixing the live values into the
+  // key lets entries computed under different thresholds coexist (multi-program batch case).
+  // Marked as a read since a cache hit skips the impl-level read.
+  if uses.settings {
+    ctx.mark_settings_read();
+    ctx.sharp_angle_threshold_degrees.borrow().to_bits().hash(&mut hasher);
+    ctx.default_curve_angle_degrees.borrow().to_bits().hash(&mut hasher);
+  }
   let key = hasher.finish128().as_u128();
-  Some(ConstEvalCacheLookup { key, uses_rng })
+  Some(ConstEvalCacheLookup { key, uses })
+}
+
+/// True when executing this fold would consume ambient state the optimizer can no longer prove
+/// matches runtime state (see the `fold_*` flags on `EvalCtx`).  An unhashable computation
+/// (`lookup` = None) is blocked conservatively whenever any tracking has broken down.
+fn ambient_fold_blocked(
+  ctx: &EvalCtx,
+  lookup: &Option<ConstEvalCacheLookup>,
+  allow_rng_const_eval: bool,
+) -> bool {
+  match lookup {
+    Some(l) => {
+      (l.uses.settings
+        && (ctx.fold_settings_unknown.get()
+          || (!allow_rng_const_eval && ctx.fold_settings_deferred_unsafe.get())))
+        || (l.uses.rng && ctx.fold_rng_unknown.get())
+    }
+    None => {
+      ctx.fold_settings_unknown.get()
+        || ctx.fold_rng_unknown.get()
+        || (!allow_rng_const_eval && ctx.fold_settings_deferred_unsafe.get())
+    }
+  }
 }
 
 fn const_eval_cache_get(ctx: &EvalCtx, lookup: ConstEvalCacheLookup) -> Option<Value> {
@@ -63,7 +102,7 @@ fn const_eval_cache_get(ctx: &EvalCtx, lookup: ConstEvalCacheLookup) -> Option<V
 }
 
 fn const_eval_cache_store(ctx: &EvalCtx, lookup: ConstEvalCacheLookup, value: Value) {
-  let rng_end_state = if lookup.uses_rng {
+  let rng_end_state = if lookup.uses.rng {
     Some(ctx.rng_state())
   } else {
     None
@@ -100,6 +139,60 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
   }
 }
 
+/// The three builtins that mutate ambient interpreter state consumed by other builtins.  The
+/// const-folding pass executes analyzable top-level setter statements at fold time so fold-time
+/// state tracks runtime statement order; anything it can't analyze flips the matching
+/// `EvalCtx::fold_*_unknown` flag instead.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum AmbientSetter {
+  SharpAngle,
+  CurveAngle,
+  RngSeed,
+}
+
+impl AmbientSetter {
+  const fn name(self) -> &'static str {
+    match self {
+      Self::SharpAngle => "set_sharp_angle_threshold",
+      Self::CurveAngle => "set_curve_angle_threshold",
+      Self::RngSeed => "set_rng_seed",
+    }
+  }
+
+  fn from_name(name: &str) -> Option<Self> {
+    Some(match name {
+      "set_sharp_angle_threshold" => Self::SharpAngle,
+      "set_curve_angle_threshold" => Self::CurveAngle,
+      "set_rng_seed" => Self::RngSeed,
+      _ => return None,
+    })
+  }
+
+  fn of_callable(callable: &Callable) -> Option<Self> {
+    match callable {
+      Callable::Builtin { fn_entry_ix, .. } => Self::from_name(fn_sigs().entries[*fn_entry_ix].0),
+      Callable::PartiallyAppliedFn(paf) => Self::of_callable(&paf.inner),
+      Callable::ComposedFn(composed) => composed.inner.iter().find_map(|c| Self::of_callable(c)),
+      _ => None,
+    }
+  }
+
+  fn to_callable(self) -> Rc<Callable> {
+    Rc::new(Callable::Builtin {
+      fn_entry_ix: get_builtin_fn_sig_entry_ix(self.name()).unwrap(),
+      fn_impl: resolve_builtin_impl(self.name()),
+      pre_resolved_signature: None,
+    })
+  }
+
+  fn mark_unknown(self, ctx: &EvalCtx) {
+    match self {
+      Self::SharpAngle | Self::CurveAngle => ctx.fold_settings_unknown.set(true),
+      Self::RngSeed => ctx.fold_rng_unknown.set(true),
+    }
+  }
+}
+
 fn callable_requires_rng_state(callable: &Callable) -> bool {
   match callable {
     Callable::Builtin { .. } => callable.is_rng_dependent(),
@@ -118,7 +211,7 @@ fn hash_rng_state(hasher: &mut SipHasher, rng_state: &Pcg32) {
 #[derive(Clone, Copy)]
 struct ExprHashConfig {
   /// Whether to track RNG usage (for const eval caching).
-  /// When true, sets `uses_rng` flag when encountering RNG-dependent callables.
+  /// When true, sets `Uses::rng` when encountering RNG-dependent callables.
   track_rng: bool,
   /// Whether to allow dynamic expressions (Ident, Conditional, Block, etc.).
   /// When false, returns None for expressions that cannot be const-evaluated.
@@ -134,10 +227,12 @@ impl ExprHashConfig {
     }
   }
 
-  /// Config for structural hashing: no RNG tracking, allows all expression types.
-  const fn structural() -> Self {
+  /// Structural traversal that still tracks ambient-state usage — for hashing callable *values*
+  /// (closure args etc.) whose bodies contain dynamic exprs but whose rng/settings reads must
+  /// influence the enclosing fold's cache key and gating.
+  const fn const_eval_value() -> Self {
     Self {
-      track_rng: false,
+      track_rng: true,
       allow_dynamic: true,
     }
   }
@@ -147,15 +242,15 @@ impl ExprHashConfig {
 fn hash_expr(
   expr: &Expr,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   std::mem::discriminant(expr).hash(hasher);
   match expr {
     Expr::BinOp { op, lhs, rhs, .. } => {
       std::mem::discriminant(op).hash(hasher);
-      hash_expr(lhs, hasher, uses_rng, config)?;
-      hash_expr(rhs, hasher, uses_rng, config)?;
+      hash_expr(lhs, hasher, uses, config)?;
+      hash_expr(rhs, hasher, uses, config)?;
       if config.track_rng && matches!(op, BinOp::Pipeline | BinOp::Map) {
         if let Expr::Literal {
           value: Value::Callable(callable),
@@ -163,8 +258,9 @@ fn hash_expr(
         } = rhs.as_ref()
         {
           if callable_requires_rng_state(callable) {
-            *uses_rng = true;
+            uses.rng = true;
           }
+          uses.settings |= callable.reads_ctx_settings();
         }
       }
       Some(())
@@ -173,7 +269,7 @@ fn hash_expr(
       op, expr: inner, ..
     } => {
       std::mem::discriminant(op).hash(hasher);
-      hash_expr(inner, hasher, uses_rng, config)
+      hash_expr(inner, hasher, uses, config)
     }
     Expr::Range {
       start,
@@ -182,20 +278,20 @@ fn hash_expr(
       ..
     } => {
       inclusive.hash(hasher);
-      hash_expr(start, hasher, uses_rng, config)?;
+      hash_expr(start, hasher, uses, config)?;
       std::mem::discriminant(end).hash(hasher);
       if let Some(end) = end {
-        hash_expr(end, hasher, uses_rng, config)?;
+        hash_expr(end, hasher, uses, config)?;
       }
       Some(())
     }
     Expr::StaticFieldAccess { lhs, field, .. } => {
       field.hash(hasher);
-      hash_expr(lhs, hasher, uses_rng, config)
+      hash_expr(lhs, hasher, uses, config)
     }
     Expr::FieldAccess { lhs, field, .. } => {
-      hash_expr(lhs, hasher, uses_rng, config)?;
-      hash_expr(field, hasher, uses_rng, config)
+      hash_expr(lhs, hasher, uses, config)?;
+      hash_expr(field, hasher, uses, config)
     }
     Expr::Call {
       call: FunctionCall {
@@ -208,9 +304,12 @@ fn hash_expr(
       std::mem::discriminant(target).hash(hasher);
       match target {
         FunctionCallTarget::Literal(callable) => {
-          hash_callable(callable, hasher, uses_rng, config)?;
+          hash_callable(callable, hasher, uses, config)?;
           if config.track_rng && callable_requires_rng_state(callable) {
-            *uses_rng = true;
+            uses.rng = true;
+          }
+          if config.track_rng {
+            uses.settings |= callable.reads_ctx_settings();
           }
         }
         FunctionCallTarget::Name(name) => {
@@ -218,18 +317,23 @@ fn hash_expr(
             return None;
           }
           name.hash(hasher);
+          // An unresolved call target could invoke anything at runtime.
+          if config.track_rng {
+            uses.rng = true;
+            uses.settings = true;
+          }
         }
       }
       args.len().hash(hasher);
       for arg in args {
-        hash_expr(arg, hasher, uses_rng, config)?;
+        hash_expr(arg, hasher, uses, config)?;
       }
       let mut keys = kwargs.keys().copied().collect::<Vec<_>>();
       keys.sort_by_key(|k| k.0);
       for key in keys {
         key.hash(hasher);
         let expr = kwargs.get(&key)?;
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
@@ -242,7 +346,7 @@ fn hash_expr(
       if !config.allow_dynamic {
         return None;
       }
-      hash_closure_parts(params, body, return_type_hint, hasher, uses_rng, config)
+      hash_closure_parts(params, body, return_type_hint, hasher, uses, config)
     }
     Expr::Ident { name, .. } => {
       if !config.allow_dynamic {
@@ -256,7 +360,7 @@ fn hash_expr(
     } => {
       exprs.len().hash(hasher);
       for expr in exprs {
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
@@ -267,16 +371,16 @@ fn hash_expr(
         match entry {
           MapLiteralEntry::KeyValue { key, value } => {
             key.hash(hasher);
-            hash_expr(value, hasher, uses_rng, config)?;
+            hash_expr(value, hasher, uses, config)?;
           }
           MapLiteralEntry::Splat { expr } => {
-            hash_expr(expr, hasher, uses_rng, config)?;
+            hash_expr(expr, hasher, uses, config)?;
           }
         }
       }
       Some(())
     }
-    Expr::Literal { value, .. } => hash_value(value, hasher),
+    Expr::Literal { value, .. } => hash_value(value, hasher, uses),
     Expr::Conditional {
       cond,
       then,
@@ -287,16 +391,16 @@ fn hash_expr(
       if !config.allow_dynamic {
         return None;
       }
-      hash_expr(cond, hasher, uses_rng, config)?;
-      hash_expr(then, hasher, uses_rng, config)?;
+      hash_expr(cond, hasher, uses, config)?;
+      hash_expr(then, hasher, uses, config)?;
       else_if_exprs.len().hash(hasher);
       for (cond, expr) in else_if_exprs {
-        hash_expr(cond, hasher, uses_rng, config)?;
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(cond, hasher, uses, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       std::mem::discriminant(else_expr).hash(hasher);
       if let Some(expr) = else_expr {
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
@@ -306,7 +410,7 @@ fn hash_expr(
       }
       statements.len().hash(hasher);
       for stmt in statements {
-        hash_statement(stmt, hasher, uses_rng, config)?;
+        hash_statement(stmt, hasher, uses, config)?;
       }
       Some(())
     }
@@ -348,7 +452,7 @@ fn hash_destructure_pattern(pattern: &DestructurePattern, hasher: &mut SipHasher
 fn hash_closure_arg(
   arg: &ClosureArg,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   hash_destructure_pattern(&arg.ident, hasher)?;
@@ -358,7 +462,7 @@ fn hash_closure_arg(
   }
   std::mem::discriminant(&arg.default_val).hash(hasher);
   if let Some(default_val) = &arg.default_val {
-    hash_expr(default_val, hasher, uses_rng, config)?;
+    hash_expr(default_val, hasher, uses, config)?;
   }
   Some(())
 }
@@ -366,7 +470,7 @@ fn hash_closure_arg(
 fn hash_statement(
   stmt: &Statement,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   std::mem::discriminant(stmt).hash(hasher);
@@ -382,24 +486,24 @@ fn hash_statement(
       if let Some(type_hint) = type_hint {
         hash_type_name(*type_hint, hasher);
       }
-      hash_expr(expr, hasher, uses_rng, config)
+      hash_expr(expr, hasher, uses, config)
     }
     Statement::DestructureAssignment { lhs, rhs } => {
       hash_destructure_pattern(lhs, hasher)?;
-      hash_expr(rhs, hasher, uses_rng, config)
+      hash_expr(rhs, hasher, uses, config)
     }
-    Statement::Expr(expr) => hash_expr(expr, hasher, uses_rng, config),
+    Statement::Expr(expr) => hash_expr(expr, hasher, uses, config),
     Statement::Return { value } => {
       std::mem::discriminant(value).hash(hasher);
       if let Some(expr) = value {
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
     Statement::Break { value } => {
       std::mem::discriminant(value).hash(hasher);
       if let Some(expr) = value {
-        hash_expr(expr, hasher, uses_rng, config)?;
+        hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
@@ -411,12 +515,12 @@ fn hash_closure_parts(
   body: &Rc<crate::ast::ClosureBody>,
   return_type_hint: &Option<ArgType>,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   params.len().hash(hasher);
   for param in params.iter() {
-    hash_closure_arg(param, hasher, uses_rng, config)?;
+    hash_closure_arg(param, hasher, uses, config)?;
   }
   std::mem::discriminant(return_type_hint).hash(hasher);
   if let Some(type_hint) = return_type_hint {
@@ -424,7 +528,7 @@ fn hash_closure_parts(
   }
   body.0.len().hash(hasher);
   for stmt in body.0.iter() {
-    hash_statement(stmt, hasher, uses_rng, config)?;
+    hash_statement(stmt, hasher, uses, config)?;
   }
   Some(())
 }
@@ -434,7 +538,7 @@ fn hash_call(
   args: &[Expr],
   kwargs: &FxHashMap<Sym, Expr>,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   // Hash a marker for function calls
@@ -448,20 +552,23 @@ fn hash_call(
   })
   .hash(hasher);
   std::mem::discriminant(&FunctionCallTarget::Literal(Rc::clone(callable))).hash(hasher);
-  hash_callable(callable, hasher, uses_rng, config)?;
+  hash_callable(callable, hasher, uses, config)?;
   if config.track_rng && callable_requires_rng_state(callable) {
-    *uses_rng = true;
+    uses.rng = true;
+  }
+  if config.track_rng {
+    uses.settings |= callable.reads_ctx_settings();
   }
   args.len().hash(hasher);
   for arg in args {
-    hash_expr(arg, hasher, uses_rng, config)?;
+    hash_expr(arg, hasher, uses, config)?;
   }
   let mut keys = kwargs.keys().copied().collect::<Vec<_>>();
   keys.sort_by_key(|k| k.0);
   for key in keys {
     key.hash(hasher);
     let expr = kwargs.get(&key)?;
-    hash_expr(expr, hasher, uses_rng, config)?;
+    hash_expr(expr, hasher, uses, config)?;
   }
   Some(())
 }
@@ -469,7 +576,7 @@ fn hash_call(
 fn hash_callable(
   callable: &Rc<Callable>,
   hasher: &mut SipHasher,
-  uses_rng: &mut bool,
+  uses: &mut Uses,
   config: ExprHashConfig,
 ) -> Option<()> {
   std::mem::discriminant(&**callable).hash(hasher);
@@ -483,7 +590,7 @@ fn hash_callable(
       &closure.body,
       &closure.return_type_hint,
       hasher,
-      uses_rng,
+      uses,
       config,
     ),
     _ => {
@@ -506,16 +613,19 @@ fn const_eval_call_value(
     return Ok(None);
   }
 
-  let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+  let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
     hash_call(
       callable,
       args,
       kwargs,
       hasher,
-      uses_rng,
+      uses,
       ExprHashConfig::const_eval(),
     )
   });
+  if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
+    return Ok(None);
+  }
   if let Some(lookup) = cache_lookup {
     if let Some(cached) = const_eval_cache_get(ctx, lookup) {
       return Ok(Some(cached));
@@ -529,7 +639,7 @@ fn const_eval_call_value(
   Ok(Some(evaled))
 }
 
-fn hash_value(value: &Value, hasher: &mut SipHasher) -> Option<()> {
+fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<()> {
   std::mem::discriminant(value).hash(hasher);
   match value {
     Value::Nil => {}
@@ -558,17 +668,19 @@ fn hash_value(value: &Value, hasher: &mut SipHasher) -> Option<()> {
       (Rc::as_ptr(mesh) as usize).hash(hasher);
     }
     Value::Callable(callable) => {
-      // Use structural config for callable hashing within values since we don't track RNG here
-      let mut dummy_rng = false;
-      hash_callable(
-        callable,
-        hasher,
-        &mut dummy_rng,
-        ExprHashConfig::structural(),
-      )?;
+      // Closure bodies are walked with tracking on, so their rng/settings usage propagates
+      // precisely; opaque callables (partials, composed, dynamic) get conservative flags.
+      hash_callable(callable, hasher, uses, ExprHashConfig::const_eval_value())?;
+      if !matches!(&**callable, Callable::Closure(_)) {
+        uses.rng |= callable_requires_rng_state(callable);
+        uses.settings |= callable.reads_ctx_settings();
+      }
     }
     Value::Sequence(seq) => {
+      // Opaque: may wrap closures that draw rng / read settings when consumed.
       (Rc::as_ptr(seq) as *const () as usize).hash(hasher);
+      uses.rng = true;
+      uses.settings = true;
     }
     Value::Map(map) => {
       (Rc::as_ptr(map) as *const () as usize).hash(hasher);
@@ -790,6 +902,12 @@ fn try_identity_peephole(
   if lhs_lit.is_none() && rhs_lit.is_none() {
     return None;
   }
+  // Only 0/1 literals can match an identity; bail before the type inference + subtree cloning
+  // below, which would otherwise tax every one-literal binop in the program.
+  let lit = lhs_lit.as_ref().or(rhs_lit.as_ref()).unwrap();
+  if !is_scalar_zero(lit) && !is_scalar_one(lit) {
+    return None;
+  }
 
   let infer = |scope: &mut ScopeTracker, e: &Expr| {
     let mut env = scope.build_type_env(ctx);
@@ -993,11 +1111,11 @@ fn fold_constants<'a>(
       let op_discriminant = std::mem::discriminant(op);
       let expr_loc = *loc;
       let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
           binop_discriminant.hash(hasher);
           op_discriminant.hash(hasher);
-          hash_expr(lhs, hasher, uses_rng, ExprHashConfig::const_eval())?;
-          hash_expr(rhs, hasher, uses_rng, ExprHashConfig::const_eval())?;
+          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
+          hash_expr(rhs, hasher, uses, ExprHashConfig::const_eval())?;
           // Already handled by hash_expr with const_eval config, but add explicit check for clarity
           if matches!(op, BinOp::Pipeline | BinOp::Map) {
             if let Expr::Literal {
@@ -1006,12 +1124,16 @@ fn fold_constants<'a>(
             } = rhs.as_ref()
             {
               if callable_requires_rng_state(callable) {
-                *uses_rng = true;
+                uses.rng = true;
               }
+              uses.settings |= callable.reads_ctx_settings();
             }
           }
           Some(())
         });
+      if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
+        return Ok(());
+      }
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(expr_loc);
@@ -1065,10 +1187,10 @@ fn fold_constants<'a>(
       let op_discriminant = std::mem::discriminant(op);
       let expr_loc = *loc;
       let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
           prefix_discriminant.hash(hasher);
           op_discriminant.hash(hasher);
-          hash_expr(inner, hasher, uses_rng, ExprHashConfig::const_eval())
+          hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
@@ -1103,7 +1225,7 @@ fn fold_constants<'a>(
       ) else {
         return Ok(());
       };
-      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, _| {
+      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
         std::mem::discriminant(&Expr::Range {
           start: Box::new(Expr::Literal {
             value: Value::Nil,
@@ -1115,10 +1237,10 @@ fn fold_constants<'a>(
         })
         .hash(hasher);
         inclusive.hash(hasher);
-        hash_value(start_val, hasher)?;
+        hash_value(start_val, hasher, uses)?;
         std::mem::discriminant(&end_val_opt).hash(hasher);
         if let Some(end_val) = end_val_opt {
-          hash_value(end_val, hasher)?;
+          hash_value(end_val, hasher, uses)?;
         }
         Some(())
       });
@@ -1154,10 +1276,10 @@ fn fold_constants<'a>(
         loc: SourceLoc::default(),
       });
       let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
           static_access_discriminant.hash(hasher);
           field.hash(hasher);
-          hash_expr(lhs, hasher, uses_rng, ExprHashConfig::const_eval())
+          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
@@ -1194,10 +1316,10 @@ fn fold_constants<'a>(
         loc: SourceLoc::default(),
       });
       let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
           field_access_discriminant.hash(hasher);
-          hash_expr(lhs, hasher, uses_rng, ExprHashConfig::const_eval())?;
-          hash_expr(field, hasher, uses_rng, ExprHashConfig::const_eval())
+          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
+          hash_expr(field, hasher, uses, ExprHashConfig::const_eval())
         });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
@@ -1283,6 +1405,30 @@ fn fold_constants<'a>(
       }
       for (_, expr) in kwargs.iter_mut() {
         optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+      }
+
+      // Ambient setters reaching here are in non-statement position (sanctioned top-level setter
+      // statements bypass `fold_constants` entirely).  Threshold setters are restricted to
+      // top-level statements; `set_rng_seed` is legal anywhere but makes the fold-time rng stream
+      // unknowable from this point on.
+      if let FunctionCallTarget::Literal(callable) = target {
+        match AmbientSetter::of_callable(callable) {
+          Some(AmbientSetter::RngSeed) => ctx.fold_rng_unknown.set(true),
+          Some(setter) => {
+            let (line, col) = ctx.resolve_loc(*loc);
+            return Err(
+              ErrorStack::new(format!(
+                "`{}` must be called as a top-level statement, not inside a closure, conditional, \
+                 or other expression.  Move the call to the program's top level, or pass the angle \
+                 directly to the function that needs it (e.g. `compute_normals(mesh, angle)` or a \
+                 `curve_angle_degrees` kwarg).",
+                setter.name()
+              ))
+              .with_loc(line, col),
+            );
+          }
+          None => {}
+        }
       }
 
       if let FunctionCallTarget::Literal(callable) = target {
@@ -1557,11 +1703,11 @@ fn fold_constants<'a>(
           loc: SourceLoc::default(),
         });
         let cache_lookup =
-          const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+          const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
             array_discriminant.hash(hasher);
             exprs.len().hash(hasher);
             for inner in exprs.iter() {
-              hash_expr(inner, hasher, uses_rng, ExprHashConfig::const_eval())?;
+              hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())?;
             }
             Some(())
           });
@@ -1606,7 +1752,7 @@ fn fold_constants<'a>(
           loc: SourceLoc::default(),
         });
         let cache_lookup =
-          const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses_rng| {
+          const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
             map_discriminant.hash(hasher);
             entries.len().hash(hasher);
             for entry in entries.iter() {
@@ -1614,10 +1760,10 @@ fn fold_constants<'a>(
               match entry {
                 MapLiteralEntry::KeyValue { key, value } => {
                   key.hash(hasher);
-                  hash_expr(value, hasher, uses_rng, ExprHashConfig::const_eval())?;
+                  hash_expr(value, hasher, uses, ExprHashConfig::const_eval())?;
                 }
                 MapLiteralEntry::Splat { expr: splat_expr } => {
-                  hash_expr(splat_expr, hasher, uses_rng, ExprHashConfig::const_eval())?;
+                  hash_expr(splat_expr, hasher, uses, ExprHashConfig::const_eval())?;
                 }
               }
             }
@@ -1956,7 +2102,115 @@ fn default_optimizer_pipeline() -> OptimizerPipeline {
   })
 }
 
+/// Resets the ambient-state fold flags for this pass, then walks the program for references that
+/// invalidate parts of the tracking up front: any threshold-setter presence (or an import, whose
+/// module may mutate thresholds when it evaluates) makes settings reads inside closure bodies
+/// unsafe to fold, and a setter *referenced as a value* can be invoked anywhere at runtime, so the
+/// matching state is unknowable for the whole program.
+fn prescan_ambient_state(ctx: &EvalCtx, ast: &Program) {
+  let setter_syms = [
+    (ctx.interned_symbols.intern("set_sharp_angle_threshold"), AmbientSetter::SharpAngle),
+    (ctx.interned_symbols.intern("set_curve_angle_threshold"), AmbientSetter::CurveAngle),
+    (ctx.interned_symbols.intern("set_rng_seed"), AmbientSetter::RngSeed),
+  ];
+  let (mut has_threshold_setter, mut settings_unknown, mut rng_unknown) = (false, false, false);
+  let mut cb = |expr: &Expr| {
+    let (called, referenced) = match expr {
+      Expr::Call {
+        call: FunctionCall {
+          target: FunctionCallTarget::Name(name),
+          ..
+        },
+        ..
+      } => (Some(*name), None),
+      Expr::Ident { name, .. } => (None, Some(*name)),
+      _ => (None, None),
+    };
+    for (sym, setter) in setter_syms {
+      if called == Some(sym) && setter != AmbientSetter::RngSeed {
+        has_threshold_setter = true;
+      }
+      if referenced == Some(sym) {
+        match setter {
+          AmbientSetter::RngSeed => rng_unknown = true,
+          _ => settings_unknown = true,
+        }
+      }
+    }
+  };
+  let mut has_import = false;
+  for stmt in &ast.statements {
+    has_import |= matches!(stmt, TopLevelStatement::Import { .. });
+    stmt.traverse_exprs(&mut cb);
+  }
+
+  ctx.fold_settings_unknown.set(settings_unknown);
+  ctx.fold_rng_unknown.set(rng_unknown);
+  ctx
+    .fold_settings_deferred_unsafe
+    .set(has_threshold_setter || settings_unknown || has_import);
+}
+
+/// If `expr` is a call to an ambient setter (in sanctioned top-level statement position), handle
+/// it: execute at fold time when the args are const so fold-time state tracks runtime statement
+/// order, else mark the state unknowable.  The statement is kept either way; eval re-runs it
+/// (idempotently) after the per-run state reset.
+fn fold_exec_ambient_setter_stmt(
+  ctx: &EvalCtx,
+  local_scope: &mut ScopeTracker,
+  expr: &mut Expr,
+) -> Result<bool, ErrorStack> {
+  let Expr::Call { call, loc } = expr else {
+    return Ok(false);
+  };
+  let setter = match &call.target {
+    FunctionCallTarget::Literal(callable) => AmbientSetter::of_callable(callable),
+    FunctionCallTarget::Name(name) => match local_scope.get(*name) {
+      Some(TrackedValueRef::Const(Value::Callable(callable))) => {
+        AmbientSetter::of_callable(callable)
+      }
+      Some(_) => None,
+      None => ctx.with_resolved_sym(*name, |name| {
+        AmbientSetter::from_name(FUNCTION_ALIASES.get(name).copied().unwrap_or(name))
+      }),
+    },
+  };
+  let Some(setter) = setter else {
+    return Ok(false);
+  };
+  // Eval expects builtin call targets to have been resolved to literals during optimization.
+  call.target = FunctionCallTarget::Literal(setter.to_callable());
+
+  for arg in call.args.iter_mut() {
+    optimize_expr(ctx, local_scope, arg, true)?;
+  }
+  for kwarg in call.kwargs.values_mut() {
+    optimize_expr(ctx, local_scope, kwarg, true)?;
+  }
+
+  let arg_vals: Option<Vec<Value>> = call.args.iter().map(|a| a.as_literal().cloned()).collect();
+  let kwarg_vals: Option<FxHashMap<Sym, Value>> = call
+    .kwargs
+    .iter()
+    .map(|(k, v)| v.as_literal().cloned().map(|v| (*k, v)))
+    .collect();
+  match (arg_vals, kwarg_vals) {
+    (Some(arg_vals), Some(kwarg_vals)) => {
+      ctx
+        .invoke_callable(&setter.to_callable(), &arg_vals, &kwarg_vals)
+        .map_err(|err| {
+          let (line, col) = ctx.resolve_loc(*loc);
+          err.with_loc(line, col)
+        })?;
+    }
+    _ => setter.mark_unknown(ctx),
+  }
+  Ok(true)
+}
+
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
+  prescan_ambient_state(ctx, ast);
+
   let mut local_scope = ScopeTracker::default();
   // Seed the tracker with the ambient scope's bindings
   if let Some(ambient) = ctx.ambient_scope.borrow().as_ref() {
@@ -1968,6 +2222,14 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
     }
   }
   for stmt in &mut ast.statements {
+    if let TopLevelStatement::Statement(Statement::Expr(expr)) = stmt {
+      if fold_exec_ambient_setter_stmt(ctx, &mut local_scope, expr)? {
+        continue;
+      }
+    } else if matches!(stmt, TopLevelStatement::Import { .. }) {
+      // The module body may mutate thresholds when it evaluates at import time.
+      ctx.fold_settings_unknown.set(true);
+    }
     optimize_top_level_statement(ctx, &mut local_scope, stmt, true)?;
   }
   Ok(())
@@ -2083,7 +2345,7 @@ y = fn(2)
 
   let ctx = EvalCtx::default();
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
-  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
 
   let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[1]
   else {
@@ -2109,7 +2371,7 @@ y = fn(2, a)
 
   let ctx = EvalCtx::default();
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
-  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
 
   let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2]
   else {
@@ -2170,7 +2432,7 @@ y = fn(2)
 
   let ctx = EvalCtx::default();
   let mut ast = crate::parse_program_src(&ctx, code).unwrap();
-  optimize_ast(&EvalCtx::default(), &mut ast).unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
 
   let TopLevelStatement::Statement(Statement::Assignment { name, expr, .. }) = &ast.statements[2]
   else {
@@ -3096,4 +3358,175 @@ build_curl = || {
 build_curl()"#;
 
   crate::parse_and_eval_program(code).unwrap();
+}
+
+/// E2E coverage of the ambient-state model: analyzable top-level setter statements execute at
+/// fold time (so readers fold correctly *and* stay cached per settings/seed), everything the
+/// optimizer can't order-track degrades to runtime evaluation, and threshold setters are
+/// rejected outside top-level statement position.
+#[cfg(test)]
+mod ambient_state_tests {
+  use super::*;
+  use crate::{parse_and_eval_program, parse_and_eval_program_with_ctx, parse_program_src};
+
+  const EMBED_PLATE: &str = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5
+)
+"#;
+
+  /// Mimics `geoscript_repl_reset`'s per-run ambient state restoration.
+  fn repl_reset(ctx: &EvalCtx) {
+    *ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
+    *ctx.default_curve_angle_degrees.borrow_mut() = 1.0;
+    ctx.reset_rng_to_default();
+  }
+
+  fn plate_vert_count(ctx: &EvalCtx, src: &str) -> usize {
+    repl_reset(ctx);
+    parse_and_eval_program_with_ctx(src.to_owned(), ctx, false).unwrap();
+    let mesh = ctx.get_global("mesh").unwrap();
+    mesh.as_mesh().unwrap().mesh.vertices.len()
+  }
+
+  fn eval_x(ctx: &EvalCtx, src: &str) -> f32 {
+    repl_reset(ctx);
+    parse_and_eval_program_with_ctx(src.to_owned(), ctx, false).unwrap();
+    ctx.get_global("x").unwrap().as_float().unwrap()
+  }
+
+  fn assignment_is_folded(src: &str, name: &str) -> bool {
+    let ctx = EvalCtx::default();
+    let mut ast = parse_program_src(&ctx, src).unwrap();
+    optimize_ast(&ctx, &mut ast).unwrap();
+    ast
+      .statements
+      .iter()
+      .find_map(|s| match s {
+        TopLevelStatement::Statement(Statement::Assignment { name: n, expr, .. })
+          if ctx.with_resolved_sym(*n, |s| s == name) =>
+        {
+          Some(expr.as_literal().is_some())
+        }
+        _ => None,
+      })
+      .unwrap()
+  }
+
+  /// A const-arg threshold setter executes at fold time: the downstream reader still const-folds
+  /// AND the folded result reflects the runtime setting (179° suppresses the cap/wall creases the
+  /// default threshold produces).
+  #[test]
+  fn threshold_setter_folds_and_is_honored() {
+    let ctx = EvalCtx::default();
+    let creased = plate_vert_count(&ctx, EMBED_PLATE);
+    let smooth = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    assert!(smooth < creased, "{smooth} !< {creased}");
+    assert!(
+      assignment_is_folded(&format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"), "mesh"),
+      "reader after an analyzable setter must still const-fold"
+    );
+  }
+
+  /// The batch case: one persistent ctx running programs with different thresholds must not serve
+  /// cache entries across settings (keys include the live threshold values).
+  #[test]
+  fn threshold_cache_isolated_across_batch_runs() {
+    let ctx = EvalCtx::default();
+    let smooth_a = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let creased = plate_vert_count(&ctx, EMBED_PLATE);
+    let smooth_b = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    assert!(smooth_a < creased);
+    assert_eq!(smooth_a, smooth_b);
+  }
+
+  /// Threshold setters outside top-level statement position are compile errors pointing at the
+  /// alternatives; `set_rng_seed` stays legal anywhere.
+  #[test]
+  fn threshold_setter_rejected_off_top_level() {
+    for src in [
+      "f = || set_sharp_angle_threshold(60)",
+      "x = if 1 < 2 { set_curve_angle_threshold(5) } else { nil }",
+      "f = set_sharp_angle_threshold\ng = || f(60)",
+    ] {
+      let err = parse_and_eval_program(src).unwrap_err();
+      let msg = format!("{err}");
+      assert!(msg.contains("top-level statement"), "`{src}`: {msg}");
+    }
+    parse_and_eval_program("f = || set_rng_seed(5)\nf()").unwrap();
+  }
+
+  /// A setter whose argument is only known at runtime still takes effect: the reader stops
+  /// folding and evaluates after the setter runs.
+  #[test]
+  fn threshold_setter_dynamic_arg_honored_at_runtime() {
+    let ctx = EvalCtx::default();
+    let creased = plate_vert_count(&ctx, EMBED_PLATE);
+    let smooth = plate_vert_count(
+      &ctx,
+      &format!("set_sharp_angle_threshold(input_float(\"t\", 179))\n{EMBED_PLATE}"),
+    );
+    assert!(smooth < creased, "{smooth} !< {creased}");
+  }
+
+  /// `set_rng_seed` executes at fold time: a downstream const-arg rng call folds, reproduces
+  /// across reruns of a shared ctx, and differs across seeds.
+  #[test]
+  fn rng_seed_folds_deterministically() {
+    let ctx = EvalCtx::default();
+    let a1 = eval_x(&ctx, "set_rng_seed(7)\nx = randf(0, 1)");
+    let b = eval_x(&ctx, "set_rng_seed(8)\nx = randf(0, 1)");
+    let a2 = eval_x(&ctx, "set_rng_seed(7)\nx = randf(0, 1)");
+    assert_eq!(a1, a2);
+    assert_ne!(a1, b);
+    assert!(assignment_is_folded("set_rng_seed(7)\nx = randf(0, 1)", "x"));
+  }
+
+  /// The seed anchors downstream fold cache keys: rng draws added/removed *before* the seed don't
+  /// change what a seeded computation produces (composition 077's memoization contract).
+  #[test]
+  fn rng_seed_anchors_downstream_cache() {
+    let ctx = EvalCtx::default();
+    let plain = eval_x(&ctx, "set_rng_seed(7)\nx = randf(0, 1)");
+    let shifted = eval_x(&ctx, "junk = randf(0, 1)\nset_rng_seed(7)\nx = randf(0, 1)");
+    assert_eq!(plain, shifted);
+  }
+
+  /// A seed the optimizer can't order-track (inside control flow / a closure) poisons rng folding
+  /// from that point, so downstream draws happen at runtime after the seed has taken effect —
+  /// producing the same value as the analyzable top-level form.
+  #[test]
+  fn rng_seed_legal_anywhere_scoped_correctly() {
+    let ctx = EvalCtx::default();
+    let baseline = eval_x(&ctx, "set_rng_seed(7)\nx = randf(0, 1)");
+    let via_cond = eval_x(&ctx, "if 1 < 2 { set_rng_seed(7) }\nx = randf(0, 1)");
+    let via_closure = eval_x(&ctx, "f = || set_rng_seed(7)\nf()\nx = randf(0, 1)");
+    assert_eq!(baseline, via_cond);
+    assert_eq!(baseline, via_closure);
+  }
+
+  /// Settings readers inside closure bodies can't fold at definition position when the program
+  /// mutates thresholds — the closure may run after the setter.
+  #[test]
+  fn closure_interior_reader_defers_when_settings_mutated() {
+    let ctx = EvalCtx::default();
+    let direct = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let via_closure = plate_vert_count(
+      &ctx,
+      r#"
+f = || {
+  embed_path(
+    path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+    embed=|p| v3(p.x, 0, p.y),
+    thickness=0.5
+  )
+}
+set_sharp_angle_threshold(179)
+mesh = f()
+"#,
+    );
+    assert_eq!(direct, via_closure);
+  }
 }

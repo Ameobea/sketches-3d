@@ -521,6 +521,10 @@ impl<'a> DerivCtx<'a> {
     result
   }
 
+  /// NOTE: every branch's primal + tangent is taped at the enclosing level, so the derivative
+  /// closure evaluates all branches unconditionally.  The selects still pick the right values (and
+  /// math builtins yield NaN/inf rather than erroring on bad domains), but `if`-guards do not
+  /// protect a branch's work from running.
   fn diff_conditional(
     &mut self,
     cond: &Expr,
@@ -843,24 +847,15 @@ fn d_abs(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLo
 }
 
 /// Branch-select derivative: `if cond { da } else { db }`.
-fn branch_select(
-  dcx: &mut DerivCtx,
-  cond: Expr,
-  da: Tangent,
-  db: Tangent,
-  loc: SourceLoc,
-) -> Result<Tangent, ErrorStack> {
+fn branch_select(cond: Expr, da: Tangent, db: Tangent, loc: SourceLoc) -> Result<Tangent, ErrorStack> {
   if matches!(da, Tangent::Zero) && matches!(db, Tangent::Zero) {
     return Ok(Tangent::Zero);
   }
-  let then_e = reify_scalar(da, loc);
-  let else_e = reify_scalar(db, loc);
-  let _ = dcx;
   Ok(Tangent::Expr(Expr::Conditional {
     cond: Box::new(cond),
-    then: Box::new(then_e),
+    then: Box::new(reify_scalar(da, loc)),
     else_if_exprs: vec![],
-    else_expr: Some(Box::new(else_e)),
+    else_expr: Some(Box::new(reify_scalar(db, loc))),
     loc,
   }))
 }
@@ -876,14 +871,14 @@ fn d_min(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLo
   require_scalar(dcx, &a[0], "min", loc)?;
   require_scalar(dcx, &a[1], "min", loc)?;
   let cond = binop(BinOp::Lte, a[0].clone(), a[1].clone(), loc);
-  branch_select(dcx, cond, d[0].clone(), d[1].clone(), loc)
+  branch_select(cond, d[0].clone(), d[1].clone(), loc)
 }
 
 fn d_max(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
   require_scalar(dcx, &a[0], "max", loc)?;
   require_scalar(dcx, &a[1], "max", loc)?;
   let cond = binop(BinOp::Gte, a[0].clone(), a[1].clone(), loc);
-  branch_select(dcx, cond, d[0].clone(), d[1].clone(), loc)
+  branch_select(cond, d[0].clone(), d[1].clone(), loc)
 }
 
 fn d_clamp(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
@@ -952,6 +947,28 @@ fn d_lerp(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc
   let term_b = t_scale(t.clone(), d[2].clone(), loc);
   let term_t = t_scale(b_minus_a, d[0].clone(), loc);
   Ok(t_add(t_add(term_a, term_b, loc), term_t, loc))
+}
+
+fn d_atan2(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+  // atan2(y, x); d = (x·dy − y·dx) / (x² + y²).  The single-arg vec2 overload is unsupported.
+  if a.len() != 2 {
+    return Err(dcx.err("autodiff: only the 2-argument form of `atan2` is differentiable", loc));
+  }
+  require_scalar(dcx, &a[0], "atan2", loc)?;
+  require_scalar(dcx, &a[1], "atan2", loc)?;
+  let (y, x) = (&a[0], &a[1]);
+  let num = t_sub(
+    t_scale(x.clone(), d[0].clone(), loc),
+    t_scale(y.clone(), d[1].clone(), loc),
+    loc,
+  );
+  let denom = binop(
+    BinOp::Add,
+    binop(BinOp::Mul, x.clone(), x.clone(), loc),
+    binop(BinOp::Mul, y.clone(), y.clone(), loc),
+    loc,
+  );
+  Ok(t_div_by(num, denom, loc))
 }
 
 fn d_deg2rad(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
@@ -1071,6 +1088,7 @@ static DERIV_RULES: phf::Map<&'static str, DerivRule> = phf::phf_map! {
   "max" => d_max,
   "clamp" => d_clamp,
   "smoothstep" => d_smoothstep,
+  "atan2" => d_atan2,
   "lerp" => d_lerp,
   "deg2rad" => d_deg2rad,
   "rad2deg" => d_rad2deg,
@@ -1391,6 +1409,8 @@ cyl_dv = deriv(cyl, vec2(0, 1))
       ("|x: float| max(x, 1)", &[0.5, 1.3, -0.2]),
       ("|x: float| clamp(0, 1, x)", &[-0.5, 0.3, 1.7]),
       ("|x: float| smoothstep(0, 1, x)", &[-0.5, 0.3, 0.8, 1.7]),
+      ("|x: float| atan2(x, 2)", &[0.5, -1.3, 2.3]),
+      ("|x: float| atan2(1.5, x)", &[0.5, 2.3, -1.1]),
       ("|x: float| x*x*x + 2*x", &[0.5, -1.3, 2.3]),
       ("|x: float| 1 / x", &[0.5, 2.3, -1.1]),
       ("|x: float| deg2rad(x)", &[10., 90.]),

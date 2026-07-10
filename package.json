@@ -11,6 +11,8 @@
     "preview": "vite preview",
     "lint": "oxfmt && oxlint",
     "format": "oxfmt",
+    "papercut": "node ./scripts/papercut.mjs",
+    "papercut:review": "node ./scripts/papercut-review.mjs",
     "gen:level-schema": "tsx src/viz/levelDef/genSchema.ts",
     "gen:api:patch": "node ./scripts/patch-api-nocheck.mjs"
   },

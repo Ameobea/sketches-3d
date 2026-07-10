@@ -1,5 +1,4 @@
 #![feature(impl_trait_in_bindings, adt_const_params, likely_unlikely)]
-#![cfg_attr(target_arch = "wasm32", feature(unsafe_cell_access))]
 #![cfg_attr(not(target_arch = "wasm32"), feature(thread_local))]
 
 #[cfg(target_arch = "wasm32")]
@@ -457,6 +456,39 @@ impl Callable {
       Callable::Closure(_) => false,
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_side_effectful()),
       Callable::Dynamic { inner, .. } => inner.is_side_effectful(),
+    }
+  }
+
+  /// True if calling this may read ctx settings mutated by `set_sharp_angle_threshold` /
+  /// `set_curve_angle_threshold` (directly for the listed builtins; conservatively for closures,
+  /// whose bodies can call anything).  Combined with [`EvalCtx::settings_setter_present`] to block
+  /// const-folding that would bake in stale settings.
+  pub fn reads_ctx_settings(&self) -> bool {
+    match self {
+      Callable::Builtin { fn_entry_ix, .. } => {
+        let name = fn_sigs().entries[*fn_entry_ix].0;
+        matches!(
+          name,
+          "tessellate_path"
+            | "embed_path"
+            | "fan_fill"
+            | "extrude_path"
+            | "offset_path"
+            | "discretize_path"
+            | "path_union"
+            | "path_intersect"
+            | "path_difference"
+            | "path_xor"
+            | "path_intersects"
+            | "compute_uvs"
+            | "compute_normals"
+        )
+      }
+      Callable::PartiallyAppliedFn(paf) => paf.inner.reads_ctx_settings(),
+      Callable::Closure(_) => true,
+      Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.reads_ctx_settings()),
+      // Dynamic callables (path samplers etc.) take discretization params from their creator.
+      Callable::Dynamic { .. } => false,
     }
   }
 
@@ -1930,6 +1962,14 @@ pub struct ModuleExportsCacheEntry {
   pub own_controls: Vec<RenderedControl>,
   pub rng_state_at_start: Pcg32,
   pub rng_state_at_end: Pcg32,
+  /// Ambient (sharp, curve) threshold values when the body started / finished evaluating.
+  /// `at_start` validates the entry when the body read the settings; `at_end` is restored on
+  /// replay so a module's own setter calls take effect for the rest of the run, mirroring
+  /// `rng_state_at_end`.
+  pub settings_at_start: (f32, f32),
+  pub settings_at_end: (f32, f32),
+  /// Whether the body (or a fold it triggered) consumed the ambient settings.
+  pub read_settings: bool,
   pub direct_imports: Vec<(String, u64)>,
   /// Handle ids this module read via `gizmo(...)`, paired with a content hash of the
   /// injected value it saw. A cache hit requires each handle's current injected value
@@ -2006,11 +2046,27 @@ pub struct EvalCtx {
   /// Handle ids read by the currently-evaluating module body, accumulated for the
   /// cache entry's `gizmo_reads`. `None` outside module eval.
   pub current_module_gizmo_reads: RefCell<Option<FxHashSet<String>>>,
+  /// Whether the currently-evaluating module body consumed the ambient threshold settings.
+  /// Saved/restored per module eval; feeds the cache entry's `read_settings`.
+  pub current_module_read_settings: Cell<bool>,
   /// Per-module-eval counter assigning `@N` ids to unnamed gizmo calls. Saved/reset
   /// by the module-context guard so nested module evals don't interfere.
   pub current_module_unnamed_gizmo_count: Cell<u32>,
   /// Text emitted via `print()` this run, captured for `geotoy eval`. Cleared at run start.
   pub prints: RefCell<Vec<String>>,
+  /// Optimizer ambient-state validity flags, reset at the start of each const-folding pass.
+  /// `run_const_folding_pass` executes analyzable setter statements (thresholds + rng seed) at
+  /// fold time so fold-time state tracks runtime state in statement order; these flags mark the
+  /// point past which that tracking breaks down and folding of consumers must stop.
+  ///
+  /// `fold_settings_unknown`: threshold values unknowable (non-const setter arg, laundered setter
+  /// ref, or an import that may mutate them).  `fold_rng_unknown`: same for the rng stream.
+  /// `fold_settings_deferred_unsafe`: the program mutates thresholds somewhere, so folding a
+  /// settings reader inside a deferred context (closure body — runtime call order unknown) is
+  /// unsafe even where straight-line state is known.
+  pub fold_settings_unknown: Cell<bool>,
+  pub fold_rng_unknown: Cell<bool>,
+  pub fold_settings_deferred_unsafe: Cell<bool>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -2054,8 +2110,12 @@ impl Default for EvalCtx {
       next_render_id: Cell::new(1),
       gizmo_values: RefCell::new(FxHashMap::default()),
       current_module_gizmo_reads: RefCell::new(None),
+      current_module_read_settings: Cell::new(false),
       current_module_unnamed_gizmo_count: Cell::new(0),
       prints: RefCell::new(Vec::new()),
+      fold_settings_unknown: Cell::new(false),
+      fold_rng_unknown: Cell::new(false),
+      fold_settings_deferred_unsafe: Cell::new(false),
     }
   }
 }
@@ -3307,8 +3367,30 @@ impl EvalCtx {
   /// A `curve_angle_degrees` arg: the explicit value if given, else the runtime default
   /// (`set_curve_angle_threshold`, seeded by the prelude).
   pub fn resolve_curve_angle_degrees(&self, v: &Value) -> f32 {
-    v.as_float()
-      .unwrap_or_else(|| *self.default_curve_angle_degrees.borrow())
+    v.as_float().unwrap_or_else(|| {
+      self.mark_settings_read();
+      *self.default_curve_angle_degrees.borrow()
+    })
+  }
+
+  /// The ambient sharp-angle threshold, noting the read for module-cache validation.  All
+  /// builtins consuming the setting must read through this.
+  pub fn read_sharp_angle_threshold_degrees(&self) -> f32 {
+    self.mark_settings_read();
+    *self.sharp_angle_threshold_degrees.borrow()
+  }
+
+  /// Records that the current computation consumed the ambient settings (also called by the
+  /// const-eval cache when a fold's key depends on them, since a cache hit skips the impl read).
+  pub fn mark_settings_read(&self) {
+    self.current_module_read_settings.set(true);
+  }
+
+  fn ambient_settings(&self) -> (f32, f32) {
+    (
+      *self.sharp_angle_threshold_degrees.borrow(),
+      *self.default_curve_angle_degrees.borrow(),
+    )
   }
 
   /// Content hash of the injected value a module would see for `handle_id`, used to
@@ -3482,7 +3564,11 @@ impl EvalCtx {
         .iter()
         .all(|(h, hash)| self.gizmo_value_hash(module_name, h) == *hash);
 
-      if !stale && rng_ok && gizmos_ok {
+      // Bodies that consumed the ambient thresholds require the current values to match what
+      // they originally saw; settings-free bodies hit unconditionally.
+      let settings_ok = !entry.read_settings || self.ambient_settings() == entry.settings_at_start;
+
+      if !stale && rng_ok && gizmos_ok && settings_ok {
         for mesh in &entry.own_renders {
           self.rendered_meshes.push(mesh.clone());
         }
@@ -3499,6 +3585,10 @@ impl EvalCtx {
           self.rendered_controls.push(control.clone());
         }
         self.set_rng_state(entry.rng_state_at_end.clone());
+        // Replay the body's outgoing threshold state so its own setter calls (not part of the
+        // recorded render side effects) still take hold for the rest of the run.
+        *self.sharp_angle_threshold_degrees.borrow_mut() = entry.settings_at_end.0;
+        *self.default_curve_angle_degrees.borrow_mut() = entry.settings_at_end.1;
         #[cfg(target_arch = "wasm32")]
         or_async_dep_bit(entry.own_async_deps_bitmask);
 
@@ -3575,6 +3665,7 @@ impl EvalCtx {
       prev_imports: Option<Vec<(String, u64)>>,
       prev_gizmo_reads: Option<FxHashSet<String>>,
       prev_unnamed_gizmo_count: u32,
+      prev_read_settings: bool,
     }
     impl<'a> Drop for ModuleCtxGuard<'a> {
       fn drop(&mut self) {
@@ -3586,6 +3677,10 @@ impl EvalCtx {
           .ctx
           .current_module_unnamed_gizmo_count
           .set(self.prev_unnamed_gizmo_count);
+        self
+          .ctx
+          .current_module_read_settings
+          .set(self.prev_read_settings);
       }
     }
     let _guard = ModuleCtxGuard {
@@ -3604,9 +3699,11 @@ impl EvalCtx {
         .borrow_mut()
         .replace(FxHashSet::default()),
       prev_unnamed_gizmo_count: self.current_module_unnamed_gizmo_count.replace(0),
+      prev_read_settings: self.current_module_read_settings.replace(false),
     };
 
     let rng_at_start = self.rng_state();
+    let settings_at_start = self.ambient_settings();
 
     // Module sources do not include the prelude; suppress any inherited offset around the parse.
     let prev_offset = self.source_map.borrow().prelude_line_count;
@@ -3740,6 +3837,8 @@ impl EvalCtx {
       })
       .collect();
     let rng_at_end = self.rng_state();
+    let settings_at_end = self.ambient_settings();
+    let read_settings = self.current_module_read_settings.get();
     #[cfg(target_arch = "wasm32")]
     let own_async_deps_bitmask = get_async_dep_bits() & !async_before;
     #[cfg(not(target_arch = "wasm32"))]
@@ -3768,6 +3867,9 @@ impl EvalCtx {
       own_controls,
       rng_state_at_start: rng_at_start,
       rng_state_at_end: rng_at_end,
+      settings_at_start,
+      settings_at_end,
+      read_settings,
       direct_imports,
       gizmo_reads,
       own_async_deps_bitmask,
@@ -6564,6 +6666,9 @@ fn test_random_module_cache_requires_matching_rng_state() {
     own_controls: Vec::new(),
     rng_state_at_start: rng_start,
     rng_state_at_end: rng_end,
+    settings_at_start: (45.8366, 1.0),
+    settings_at_end: (45.8366, 1.0),
+    read_settings: false,
     direct_imports: Vec::new(),
     gizmo_reads: Vec::new(),
     own_async_deps_bitmask: 0,
@@ -6583,6 +6688,115 @@ fn test_random_module_cache_requires_matching_rng_state() {
   let actual = actual_exports.get("x").unwrap().as_int().unwrap();
 
   assert_eq!(actual, 2);
+}
+
+#[cfg(test)]
+const PLATE_MODULE: &str = r#"
+export m = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5
+)
+"#;
+
+/// Mimics `geoscript_repl_reset`'s per-run ambient state restoration, then runs `src`.
+#[cfg(test)]
+fn run_as_fresh_run(ctx: &EvalCtx, src: &str) {
+  *ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
+  *ctx.default_curve_angle_degrees.borrow_mut() = 1.0;
+  ctx.reset_rng_to_default();
+  ctx.replayed_this_run.borrow_mut().clear();
+  parse_and_eval_program_with_ctx(src.to_owned(), ctx, false).unwrap();
+}
+
+#[cfg(test)]
+fn module_export_mesh_verts(ctx: &EvalCtx, module: &str, name: &str) -> usize {
+  let exports = Rc::clone(&ctx.module_exports.borrow().get(module).unwrap().exports);
+  let Value::Mesh(m) = &exports[name] else {
+    panic!("export {name} is not a mesh")
+  };
+  m.mesh.vertices.len()
+}
+
+/// A module whose exports bake the ambient sharp-angle threshold re-evals when the value at its
+/// import point changes, and its entry keeps serving when it matches again.
+#[test]
+fn test_module_cache_validates_threshold_reads() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("plate".to_owned(), PLATE_MODULE.to_owned());
+
+  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"");
+  let smooth = module_export_mesh_verts(&ctx, "plate", "m");
+  run_as_fresh_run(&ctx, "import { m } from \"plate\"");
+  let creased = module_export_mesh_verts(&ctx, "plate", "m");
+  assert!(smooth < creased, "{smooth} !< {creased}");
+  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"");
+  assert_eq!(module_export_mesh_verts(&ctx, "plate", "m"), smooth);
+}
+
+/// A module that never consumes the ambient settings stays cached across runs with different
+/// threshold values at its import point.
+#[test]
+fn test_module_cache_retained_when_settings_unread() {
+  let ctx = EvalCtx::default();
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("pure".to_owned(), "export v = box(1)".to_owned());
+
+  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { v } from \"pure\"");
+  let first = Rc::as_ptr(&ctx.module_exports.borrow().get("pure").unwrap().exports);
+  run_as_fresh_run(&ctx, "import { v } from \"pure\"");
+  let second = Rc::as_ptr(&ctx.module_exports.borrow().get("pure").unwrap().exports);
+  assert_eq!(
+    first, second,
+    "settings-free module must stay cached across ambient threshold changes"
+  );
+}
+
+/// A module's own threshold setter is not part of its recorded render side effects; the cache
+/// replay must restore its outgoing settings state so the rest of the run behaves like the
+/// original eval did.
+#[test]
+fn test_module_setter_effect_replays_from_cache() {
+  const ROOT_PLATE: &str = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5
+)
+"#;
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "smooth_mode".to_owned(),
+    "set_sharp_angle_threshold(179)\nexport marker = 1".to_owned(),
+  );
+  let mesh_verts = |ctx: &EvalCtx| {
+    ctx
+      .get_global("mesh")
+      .unwrap()
+      .as_mesh()
+      .unwrap()
+      .mesh
+      .vertices
+      .len()
+  };
+
+  let root = format!("import {{ marker }} from \"smooth_mode\"\n{ROOT_PLATE}");
+  run_as_fresh_run(&ctx, &root);
+  let first = mesh_verts(&ctx);
+  // Second run replays the module from cache; the restored settings must still shape the
+  // root-level mesh built after the import.
+  run_as_fresh_run(&ctx, &root);
+  let second = mesh_verts(&ctx);
+  assert_eq!(first, second);
+
+  run_as_fresh_run(&ctx, ROOT_PLATE);
+  let creased = mesh_verts(&ctx);
+  assert!(first < creased, "{first} !< {creased}");
 }
 
 #[cfg(test)]

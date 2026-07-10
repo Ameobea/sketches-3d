@@ -1,7 +1,6 @@
 use mesh::triangle_intersection::TriTriIntersectionType;
 use noise::RangeFunction;
 use paste::paste;
-#[cfg(target_arch = "wasm32")]
 use rand_pcg::Pcg32;
 use std::cmp::Reverse;
 use std::marker::ConstParamTy;
@@ -20,7 +19,6 @@ use parry3d::bounding_volume::Aabb;
 use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
 use rand::RngExt;
-#[cfg(target_arch = "wasm32")]
 use rand::{Rng, SeedableRng};
 
 use crate::builtins::trace_path::{
@@ -1191,7 +1189,6 @@ fn set_default_material_impl(
   }
 }
 
-#[cfg(target_arch = "wasm32")]
 fn set_rng_seed_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -1202,11 +1199,7 @@ fn set_rng_seed_impl(
   match def_ix {
     0 => {
       let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
-      unsafe {
-        ctx
-          .rng
-          .replace(Pcg32::from_seed(std::mem::transmute((seed, seed))));
-      };
+      *ctx.rng() = Pcg32::from_seed(unsafe { std::mem::transmute((seed, seed)) });
 
       // pump the rng a few times because sometimes that seems to be necessary to get good results
       let _ = ctx.rng().next_u64();
@@ -1217,17 +1210,6 @@ fn set_rng_seed_impl(
     }
     _ => unimplemented!(),
   }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn set_rng_seed_impl(
-  _ctx: &EvalCtx,
-  _def_ix: usize,
-  _arg_refs: &[ArgRef],
-  _args: &[Value],
-  _kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  Ok(Value::Nil)
 }
 
 fn set_sharp_angle_threshold_impl(
@@ -2565,9 +2547,6 @@ fn discretize_fillable_paths(
   Ok(paths)
 }
 
-/// Domain step for finite-difference embedding frames when autodiff is unavailable.
-const EMBED_FRAME_FD_STEP: f32 = 1e-3;
-
 /// A unit vector perpendicular to `n` (arbitrary in-plane direction), for degenerate-tangent fallback.
 fn any_perp(n: Vec3) -> Vec3 {
   let axis = if n.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
@@ -2609,6 +2588,8 @@ fn embed_boundary_arclen_tangents(
     if visited[start] || !adj.contains_key(&start) {
       continue;
     }
+    // Assumes each border vertex has exactly 2 border neighbors; loops that touch at a vertex
+    // would walk across each other and get bogus arc lengths.
     let mut order = Vec::new();
     let (mut cur, mut prev) = (start, usize::MAX);
     loop {
@@ -2758,6 +2739,18 @@ fn embed_path_impl(
 
         let (arclen, btan, closure) = embed_boundary_arclen_tangents(&mesh, &cap_positions);
 
+        // Finite-difference step scaled to the domain so it stays well above f32 ulp at large
+        // path coords while remaining small relative to feature size.
+        let fd_step = {
+          let (mut lo, mut hi) = (Vec2::repeat(f32::INFINITY), Vec2::repeat(f32::NEG_INFINITY));
+          for p in paths.iter().flatten() {
+            lo = lo.inf(p);
+            hi = hi.sup(p);
+          }
+          let max_abs = lo.abs().sup(&hi.abs()).max();
+          ((hi - lo).norm() * 1e-3).max(max_abs * 1e-5)
+        };
+
         let uv_by_key: FxHashMap<VertexKey, Vec2> = domain_uvs
           .iter()
           .enumerate()
@@ -2766,21 +2759,38 @@ fn embed_path_impl(
         // Per cap vertex: analytic (offset-aligned) surface normal + the partials φ_u, φ_v.
         let frames = RefCell::new(vec![(Vec3::zeros(), Vec3::zeros(), Vec3::zeros()); n]);
 
-        extrude_along_normals_with_normal_override(&mut mesh, &distance, |vk, topo| {
-          let Some(&uv) = uv_by_key.get(&vk) else {
-            return Ok(None);
-          };
-          let frame = match &autodiff_frame {
-            Some(f) => f.frame(ctx, uv)?,
-            None => estimate_embed_frame(uv, EMBED_FRAME_FD_STEP, &embed)?,
-          };
-          if frame.normal.norm() < 1e-9 {
-            return Ok(None);
-          }
-          let normal = if frame.normal.dot(&topo) < 0. { -frame.normal } else { frame.normal };
-          frames.borrow_mut()[vkey_ix(&vk) as usize - 1] = (normal, frame.du, frame.dv);
-          Ok(Some(normal))
-        })?;
+        // Offset with precomputed per-vertex thicknesses so the top-cap position reconstruction
+        // below matches bit-exactly even for an impure thickness callable.
+        let thick: Vec<f32> = cap_positions
+          .iter()
+          .map(|&p| distance(p))
+          .collect::<Result<_, _>>()?;
+        let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+        let ix_by_pos: FxHashMap<[u32; 3], usize> = cap_positions
+          .iter()
+          .enumerate()
+          .map(|(i, &p)| (pos_key(p), i))
+          .collect();
+
+        extrude_along_normals_with_normal_override(
+          &mut mesh,
+          |pos| Ok(thick[ix_by_pos[&pos_key(pos)]]),
+          |vk, topo| {
+            let Some(&uv) = uv_by_key.get(&vk) else {
+              return Ok(None);
+            };
+            let frame = match &autodiff_frame {
+              Some(f) => f.frame(ctx, uv)?,
+              None => estimate_embed_frame(uv, fd_step, &embed)?,
+            };
+            if frame.normal.norm() < 1e-9 {
+              return Ok(None);
+            }
+            let normal = if frame.normal.dot(&topo) < 0. { -frame.normal } else { frame.normal };
+            frames.borrow_mut()[vkey_ix(&vk) as usize - 1] = (normal, frame.du, frame.dv);
+            Ok(Some(normal))
+          },
+        )?;
 
         // Split the cap/wall seam via the standard auto-smooth pass (walls keep topological normals,
         // the junction stays a crisp crease), then author analytic attributes onto each split vertex
@@ -2791,14 +2801,9 @@ fn embed_path_impl(
         // handedness is derived analytically from the target bitangent (φ_v for caps, the thickness
         // direction for walls).
         let frames = frames.into_inner();
-        let thick: Vec<f32> = cap_positions
-          .iter()
-          .map(|&p| distance(p))
-          .collect::<Result<_, _>>()?;
-        mesh.mark_edge_sharpness(ctx.sharp_angle_threshold_degrees.borrow().to_radians());
+        mesh.mark_edge_sharpness(ctx.read_sharp_angle_threshold_degrees().to_radians());
         mesh.separate_vertices_and_compute_normals();
 
-        let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
         let mut by_pos: FxHashMap<[u32; 3], (usize, bool)> = FxHashMap::default();
         for i in 0..n {
           let (a, ..) = frames[i];
@@ -2820,6 +2825,8 @@ fn embed_path_impl(
           };
           let (a, du, dv) = frames[i];
           let cn = mesh.shading_normals.get(vk).copied().unwrap_or(a);
+          // Heuristic with a 60° budget: assumes wall fans stay roughly perpendicular to the
+          // surface normal (breaks only under extreme thickness gradients along the boundary).
           let is_cap = a.dot(&cn).abs() > 0.5;
 
           let (uv, t_raw, n_shade, b_target) = if is_cap {
@@ -3552,7 +3559,7 @@ fn compute_uvs_impl(
         )));
       }
 
-      let sharp_threshold_rad = ctx.sharp_angle_threshold_degrees.borrow().to_radians();
+      let sharp_threshold_rad = ctx.read_sharp_angle_threshold_degrees().to_radians();
       let out = compute_uvs(
         mesh,
         uv_type,
@@ -3582,7 +3589,7 @@ fn compute_normals_impl(
       let smooth_angle = arg_refs[1].resolve(args, kwargs);
       let smooth_angle_deg = match smooth_angle {
         _ if let Some(a) = smooth_angle.as_float() => a,
-        Value::Nil => *ctx.sharp_angle_threshold_degrees.borrow(),
+        Value::Nil => ctx.read_sharp_angle_threshold_degrees(),
         _ => {
           return Err(ErrorStack::new(format!(
             "Invalid `smooth_angle` for `compute_normals`; expected a number of degrees or nil, \
@@ -9974,6 +9981,14 @@ mesh = embed_path(
       m.vertices.len(),
       "analytic mode must author a complete normal set so the render path keeps it"
     );
+    // Default orientation matches `tessellate_path`: the flat plate's thickness grows +Y.
+    for v in m.vertices.values() {
+      assert!(
+        v.position.y >= -1e-6 && v.position.y <= 0.5 + 1e-6,
+        "expected y in [0, 0.5], got {}",
+        v.position.y
+      );
+    }
     let (mut caps, mut walls) = (0, 0);
     for n in m.shading_normals.values() {
       assert!((n.norm() - 1.).abs() < 1e-4, "normals must be unit length");
@@ -10027,6 +10042,31 @@ mesh = embed_path(
     assert!(
       (max_wall_u - 8.).abs() < 1e-3,
       "wall seam clone should reach perimeter=8, got {max_wall_u}"
+    );
+  }
+
+  // A runtime `set_sharp_angle_threshold` preceding a const-arg `embed_path` call must be honored;
+  // the call would otherwise const-fold with the optimize-time default baked in (the setter is
+  // side-effectful and never runs at fold time).
+  #[test]
+  fn embed_path_honors_runtime_sharp_angle_threshold() {
+    let base = r#"
+mesh = embed_path(
+  path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=0.5
+)
+"#;
+    let vert_count = |src: &str| {
+      let ctx = parse_and_eval_program(src).unwrap();
+      let handle = ctx.get_global("mesh").unwrap();
+      handle.as_mesh().unwrap().mesh.vertices.len()
+    };
+    let creased = vert_count(base);
+    let smooth = vert_count(&format!("set_sharp_angle_threshold(179)\n{base}"));
+    assert!(
+      smooth < creased,
+      "179° threshold should suppress crease splits: smooth={smooth} vs creased={creased}"
     );
   }
 

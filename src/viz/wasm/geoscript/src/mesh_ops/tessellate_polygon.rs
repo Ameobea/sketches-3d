@@ -336,11 +336,8 @@ pub fn tessellate_ring_cap_with_holes(
     indices.push(flat);
   }
 
-  // Match the single-polygon cap's CGAL-winding correction, then honor `reverse_winding`.
-  for tri in indices.chunks_mut(3) {
-    tri.swap(0, 2);
-  }
-  if reverse_winding {
+  // The single-polygon cap's CGAL-winding correction and `reverse_winding` cancel to one pass.
+  if !reverse_winding {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -507,11 +504,21 @@ pub fn tessellate_2d_paths_multi(
   plane: TessPlane,
   options: CgalCdtOptions,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
-  if paths.is_empty() {
-    return Ok(LinkedMesh::default());
-  }
+  // `_embedded`'s default front faces −(φ_u × φ_v); xor with the plane's parity to keep this
+  // function's "+remaining axis" default.
+  let (mesh, _domain_uvs) = tessellate_2d_paths_embedded(
+    paths,
+    plane.ccw_faces_positive() ^ flipped,
+    options,
+    |uv| Ok(plane.embed(uv.x, uv.y)),
+  )?;
+  Ok(mesh)
+}
 
-  let mut coords: Vec<f32> = Vec::new();
+/// Validates (>= 3 points per subpath) and flattens `paths` into the flat coord + subpath-length
+/// buffers CGAL's multi-subpath CDT consumes.
+fn flatten_paths(paths: &[Vec<Vec2>]) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
+  let mut coords: Vec<f32> = Vec::with_capacity(paths.iter().map(Vec::len).sum::<usize>() * 2);
   let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
   for (ix, path) in paths.iter().enumerate() {
     if path.len() < 3 {
@@ -526,38 +533,17 @@ pub fn tessellate_2d_paths_multi(
     }
     subpath_lengths.push(path.len() as u32);
   }
-
-  let (out_vertices_xy, mut indices, _vertex_mapping) =
-    run_triangulation_with_holes(&coords, &subpath_lengths, options, &[])?;
-  if indices.is_empty() {
-    return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
-  }
-
-  let mut verts: Vec<Vec3> = Vec::with_capacity(out_vertices_xy.len() / 2);
-  for xy in out_vertices_xy.chunks_exact(2) {
-    verts.push(plane.embed(xy[0], xy[1]));
-  }
-
-  // CGAL emits CCW triangles in param space; embedding into the target plane flips apparent
-  // orientation for some planes.  Swap so the default face points along the plane's +remaining
-  // axis (+Y for the legacy XZ default); `flipped` opts into the other side.
-  if (!plane.ccw_faces_positive()) ^ flipped {
-    for tri in indices.chunks_mut(3) {
-      tri.swap(0, 2);
-    }
-  }
-
-  Ok(LinkedMesh::from_indexed_vertices(
-    &verts, &indices, None, None,
-  ))
+  Ok((coords, subpath_lengths))
 }
 
 /// Constrained-Delaunay-triangulates `paths` (outer + holes via subpath nesting), then embeds each
 /// output 2D vertex into 3D through `embed`.  This is `tessellate_2d_paths_multi` generalized from an
-/// affine `TessPlane` to an arbitrary map φ: ℝ²→ℝ³.  Winding is CGAL's raw CCW-in-param order;
-/// `flipped` swaps it.  The resulting single-layer cap is what `embed_path` thickens.  Also returns
-/// each output vertex's 2D domain coordinate, aligned with the mesh's vertex order (`vkey(i+1, 1)`),
-/// so callers can recover φ's frame per vertex.
+/// affine `TessPlane` to an arbitrary map φ: ℝ²→ℝ³.  The default front face points along
+/// −(φ_u × φ_v) — for a flat `|p| (p.x, 0, p.y)`-style embedding that's +Y, matching
+/// `tessellate_2d_paths_multi`'s legacy XZ default; `flipped` swaps it.  The resulting single-layer
+/// cap is what `embed_path` thickens.  Also returns each output vertex's 2D domain coordinate,
+/// aligned with the mesh's vertex order (`vkey(i+1, 1)`), so callers can recover φ's frame per
+/// vertex.
 pub fn tessellate_2d_paths_embedded(
   paths: &[Vec<Vec2>],
   flipped: bool,
@@ -568,22 +554,7 @@ pub fn tessellate_2d_paths_embedded(
     return Ok((LinkedMesh::default(), Vec::new()));
   }
 
-  let mut coords: Vec<f32> = Vec::new();
-  let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
-  for (ix, path) in paths.iter().enumerate() {
-    if path.len() < 3 {
-      return Err(ErrorStack::new(format!(
-        "Cannot embed subpath {ix} with fewer than 3 points, found: {}",
-        path.len()
-      )));
-    }
-    for pt in path {
-      coords.push(pt.x);
-      coords.push(pt.y);
-    }
-    subpath_lengths.push(path.len() as u32);
-  }
-
+  let (coords, subpath_lengths) = flatten_paths(paths)?;
   let (out_vertices_xy, mut indices, _vertex_mapping) =
     run_triangulation_with_holes(&coords, &subpath_lengths, options, &[])?;
   if indices.is_empty() {
@@ -598,7 +569,8 @@ pub fn tessellate_2d_paths_embedded(
     domain_uvs.push(uv);
   }
 
-  if flipped {
+  // CGAL emits CCW-in-param triangles, which face +(φ_u × φ_v); swap to the −(φ_u × φ_v) default.
+  if !flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -718,22 +690,11 @@ pub fn tessellate_2d_paths_embedded_refined(
     return Ok((LinkedMesh::default(), Vec::new()));
   }
 
-  let mut coords: Vec<f32> = Vec::new();
-  let mut subpath_lengths: Vec<u32> = Vec::with_capacity(paths.len());
-  for (ix, path) in paths.iter().enumerate() {
-    if path.len() < 3 {
-      return Err(ErrorStack::new(format!(
-        "Cannot embed subpath {ix} with fewer than 3 points, found: {}",
-        path.len()
-      )));
-    }
-    let dense = densify_loop_under_embed(path, &embed, tol)?;
-    for pt in &dense {
-      coords.push(pt.x);
-      coords.push(pt.y);
-    }
-    subpath_lengths.push(dense.len() as u32);
-  }
+  let dense = paths
+    .iter()
+    .map(|path| densify_loop_under_embed(path, &embed, tol))
+    .collect::<Result<Vec<_>, _>>()?;
+  let (coords, subpath_lengths) = flatten_paths(&dense)?;
 
   let mut interior: Vec<f32> = Vec::new();
   let mut result: Option<(Vec<Vec2>, Vec<Vec3>, Vec<u32>)> = None;
@@ -775,7 +736,8 @@ pub fn tessellate_2d_paths_embedded_refined(
   }
 
   let (domain_uvs, verts, mut indices) = result.unwrap();
-  if flipped {
+  // Same −(φ_u × φ_v) default facing as `tessellate_2d_paths_embedded`.
+  if !flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -900,51 +862,6 @@ impl AutodiffEmbedFrame {
   }
 }
 
-/// Max magnitude of principal normal curvature of the embedded surface at `uv`, from a 9-point
-/// second-difference stencil and the shape operator's eigenvalues.  0 where locally flat.  Governs
-/// deviation-based sizing: a facet with 2D edge `e` bows off the surface by ≈ `e²·κ/8`, so
-/// `e ≈ √(8·tol/κ)` keeps it within `tol`.
-pub fn estimate_embed_max_curvature(
-  uv: Vec2,
-  h: f32,
-  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
-) -> Result<f32, ErrorStack> {
-  let c = embed(uv)?;
-  let (pu, mu) = (embed(uv + Vec2::new(h, 0.))?, embed(uv - Vec2::new(h, 0.))?);
-  let (pv, mv) = (embed(uv + Vec2::new(0., h))?, embed(uv - Vec2::new(0., h))?);
-  let du = (pu - mu) / (2. * h);
-  let dv = (pv - mv) / (2. * h);
-  let n = du.cross(&dv);
-  if n.norm() < 1e-12 {
-    return Ok(0.);
-  }
-  let n = n.normalize();
-
-  let h2 = h * h;
-  let duu = (pu - c * 2. + mu) / h2;
-  let dvv = (pv - c * 2. + mv) / h2;
-  let pp = embed(uv + Vec2::new(h, h))?;
-  let pm = embed(uv + Vec2::new(h, -h))?;
-  let mp = embed(uv + Vec2::new(-h, h))?;
-  let mm = embed(uv + Vec2::new(-h, -h))?;
-  let duv = (pp - pm - mp + mm) / (4. * h2);
-
-  // Second fundamental form (l, m, nn) and first (e, f, g); principal curvatures solve
-  // det(II − κ·I) = 0 → denom·κ² − b·κ + cc = 0.
-  let (l, m, nn) = (duu.dot(&n), duv.dot(&n), dvv.dot(&n));
-  let (e, f, g) = (du.dot(&du), du.dot(&dv), dv.dot(&dv));
-  let denom = e * g - f * f;
-  if denom.abs() < 1e-20 {
-    return Ok(0.);
-  }
-  let b = e * nn + g * l - 2. * f * m;
-  let cc = l * nn - m * m;
-  let disc = (b * b - 4. * denom * cc).max(0.).sqrt();
-  let k1 = (b + disc) / (2. * denom);
-  let k2 = (b - disc) / (2. * denom);
-  Ok(k1.abs().max(k2.abs()))
-}
-
 /// Tessellates a pre-built lyon `Path` into a flat mesh in the given coordinate plane.
 ///
 /// Output vertices are deduplicated by exact float position before building the `LinkedMesh`,
@@ -1064,9 +981,8 @@ mod native_tests {
     }
   }
 
-  // Finite-difference φ derivatives must match known analytic surfaces: a plane is flat (κ≈0) with
-  // axis-aligned tangents; a cylinder of radius R has one principal curvature 1/R and one 0, and a
-  // radial normal.
+  // Finite-difference φ derivatives must match known analytic surfaces: a plane has axis-aligned
+  // tangents; a cylinder has an axial ∂u and a radial normal.
   #[test]
   fn embed_derivatives_match_analytic_surfaces() {
     let plane = |p: Vec2| -> Result<Vec3, ErrorStack> { Ok(Vec3::new(p.x, 0., p.y)) };
@@ -1074,8 +990,6 @@ mod native_tests {
     assert!((f.du - Vec3::new(1., 0., 0.)).norm() < 1e-3);
     assert!((f.dv - Vec3::new(0., 0., 1.)).norm() < 1e-3);
     assert!(f.normal.y.abs() > 0.999); // ±Y
-    let k = estimate_embed_max_curvature(Vec2::new(0.3, -0.7), 0.02, &plane).unwrap();
-    assert!(k < 1e-3, "plane should be flat, got κ={k}");
 
     let r = 2.0f32;
     let cyl = |p: Vec2| -> Result<Vec3, ErrorStack> {
@@ -1085,8 +999,6 @@ mod native_tests {
     let f = estimate_embed_frame(Vec2::new(0., 1.5), 0.01, &cyl).unwrap();
     assert!((f.du - Vec3::new(0., 0., 1.)).norm() < 1e-3);
     assert!(f.normal.x.abs() > 0.999);
-    let k = estimate_embed_max_curvature(Vec2::new(0., 1.5), 0.02, &cyl).unwrap();
-    assert!((k - 1.0 / r).abs() < 5e-3, "cylinder κ should be 1/R=0.5, got {k}");
   }
 
   // T2 frame-source ladder: the analytic (autodiff) frame of a curved embedding must agree with the

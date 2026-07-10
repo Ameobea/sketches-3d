@@ -324,6 +324,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   *ctx.geo_ctx.current_module_imports.borrow_mut() = None;
   *ctx.geo_ctx.current_module_gizmo_reads.borrow_mut() = None;
   ctx.geo_ctx.current_module_unnamed_gizmo_count.set(0);
+  ctx.geo_ctx.current_module_read_settings.set(false);
   // Gizmo inputs are eval-scoped host state; the runner re-pushes them each run.
   ctx.geo_ctx.gizmo_values.borrow_mut().clear();
   ctx.geo_ctx.replayed_this_run.borrow_mut().clear();

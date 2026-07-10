@@ -7830,7 +7830,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "The map φ used to embed the region into 3D: `|uv: vec2|: vec3`.  Receives the path's native 2D coordinates (not normalized), so `|p| v3(p.x, 0, p.y)` reproduces a flat plate in the XZ plane.  Make it follow a curve, spline, helix, or analytic surface to bend the plate."
+            description: "The map φ used to embed the region into 3D: `|uv: vec2|: vec3`.  Receives the path's native 2D coordinates (not normalized), so `|p| v3(p.x, 0, p.y)` reproduces a flat plate in the XZ plane with thickness growing +Y, matching `tessellate_path`.  In general the default cap faces −(∂φ/∂u × ∂φ/∂v); `flipped` picks the other side.  Make φ follow a curve, spline, helix, or analytic surface to bend the plate."
           },
           ArgDef {
             name: "thickness",
@@ -9223,7 +9223,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "The angle at which edges are considered sharp, in degrees"
           }
         ],
-        description: "Sets the sharp angle threshold for computing auto-smooth-shaded normals (specified in degrees).  If the angle between two adjacent faces is greater than this angle, the edge will be considered sharp.",
+        description: "Sets the sharp angle threshold for computing auto-smooth-shaded normals (specified in degrees).  If the angle between two adjacent faces is greater than this angle, the edge will be considered sharp.\n\nMust be called as a top-level statement (not inside closures or conditionals); use per-call kwargs like `compute_normals(mesh, angle)` for finer-grained control.",
         return_type: &[ArgType::Nil],
       }
     ]
@@ -9242,7 +9242,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Maximum angular deviation per segment, in degrees; smaller is finer."
           }
         ],
-        description: "Sets the default `curve_angle_degrees` used when discretizing continuous path features (Clipper2/CGAL boundaries, `tessellate_path`, `extrude_path`, etc.) and the kwarg is omitted.  Builtins that take an explicit `curve_angle_degrees` override this per-call.",
+        description: "Sets the default `curve_angle_degrees` used when discretizing continuous path features (Clipper2/CGAL boundaries, `tessellate_path`, `extrude_path`, etc.) and the kwarg is omitted.  Builtins that take an explicit `curve_angle_degrees` override this per-call.\n\nMust be called as a top-level statement (not inside closures or conditionals).",
         return_type: &[ArgType::Nil],
       }
     ]
