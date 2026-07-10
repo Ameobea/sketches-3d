@@ -485,7 +485,13 @@ fn run_triangulation_with_holes(
 ) -> Result<(Vec<f32>, Vec<u32>, Vec<i32>), ErrorStack> {
   // Native builds only support the single-subpath, non-refining case, matching the legacy
   // fan-fill fallback that backed `tessellate_2d_paths`.  Real CDT, Delaunay refinement, and
-  // interior-point insertion live in the CGAL wasm.
+  // interior-point insertion live in the CGAL wasm — except under `cargo test`, where a single
+  // subpath's refine/interior case is served by `spade` so the embed_path refinement path is
+  // exercisable natively.
+  #[cfg(test)]
+  if subpath_lengths.len() == 1 && (options.refine() || !interior_points.is_empty()) {
+    return native_tests::spade_refined_triangulation(vertices, options, interior_points);
+  }
   if subpath_lengths.len() != 1 || options.refine() || !interior_points.is_empty() {
     return Err(ErrorStack::new(
       "Multi-subpath / refining / interior-point CGAL triangulation is only available in wasm builds",
@@ -675,11 +681,18 @@ fn embedded_triangle_deviation(
 /// under-refined mesh (over-tolerance triangles, no warning) rather than erroring.
 const REFINE_MAX_ITERS: u32 = 30;
 
+/// Min-angle quality floor for the refined cap's CDT (squared sine).  The deviation-only refiner
+/// leaves locally-flat slivers (e.g. a tall base whose embedded height doesn't vary along it);
+/// enforcing this kills them.  0.11 ≈ sin²(19.5°), just under CGAL's 20.7° termination guarantee.
+const REFINE_MIN_ANGLE_SQ_SINE: f32 = 0.11;
+
 /// Distortion-aware version of `tessellate_2d_paths_embedded`: densifies each boundary loop under φ
 /// to `tol`, then refines the interior a-posteriori — constrained-Delaunay-triangulate → embed → drop
 /// a Steiner point at the centroid of every triangle still deviating from φ by more than `tol` →
-/// re-triangulate with the accumulated points → repeat until converged (or the iteration cap).
-/// Spatially adaptive: flat regions stay coarse, curved regions densify where they exceed tolerance.
+/// re-triangulate with the accumulated points → repeat until converged (or the iteration cap).  The
+/// CDT itself enforces a min-angle quality floor ([`REFINE_MIN_ANGLE_SQ_SINE`]) so slivers can't
+/// survive in regions the deviation test leaves alone.  Spatially adaptive: flat regions stay coarse,
+/// curved regions densify where they exceed tolerance.
 pub fn tessellate_2d_paths_embedded_refined(
   paths: &[Vec<Vec2>],
   flipped: bool,
@@ -696,12 +709,20 @@ pub fn tessellate_2d_paths_embedded_refined(
     .collect::<Result<Vec<_>, _>>()?;
   let (coords, subpath_lengths) = flatten_paths(&dense)?;
 
+  // Quality-refining CDT: min-angle Steiner points split slivers and long boundary edges that the
+  // deviation test alone can't reach.  Native `cargo test` serves this via `spade` (see
+  // `run_triangulation_with_holes`); production tessellates it with CGAL/wasm.
+  let cdt_options = CgalCdtOptions {
+    max_edge_len: None,
+    min_angle_squared_sine: Some(REFINE_MIN_ANGLE_SQ_SINE),
+  };
+
   let mut interior: Vec<f32> = Vec::new();
   let mut result: Option<(Vec<Vec2>, Vec<Vec3>, Vec<u32>)> = None;
 
   for _ in 0..REFINE_MAX_ITERS {
     let (out_xy, indices, _mapping) =
-      run_triangulation_with_holes(&coords, &subpath_lengths, CgalCdtOptions::default(), &interior)?;
+      run_triangulation_with_holes(&coords, &subpath_lengths, cdt_options, &interior)?;
     if indices.is_empty() {
       return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
     }
@@ -972,6 +993,65 @@ pub fn tessellate_2d_paths_with_lyon(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod native_tests {
   use super::*;
+
+  /// Native stand-in for CGAL's constrained-Delaunay triangulation of a single loop, so the
+  /// otherwise-wasm-only embed_path refinement path is exercisable under `cargo test`.  Mirrors the
+  /// CGAL semantics: quality-refines iff `options.refine()`, so the "no slivers" regression test still
+  /// fails if the min-angle floor is ever dropped.  The mapping is unused by the refine caller.
+  pub(super) fn spade_refined_triangulation(
+    vertices: &[f32],
+    options: CgalCdtOptions,
+    interior_points: &[f32],
+  ) -> Result<(Vec<f32>, Vec<u32>, Vec<i32>), ErrorStack> {
+    use spade::{
+      AngleLimit, ConstrainedDelaunayTriangulation, Point2, RefinementParameters, Triangulation,
+    };
+
+    let boundary: Vec<Vec2> = vertices.chunks_exact(2).map(|c| Vec2::new(c[0], c[1])).collect();
+    let mut cdt = ConstrainedDelaunayTriangulation::<Point2<f64>>::new();
+    cdt
+      .add_constraint_edges(
+        boundary.iter().map(|p| Point2::new(p.x as f64, p.y as f64)),
+        true,
+      )
+      .map_err(|e| ErrorStack::new(format!("spade constraint insertion failed: {e:?}")))?;
+    for c in interior_points.chunks_exact(2) {
+      cdt
+        .insert(Point2::new(c[0] as f64, c[1] as f64))
+        .map_err(|e| ErrorStack::new(format!("spade interior insertion failed: {e:?}")))?;
+    }
+    if let Some(sq_sine) = options.min_angle_squared_sine.filter(|_| options.refine()) {
+      cdt.refine(
+        RefinementParameters::<f64>::new()
+          .with_angle_limit(AngleLimit::from_deg((sq_sine.sqrt().asin().to_degrees()) as f64))
+          .exclude_outer_faces(true),
+      );
+    }
+
+    let mut out_xy = vec![0f32; cdt.num_vertices() * 2];
+    for v in cdt.vertices() {
+      let i = v.fix().index();
+      let p = v.position();
+      out_xy[i * 2] = p.x as f32;
+      out_xy[i * 2 + 1] = p.y as f32;
+    }
+
+    let mut indices = Vec::new();
+    for f in cdt.inner_faces() {
+      let vs = f.vertices();
+      let [a, b, c] = [vs[0].position(), vs[1].position(), vs[2].position()];
+      let centroid = Vec2::new(
+        ((a.x + b.x + c.x) / 3.) as f32,
+        ((a.y + b.y + c.y) / 3.) as f32,
+      );
+      if crate::mesh_ops::rail_sweep::point_in_polygon2d(centroid, &boundary) {
+        for v in vs {
+          indices.push(v.fix().index() as u32);
+        }
+      }
+    }
+    Ok((out_xy, indices, Vec::new()))
+  }
 
   fn xy_plane_frame() -> PlaneFrame {
     PlaneFrame {

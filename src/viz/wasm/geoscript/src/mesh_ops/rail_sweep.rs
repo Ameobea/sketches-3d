@@ -652,7 +652,7 @@ fn shoelace_area(pts: &[Vec2]) -> f32 {
 }
 
 /// Even-odd ray cast: whether `pt` lies inside the polygon `poly`.
-fn point_in_polygon2d(pt: Vec2, poly: &[Vec2]) -> bool {
+pub(crate) fn point_in_polygon2d(pt: Vec2, poly: &[Vec2]) -> bool {
   let n = poly.len();
   if n < 3 {
     return false;

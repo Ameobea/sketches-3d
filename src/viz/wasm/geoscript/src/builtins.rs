@@ -10111,4 +10111,37 @@ mesh = embed_path(
       "autodiff mode must reject a non-differentiable embed"
     );
   }
+
+  // Regression: `tolerance=`-refined `embed_path` must not leave sliver triangles where the embedded
+  // surface is flat along one axis (here z = sin(v.x) is constant in y, so a tall base once filled
+  // with needle triangles the deviation-only refiner never split).  Runs natively via the `spade`
+  // test backend; production tessellates this path with CGAL/wasm.
+  #[test]
+  fn embed_path_refined_has_no_slivers_on_flat_axis() {
+    let src = r#"
+mesh = embed_path(
+  path=[vec2(-4, -6), vec2(4, -6), vec2(4, 0), vec2(-4, 0)],
+  embed=|v: vec2|: vec3 { v3(v.x, v.y, sin(v.x * 0.5) * 2) },
+  thickness=1,
+  tolerance=0.05
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let handle = ctx.get_global("mesh").unwrap();
+    let m = &handle.as_mesh().unwrap().mesh;
+    let mut worst_edge_ratio = 0f32;
+    for (_fk, f) in m.iter_faces() {
+      let [a, b, c] = f.vertex_positions(&m.vertices);
+      let e = [(b - a).norm(), (c - b).norm(), (a - c).norm()];
+      let lo = e[0].min(e[1]).min(e[2]);
+      let hi = e[0].max(e[1]).max(e[2]);
+      if lo > 1e-6 {
+        worst_edge_ratio = worst_edge_ratio.max(hi / lo);
+      }
+    }
+    assert!(
+      worst_edge_ratio < 30.,
+      "refined embed_path cap has sliver triangles: worst edge-length ratio {worst_edge_ratio:.0}"
+    );
+  }
 }

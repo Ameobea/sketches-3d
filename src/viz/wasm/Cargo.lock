@@ -598,6 +598,7 @@ dependencies = [
  "rand_pcg",
  "siphasher",
  "smallvec",
+ "spade",
  "strum",
  "svgtypes",
  "tessellation",
