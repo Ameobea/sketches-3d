@@ -139,7 +139,7 @@ pub fn extrude(
 
 pub fn extrude_along_normals(
   mesh: &mut LinkedMesh<()>,
-  distance: impl Fn(Vec3) -> Result<f32, ErrorStack>,
+  distance: impl Fn(VertexKey, Vec3) -> Result<f32, ErrorStack>,
 ) -> Result<(), ErrorStack> {
   extrude_along_normals_with_normal_override(mesh, distance, |_, _| Ok(None))
 }
@@ -150,7 +150,7 @@ pub fn extrude_along_normals(
 /// caller can sign-align its replacement to it, keeping the offset side stable.
 pub fn extrude_along_normals_with_normal_override(
   mesh: &mut LinkedMesh<()>,
-  distance: impl Fn(Vec3) -> Result<f32, ErrorStack>,
+  distance: impl Fn(VertexKey, Vec3) -> Result<f32, ErrorStack>,
   mut normal_override: impl FnMut(VertexKey, Vec3) -> Result<Option<Vec3>, ErrorStack>,
 ) -> Result<(), ErrorStack> {
   let components = mesh.connected_components();
@@ -159,7 +159,7 @@ pub fn extrude_along_normals_with_normal_override(
     let offsets = build_offsets_per_vertex(mesh, &faces, |vk, pos| {
       let topo = normals.get(&vk).copied().unwrap_or_else(Vec3::zeros);
       let n = normal_override(vk, topo)?.unwrap_or(topo);
-      Ok(n * distance(pos)?)
+      Ok(n * distance(vk, pos)?)
     })?;
     extrude_with_offsets(mesh, &faces, &offsets);
   }
@@ -209,7 +209,7 @@ fn test_extrude_along_normals_flat_plane() {
     .check_is_manifold::<false>()
     .expect("not manifold before extrude");
 
-  extrude_along_normals(&mut mesh, |_| Ok(1.0)).unwrap();
+  extrude_along_normals(&mut mesh, |_, _| Ok(1.0)).unwrap();
   mesh
     .check_is_manifold::<true>()
     .expect("not two-manifold after extrude_along_normals");

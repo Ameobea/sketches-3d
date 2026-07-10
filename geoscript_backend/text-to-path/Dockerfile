@@ -14,7 +14,7 @@ RUN cd /temp/prod && bun install --production
 # copy production dependencies and source code into final image
 FROM base AS release
 COPY --from=install /temp/prod/node_modules node_modules
-COPY index.ts conf.ts package.json ./
+COPY index.ts conf.ts fontHealth.ts package.json ./
 
 # Set environment variables (can be overridden at runtime)
 ENV NODE_ENV=production

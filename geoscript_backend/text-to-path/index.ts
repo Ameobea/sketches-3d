@@ -1,5 +1,6 @@
 import { config } from './conf';
 import Session from 'svg-text-to-path';
+import { checkFontApi, startFontApiMonitor } from './fontHealth';
 
 // Simple LRU cache with bounded size
 class LRUCache<T> {
@@ -281,6 +282,15 @@ async function handleTextToPath(req: Request): Promise<Response> {
     return Response.json({ path: result.path } satisfies TextToPathResponse);
   } catch (err) {
     console.error('Text to path conversion error:', err);
+    // A dead/invalid Google Fonts key surfaces here as a cryptic library TypeError;
+    // probe the API so the client gets the real reason instead of a masked 500.
+    const health = await checkFontApi();
+    if (!health.ok) {
+      return Response.json(
+        { error: `Font service unavailable: ${health.message} (${health.reason})` } satisfies ErrorResponse,
+        { status: 502 }
+      );
+    }
     return Response.json({ error: 'Internal server error during conversion' } satisfies ErrorResponse, {
       status: 500,
     });
@@ -320,8 +330,14 @@ async function handleTextToPathWithCors(req: Request): Promise<Response> {
 const server = Bun.serve({
   port: config.port,
   routes: {
-    // Health check endpoint
+    // Liveness: process is up
     '/api/health': new Response('OK', { headers: corsHeaders }),
+
+    // Readiness: upstream Google Fonts API is reachable with a valid key
+    '/api/health/deep': async () => {
+      const health = await checkFontApi();
+      return Response.json(health, { status: health.ok ? 200 : 503, headers: corsHeaders });
+    },
 
     // Main text-to-path conversion endpoint
     '/api/text-to-path': {
@@ -346,3 +362,5 @@ const server = Bun.serve({
 });
 
 console.log(`Text-to-path server running at ${server.url}`);
+
+startFontApiMonitor();

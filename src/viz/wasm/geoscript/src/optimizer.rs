@@ -3373,7 +3373,8 @@ mod ambient_state_tests {
 mesh = embed_path(
   path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
   embed=|p| v3(p.x, 0, p.y),
-  thickness=0.5
+  thickness=0.5,
+  split_seams=true
 )
 "#;
 
@@ -3520,7 +3521,8 @@ f = || {
   embed_path(
     path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
     embed=|p| v3(p.x, 0, p.y),
-    thickness=0.5
+    thickness=0.5,
+    split_seams=true
   )
 }
 set_sharp_angle_threshold(179)

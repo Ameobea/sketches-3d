@@ -590,48 +590,132 @@ pub fn tessellate_2d_paths_embedded(
 
 const DENSIFY_MAX_DEPTH: u32 = 12;
 
-/// Recursively appends the strictly-interior subdivision points of the 2D segment `[a, b]` (with
-/// pre-embedded endpoints `ea`/`eb`) so that the embedded polyline tracks φ within `tol` — the
-/// deviation of the true embedded midpoint from the embedded-chord midpoint.  Standard chord-
-/// flattening, but measured in embedded (3D) space so a straight domain edge that bends under φ
-/// gets densified into its actual curve.
+/// A domain point sampled on both surfaces sharing the cap CDT: the top cap φ(uv) and the offset
+/// cap φ(uv) ∓ t·N(uv).  When no offset surface is tracked `off == top`, so every deviation test
+/// degenerates to single-surface behavior for free.
+#[derive(Clone, Copy)]
+struct SurfPt {
+  top: Vec3,
+  off: Vec3,
+}
+
+impl SurfPt {
+  fn dev_from(self, chord: SurfPt) -> f32 {
+    (self.top - chord.top).norm().max((self.off - chord.off).norm())
+  }
+}
+
+impl std::ops::Add for SurfPt {
+  type Output = SurfPt;
+  fn add(self, o: SurfPt) -> SurfPt {
+    SurfPt { top: self.top + o.top, off: self.off + o.off }
+  }
+}
+
+impl std::ops::Mul<f32> for SurfPt {
+  type Output = SurfPt;
+  fn mul(self, s: f32) -> SurfPt {
+    SurfPt { top: self.top * s, off: self.off * s }
+  }
+}
+
+/// Guard-aware recursive chord-flattening of the 2D segment `[a, b]` (with pre-probed endpoints
+/// `ea`/`eb` and endpoint guard values `ga`/`gb`): appends strictly-interior subdivision points so
+/// the probed surfaces track their true shape within `tol` — the deviation of the true midpoint
+/// from the chord midpoint, on whichever surface is worse.
+///
+/// A clear guard sign flip splits at the *crease* (bisected root) instead of the midpoint, so a C¹
+/// break is consumed as an exact vertex rather than chased as curvature; recursion then continues
+/// on the smooth halves.  Standard midpoint flattening applies otherwise.
+#[allow(clippy::too_many_arguments)]
 fn densify_segment_under_embed(
   a: Vec2,
   b: Vec2,
-  ea: Vec3,
-  eb: Vec3,
-  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  ea: SurfPt,
+  eb: SurfPt,
+  ga: Option<std::rc::Rc<Vec<f32>>>,
+  gb: Option<std::rc::Rc<Vec<f32>>>,
+  probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
+  guards: Option<GuardEval>,
   tol: f32,
   depth: u32,
   out: &mut Vec<Vec2>,
+  crease: &mut CreaseUvs,
 ) -> Result<(), ErrorStack> {
   if depth >= DENSIFY_MAX_DEPTH || (b - a).norm() <= DEFAULT_MIN_SEGMENT_LENGTH {
     return Ok(());
   }
+  if let (Some(gav), Some(gbv), Some(g)) = (&ga, &gb, guards) {
+    for k in 0..gav.len().min(gbv.len()) {
+      if !clear_straddle(gav[k], gbv[k]) {
+        continue;
+      }
+      let Some(root) = bisect_guard_root(a, b, 0., 1., k, g) else {
+        continue;
+      };
+      if (root - a).norm() <= DEFAULT_MIN_SEGMENT_LENGTH
+        || (b - root).norm() <= DEFAULT_MIN_SEGMENT_LENGTH
+      {
+        continue;
+      }
+      let eroot = probe(root)?;
+      let groot = g(root).map(std::rc::Rc::new);
+      record_crease(crease, root, k);
+      densify_segment_under_embed(
+        a, root, ea, eroot, ga, groot.clone(), probe, guards, tol, depth + 1, out, crease,
+      )?;
+      out.push(root);
+      densify_segment_under_embed(
+        root, b, eroot, eb, groot, gb, probe, guards, tol, depth + 1, out, crease,
+      )?;
+      return Ok(());
+    }
+  }
   let mid = (a + b) * 0.5;
-  let emid = embed(mid)?;
-  if (emid - (ea + eb) * 0.5).norm() <= tol {
+  let emid = probe(mid)?;
+  if emid.dev_from((ea + eb) * 0.5) <= tol {
     return Ok(());
   }
-  densify_segment_under_embed(a, mid, ea, emid, embed, tol, depth + 1, out)?;
+  let gmid = match guards {
+    Some(g) if ga.is_some() => g(mid).map(std::rc::Rc::new),
+    _ => None,
+  };
+  densify_segment_under_embed(
+    a,
+    mid,
+    ea,
+    emid,
+    ga,
+    gmid.clone(),
+    probe,
+    guards,
+    tol,
+    depth + 1,
+    out,
+    crease,
+  )?;
   out.push(mid);
-  densify_segment_under_embed(mid, b, emid, eb, embed, tol, depth + 1, out)?;
+  densify_segment_under_embed(mid, b, emid, eb, gmid, gb, probe, guards, tol, depth + 1, out, crease)?;
   Ok(())
 }
 
-/// Densifies a closed boundary loop so its embedding under `embed` deviates from the true surface
-/// by at most `tol`.  Each input vertex is kept (constrained feature points ride through); interior
-/// points are inserted per segment, including the wrap segment.
+/// Densifies a closed boundary loop so its image under the probed surface(s) deviates from the true
+/// shape by at most `tol`.  Each input vertex is kept (constrained feature points ride through);
+/// interior points are inserted per segment, including the wrap segment.
 fn densify_loop_under_embed(
   loop_2d: &[Vec2],
-  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
+  guards: Option<GuardEval>,
   tol: f32,
+  crease: &mut CreaseUvs,
 ) -> Result<Vec<Vec2>, ErrorStack> {
   let n = loop_2d.len();
   let mut out = Vec::with_capacity(n * 2);
-  let mut embedded: Vec<Vec3> = Vec::with_capacity(n);
+  let mut probed: Vec<SurfPt> = Vec::with_capacity(n);
+  let mut gvals: Vec<Option<std::rc::Rc<Vec<f32>>>> = Vec::with_capacity(n);
   for &p in loop_2d {
-    embedded.push(embed(p)?);
+    probed.push(probe(p)?);
+    gvals.push(guards.and_then(|g| g(p)).map(std::rc::Rc::new));
   }
   for k in 0..n {
     let j = (k + 1) % n;
@@ -639,39 +723,40 @@ fn densify_loop_under_embed(
     densify_segment_under_embed(
       loop_2d[k],
       loop_2d[j],
-      embedded[k],
-      embedded[j],
-      embed,
+      probed[k],
+      probed[j],
+      gvals[k].clone(),
+      gvals[j].clone(),
+      probe,
+      guards,
       tol,
       0,
       &mut out,
+      crease,
     )?;
   }
   Ok(out)
 }
 
-/// Max deviation of the flat triangle `(a, b, c)` (embedded positions) from the true surface, probed
-/// at the three edge midpoints and the centroid.
+/// Max deviation of the flat triangle `(a, b, c)` from the true probed surface(s), measured at the
+/// three edge midpoints and the centroid.
 fn embedded_triangle_deviation(
   a2: Vec2,
   b2: Vec2,
   c2: Vec2,
-  a3: Vec3,
-  b3: Vec3,
-  c3: Vec3,
-  embed: &impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  a3: SurfPt,
+  b3: SurfPt,
+  c3: SurfPt,
+  probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
 ) -> Result<f32, ErrorStack> {
   let mut dev = 0f32;
   for (m2, chord) in [
     ((a2 + b2) * 0.5, (a3 + b3) * 0.5),
     ((b2 + c2) * 0.5, (b3 + c3) * 0.5),
     ((c2 + a2) * 0.5, (c3 + a3) * 0.5),
-    (
-      (a2 + b2 + c2) / 3.0,
-      (a3 + b3 + c3) / 3.0,
-    ),
+    ((a2 + b2 + c2) / 3.0, (a3 + b3 + c3) * (1. / 3.)),
   ] {
-    dev = dev.max((embed(m2)? - chord).norm());
+    dev = dev.max(probe(m2)?.dev_from(chord));
   }
   Ok(dev)
 }
@@ -680,6 +765,158 @@ fn embedded_triangle_deviation(
 /// the cap only bites on pathological φ.  Kept generous because a too-low cap silently returns an
 /// under-refined mesh (over-tolerance triangles, no warning) rather than erroring.
 const REFINE_MAX_ITERS: u32 = 30;
+
+/// Evaluates the crease guard functions (design §12) at a domain point; a fixed-length vector of
+/// switching values whose sign changes mark C¹ discontinuities of the probed surfaces.  `None`
+/// once guards are disabled (evaluation error) — the caller falls back to plain refinement.
+pub type GuardEval<'a> = &'a dyn Fn(Vec2) -> Option<Vec<f32>>;
+
+/// How refinement ended; consumed by `embed_path` to warn on under-refinement.
+#[derive(Clone, Copy, Default, Debug)]
+pub struct RefineStats {
+  /// Over-tolerance triangles in the final iteration that contributed no new point (min-edge
+  /// floor, or every candidate insertion was a near-duplicate) — i.e. left unresolved.
+  pub stalled: usize,
+  pub budget_hit: bool,
+  pub converged: bool,
+}
+
+const GUARD_BOUNDARY_SCAN_SAMPLES: usize = 8;
+const GUARD_BISECT_ITERS: u32 = 24;
+/// Rung-0 safety valve: hard cap on accumulated interior Steiner points.
+const REFINE_POINT_BUDGET: usize = 50_000;
+/// Rung-0 floor: over-tol triangles whose longest domain edge is below this fraction of the
+/// domain bbox diagonal are left alone (stalled) rather than split forever.  A balance: small
+/// enough that legitimate fine features on large domains still resolve (smooth features converge
+/// quadratically and rarely approach it), large enough that unresolvable value-jump bands stall
+/// well before the point budget.
+const MIN_SPLIT_EDGE_FRAC: f32 = 3e-4;
+const DEDUP_RADIUS_FRAC: f32 = 1e-5;
+
+/// Near-duplicate filter for queued Steiner points: a vertex sitting on a crease has guard ≈ 0, so
+/// adjacent edges can show hairline sign flips whose roots land right back on it.
+struct DedupGrid {
+  radius_sq: f32,
+  inv_cell: f32,
+  cells: fxhash::FxHashMap<(i32, i32), Vec<Vec2>>,
+}
+
+impl DedupGrid {
+  fn new(radius: f32) -> Self {
+    DedupGrid {
+      radius_sq: radius * radius,
+      inv_cell: 1. / radius,
+      cells: fxhash::FxHashMap::default(),
+    }
+  }
+
+  fn try_insert(&mut self, p: Vec2) -> bool {
+    let (kx, ky) = ((p.x * self.inv_cell).floor() as i32, (p.y * self.inv_cell).floor() as i32);
+    for dx in -1..=1 {
+      for dy in -1..=1 {
+        if let Some(pts) = self.cells.get(&(kx + dx, ky + dy)) {
+          if pts.iter().any(|q| (q - p).norm_squared() < self.radius_sq) {
+            return false;
+          }
+        }
+      }
+    }
+    self.cells.entry((kx, ky)).or_default().push(p);
+    true
+  }
+}
+
+/// A *clear* sign straddle: opposite signs AND both magnitudes well away from zero relative to
+/// each other.  Vertices sitting on a crease carry `g ≈ ±ε` bisection residue, so a plain
+/// `ga·gb < 0` test fires on edges *along* the crease and bisection then inserts junk points
+/// (root-finding on noise).  The relative floor rejects those while keeping genuine crossings.
+fn clear_straddle(ga: f32, gb: f32) -> bool {
+  ga * gb < 0. && ga.abs().min(gb.abs()) > 1e-3 * ga.abs().max(gb.abs())
+}
+
+/// Domain points inserted on guard zero sets, with a bitmask of which guards vanish there.
+/// Consumed by `embed_path` to sharp-mark crease edges.
+pub type CreaseUvs = fxhash::FxHashMap<[u32; 2], u16>;
+
+fn record_crease(crease: &mut CreaseUvs, p: Vec2, g_ix: usize) {
+  *crease.entry([p.x.to_bits(), p.y.to_bits()]).or_insert(0) |= 1 << g_ix.min(15);
+}
+
+/// Bisects guard `g_ix` to its zero on the domain segment `a→b` within param bracket `[lo, hi]`
+/// (which must straddle the zero).  Returns the root point.
+fn bisect_guard_root(
+  a: Vec2,
+  b: Vec2,
+  mut lo: f32,
+  mut hi: f32,
+  g_ix: usize,
+  guards: GuardEval,
+) -> Option<Vec2> {
+  let g_at = |t: f32| guards(a + (b - a) * t).and_then(|v| v.get(g_ix).copied());
+  let mut glo = g_at(lo)?;
+  for _ in 0..GUARD_BISECT_ITERS {
+    let mid = (lo + hi) * 0.5;
+    let gm = g_at(mid)?;
+    if glo * gm <= 0. {
+      hi = mid;
+    } else {
+      lo = mid;
+      glo = gm;
+    }
+  }
+  Some(a + (b - a) * ((lo + hi) * 0.5))
+}
+
+/// The 1D critical-t case of §12 rung 1: root-finds every guard along each boundary segment and
+/// splices the roots in as mandatory vertices, so the densifier samples *between* creases and the
+/// CDT gets constrained boundary vertices exactly on them.  (The recursive densifier is also
+/// guard-aware, catching crossings this coarse scan misses.)  Falls back to the original loop on
+/// any guard failure.
+fn insert_boundary_guard_roots(
+  loop_2d: &[Vec2],
+  guards: GuardEval,
+  crease: &mut CreaseUvs,
+) -> Option<Vec<Vec2>> {
+  let n = loop_2d.len();
+  let mut out = Vec::with_capacity(n * 2);
+  for k in 0..n {
+    let (a, b) = (loop_2d[k], loop_2d[(k + 1) % n]);
+    out.push(a);
+    let mut roots: Vec<(f32, usize)> = Vec::new();
+    let mut prev = guards(a)?;
+    for i in 1..=GUARD_BOUNDARY_SCAN_SAMPLES {
+      let t = i as f32 / GUARD_BOUNDARY_SCAN_SAMPLES as f32;
+      let cur = guards(a + (b - a) * t)?;
+      for g in 0..prev.len().min(cur.len()) {
+        if clear_straddle(prev[g], cur[g]) {
+          if let Some(root) = bisect_guard_root(
+            a,
+            b,
+            t - 1. / GUARD_BOUNDARY_SCAN_SAMPLES as f32,
+            t,
+            g,
+            guards,
+          ) {
+            let rt = (root - a).norm() / (b - a).norm().max(1e-12);
+            roots.push((rt, g));
+          }
+        }
+      }
+      prev = cur;
+    }
+    roots.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+    let mut last = 0f32;
+    for (rt, g) in roots {
+      if rt > last + 1e-3 && rt < 1. - 1e-3 {
+        let p = a + (b - a) * rt;
+        record_crease(crease, p, g);
+        out.push(p);
+        last = rt;
+      }
+    }
+  }
+  Some(out)
+}
 
 /// Min-angle quality floor for the refined cap's CDT (squared sine).  The deviation-only refiner
 /// leaves locally-flat slivers (e.g. a tall base whose embedded height doesn't vary along it);
@@ -693,21 +930,76 @@ const REFINE_MIN_ANGLE_SQ_SINE: f32 = 0.11;
 /// CDT itself enforces a min-angle quality floor ([`REFINE_MIN_ANGLE_SQ_SINE`]) so slivers can't
 /// survive in regions the deviation test leaves alone.  Spatially adaptive: flat regions stay coarse,
 /// curved regions densify where they exceed tolerance.
+///
+/// `offset_surface`, when given, is the second surface sharing this CDT (the offset cap
+/// `φ(uv) ∓ t·N(uv)`); both boundary densification and interior refinement then split on the worse
+/// of the two deviations, so a spatially-varying thickness that curves the offset cap gets resolved
+/// even where φ itself is flat.
+///
+/// `guards`, when given, enables crease-aware refinement (§12 rungs 0+1): boundary segments get
+/// mandatory vertices at guard roots, and over-tolerance triangles straddling a guard sign change
+/// insert their Steiner point *on* the crease (edge bisection) instead of at the centroid, so
+/// C¹-discontinuous fields converge instead of piling points into the crease band.
 pub fn tessellate_2d_paths_embedded_refined(
   paths: &[Vec<Vec2>],
   flipped: bool,
   tol: f32,
   embed: impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
-) -> Result<(LinkedMesh<()>, Vec<Vec2>), ErrorStack> {
+  offset_surface: Option<&dyn Fn(Vec2) -> Result<Vec3, ErrorStack>>,
+  guards: Option<GuardEval>,
+) -> Result<(LinkedMesh<()>, Vec<Vec2>, RefineStats, CreaseUvs), ErrorStack> {
+  let mut stats = RefineStats::default();
+  let mut crease = CreaseUvs::default();
   if paths.is_empty() {
-    return Ok((LinkedMesh::default(), Vec::new()));
+    return Ok((LinkedMesh::default(), Vec::new(), stats, crease));
   }
+
+  // Memoized like guard_cache below: vertex/probe positions repeat across re-triangulations, and
+  // each uncached probe costs several interpreter invocations (embed + FD frame + thickness).
+  let probe_cache: std::cell::RefCell<fxhash::FxHashMap<[u32; 2], SurfPt>> =
+    std::cell::RefCell::new(fxhash::FxHashMap::default());
+  let probe = |uv: Vec2| -> Result<SurfPt, ErrorStack> {
+    let key = [uv.x.to_bits(), uv.y.to_bits()];
+    if let Some(&hit) = probe_cache.borrow().get(&key) {
+      return Ok(hit);
+    }
+    let top = embed(uv)?;
+    let off = match offset_surface {
+      Some(f) => f(uv)?,
+      None => top,
+    };
+    let pt = SurfPt { top, off };
+    probe_cache.borrow_mut().insert(key, pt);
+    Ok(pt)
+  };
 
   let dense = paths
     .iter()
-    .map(|path| densify_loop_under_embed(path, &embed, tol))
+    .map(|path| {
+      let with_roots = guards
+        .and_then(|g| insert_boundary_guard_roots(path, g, &mut crease))
+        .unwrap_or_else(|| path.clone());
+      densify_loop_under_embed(&with_roots, &probe, guards, tol, &mut crease)
+    })
     .collect::<Result<Vec<_>, _>>()?;
   let (coords, subpath_lengths) = flatten_paths(&dense)?;
+
+  let bbox_diag = {
+    let (mut lo, mut hi) = (Vec2::repeat(f32::INFINITY), Vec2::repeat(f32::NEG_INFINITY));
+    for c in coords.chunks_exact(2) {
+      let p = Vec2::new(c[0], c[1]);
+      lo = lo.inf(&p);
+      hi = hi.sup(&p);
+    }
+    (hi - lo).norm()
+  };
+  let min_split_edge = bbox_diag * MIN_SPLIT_EDGE_FRAC;
+  let mut dedup = DedupGrid::new((bbox_diag * DEDUP_RADIUS_FRAC).max(DEFAULT_MIN_SEGMENT_LENGTH));
+  for c in coords.chunks_exact(2) {
+    dedup.try_insert(Vec2::new(c[0], c[1]));
+  }
+  let mut guard_cache: fxhash::FxHashMap<[u32; 2], Option<std::rc::Rc<Vec<f32>>>> =
+    fxhash::FxHashMap::default();
 
   // Quality-refining CDT: min-angle Steiner points split slivers and long boundary edges that the
   // deviation test alone can't reach.  Native `cargo test` serves this via `spade` (see
@@ -718,7 +1010,7 @@ pub fn tessellate_2d_paths_embedded_refined(
   };
 
   let mut interior: Vec<f32> = Vec::new();
-  let mut result: Option<(Vec<Vec2>, Vec<Vec3>, Vec<u32>)> = None;
+  let mut result: Option<(Vec<Vec2>, Vec<SurfPt>, Vec<u32>)> = None;
 
   for _ in 0..REFINE_MAX_ITERS {
     let (out_xy, indices, _mapping) =
@@ -731,49 +1023,209 @@ pub fn tessellate_2d_paths_embedded_refined(
       .chunks_exact(2)
       .map(|xy| Vec2::new(xy[0], xy[1]))
       .collect();
-    let verts_3d: Vec<Vec3> = verts_2d
+    let verts_3d: Vec<SurfPt> = verts_2d
       .iter()
-      .map(|&p| embed(p))
+      .map(|&p| probe(p))
       .collect::<Result<_, _>>()?;
 
+    // Lazily evaluated + memoized by position bits so values survive re-triangulation (vertex
+    // order changes across iterations, positions mostly don't).
+    let mut guard_at = |uv: Vec2| -> Option<std::rc::Rc<Vec<f32>>> {
+      let g = guards?;
+      guard_cache
+        .entry([uv.x.to_bits(), uv.y.to_bits()])
+        .or_insert_with(|| g(uv).map(std::rc::Rc::new))
+        .clone()
+    };
+
     let mut fresh: Vec<f32> = Vec::new();
+    stats.stalled = 0;
     for tri in indices.chunks_exact(3) {
       let (i, j, k) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
       let dev = embedded_triangle_deviation(
-        verts_2d[i], verts_2d[j], verts_2d[k], verts_3d[i], verts_3d[j], verts_3d[k], &embed,
+        verts_2d[i], verts_2d[j], verts_2d[k], verts_3d[i], verts_3d[j], verts_3d[k], &probe,
       )?;
-      if dev > tol {
+      if dev <= tol {
+        continue;
+      }
+
+      // Rung 1: a clear guard sign change across an edge means the crease runs through this
+      // triangle — put the Steiner point exactly on it so on-crease points chain into aligned
+      // edges.  A straddling triangle whose roots all dedup away gets NO fallback point: the
+      // crease vertices already exist, and an off-crease centroid would only add clutter for the
+      // Delaunay pass to fight (the spiderweb-knot failure mode).
+      let mut inserted = false;
+      let mut straddling = false;
+      if let (Some(gi), Some(gj), Some(gk)) =
+        (guard_at(verts_2d[i]), guard_at(verts_2d[j]), guard_at(verts_2d[k]))
+      {
+        let corners = [(verts_2d[i], &gi), (verts_2d[j], &gj), (verts_2d[k], &gk)];
+        for e in 0..3 {
+          let (pa, ga) = corners[e];
+          let (pb, gb) = corners[(e + 1) % 3];
+          for g_ix in 0..ga.len().min(gb.len()) {
+            if clear_straddle(ga[g_ix], gb[g_ix]) {
+              straddling = true;
+              if let Some(root) = bisect_guard_root(pa, pb, 0., 1., g_ix, guards.unwrap()) {
+                if dedup.try_insert(root) {
+                  record_crease(&mut crease, root, g_ix);
+                  fresh.push(root.x);
+                  fresh.push(root.y);
+                  inserted = true;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if !inserted {
+        if straddling {
+          // Every crossing root already exists within the dedup radius — the crease is resolved
+          // to that precision and the residual over-tol reading is a chord-probe artifact (e.g.
+          // at X-crossing saddles), so this neither inserts nor counts as unresolved.
+          continue;
+        }
+        // Rung 0 floor: an over-tol triangle this small is chasing something splitting can't fix
+        // (unaligned crease, value jump) — leave it and report instead of exploding.
+        let longest = (verts_2d[j] - verts_2d[i])
+          .norm()
+          .max((verts_2d[k] - verts_2d[j]).norm())
+          .max((verts_2d[i] - verts_2d[k]).norm());
+        if longest < min_split_edge {
+          stats.stalled += 1;
+          continue;
+        }
         let c = (verts_2d[i] + verts_2d[j] + verts_2d[k]) / 3.;
-        fresh.push(c.x);
-        fresh.push(c.y);
+        if dedup.try_insert(c) {
+          fresh.push(c.x);
+          fresh.push(c.y);
+        } else {
+          stats.stalled += 1;
+        }
       }
     }
 
     result = Some((verts_2d, verts_3d, indices));
     if fresh.is_empty() {
+      stats.converged = stats.stalled == 0;
       break;
     }
-    interior.extend_from_slice(&fresh);
+    if stats.budget_hit {
+      break;
+    }
+    // On budget exhaustion, keep the batch prefix that still fits and run one more iteration so
+    // it actually gets triangulated into the result.
+    let room = REFINE_POINT_BUDGET.saturating_sub(interior.len() / 2) * 2;
+    if fresh.len() > room {
+      stats.budget_hit = true;
+    }
+    interior.extend_from_slice(&fresh[..fresh.len().min(room)]);
+    if room == 0 {
+      break;
+    }
   }
 
-  let (domain_uvs, verts, mut indices) = result.unwrap();
+  let (mut domain_uvs, verts, mut indices) = result.unwrap();
+  let verts: Vec<Vec3> = verts.iter().map(|s| s.top).collect();
   // Same −(φ_u × φ_v) default facing as `tessellate_2d_paths_embedded`.
   if !flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
   }
-  Ok((
-    LinkedMesh::from_indexed_vertices(&verts, &indices, None, None),
-    domain_uvs,
-  ))
+  let mut mesh = LinkedMesh::from_indexed_vertices(&verts, &indices, None, None);
+
+  // Crease-alignment post-pass (single round, topology-side).  The loop above is deviation-gated,
+  // so a crease whose kink is *sub-tolerance* (shallow double-valleys) attracts no roots and
+  // renders as a soft diamond at X-crossings.  Walk every final edge once and `split_edge` it in
+  // place at its first clear guard crossing (with a midpoint sample so an edge crossing two
+  // crease lines — an even sign flip the endpoint test is blind to — is still caught).  Splitting
+  // never re-triangulates, so there is no CDT quality-refinement feedback: sub-edges end *on* the
+  // crease (guard ≈ 0, `clear_straddle` rejects) and can't re-register, and when a crease crosses
+  // two edges of one triangle the second split's spoke connects the two on-crease vertices,
+  // edge-chaining the crease for the sharp-marking downstream.
+  if let Some(g) = guards {
+    use mesh::{
+      linked_mesh::{DisplacementNormalMethod, EdgeSplitPos},
+      slotmap_utils::vkey_ix,
+    };
+    let mut guard_at = |uv: Vec2| -> Option<std::rc::Rc<Vec<f32>>> {
+      guard_cache
+        .entry([uv.x.to_bits(), uv.y.to_bits()])
+        .or_insert_with(|| g(uv).map(std::rc::Rc::new))
+        .clone()
+    };
+    for ek in mesh.edges.keys().collect::<Vec<_>>() {
+      // border-adjacent edges can be dropped + recreated by an earlier split's face rebuild
+      let Some(edge) = mesh.edges.get(ek) else {
+        continue;
+      };
+      let [va, vb] = edge.vertices;
+      let (pa, pb) = (
+        domain_uvs[vkey_ix(&va) as usize - 1],
+        domain_uvs[vkey_ix(&vb) as usize - 1],
+      );
+      if (pb - pa).norm() <= DEFAULT_MIN_SEGMENT_LENGTH * 2. {
+        continue;
+      }
+      let (Some(ga), Some(gb)) = (guard_at(pa), guard_at(pb)) else {
+        continue;
+      };
+      // Quarter-point samples: interior crossings hide from the endpoint test both when the flip
+      // count is even and when an endpoint sits on the crease itself (near-zero guard, rejected
+      // by `clear_straddle`) — finer brackets shrink both blind windows.
+      let (Some(g25), Some(g50), Some(g75)) = (
+        g(pa + (pb - pa) * 0.25),
+        g((pa + pb) * 0.5),
+        g(pa + (pb - pa) * 0.75),
+      ) else {
+        continue;
+      };
+      let samples: [(f32, &[f32]); 5] =
+        [(0., &ga), (0.25, &g25), (0.5, &g50), (0.75, &g75), (1., &gb)];
+      let n_guards = samples.iter().map(|(_, v)| v.len()).min().unwrap();
+      let mut found: Option<(Vec2, usize)> = None;
+      'guards: for k in 0..n_guards {
+        for w in samples.windows(2) {
+          let ((lo, glo), (hi, ghi)) = (w[0], w[1]);
+          if clear_straddle(glo[k], ghi[k]) {
+            if let Some(root) = bisect_guard_root(pa, pb, lo, hi, k, g) {
+              if dedup.try_insert(root) {
+                found = Some((root, k));
+                break 'guards;
+              }
+            }
+          }
+        }
+      }
+      let Some((root, k)) = found else {
+        continue;
+      };
+      let t = (root - pa).norm() / (pb - pa).norm();
+      if !(1e-4..=1. - 1e-4).contains(&t) {
+        continue;
+      }
+      let new_vk = mesh.split_edge(
+        ek,
+        EdgeSplitPos { pos: t, start_vtx_key: va },
+        DisplacementNormalMethod::Interpolate,
+      );
+      mesh.vertices[new_vk].position = probe(root)?.top;
+      record_crease(&mut crease, root, k);
+      debug_assert_eq!(vkey_ix(&new_vk) as usize - 1, domain_uvs.len());
+      domain_uvs.push(root);
+    }
+  }
+
+  Ok((mesh, domain_uvs, stats, crease))
 }
 
-/// Which surface-normal source `embed_path` uses for both the thickening offset direction and the
-/// authored cap shading normals.  `Auto` picks the best available — exact symbolic autodiff of the
-/// embedding when it is differentiable, else finite differences.  The explicit variants force one
-/// method (validation/debugging); `Mesh` reverts to topological face-weighted normals with no
-/// authored shading normals, i.e. the classic welded output.
+/// Which surface-normal source `embed_path` uses — always for the thickening offset direction, and
+/// additionally for the authored cap shading normals when `split_seams` is set.  `Auto` picks the
+/// best available — exact symbolic autodiff of the embedding when it is differentiable, else finite
+/// differences.  The explicit variants force one method (validation/debugging); `Mesh` reverts to
+/// topological face-weighted normals.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NormalMode {
   Auto,
@@ -1137,8 +1589,10 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
     let embed = |p: Vec2| -> Result<Vec3, ErrorStack> {
       Ok(Vec3::new(p.x, (p.x * 2.0).sin() * 0.6, p.y))
     };
+    let probe = |p: Vec2| embed(p).map(|e| SurfPt { top: e, off: e });
     let tol = 0.01;
-    let dense = densify_loop_under_embed(&loop_2d, &embed, tol).unwrap();
+    let dense =
+      densify_loop_under_embed(&loop_2d, &probe, None, tol, &mut CreaseUvs::default()).unwrap();
 
     assert!(
       dense.len() > loop_2d.len(),
@@ -1165,6 +1619,60 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
       .filter(|p| p.x.abs() < 1e-4 && p.y > 1e-4 && p.y < 1.0 - 1e-4)
       .count();
     assert_eq!(interior_on_x0, 0, "straight edge must not densify");
+  }
+
+  // §12 rung 1, 1D case: guard roots become mandatory boundary vertices at their exact zero
+  // crossings on every edge the crease intersects.
+  #[test]
+  fn boundary_guard_roots_inserted_at_zero_crossings() {
+    let loop_2d = [
+      Vec2::new(0., 0.),
+      Vec2::new(4., 0.),
+      Vec2::new(4., 1.),
+      Vec2::new(0., 1.),
+    ];
+    let guards = |p: Vec2| Some(vec![(p.x * 2.).cos()]);
+    let mut crease = CreaseUvs::default();
+    let out = insert_boundary_guard_roots(&loop_2d, &guards, &mut crease).unwrap();
+    assert_eq!(crease.len(), 6, "every inserted root should be recorded as a crease point");
+    // cos(2x) = 0 at x = π/4, 3π/4, 5π/4, 7π/4 → 0.785, 2.356, 3.927 within [0, 4], on both
+    // x-parallel edges; the x=0/x=4 edges gain nothing.
+    for target in [0.785398f32, 2.356194, 3.926991] {
+      for y in [0f32, 1.] {
+        assert!(
+          out
+            .iter()
+            .any(|p| (p.y - y).abs() < 1e-6 && (p.x - target).abs() < 1e-3),
+          "missing root near x={target} on the y={y} edge"
+        );
+      }
+    }
+    assert_eq!(out.len(), loop_2d.len() + 6);
+  }
+
+  // §11.2 boundary broadening: a flat embed contributes zero top-cap deviation, so any boundary
+  // densification must come from the offset surface (here a sine thickness field along x).  The
+  // constant-thickness y-edges must stay untouched.
+  #[test]
+  fn densify_loop_tracks_offset_surface() {
+    let loop_2d = [
+      Vec2::new(0., 0.),
+      Vec2::new(4., 0.),
+      Vec2::new(4., 1.),
+      Vec2::new(0., 1.),
+    ];
+    let probe = |p: Vec2| -> Result<SurfPt, ErrorStack> {
+      let top = Vec3::new(p.x, 0., p.y);
+      Ok(SurfPt { top, off: top + Vec3::new(0., 0.2 + (p.x * 2.0).sin() * 0.6, 0.) })
+    };
+    let dense =
+      densify_loop_under_embed(&loop_2d, &probe, None, 0.01, &mut CreaseUvs::default()).unwrap();
+    assert!(dense.len() > loop_2d.len(), "offset-bending edges should add points");
+    let interior_on_x0 = dense
+      .iter()
+      .filter(|p| p.x.abs() < 1e-4 && p.y > 1e-4 && p.y < 1.0 - 1e-4)
+      .count();
+    assert_eq!(interior_on_x0, 0, "edge straight on both surfaces must not densify");
   }
 
   /// For a single (hole-free) loop, the with-holes cap must remap to the exact same shared-vertex

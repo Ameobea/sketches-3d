@@ -50,6 +50,7 @@ use crate::{
 
 pub mod ast;
 pub mod autodiff;
+mod guards;
 pub mod builtins;
 pub mod lights;
 pub mod materials;
@@ -6695,7 +6696,8 @@ const PLATE_MODULE: &str = r#"
 export m = embed_path(
   path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
   embed=|p| v3(p.x, 0, p.y),
-  thickness=0.5
+  thickness=0.5,
+  split_seams=true
 )
 "#;
 
@@ -6766,7 +6768,8 @@ fn test_module_setter_effect_replays_from_cache() {
 mesh = embed_path(
   path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
   embed=|p| v3(p.x, 0, p.y),
-  thickness=0.5
+  thickness=0.5,
+  split_seams=true
 )
 "#;
   let ctx = EvalCtx::default();
