@@ -63,8 +63,16 @@ fn const_eval_cache_lookup_with(
   // Marked as a read since a cache hit skips the impl-level read.
   if uses.settings {
     ctx.mark_settings_read();
-    ctx.sharp_angle_threshold_degrees.borrow().to_bits().hash(&mut hasher);
-    ctx.default_curve_angle_degrees.borrow().to_bits().hash(&mut hasher);
+    ctx
+      .sharp_angle_threshold_degrees
+      .borrow()
+      .to_bits()
+      .hash(&mut hasher);
+    ctx
+      .default_curve_angle_degrees
+      .borrow()
+      .to_bits()
+      .hash(&mut hasher);
   }
   let key = hasher.finish128().as_u128();
   Some(ConstEvalCacheLookup { key, uses })
@@ -926,18 +934,22 @@ fn try_identity_peephole(
 
   match op {
     BinOp::Add => {
-      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty) {
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty)
+      {
         return Some(lhs.clone());
       }
-      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty) {
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty)
+      {
         return Some(rhs.clone());
       }
     }
     BinOp::Sub => {
-      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty) {
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, lhs), result_ty)
+      {
         return Some(lhs.clone());
       }
-      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty) {
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && same_arg_type(infer(scope, rhs), result_ty)
+      {
         return Some(Expr::PrefixOp {
           op: PrefixOp::Neg,
           expr: Box::new(rhs.clone()),
@@ -946,20 +958,25 @@ fn try_identity_peephole(
       }
     }
     BinOp::Mul => {
-      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty) {
+      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty)
+      {
         return Some(lhs.clone());
       }
-      if lhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, rhs), result_ty) {
+      if lhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, rhs), result_ty)
+      {
         return Some(rhs.clone());
       }
-      if rhs_lit.as_ref().is_some_and(is_scalar_zero) || lhs_lit.as_ref().is_some_and(is_scalar_zero) {
+      if rhs_lit.as_ref().is_some_and(is_scalar_zero)
+        || lhs_lit.as_ref().is_some_and(is_scalar_zero)
+      {
         if let Some(zero) = result_ty.and_then(typed_zero) {
           return Some(zero.into_literal_expr(loc));
         }
       }
     }
     BinOp::Div => {
-      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty) {
+      if rhs_lit.as_ref().is_some_and(is_scalar_one) && same_arg_type(infer(scope, lhs), result_ty)
+      {
         return Some(lhs.clone());
       }
       if lhs_lit.as_ref().is_some_and(is_scalar_zero) {
@@ -1110,27 +1127,26 @@ fn fold_constants<'a>(
       });
       let op_discriminant = std::mem::discriminant(op);
       let expr_loc = *loc;
-      let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
-          binop_discriminant.hash(hasher);
-          op_discriminant.hash(hasher);
-          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
-          hash_expr(rhs, hasher, uses, ExprHashConfig::const_eval())?;
-          // Already handled by hash_expr with const_eval config, but add explicit check for clarity
-          if matches!(op, BinOp::Pipeline | BinOp::Map) {
-            if let Expr::Literal {
-              value: Value::Callable(callable),
-              ..
-            } = rhs.as_ref()
-            {
-              if callable_requires_rng_state(callable) {
-                uses.rng = true;
-              }
-              uses.settings |= callable.reads_ctx_settings();
+      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+        binop_discriminant.hash(hasher);
+        op_discriminant.hash(hasher);
+        hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
+        hash_expr(rhs, hasher, uses, ExprHashConfig::const_eval())?;
+        // Already handled by hash_expr with const_eval config, but add explicit check for clarity
+        if matches!(op, BinOp::Pipeline | BinOp::Map) {
+          if let Expr::Literal {
+            value: Value::Callable(callable),
+            ..
+          } = rhs.as_ref()
+          {
+            if callable_requires_rng_state(callable) {
+              uses.rng = true;
             }
+            uses.settings |= callable.reads_ctx_settings();
           }
-          Some(())
-        });
+        }
+        Some(())
+      });
       if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
         return Ok(());
       }
@@ -1186,12 +1202,11 @@ fn fold_constants<'a>(
       });
       let op_discriminant = std::mem::discriminant(op);
       let expr_loc = *loc;
-      let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
-          prefix_discriminant.hash(hasher);
-          op_discriminant.hash(hasher);
-          hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())
-        });
+      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+        prefix_discriminant.hash(hasher);
+        op_discriminant.hash(hasher);
+        hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())
+      });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(expr_loc);
@@ -1275,12 +1290,11 @@ fn fold_constants<'a>(
         field: field.clone(),
         loc: SourceLoc::default(),
       });
-      let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
-          static_access_discriminant.hash(hasher);
-          field.hash(hasher);
-          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())
-        });
+      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+        static_access_discriminant.hash(hasher);
+        field.hash(hasher);
+        hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())
+      });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(*loc);
@@ -1315,12 +1329,11 @@ fn fold_constants<'a>(
         }),
         loc: SourceLoc::default(),
       });
-      let cache_lookup =
-        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
-          field_access_discriminant.hash(hasher);
-          hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
-          hash_expr(field, hasher, uses, ExprHashConfig::const_eval())
-        });
+      let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+        field_access_discriminant.hash(hasher);
+        hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
+        hash_expr(field, hasher, uses, ExprHashConfig::const_eval())
+      });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(*loc);
@@ -1419,9 +1432,9 @@ fn fold_constants<'a>(
             return Err(
               ErrorStack::new(format!(
                 "`{}` must be called as a top-level statement, not inside a closure, conditional, \
-                 or other expression.  Move the call to the program's top level, or pass the angle \
-                 directly to the function that needs it (e.g. `compute_normals(mesh, angle)` or a \
-                 `curve_angle_degrees` kwarg).",
+                 or other expression.  Move the call to the program's top level, or pass the \
+                 angle directly to the function that needs it (e.g. `compute_normals(mesh, \
+                 angle)` or a `curve_angle_degrees` kwarg).",
                 setter.name()
               ))
               .with_loc(line, col),
@@ -2109,18 +2122,28 @@ fn default_optimizer_pipeline() -> OptimizerPipeline {
 /// matching state is unknowable for the whole program.
 fn prescan_ambient_state(ctx: &EvalCtx, ast: &Program) {
   let setter_syms = [
-    (ctx.interned_symbols.intern("set_sharp_angle_threshold"), AmbientSetter::SharpAngle),
-    (ctx.interned_symbols.intern("set_curve_angle_threshold"), AmbientSetter::CurveAngle),
-    (ctx.interned_symbols.intern("set_rng_seed"), AmbientSetter::RngSeed),
+    (
+      ctx.interned_symbols.intern("set_sharp_angle_threshold"),
+      AmbientSetter::SharpAngle,
+    ),
+    (
+      ctx.interned_symbols.intern("set_curve_angle_threshold"),
+      AmbientSetter::CurveAngle,
+    ),
+    (
+      ctx.interned_symbols.intern("set_rng_seed"),
+      AmbientSetter::RngSeed,
+    ),
   ];
   let (mut has_threshold_setter, mut settings_unknown, mut rng_unknown) = (false, false, false);
   let mut cb = |expr: &Expr| {
     let (called, referenced) = match expr {
       Expr::Call {
-        call: FunctionCall {
-          target: FunctionCallTarget::Name(name),
-          ..
-        },
+        call:
+          FunctionCall {
+            target: FunctionCallTarget::Name(name),
+            ..
+          },
         ..
       } => (Some(*name), None),
       Expr::Ident { name, .. } => (None, Some(*name)),
@@ -3423,10 +3446,16 @@ mesh = embed_path(
   fn threshold_setter_folds_and_is_honored() {
     let ctx = EvalCtx::default();
     let creased = plate_vert_count(&ctx, EMBED_PLATE);
-    let smooth = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let smooth = plate_vert_count(
+      &ctx,
+      &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"),
+    );
     assert!(smooth < creased, "{smooth} !< {creased}");
     assert!(
-      assignment_is_folded(&format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"), "mesh"),
+      assignment_is_folded(
+        &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"),
+        "mesh"
+      ),
       "reader after an analyzable setter must still const-fold"
     );
   }
@@ -3436,9 +3465,15 @@ mesh = embed_path(
   #[test]
   fn threshold_cache_isolated_across_batch_runs() {
     let ctx = EvalCtx::default();
-    let smooth_a = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let smooth_a = plate_vert_count(
+      &ctx,
+      &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"),
+    );
     let creased = plate_vert_count(&ctx, EMBED_PLATE);
-    let smooth_b = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let smooth_b = plate_vert_count(
+      &ctx,
+      &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"),
+    );
     assert!(smooth_a < creased);
     assert_eq!(smooth_a, smooth_b);
   }
@@ -3482,7 +3517,10 @@ mesh = embed_path(
     let a2 = eval_x(&ctx, "set_rng_seed(7)\nx = randf(0, 1)");
     assert_eq!(a1, a2);
     assert_ne!(a1, b);
-    assert!(assignment_is_folded("set_rng_seed(7)\nx = randf(0, 1)", "x"));
+    assert!(assignment_is_folded(
+      "set_rng_seed(7)\nx = randf(0, 1)",
+      "x"
+    ));
   }
 
   /// The seed anchors downstream fold cache keys: rng draws added/removed *before* the seed don't
@@ -3513,7 +3551,10 @@ mesh = embed_path(
   #[test]
   fn closure_interior_reader_defers_when_settings_mutated() {
     let ctx = EvalCtx::default();
-    let direct = plate_vert_count(&ctx, &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"));
+    let direct = plate_vert_count(
+      &ctx,
+      &format!("set_sharp_angle_threshold(179)\n{EMBED_PLATE}"),
+    );
     let via_closure = plate_vert_count(
       &ctx,
       r#"

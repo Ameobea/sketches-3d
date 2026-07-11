@@ -2467,12 +2467,14 @@ fn discretize_fillable_paths(
       }
       cleaned.push(point);
     }
-    if cleaned.len() >= 2 && (cleaned[0] - *cleaned.last().unwrap()).norm_squared() <= dedup_eps_sq {
+    if cleaned.len() >= 2 && (cleaned[0] - *cleaned.last().unwrap()).norm_squared() <= dedup_eps_sq
+    {
       cleaned.pop();
     }
     if cleaned.len() < 3 {
       return Err(ErrorStack::new(format!(
-        "Cannot fill path with fewer than 3 points after cleanup in {label} for `{fn_name}`; got {}",
+        "Cannot fill path with fewer than 3 points after cleanup in {label} for `{fn_name}`; got \
+         {}",
         cleaned.len()
       )));
     }
@@ -2529,7 +2531,14 @@ fn discretize_fillable_paths(
       push_clean(flat_points, "path sequence")?;
     }
   } else if let Some(cb) = path_val.as_callable() {
-    let subpaths = sample_path_subpaths(ctx, cb, curve_angle_radians, sample_count, Some(true), fn_name)?;
+    let subpaths = sample_path_subpaths(
+      ctx,
+      cb,
+      curve_angle_radians,
+      sample_count,
+      Some(true),
+      fn_name,
+    )?;
     for (ix, (points, _closed)) in subpaths.into_iter().enumerate() {
       push_clean(points, &format!("subpath {ix}"))?;
     }
@@ -2547,9 +2556,14 @@ fn discretize_fillable_paths(
   Ok(paths)
 }
 
-/// A unit vector perpendicular to `n` (arbitrary in-plane direction), for degenerate-tangent fallback.
+/// A unit vector perpendicular to `n` (arbitrary in-plane direction), for degenerate-tangent
+/// fallback.
 fn any_perp(n: Vec3) -> Vec3 {
-  let axis = if n.x.abs() < 0.9 { Vec3::x() } else { Vec3::y() };
+  let axis = if n.x.abs() < 0.9 {
+    Vec3::x()
+  } else {
+    Vec3::y()
+  };
   let t = axis - n * n.dot(&axis);
   if t.norm() > 1e-9 {
     t.normalize()
@@ -2567,7 +2581,11 @@ fn any_perp(n: Vec3) -> Vec3 {
 fn embed_boundary_arclen_tangents(
   cap: &LinkedMesh<()>,
   positions: &[Vec3],
-) -> (Vec<Option<f32>>, Vec<Option<Vec3>>, Vec<Option<(usize, f32)>>) {
+) -> (
+  Vec<Option<f32>>,
+  Vec<Option<Vec3>>,
+  Vec<Option<(usize, f32)>>,
+) {
   let n = positions.len();
   let mut adj: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
   for edge in cap.edges.values() {
@@ -2614,7 +2632,11 @@ fn embed_boundary_arclen_tangents(
     }
     for k in 0..m {
       let t = positions[order[(k + 1) % m]] - positions[order[(k + m - 1) % m]];
-      btan[order[k]] = Some(if t.norm() > 1e-9 { t.normalize() } else { Vec3::x() });
+      btan[order[k]] = Some(if t.norm() > 1e-9 {
+        t.normalize()
+      } else {
+        Vec3::x()
+      });
     }
     closure[order[0]] = Some((order[m - 1], cum));
   }
@@ -2645,13 +2667,18 @@ fn embed_path_impl(
 
   use crate::mesh_ops::tessellate_polygon::{
     estimate_embed_frame, tessellate_2d_paths_embedded, tessellate_2d_paths_embedded_refined,
-    AutodiffEmbedFrame, CgalCdtOptions, CreaseUvs, NormalMode,
+    tessellate_2d_paths_embedded_two_caps, AutodiffEmbedFrame, CgalCdtOptions, CreaseUvs,
+    EmbedFrame, NormalMode, RefineStats, TwoCapSolid,
   };
 
   match def_ix {
     0 => {
       let path_val = arg_refs[0].resolve(args, kwargs).clone();
-      let embed_cb = arg_refs[1].resolve(args, kwargs).as_callable().unwrap().clone();
+      let embed_cb = arg_refs[1]
+        .resolve(args, kwargs)
+        .as_callable()
+        .unwrap()
+        .clone();
       let thickness_val = arg_refs[2].resolve(args, kwargs).clone();
       let flipped = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
       let tolerance: Option<f32> = match arg_refs[4].resolve(args, kwargs) {
@@ -2698,7 +2725,8 @@ fn embed_path_impl(
         Value::Int(_) | Value::Float(_) | Value::Callable(_)
       ) {
         return Err(ErrorStack::new(format!(
-          "Invalid thickness for `embed_path`; expected number or callable, found: {thickness_val:?}"
+          "Invalid thickness for `embed_path`; expected number or callable, found: \
+           {thickness_val:?}"
         )));
       }
 
@@ -2878,26 +2906,491 @@ fn embed_path_impl(
       let guard_eval: Option<crate::mesh_ops::tessellate_polygon::GuardEval> =
         (embed_guards.is_some() || thick_guards.is_some()).then_some(&eval_guards);
 
+      let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
+      let finish = |mesh: LinkedMesh<()>| {
+        Value::Mesh(Rc::new(MeshHandle {
+          mesh: Rc::new(mesh),
+          transform: Matrix4::identity(),
+          manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+          aabb: RefCell::new(None),
+          trimesh: RefCell::new(None),
+          material: None,
+        }))
+      };
+      let warn_unconverged = |stats: &RefineStats| {
+        if stats.converged {
+          return;
+        }
+        let msg = format!(
+          "embed_path: refinement stopped before reaching tolerance{}{}; output may be \
+           under-refined near sharp features",
+          if stats.stalled > 0 {
+            format!(" ({} triangles left unresolved)", stats.stalled)
+          } else {
+            String::new()
+          },
+          if stats.budget_hit {
+            " (point budget hit)"
+          } else {
+            ""
+          },
+        );
+        ctx.prints.borrow_mut().push(msg.clone());
+        (ctx.log_fn)(&msg);
+      };
+      // Vertex index -> bitmask of guards whose zero set the refiner pinned that vertex onto.
+      let crease_bits_map = |uvs: &[Vec2], crease: &CreaseUvs| -> FxHashMap<usize, u16> {
+        let ix_by_uv: FxHashMap<[u32; 2], usize> = uvs
+          .iter()
+          .enumerate()
+          .map(|(i, uv)| ([uv.x.to_bits(), uv.y.to_bits()], i))
+          .collect();
+        crease
+          .iter()
+          .filter_map(|(uvbits, &bits)| ix_by_uv.get(uvbits).map(|&i| (i, bits)))
+          .collect()
+      };
+      // A crease-vertex pair only makes a crease *edge* if the zero set actually runs along it.
+      // Two tests, both required:
+      // 1. Wing test — the guard vanishes at the edge midpoint relative to its magnitude a quarter
+      //    edge-length off to either side (rejects chords between two parallel crease lines; short
+      //    wings keep periodic lattice guards from aliasing onto neighboring zero lines when an
+      //    aligned edge spans ~a full period).
+      // 2. Gradient tangency ("crease identity") — the zero set's branch direction is ⊥ ∇g, so a
+      //    true crease edge has ∇g ⊥ ê at both endpoints.  A chord bridging two *different branches
+      //    of the same guard* (e.g. diagonally across an X-crossing of a product like cos·cos,
+      //    where the wing test degenerates to second-order noise) fails: its endpoint gradients
+      //    point along the two different branch normals.  The gradient *direction* stays robust
+      //    near the saddle even as magnitudes shrink (∇(f·h) = h·∇f on the f-line).
+      let crease_edge_bits = |uvs: &[Vec2], ia: usize, ib: usize, common: u16| -> u16 {
+        let (ua, ub) = (uvs[ia], uvs[ib]);
+        let mid = (ua + ub) * 0.5;
+        let d = ub - ua;
+        let perp = Vec2::new(-d.y, d.x) * 0.25;
+        let (Some(gm), Some(gw1), Some(gw2)) = (
+          eval_guards(mid),
+          eval_guards(mid + perp),
+          eval_guards(mid - perp),
+        ) else {
+          return 0;
+        };
+        let step = d.norm() * 0.05;
+        let grad_at = |p: Vec2| -> Option<(Vec<f32>, Vec<f32>)> {
+          let xp = eval_guards(p + Vec2::new(step, 0.))?;
+          let xm = eval_guards(p - Vec2::new(step, 0.))?;
+          let yp = eval_guards(p + Vec2::new(0., step))?;
+          let ym = eval_guards(p - Vec2::new(0., step))?;
+          let n = xp.len().min(xm.len()).min(yp.len()).min(ym.len());
+          Some((
+            (0..n).map(|k| xp[k] - xm[k]).collect(),
+            (0..n).map(|k| yp[k] - ym[k]).collect(),
+          ))
+        };
+        let (Some(gr_a), Some(gr_b)) = (grad_at(ua), grad_at(ub)) else {
+          return 0;
+        };
+        let e_hat = d / d.norm().max(1e-12);
+        let mut out = 0u16;
+        for k in 0..gm.len().min(16) {
+          if common & (1 << k) == 0 || gm[k].abs() >= 0.25 * gw1[k].abs().max(gw2[k].abs()) {
+            continue;
+          }
+          let ga = Vec2::new(gr_a.0[k], gr_a.1[k]);
+          let gb = Vec2::new(gr_b.0[k], gr_b.1[k]);
+          if !crease_edge_tangent(ga, gb, e_hat) {
+            continue;
+          }
+          out |= 1 << k;
+        }
+        out
+      };
+
+      // §12.2b per-cap independent interiors — engaged exactly when the offset cap can diverge
+      // from the top cap (variable thickness on an analytic frame).  `Ok(None)` (touching loops)
+      // falls through to the shared-CDT path below.
+      if let (Some(tol), true) = (tolerance, offset_probe.is_some()) {
+        let eval_guards_top = |uv: Vec2| -> Option<Vec<f32>> {
+          let mut v = eval_guards(uv)?;
+          let n_embed = guard_state.borrow().n_embed_masked;
+          if n_embed == 0 {
+            return None;
+          }
+          v.truncate(n_embed);
+          Some(v)
+        };
+        let guards_top: Option<crate::mesh_ops::tessellate_polygon::GuardEval> =
+          embed_guards.is_some().then_some(&eval_guards_top);
+        if let Some(solid) = tessellate_2d_paths_embedded_two_caps(
+          &paths,
+          flipped,
+          tol,
+          &embed,
+          &offset_surface,
+          guard_eval,
+          guards_top,
+        )? {
+          warn_unconverged(&solid.stats);
+          guard_state.borrow_mut().latch = false;
+
+          let TwoCapSolid {
+            mut mesh,
+            top_uvs,
+            off_uvs,
+            off_vkeys,
+            top_faces,
+            off_faces,
+            top_crease,
+            off_crease,
+            rings,
+            stats: _,
+          } = solid;
+          let n_top = top_uvs.len();
+          debug_assert!(off_vkeys
+            .iter()
+            .enumerate()
+            .all(|(j, vk)| vkey_ix(vk) as usize == n_top + j + 1));
+          let top_pos: Vec<Vec3> = (0..n_top)
+            .map(|i| mesh.vertices[vkey(i as u32 + 1, 1)].position)
+            .collect();
+          let off_pos: Vec<Vec3> = off_vkeys
+            .iter()
+            .map(|&vk| mesh.vertices[vk].position)
+            .collect();
+
+          let top_bits = crease_bits_map(&top_uvs, &top_crease);
+          let off_bits = crease_bits_map(&off_uvs, &off_crease);
+          let bits_at = |map: &FxHashMap<usize, u16>, i: usize| map.get(&i).copied().unwrap_or(0);
+          let embed_guard_mask: u16 =
+            ((1u32 << guard_state.borrow().n_embed_masked.min(16)) - 1) as u16;
+
+          // Interior crease edges, marked directly per cap — each cap now has its own aligned
+          // crease topology, so there is no counterpart mapping.  The φ cap only kinks for
+          // embed-sourced guards; the offset cap for any.
+          for ek in mesh.edges.keys().collect::<Vec<_>>() {
+            let [va, vb] = mesh.edges[ek].vertices;
+            let (ia, ib) = (vkey_ix(&va) as usize - 1, vkey_ix(&vb) as usize - 1);
+            let sharp = if ia < n_top && ib < n_top {
+              let common = bits_at(&top_bits, ia) & bits_at(&top_bits, ib);
+              common != 0 && crease_edge_bits(&top_uvs, ia, ib, common) & embed_guard_mask != 0
+            } else if ia >= n_top && ib >= n_top {
+              let (ja, jb) = (ia - n_top, ib - n_top);
+              let common = bits_at(&off_bits, ja) & bits_at(&off_bits, jb);
+              common != 0 && crease_edge_bits(&off_uvs, ja, jb, common) != 0
+            } else {
+              false
+            };
+            if sharp {
+              mesh.edges[ek].sharp = true;
+            }
+          }
+
+          // Junction rings: both rails sharp, plus the vertical wall edge wherever a crease
+          // crosses the boundary.
+          let mark = |mesh: &mut LinkedMesh<()>, va: VertexKey, vb: VertexKey| {
+            if let Some(ek) = mesh.get_edge_key([va, vb]) {
+              mesh.edges[ek].sharp = true;
+            }
+          };
+          for ring in &rings {
+            let m = ring.top.len();
+            for k in 0..m {
+              let (i0, i1) = (ring.top[k], ring.top[(k + 1) % m]);
+              let (j0, j1) = (ring.off[k], ring.off[(k + 1) % m]);
+              mark(&mut mesh, vkey(i0 as u32 + 1, 1), vkey(i1 as u32 + 1, 1));
+              mark(&mut mesh, off_vkeys[j0], off_vkeys[j1]);
+              if bits_at(&top_bits, i0) | bits_at(&off_bits, j0) != 0 {
+                mark(&mut mesh, vkey(i0 as u32 + 1, 1), off_vkeys[j0]);
+              }
+            }
+          }
+
+          if !split_seams {
+            return Ok(finish(mesh));
+          }
+
+          // Authoring, as in the shared-CDT path below but with per-side index spaces.  Ring
+          // attrs replace `embed_boundary_arclen_tangents` — the conformed rings are already
+          // ordered loops.
+          struct RingAttrs {
+            arclen: Vec<f32>,
+            tangent: Vec<Vec3>,
+            perim: f32,
+          }
+          let ring_attrs: Vec<RingAttrs> = rings
+            .iter()
+            .map(|ring| {
+              let m = ring.top.len();
+              let p = |k: usize| top_pos[ring.top[k % m]];
+              let mut arclen = Vec::with_capacity(m);
+              let mut cum = 0.;
+              for k in 0..m {
+                arclen.push(cum);
+                cum += (p(k + 1) - p(k)).norm();
+              }
+              let tangent = (0..m)
+                .map(|k| {
+                  let t = p(k + 1) - p(k + m - 1);
+                  if t.norm() > 1e-9 {
+                    t.normalize()
+                  } else {
+                    Vec3::x()
+                  }
+                })
+                .collect();
+              RingAttrs {
+                arclen,
+                tangent,
+                perim: cum,
+              }
+            })
+            .collect();
+          let mut ring_slot_top: FxHashMap<usize, (usize, usize)> = FxHashMap::default();
+          let mut ring_slot_off: FxHashMap<usize, (usize, usize)> = FxHashMap::default();
+          for (r, ring) in rings.iter().enumerate() {
+            for k in 0..ring.top.len() {
+              ring_slot_top.insert(ring.top[k], (r, k));
+              ring_slot_off.insert(ring.off[k], (r, k));
+            }
+          }
+
+          let frames_top: Vec<EmbedFrame> = top_uvs
+            .iter()
+            .map(|&uv| embed_frame(uv))
+            .collect::<Result<_, _>>()?;
+          let frames_off: Vec<EmbedFrame> = off_uvs
+            .iter()
+            .map(|&uv| embed_frame(uv))
+            .collect::<Result<_, _>>()?;
+
+          mesh.mark_edge_sharpness(ctx.read_sharp_angle_threshold_degrees().to_radians());
+          mesh.separate_vertices_and_compute_normals();
+
+          let mut by_pos: FxHashMap<[u32; 3], (bool, usize)> = FxHashMap::default();
+          for i in 0..n_top {
+            if frames_top[i].normal.norm() >= 1e-9 {
+              by_pos.insert(pos_key(top_pos[i]), (false, i));
+            }
+          }
+          for j in 0..off_uvs.len() {
+            if frames_off[j].normal.norm() >= 1e-9 {
+              by_pos.insert(pos_key(off_pos[j]), (true, j));
+            }
+          }
+
+          #[derive(Clone, Copy, PartialEq)]
+          enum FanKind {
+            PhiCap,
+            OffsetCap,
+            Wall,
+            Mixed,
+          }
+          let classify = |mesh: &LinkedMesh<()>, vk: VertexKey| -> FanKind {
+            let (mut phi, mut off, mut wall) = (false, false, false);
+            let mut seen: Vec<FaceKey> = Vec::new();
+            for &ek in &mesh.vertices[vk].edges {
+              for &fk in &mesh.edges[ek].faces {
+                if seen.contains(&fk) {
+                  continue;
+                }
+                seen.push(fk);
+                if top_faces.contains(&fk) {
+                  phi = true;
+                } else if off_faces.contains(&fk) {
+                  off = true;
+                } else {
+                  wall = true;
+                }
+              }
+            }
+            match (phi, off, wall) {
+              (true, false, false) => FanKind::PhiCap,
+              (false, true, false) => FanKind::OffsetCap,
+              (false, false, true) => FanKind::Wall,
+              _ => FanKind::Mixed,
+            }
+          };
+
+          let mut uv_ch = Channel::new(
+            Arity::Vec2,
+            Interp::Lerp,
+            FlipXform::Identity,
+            SpatialXform::Identity,
+          );
+          let mut tan_ch = Channel::new(
+            Arity::Vec4,
+            Interp::Lerp,
+            FlipXform::Negate,
+            SpatialXform::Direction,
+          );
+          for vk in mesh.vertices.keys().collect::<Vec<_>>() {
+            let p = mesh.vertices[vk].position;
+            let Some(&(is_off, ix)) = by_pos.get(&pos_key(p)) else {
+              continue;
+            };
+            let frame = if is_off {
+              frames_off[ix]
+            } else {
+              frames_top[ix]
+            };
+            let (a, du, dv) = (frame.normal, frame.du, frame.dv);
+            let cn = mesh.shading_normals.get(vk).copied().unwrap_or(a);
+            let is_cap = match classify(&mesh, vk) {
+              FanKind::PhiCap | FanKind::OffsetCap => true,
+              FanKind::Wall => false,
+              FanKind::Mixed => a.dot(&cn).abs() > 0.5,
+            };
+
+            let (uv, t_raw, n_shade, b_target) = if is_cap {
+              let uv2 = if is_off { off_uvs[ix] } else { top_uvs[ix] };
+              let vbits = if is_off {
+                bits_at(&off_bits, ix)
+              } else {
+                bits_at(&top_bits, ix)
+              };
+              let keep_topo = if is_off {
+                vbits != 0
+              } else {
+                vbits & embed_guard_mask != 0
+              };
+              if keep_topo {
+                (uv2, du, cn, dv)
+              } else {
+                let (n_raw, t_psi, b_psi) = if is_off {
+                  let psi = estimate_embed_frame(uv2, fd_step, &offset_surface)?;
+                  if psi.normal.norm() > 1e-9 {
+                    (psi.normal, psi.du, psi.dv)
+                  } else {
+                    (a, du, dv)
+                  }
+                } else {
+                  (a, du, dv)
+                };
+                let nsign = if n_raw.dot(&cn) < 0. { -n_raw } else { n_raw };
+                mesh.set_shading_normal(vk, Some(nsign));
+                (uv2, t_psi, nsign, b_psi)
+              }
+            } else {
+              let slot = if is_off {
+                ring_slot_off.get(&ix)
+              } else {
+                ring_slot_top.get(&ix)
+              };
+              let (u, v, tan) = match slot {
+                Some(&(r, k)) => (
+                  ring_attrs[r].arclen[k],
+                  if is_off {
+                    (off_pos[ix] - top_pos[rings[r].top[k]]).norm()
+                  } else {
+                    0.
+                  },
+                  ring_attrs[r].tangent[k],
+                ),
+                None => (0., 0., any_perp(cn)),
+              };
+              // The wall bitangent target is the thickening direction: the frame normal on the
+              // offset side of φ.
+              (Vec2::new(u, v), tan, cn, a * offset_sign)
+            };
+
+            let t = t_raw - n_shade * n_shade.dot(&t_raw);
+            let t = if t.norm() > 1e-9 {
+              t.normalize()
+            } else {
+              any_perp(n_shade)
+            };
+            let w = if n_shade.cross(&t).dot(&b_target) < 0. {
+              -1.
+            } else {
+              1.
+            };
+            uv_ch.set(vk, [uv.x, uv.y, 0., 0.]);
+            tan_ch.set(vk, [t.x, t.y, t.z, w]);
+          }
+          mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
+          mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+
+          // Wrap-seam split per ring, à la the shared-CDT path below.
+          let mut verts_by_pos: FxHashMap<[u32; 3], Vec<VertexKey>> = FxHashMap::default();
+          for vk in mesh.vertices.keys() {
+            verts_by_pos
+              .entry(pos_key(mesh.vertices[vk].position))
+              .or_default()
+              .push(vk);
+          }
+          for (r, ring) in rings.iter().enumerate() {
+            let m = ring.top.len();
+            let perim = ring_attrs[r].perim;
+            let a_i = frames_top[ring.top[0]].normal;
+            let vlast_keys = [
+              pos_key(top_pos[ring.top[m - 1]]),
+              pos_key(off_pos[ring.off[m - 1]]),
+            ];
+            for seam_pos in [top_pos[ring.top[0]], off_pos[ring.off[0]]] {
+              let Some(keys) = verts_by_pos.get(&pos_key(seam_pos)).cloned() else {
+                continue;
+              };
+              for vk in keys {
+                let cn = mesh.shading_normals.get(vk).copied().unwrap_or(a_i);
+                let is_wall = match classify(&mesh, vk) {
+                  FanKind::Wall => true,
+                  FanKind::Mixed => a_i.dot(&cn).abs() <= 0.5,
+                  _ => false,
+                };
+                if !is_wall {
+                  continue;
+                }
+                let mut incident: Vec<FaceKey> = Vec::new();
+                for &ek in &mesh.vertices[vk].edges {
+                  for &fk in &mesh.edges[ek].faces {
+                    if !incident.contains(&fk) {
+                      incident.push(fk);
+                    }
+                  }
+                }
+                let wrap: Vec<FaceKey> = incident
+                  .iter()
+                  .copied()
+                  .filter(|&fk| {
+                    mesh.faces[fk]
+                      .vertices
+                      .iter()
+                      .any(|&fv| vlast_keys.contains(&pos_key(mesh.vertices[fv].position)))
+                  })
+                  .collect();
+                if wrap.is_empty() {
+                  continue;
+                }
+                let target = if wrap.len() == incident.len() {
+                  vk
+                } else {
+                  mesh.split_off_faces(vk, &wrap)
+                };
+                if let Some(uv_ch) = mesh.vertex_channels.get_mut("uv") {
+                  if let Some(mut uv) = uv_ch.get(vk) {
+                    uv[0] = perim;
+                    uv_ch.set(target, uv);
+                  }
+                }
+              }
+            }
+          }
+          mesh.flags |= mesh_flags::NO_WELD;
+          return Ok(finish(mesh));
+        }
+      }
+
       let mut crease_uvs = CreaseUvs::default();
       let (mut mesh, domain_uvs) = match tolerance {
         Some(tol) => {
           let (mesh, domain_uvs, stats, crease) = tessellate_2d_paths_embedded_refined(
-            &paths, flipped, tol, &embed, offset_probe, guard_eval,
+            &paths,
+            flipped,
+            tol,
+            &embed,
+            offset_probe,
+            guard_eval,
           )?;
-          if !stats.converged {
-            let msg = format!(
-              "embed_path: refinement stopped before reaching tolerance{}{}; output may be \
-               under-refined near sharp features",
-              if stats.stalled > 0 {
-                format!(" ({} triangles left unresolved)", stats.stalled)
-              } else {
-                String::new()
-              },
-              if stats.budget_hit { " (point budget hit)" } else { "" },
-            );
-            ctx.prints.borrow_mut().push(msg.clone());
-            (ctx.log_fn)(&msg);
-          }
+          warn_unconverged(&stats);
           crease_uvs = crease;
           (mesh, domain_uvs)
         }
@@ -2918,19 +3411,7 @@ fn embed_path_impl(
       let thick: Vec<f32> = (0..n)
         .map(|i| distance(cap_positions[i], domain_uvs[i]))
         .collect::<Result<_, _>>()?;
-      let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
       let dist_by_key = |vk: VertexKey, _pos: Vec3| Ok(thick[vkey_ix(&vk) as usize - 1]);
-
-      let finish = |mesh: LinkedMesh<()>| {
-        Value::Mesh(Rc::new(MeshHandle {
-          mesh: Rc::new(mesh),
-          transform: Matrix4::identity(),
-          manifold_handle: Rc::new(ManifoldHandle::new_empty()),
-          aabb: RefCell::new(None),
-          trimesh: RefCell::new(None),
-          material: None,
-        }))
-      };
 
       if normal_mode == NormalMode::Mesh {
         extrude_along_normals(&mut mesh, dist_by_key)?;
@@ -2950,71 +3431,9 @@ fn embed_path_impl(
         // reads them too — so the cap/wall junction splits even when the scene raises the sharp
         // angle to keep a curved embedding smooth (the "normal bleed onto the cap" failure), and
         // creases too shallow for the dihedral test still crease.
-        let crease_bits_by_ix: FxHashMap<usize, u16> = {
-          let ix_by_uv: FxHashMap<[u32; 2], usize> = domain_uvs
-            .iter()
-            .enumerate()
-            .map(|(i, uv)| ([uv.x.to_bits(), uv.y.to_bits()], i))
-            .collect();
-          crease_uvs
-            .iter()
-            .filter_map(|(uvbits, &bits)| ix_by_uv.get(uvbits).map(|&i| (i, bits)))
-            .collect()
-        };
+        let crease_bits_by_ix = crease_bits_map(&domain_uvs, &crease_uvs);
         let embed_guard_mask: u16 =
           ((1u32 << guard_state.borrow().n_embed_masked.min(16)) - 1) as u16;
-        // A crease-vertex pair only makes a crease *edge* if the zero set actually runs along it.
-        // Two tests, both required:
-        // 1. Wing test — the guard vanishes at the edge midpoint relative to its magnitude a
-        //    quarter edge-length off to either side (rejects chords between two parallel crease
-        //    lines; short wings keep periodic lattice guards from aliasing onto neighboring zero
-        //    lines when an aligned edge spans ~a full period).
-        // 2. Gradient tangency ("crease identity") — the zero set's branch direction is ⊥ ∇g, so
-        //    a true crease edge has ∇g ⊥ ê at both endpoints.  A chord bridging two *different
-        //    branches of the same guard* (e.g. diagonally across an X-crossing of a product like
-        //    cos·cos, where the wing test degenerates to second-order noise) fails: its endpoint
-        //    gradients point along the two different branch normals.  The gradient *direction*
-        //    stays robust near the saddle even as magnitudes shrink (∇(f·h) = h·∇f on the f-line).
-        let crease_edge_bits = |ia: usize, ib: usize, common: u16| -> u16 {
-          let (ua, ub) = (domain_uvs[ia], domain_uvs[ib]);
-          let mid = (ua + ub) * 0.5;
-          let d = ub - ua;
-          let perp = Vec2::new(-d.y, d.x) * 0.25;
-          let (Some(gm), Some(gw1), Some(gw2)) =
-            (eval_guards(mid), eval_guards(mid + perp), eval_guards(mid - perp))
-          else {
-            return 0;
-          };
-          let step = d.norm() * 0.05;
-          let grad_at = |p: Vec2| -> Option<(Vec<f32>, Vec<f32>)> {
-            let xp = eval_guards(p + Vec2::new(step, 0.))?;
-            let xm = eval_guards(p - Vec2::new(step, 0.))?;
-            let yp = eval_guards(p + Vec2::new(0., step))?;
-            let ym = eval_guards(p - Vec2::new(0., step))?;
-            let n = xp.len().min(xm.len()).min(yp.len()).min(ym.len());
-            Some((
-              (0..n).map(|k| xp[k] - xm[k]).collect(),
-              (0..n).map(|k| yp[k] - ym[k]).collect(),
-            ))
-          };
-          let (Some(gr_a), Some(gr_b)) = (grad_at(ua), grad_at(ub)) else {
-            return 0;
-          };
-          let e_hat = d / d.norm().max(1e-12);
-          let mut out = 0u16;
-          for k in 0..gm.len().min(16) {
-            if common & (1 << k) == 0 || gm[k].abs() >= 0.25 * gw1[k].abs().max(gw2[k].abs()) {
-              continue;
-            }
-            let ga = Vec2::new(gr_a.0[k], gr_a.1[k]);
-            let gb = Vec2::new(gr_b.0[k], gr_b.1[k]);
-            if !crease_edge_tangent(ga, gb, e_hat) {
-              continue;
-            }
-            out |= 1 << k;
-          }
-          out
-        };
 
         let cap_faces: FxHashSet<FaceKey> = mesh.faces.keys().collect();
         // Cap-vertex index pairs whose offset-side counterpart edge gets marked post-extrude, and
@@ -3039,7 +3458,7 @@ fn embed_path_impl(
           if common == 0 {
             continue;
           }
-          let on_crease = crease_edge_bits(ia, ib, common);
+          let on_crease = crease_edge_bits(&domain_uvs, ia, ib, common);
           if on_crease == 0 {
             continue;
           }
@@ -3058,7 +3477,11 @@ fn embed_path_impl(
           if frame.normal.norm() < 1e-9 {
             return Ok(None);
           }
-          let normal = if frame.normal.dot(&topo) < 0. { -frame.normal } else { frame.normal };
+          let normal = if frame.normal.dot(&topo) < 0. {
+            -frame.normal
+          } else {
+            frame.normal
+          };
           frames.borrow_mut()[vkey_ix(&vk) as usize - 1] = (normal, frame.du, frame.dv);
           Ok(Some(normal))
         })?;
@@ -3111,11 +3534,11 @@ fn embed_path_impl(
           return Ok(finish(mesh));
         };
 
-        // Split the cap/wall seam via the standard auto-smooth pass (walls keep topological normals,
-        // the junction stays a crisp crease), then author analytic attributes onto each split vertex
-        // — matched by position, disambiguated cap-vs-wall by the fan's topological normal:
-        //   caps  -> exact analytic normal, domain-coord UVs, tangent = φ_u
-        //   walls -> arc-length × thickness UVs, tangent = boundary direction
+        // Split the cap/wall seam via the standard auto-smooth pass (walls keep topological
+        // normals, the junction stays a crisp crease), then author analytic attributes onto
+        // each split vertex — matched by position, disambiguated cap-vs-wall by the fan's
+        // topological normal:   caps  -> exact analytic normal, domain-coord UVs, tangent =
+        // φ_u   walls -> arc-length × thickness UVs, tangent = boundary direction
         // The complete normal set + `NO_WELD` make the render path use these verbatim.  glTF `w`
         // handedness is derived analytically from the target bitangent (φ_v for caps, the thickness
         // direction for walls).
@@ -3174,10 +3597,18 @@ fn embed_path_impl(
           }
         };
 
-        let mut uv_ch =
-          Channel::new(Arity::Vec2, Interp::Lerp, FlipXform::Identity, SpatialXform::Identity);
-        let mut tan_ch =
-          Channel::new(Arity::Vec4, Interp::Lerp, FlipXform::Negate, SpatialXform::Direction);
+        let mut uv_ch = Channel::new(
+          Arity::Vec2,
+          Interp::Lerp,
+          FlipXform::Identity,
+          SpatialXform::Identity,
+        );
+        let mut tan_ch = Channel::new(
+          Arity::Vec4,
+          Interp::Lerp,
+          FlipXform::Negate,
+          SpatialXform::Direction,
+        );
         for vk in mesh.vertices.keys().collect::<Vec<_>>() {
           let p = mesh.vertices[vk].position;
           let Some(&(i, is_top)) = by_pos.get(&pos_key(p)) else {
@@ -3197,7 +3628,11 @@ fn embed_path_impl(
             // crease.  The offset cap kinks for any guard source; the φ cap only for
             // embed-sourced guards.
             let vbits = crease_bits_by_ix.get(&i).copied().unwrap_or(0);
-            let keep_topo = if is_top { vbits != 0 } else { vbits & embed_guard_mask != 0 };
+            let keep_topo = if is_top {
+              vbits != 0
+            } else {
+              vbits & embed_guard_mask != 0
+            };
             if keep_topo {
               (domain_uvs[i], du, cn, dv)
             } else {
@@ -3205,17 +3640,16 @@ fn embed_path_impl(
               // where φ is flat, so its frame comes from finite-differencing the composed surface
               // (which rides whatever φ frame source is active).  Constant thickness is a
               // parallel surface — same normal as φ — so the analytic frame is exact there.
-              let (n_raw, t_psi, b_psi) =
-                if is_top && matches!(thickness_val, Value::Callable(_)) {
-                  let psi = estimate_embed_frame(domain_uvs[i], fd_step, &offset_surface)?;
-                  if psi.normal.norm() > 1e-9 {
-                    (psi.normal, psi.du, psi.dv)
-                  } else {
-                    (a, du, dv)
-                  }
+              let (n_raw, t_psi, b_psi) = if is_top && matches!(thickness_val, Value::Callable(_)) {
+                let psi = estimate_embed_frame(domain_uvs[i], fd_step, &offset_surface)?;
+                if psi.normal.norm() > 1e-9 {
+                  (psi.normal, psi.du, psi.dv)
                 } else {
                   (a, du, dv)
-                };
+                }
+              } else {
+                (a, du, dv)
+              };
               let nsign = if n_raw.dot(&cn) < 0. { -n_raw } else { n_raw };
               mesh.set_shading_normal(vk, Some(nsign));
               (domain_uvs[i], t_psi, nsign, b_psi)
@@ -3231,19 +3665,28 @@ fn embed_path_impl(
           };
 
           let t = t_raw - n_shade * n_shade.dot(&t_raw);
-          let t = if t.norm() > 1e-9 { t.normalize() } else { any_perp(n_shade) };
-          let w = if n_shade.cross(&t).dot(&b_target) < 0. { -1. } else { 1. };
+          let t = if t.norm() > 1e-9 {
+            t.normalize()
+          } else {
+            any_perp(n_shade)
+          };
+          let w = if n_shade.cross(&t).dot(&b_target) < 0. {
+            -1.
+          } else {
+            1.
+          };
           uv_ch.set(vk, [uv.x, uv.y, 0., 0.]);
           tan_ch.set(vk, [t.x, t.y, t.z, w]);
         }
         mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
         mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
 
-        // Split each boundary loop's wall wrap-seam — the closure quad where U jumps perimeter→0 and
-        // crushes the texture.  Clone the seam-side wall verts onto just the closure faces and give
-        // the clones U=perimeter, à la `rail_sweep::split_profile_seams`.  `split_off_faces` carries
-        // the shading normal + channel slots to the clone, so the complete-normal set survives; a
-        // seam fan already isolated (a sharp corner) has its U set in place instead (no orphan).
+        // Split each boundary loop's wall wrap-seam — the closure quad where U jumps perimeter→0
+        // and crushes the texture.  Clone the seam-side wall verts onto just the closure
+        // faces and give the clones U=perimeter, à la `rail_sweep::split_profile_seams`.
+        // `split_off_faces` carries the shading normal + channel slots to the clone, so the
+        // complete-normal set survives; a seam fan already isolated (a sharp corner) has
+        // its U set in place instead (no orphan).
         let mut verts_by_pos: FxHashMap<[u32; 3], Vec<VertexKey>> = FxHashMap::default();
         for vk in mesh.vertices.keys() {
           verts_by_pos
@@ -10318,7 +10761,10 @@ mesh = embed_path(
       .expect("mesh-mode solid should be a closed 2-manifold");
     // 4 cap verts duplicated by the thickening pass.
     assert_eq!(handle.mesh.vertices.len(), 8);
-    assert!(handle.mesh.shading_normals.is_empty(), "mesh mode authors no normals");
+    assert!(
+      handle.mesh.shading_normals.is_empty(),
+      "mesh mode authors no normals"
+    );
     assert!(!handle.mesh.has_flag(mesh_flags::NO_WELD));
   }
 
@@ -10354,7 +10800,8 @@ mesh = embed_path(
 )
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
-    ctx.get_global("mesh")
+    ctx
+      .get_global("mesh")
       .unwrap()
       .as_mesh()
       .unwrap()
@@ -10411,7 +10858,10 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    assert!(m.has_flag(mesh_flags::NO_WELD), "analytic mode should be NO_WELD");
+    assert!(
+      m.has_flag(mesh_flags::NO_WELD),
+      "analytic mode should be NO_WELD"
+    );
     assert_eq!(
       m.shading_normals.len(),
       m.vertices.len(),
@@ -10436,7 +10886,10 @@ mesh = embed_path(
         panic!("normal neither cap-vertical nor wall-horizontal: {n:?}");
       }
     }
-    assert!(caps > 0 && walls > 0, "expected both cap and wall normals: caps={caps} walls={walls}");
+    assert!(
+      caps > 0 && walls > 0,
+      "expected both cap and wall normals: caps={caps} walls={walls}"
+    );
 
     // UV + tangent channels are authored, complete, and well-formed: caps carry the domain corner
     // coords; walls span V=0 (bottom) to thickness (top); every tangent is unit with w=±1.
@@ -10550,10 +11003,10 @@ mesh = embed_path(
     );
   }
 
-  // Regression: `tolerance=`-refined `embed_path` must not leave sliver triangles where the embedded
-  // surface is flat along one axis (here z = sin(v.x) is constant in y, so a tall base once filled
-  // with needle triangles the deviation-only refiner never split).  Runs natively via the `spade`
-  // test backend; production tessellates this path with CGAL/wasm.
+  // Regression: `tolerance=`-refined `embed_path` must not leave sliver triangles where the
+  // embedded surface is flat along one axis (here z = sin(v.x) is constant in y, so a tall base
+  // once filled with needle triangles the deviation-only refiner never split).  Runs natively via
+  // the `spade` test backend; production tessellates this path with CGAL/wasm.
   #[test]
   fn embed_path_refined_has_no_slivers_on_flat_axis() {
     let src = r#"
@@ -10598,7 +11051,8 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("should stay watertight");
+    m.check_is_manifold::<true>()
+      .expect("should stay watertight");
     let max_y = m
       .vertices
       .values()
@@ -10629,15 +11083,76 @@ mesh = embed_path(
       let ctx = parse_and_eval_program(&src).unwrap();
       let handle = ctx.get_global("mesh").unwrap();
       let m = std::rc::Rc::clone(&handle.as_mesh().unwrap().mesh);
-      m.check_is_manifold::<true>().expect("should stay watertight");
-      m.vertices.len()
+      m.check_is_manifold::<true>()
+        .expect("should stay watertight");
+      m
     };
 
-    assert_eq!(with_thickness("0.2"), 8, "flat embed + constant thickness must stay coarse");
-    let bump_verts = with_thickness("|pos, uv| 0.2 + 2 * exp(-(uv.x*uv.x + uv.y*uv.y))");
+    // Winding regression guards (check_is_manifold doesn't validate orientation): every interior
+    // edge must be traversed oppositely by its two faces, and the two-cap assembly must enclose
+    // volume with the same global orientation as the extrude-built (constant-thickness) solid.
+    let consistent_winding = |m: &mesh::LinkedMesh<()>| {
+      m.edges.values().all(|edge| {
+        if edge.faces.len() != 2 {
+          return true;
+        }
+        let dir = |fk: mesh::linked_mesh::FaceKey| {
+          let vs = m.faces[fk].vertices;
+          (0..3).find_map(|i| {
+            if vs[i] == edge.vertices[0] && vs[(i + 1) % 3] == edge.vertices[1] {
+              Some(true)
+            } else if vs[i] == edge.vertices[1] && vs[(i + 1) % 3] == edge.vertices[0] {
+              Some(false)
+            } else {
+              None
+            }
+          })
+        };
+        dir(edge.faces[0]) != dir(edge.faces[1])
+      })
+    };
+    let signed_volume = |m: &mesh::LinkedMesh<()>| -> f32 {
+      m.faces
+        .values()
+        .map(|f| {
+          let [a, b, c] = f.vertices.map(|vk| m.vertices[vk].position);
+          a.dot(&b.cross(&c)) / 6.
+        })
+        .sum()
+    };
+
+    let flat = with_thickness("0.2");
+    assert_eq!(
+      flat.vertices.len(),
+      8,
+      "flat embed + constant thickness must stay coarse"
+    );
+    let bump = with_thickness("|pos, uv| 0.2 + 2 * exp(-(uv.x*uv.x + uv.y*uv.y))");
+    let bump_verts = bump.vertices.len();
     assert!(
       bump_verts > 100,
       "variable thickness must drive interior refinement, got {bump_verts} verts"
+    );
+    assert!(
+      consistent_winding(&bump),
+      "two-cap solid has inconsistently wound faces"
+    );
+    let (v_flat, v_bump) = (signed_volume(&flat), signed_volume(&bump));
+    assert!(
+      v_flat * v_bump > 0. && v_bump.abs() > 1.,
+      "two-cap solid orientation must match the extrude-built solid: flat={v_flat} bump={v_bump}"
+    );
+    // §12.2b: the refinement lands on the domed offset cap; the flat φ cap stays coarse instead
+    // of mirroring it.
+    let top = bump
+      .vertices
+      .values()
+      .filter(|v| v.position.y.abs() < 1e-4)
+      .count();
+    let off = bump_verts - top;
+    assert!(
+      top * 3 < off,
+      "per-cap tessellation should keep the flat top cap coarse: top={top} off={off}"
     );
   }
 
@@ -10658,7 +11173,8 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("should stay watertight");
+    m.check_is_manifold::<true>()
+      .expect("should stay watertight");
 
     let n_verts = m.vertices.len();
     assert!(
@@ -10674,11 +11190,11 @@ mesh = embed_path(
           && ((v.position.x * 2.).cos() * (v.position.z * 2.).cos()).abs() < 1e-3
       })
       .count();
-    assert!(on_crease > 5, "expected crease-aligned vertices, found {on_crease}");
+    assert!(
+      on_crease > 5,
+      "expected crease-aligned vertices, found {on_crease}"
+    );
   }
-
-
-
 
   // §12 lattice guards: the canonical triangle-wave tiling `abs(fract(u) − 0.5)` is continuous
   // but kinked at every half-integer; the fract-guard (sin(π·u)) covers the integers and the
@@ -10697,7 +11213,8 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("should stay watertight");
+    m.check_is_manifold::<true>()
+      .expect("should stay watertight");
     assert!(
       ctx.prints.borrow().is_empty(),
       "continuous tiling should converge without warnings: {:?}",
@@ -10710,13 +11227,17 @@ mesh = embed_path(
         .values()
         .filter(|v| v.position.y.abs() < 1e-4 && (v.position.x - target).abs() < 1e-3)
         .count();
-      assert!(count > 0, "no crease-aligned vertices on the u={target} kink line");
+      assert!(
+        count > 0,
+        "no crease-aligned vertices on the u={target} kink line"
+      );
     }
   }
 
   // §12.2a sharp-marking, welded default: the cap/wall junction rings (both sides + wall
   // verticals at crease crossings) and the offset-cap crease edges get explicit sharp flags; the
-  // φ cap stays unmarked for thickness-sourced creases (it is geometrically smooth there).
+  // φ cap stays smooth for thickness-sourced creases — under §12.2b per-cap tessellation it
+  // doesn't even receive their interior crease vertices, staying much coarser than the offset cap.
   #[test]
   fn embed_path_sharp_marks_junction_and_crease_edges() {
     let src = r#"
@@ -10730,11 +11251,11 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("sharp flags must not break the welded solid");
+    m.check_is_manifold::<true>()
+      .expect("sharp flags must not break the welded solid");
 
     let crease_x = std::f32::consts::FRAC_PI_4;
-    let (mut junction, mut offset_crease, mut wall_vertical, mut phi_interior_crease) =
-      (0usize, 0usize, 0usize, 0usize);
+    let (mut junction, mut offset_crease, mut wall_vertical) = (0usize, 0usize, 0usize);
     for edge in m.edges.values() {
       let [a, b] = [
         m.vertices[edge.vertices[0]].position,
@@ -10750,19 +11271,47 @@ mesh = embed_path(
         } else if on_crease && (a.y - b.y).abs() > 0.05 && a.z.abs() < 1e-3 && b.z.abs() < 1e-3 {
           wall_vertical += 1;
         }
-      } else if on_crease && both_top_ring && a.z > 0.1 && a.z < 0.9 && b.z > 0.1 && b.z < 0.9 {
-        phi_interior_crease += 1;
       }
       // interior φ-cap crease edges must NOT be sharp (top cap is smooth for thickness creases)
-      if edge.sharp && on_crease && both_top_ring && a.z > 0.1 && a.z < 0.9 && b.z > 0.1 && b.z < 0.9
+      if edge.sharp
+        && on_crease
+        && both_top_ring
+        && a.z > 0.1
+        && a.z < 0.9
+        && b.z > 0.1
+        && b.z < 0.9
       {
         panic!("interior top-cap crease edge wrongly marked sharp");
       }
     }
-    assert!(junction >= 4, "junction ring edges should be sharp, found {junction}");
+    assert!(
+      junction >= 4,
+      "junction ring edges should be sharp, found {junction}"
+    );
     assert!(offset_crease > 0, "offset-cap crease edges should be sharp");
-    assert!(wall_vertical > 0, "wall vertical at the crease/boundary crossing should be sharp");
-    assert!(phi_interior_crease > 0, "expected unmarked interior top-cap crease edges to exist");
+    assert!(
+      wall_vertical > 0,
+      "wall vertical at the crease/boundary crossing should be sharp"
+    );
+
+    // §12.2b: the flat φ cap's interior must stay far coarser than the crease-refined offset cap.
+    let strict_interior =
+      |p: &mesh::linked_mesh::Vec3| p.x > 1e-3 && p.x < 2. - 1e-3 && p.z > 1e-3 && p.z < 1. - 1e-3;
+    let top_interior = m
+      .vertices
+      .values()
+      .filter(|v| v.position.y.abs() < 1e-4 && strict_interior(&v.position))
+      .count();
+    let off_interior = m
+      .vertices
+      .values()
+      .filter(|v| v.position.y > 0.05 && strict_interior(&v.position))
+      .count();
+    assert!(
+      top_interior * 3 < off_interior,
+      "per-cap tessellation should keep the flat top cap coarse: top={top_interior} \
+       off={off_interior}"
+    );
   }
 
   // §12.2a bleed fix: with the scene sharp-angle threshold raised to keep curved embeds smooth,
@@ -10835,12 +11384,7 @@ mesh = embed_path(
     // The thickness slope is ±1 on either side of the crease, so per-side normals differ by ~90°.
     let split_positions = by_pos
       .values()
-      .filter(|ns| {
-        ns.len() >= 2
-          && ns
-            .iter()
-            .any(|a| ns.iter().any(|b| a.dot(b) < 0.9))
-      })
+      .filter(|ns| ns.len() >= 2 && ns.iter().any(|a| ns.iter().any(|b| a.dot(b) < 0.9)))
       .count();
     assert!(
       split_positions > 0,
@@ -10889,7 +11433,10 @@ mesh = embed_path(
         }
       }
     }
-    assert!(checked >= 5 && tilted > 0, "expected tilted offset-cap normals: {checked}/{tilted}");
+    assert!(
+      checked >= 5 && tilted > 0,
+      "expected tilted offset-cap normals: {checked}/{tilted}"
+    );
   }
 
   // §12.2d alignment post-pass: a crease whose kink is *sub-tolerance* (shallow double-valley)
@@ -10938,19 +11485,27 @@ mesh = embed_path(
 
     // Crease identity: no sharp edge may bridge the two crease lines (the "stamped diamond" —
     // both endpoints are on-crease, but on *different branches* of the product guard's zero set).
-    let on_u = |p: mesh::linked_mesh::Vec3| (p.x - crease).abs() < 1e-3 && (p.z - crease).abs() > 0.02;
-    let on_v = |p: mesh::linked_mesh::Vec3| (p.z - crease).abs() < 1e-3 && (p.x - crease).abs() > 0.02;
+    let on_u =
+      |p: mesh::linked_mesh::Vec3| (p.x - crease).abs() < 1e-3 && (p.z - crease).abs() > 0.02;
+    let on_v =
+      |p: mesh::linked_mesh::Vec3| (p.z - crease).abs() < 1e-3 && (p.x - crease).abs() > 0.02;
     let stamped = m
       .edges
       .values()
       .filter(|e| {
         e.sharp && {
-          let [a, b] = [m.vertices[e.vertices[0]].position, m.vertices[e.vertices[1]].position];
+          let [a, b] = [
+            m.vertices[e.vertices[0]].position,
+            m.vertices[e.vertices[1]].position,
+          ];
           a.y > 0.02 && b.y > 0.02 && ((on_u(a) && on_v(b)) || (on_v(a) && on_u(b)))
         }
       })
       .count();
-    assert_eq!(stamped, 0, "sharp edges must not bridge different crease branches");
+    assert_eq!(
+      stamped, 0,
+      "sharp edges must not bridge different crease branches"
+    );
   }
 
   // Crease-identity tangency cases: an along-branch edge passes; a chord bridging two branches
@@ -10963,7 +11518,10 @@ mesh = embed_path(
     let along = Vec2::new(1., 0.); // gradient ⊥ the line (branch normal)
     let noise = Vec2::new(3e-8, -4e-8); // saddle endpoint: second-order residue
 
-    assert!(crease_edge_tangent(along, along, e), "along-branch edge must pass");
+    assert!(
+      crease_edge_tangent(along, along, e),
+      "along-branch edge must pass"
+    );
     assert!(
       crease_edge_tangent(along, noise, e) && crease_edge_tangent(noise, along, e),
       "X-vertex spoke (one degenerate endpoint) must pass"
@@ -10975,11 +11533,11 @@ mesh = embed_path(
     // branch normals, both reliable.
     let chord = Vec2::new(1., 1.).normalize();
     let (gu, gv) = (Vec2::new(1., 0.), Vec2::new(0., 1.));
-    assert!(!crease_edge_tangent(gu, gv, chord), "branch-bridging chord must fail");
+    assert!(
+      !crease_edge_tangent(gu, gv, chord),
+      "branch-bridging chord must fail"
+    );
   }
-
-
-
 
   // §12 rung 0: a guard-invisible value jump (hidden behind a captured helper closure so no guard
   // can be extracted) can never converge — the floor + dedup must stop refinement at a bounded
@@ -10998,7 +11556,8 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("should stay watertight");
+    m.check_is_manifold::<true>()
+      .expect("should stay watertight");
     assert!(
       m.vertices.len() < 20_000,
       "stall guard should bound refinement, got {} verts",

@@ -50,8 +50,8 @@ use crate::{
 
 pub mod ast;
 pub mod autodiff;
-mod guards;
 pub mod builtins;
+mod guards;
 pub mod lights;
 pub mod materials;
 pub mod mesh_ops;
@@ -6730,12 +6730,18 @@ fn test_module_cache_validates_threshold_reads() {
     .borrow_mut()
     .insert("plate".to_owned(), PLATE_MODULE.to_owned());
 
-  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"");
+  run_as_fresh_run(
+    &ctx,
+    "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"",
+  );
   let smooth = module_export_mesh_verts(&ctx, "plate", "m");
   run_as_fresh_run(&ctx, "import { m } from \"plate\"");
   let creased = module_export_mesh_verts(&ctx, "plate", "m");
   assert!(smooth < creased, "{smooth} !< {creased}");
-  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"");
+  run_as_fresh_run(
+    &ctx,
+    "set_sharp_angle_threshold(179)\nimport { m } from \"plate\"",
+  );
   assert_eq!(module_export_mesh_verts(&ctx, "plate", "m"), smooth);
 }
 
@@ -6749,7 +6755,10 @@ fn test_module_cache_retained_when_settings_unread() {
     .borrow_mut()
     .insert("pure".to_owned(), "export v = box(1)".to_owned());
 
-  run_as_fresh_run(&ctx, "set_sharp_angle_threshold(179)\nimport { v } from \"pure\"");
+  run_as_fresh_run(
+    &ctx,
+    "set_sharp_angle_threshold(179)\nimport { v } from \"pure\"",
+  );
   let first = Rc::as_ptr(&ctx.module_exports.borrow().get("pure").unwrap().exports);
   run_as_fresh_run(&ctx, "import { v } from \"pure\"");
   let second = Rc::as_ptr(&ctx.module_exports.borrow().get("pure").unwrap().exports);

@@ -1,4 +1,8 @@
-use mesh::{linked_mesh::Vec3, LinkedMesh};
+use mesh::{
+  linked_mesh::{DisplacementNormalMethod, EdgeSplitPos, FaceKey, Vec3, Vertex, VertexKey},
+  slotmap_utils::{vkey, vkey_ix},
+  LinkedMesh,
+};
 
 use super::adaptive_sampler::DEFAULT_MIN_SEGMENT_LENGTH;
 use crate::{ErrorStack, Vec2};
@@ -358,7 +362,10 @@ pub struct TessPlane {
 
 impl Default for TessPlane {
   fn default() -> Self {
-    TessPlane { u_axis: 0, v_axis: 2 }
+    TessPlane {
+      u_axis: 0,
+      v_axis: 2,
+    }
   }
 }
 
@@ -400,7 +407,12 @@ pub fn tessellate_2d_paths(
   paths: &[Vec<Vec2>],
   flipped: bool,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
-  tessellate_2d_paths_multi(paths, flipped, TessPlane::default(), CgalCdtOptions::default())
+  tessellate_2d_paths_multi(
+    paths,
+    flipped,
+    TessPlane::default(),
+    CgalCdtOptions::default(),
+  )
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -494,7 +506,8 @@ fn run_triangulation_with_holes(
   }
   if subpath_lengths.len() != 1 || options.refine() || !interior_points.is_empty() {
     return Err(ErrorStack::new(
-      "Multi-subpath / refining / interior-point CGAL triangulation is only available in wasm builds",
+      "Multi-subpath / refining / interior-point CGAL triangulation is only available in wasm \
+       builds",
     ));
   }
   let vertex_count = subpath_lengths[0] as usize;
@@ -512,12 +525,10 @@ pub fn tessellate_2d_paths_multi(
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   // `_embedded`'s default front faces −(φ_u × φ_v); xor with the plane's parity to keep this
   // function's "+remaining axis" default.
-  let (mesh, _domain_uvs) = tessellate_2d_paths_embedded(
-    paths,
-    plane.ccw_faces_positive() ^ flipped,
-    options,
-    |uv| Ok(plane.embed(uv.x, uv.y)),
-  )?;
+  let (mesh, _domain_uvs) =
+    tessellate_2d_paths_embedded(paths, plane.ccw_faces_positive() ^ flipped, options, |uv| {
+      Ok(plane.embed(uv.x, uv.y))
+    })?;
   Ok(mesh)
 }
 
@@ -543,8 +554,8 @@ fn flatten_paths(paths: &[Vec<Vec2>]) -> Result<(Vec<f32>, Vec<u32>), ErrorStack
 }
 
 /// Constrained-Delaunay-triangulates `paths` (outer + holes via subpath nesting), then embeds each
-/// output 2D vertex into 3D through `embed`.  This is `tessellate_2d_paths_multi` generalized from an
-/// affine `TessPlane` to an arbitrary map φ: ℝ²→ℝ³.  The default front face points along
+/// output 2D vertex into 3D through `embed`.  This is `tessellate_2d_paths_multi` generalized from
+/// an affine `TessPlane` to an arbitrary map φ: ℝ²→ℝ³.  The default front face points along
 /// −(φ_u × φ_v) — for a flat `|p| (p.x, 0, p.y)`-style embedding that's +Y, matching
 /// `tessellate_2d_paths_multi`'s legacy XZ default; `flipped` swaps it.  The resulting single-layer
 /// cap is what `embed_path` thickens.  Also returns each output vertex's 2D domain coordinate,
@@ -590,32 +601,62 @@ pub fn tessellate_2d_paths_embedded(
 
 const DENSIFY_MAX_DEPTH: u32 = 12;
 
-/// A domain point sampled on both surfaces sharing the cap CDT: the top cap φ(uv) and the offset
-/// cap φ(uv) ∓ t·N(uv).  When no offset surface is tracked `off == top`, so every deviation test
-/// degenerates to single-surface behavior for free.
+/// A domain point sampled on both surfaces sharing the cap boundary: the top cap φ(uv) and the
+/// offset cap φ(uv) ∓ t·N(uv).  When no offset surface is tracked `off == top`, so every deviation
+/// test degenerates to single-surface behavior for free.
 #[derive(Clone, Copy)]
 struct SurfPt {
   top: Vec3,
   off: Vec3,
 }
 
+/// Which probed surface a refinement pass measures (and which one positions its mesh).  `Both`
+/// (max deviation, top positions) is the shared-CDT behavior; `Top`/`Off` drive the per-cap
+/// independent interiors of [`tessellate_2d_paths_embedded_two_caps`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum SurfSel {
+  Both,
+  Top,
+  Off,
+}
+
 impl SurfPt {
-  fn dev_from(self, chord: SurfPt) -> f32 {
-    (self.top - chord.top).norm().max((self.off - chord.off).norm())
+  fn dev_from(self, chord: SurfPt, sel: SurfSel) -> f32 {
+    let t = (self.top - chord.top).norm();
+    let o = (self.off - chord.off).norm();
+    match sel {
+      SurfSel::Both => t.max(o),
+      SurfSel::Top => t,
+      SurfSel::Off => o,
+    }
+  }
+
+  fn pos(self, sel: SurfSel) -> Vec3 {
+    if sel == SurfSel::Off {
+      self.off
+    } else {
+      self.top
+    }
   }
 }
 
 impl std::ops::Add for SurfPt {
   type Output = SurfPt;
   fn add(self, o: SurfPt) -> SurfPt {
-    SurfPt { top: self.top + o.top, off: self.off + o.off }
+    SurfPt {
+      top: self.top + o.top,
+      off: self.off + o.off,
+    }
   }
 }
 
 impl std::ops::Mul<f32> for SurfPt {
   type Output = SurfPt;
   fn mul(self, s: f32) -> SurfPt {
-    SurfPt { top: self.top * s, off: self.off * s }
+    SurfPt {
+      top: self.top * s,
+      off: self.off * s,
+    }
   }
 }
 
@@ -638,6 +679,7 @@ fn densify_segment_under_embed(
   probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
   guards: Option<GuardEval>,
   tol: f32,
+  sel: SurfSel,
   depth: u32,
   out: &mut Vec<Vec2>,
   crease: &mut CreaseUvs,
@@ -662,18 +704,42 @@ fn densify_segment_under_embed(
       let groot = g(root).map(std::rc::Rc::new);
       record_crease(crease, root, k);
       densify_segment_under_embed(
-        a, root, ea, eroot, ga, groot.clone(), probe, guards, tol, depth + 1, out, crease,
+        a,
+        root,
+        ea,
+        eroot,
+        ga,
+        groot.clone(),
+        probe,
+        guards,
+        tol,
+        sel,
+        depth + 1,
+        out,
+        crease,
       )?;
       out.push(root);
       densify_segment_under_embed(
-        root, b, eroot, eb, groot, gb, probe, guards, tol, depth + 1, out, crease,
+        root,
+        b,
+        eroot,
+        eb,
+        groot,
+        gb,
+        probe,
+        guards,
+        tol,
+        sel,
+        depth + 1,
+        out,
+        crease,
       )?;
       return Ok(());
     }
   }
   let mid = (a + b) * 0.5;
   let emid = probe(mid)?;
-  if emid.dev_from((ea + eb) * 0.5) <= tol {
+  if emid.dev_from((ea + eb) * 0.5, sel) <= tol {
     return Ok(());
   }
   let gmid = match guards {
@@ -690,12 +756,27 @@ fn densify_segment_under_embed(
     probe,
     guards,
     tol,
+    sel,
     depth + 1,
     out,
     crease,
   )?;
   out.push(mid);
-  densify_segment_under_embed(mid, b, emid, eb, gmid, gb, probe, guards, tol, depth + 1, out, crease)?;
+  densify_segment_under_embed(
+    mid,
+    b,
+    emid,
+    eb,
+    gmid,
+    gb,
+    probe,
+    guards,
+    tol,
+    sel,
+    depth + 1,
+    out,
+    crease,
+  )?;
   Ok(())
 }
 
@@ -707,6 +788,7 @@ fn densify_loop_under_embed(
   probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
   guards: Option<GuardEval>,
   tol: f32,
+  sel: SurfSel,
   crease: &mut CreaseUvs,
 ) -> Result<Vec<Vec2>, ErrorStack> {
   let n = loop_2d.len();
@@ -730,6 +812,7 @@ fn densify_loop_under_embed(
       probe,
       guards,
       tol,
+      sel,
       0,
       &mut out,
       crease,
@@ -740,6 +823,7 @@ fn densify_loop_under_embed(
 
 /// Max deviation of the flat triangle `(a, b, c)` from the true probed surface(s), measured at the
 /// three edge midpoints and the centroid.
+#[allow(clippy::too_many_arguments)]
 fn embedded_triangle_deviation(
   a2: Vec2,
   b2: Vec2,
@@ -747,7 +831,8 @@ fn embedded_triangle_deviation(
   a3: SurfPt,
   b3: SurfPt,
   c3: SurfPt,
-  probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
+  probe: Probe,
+  sel: SurfSel,
 ) -> Result<f32, ErrorStack> {
   let mut dev = 0f32;
   for (m2, chord) in [
@@ -756,7 +841,7 @@ fn embedded_triangle_deviation(
     ((c2 + a2) * 0.5, (c3 + a3) * 0.5),
     ((a2 + b2 + c2) / 3.0, (a3 + b3 + c3) * (1. / 3.)),
   ] {
-    dev = dev.max(probe(m2)?.dev_from(chord));
+    dev = dev.max(probe(m2)?.dev_from(chord, sel));
   }
   Ok(dev)
 }
@@ -811,7 +896,10 @@ impl DedupGrid {
   }
 
   fn try_insert(&mut self, p: Vec2) -> bool {
-    let (kx, ky) = ((p.x * self.inv_cell).floor() as i32, (p.y * self.inv_cell).floor() as i32);
+    let (kx, ky) = (
+      (p.x * self.inv_cell).floor() as i32,
+      (p.y * self.inv_cell).floor() as i32,
+    );
     for dx in -1..=1 {
       for dy in -1..=1 {
         if let Some(pts) = self.cells.get(&(kx + dx, ky + dy)) {
@@ -924,12 +1012,12 @@ fn insert_boundary_guard_roots(
 const REFINE_MIN_ANGLE_SQ_SINE: f32 = 0.11;
 
 /// Distortion-aware version of `tessellate_2d_paths_embedded`: densifies each boundary loop under φ
-/// to `tol`, then refines the interior a-posteriori — constrained-Delaunay-triangulate → embed → drop
-/// a Steiner point at the centroid of every triangle still deviating from φ by more than `tol` →
-/// re-triangulate with the accumulated points → repeat until converged (or the iteration cap).  The
-/// CDT itself enforces a min-angle quality floor ([`REFINE_MIN_ANGLE_SQ_SINE`]) so slivers can't
-/// survive in regions the deviation test leaves alone.  Spatially adaptive: flat regions stay coarse,
-/// curved regions densify where they exceed tolerance.
+/// to `tol`, then refines the interior a-posteriori — constrained-Delaunay-triangulate → embed →
+/// drop a Steiner point at the centroid of every triangle still deviating from φ by more than `tol`
+/// → re-triangulate with the accumulated points → repeat until converged (or the iteration cap).
+/// The CDT itself enforces a min-angle quality floor ([`REFINE_MIN_ANGLE_SQ_SINE`]) so slivers
+/// can't survive in regions the deviation test leaves alone.  Spatially adaptive: flat regions stay
+/// coarse, curved regions densify where they exceed tolerance.
 ///
 /// `offset_surface`, when given, is the second surface sharing this CDT (the offset cap
 /// `φ(uv) ∓ t·N(uv)`); both boundary densification and interior refinement then split on the worse
@@ -948,14 +1036,19 @@ pub fn tessellate_2d_paths_embedded_refined(
   offset_surface: Option<&dyn Fn(Vec2) -> Result<Vec3, ErrorStack>>,
   guards: Option<GuardEval>,
 ) -> Result<(LinkedMesh<()>, Vec<Vec2>, RefineStats, CreaseUvs), ErrorStack> {
-  let mut stats = RefineStats::default();
   let mut crease = CreaseUvs::default();
   if paths.is_empty() {
-    return Ok((LinkedMesh::default(), Vec::new(), stats, crease));
+    return Ok((
+      LinkedMesh::default(),
+      Vec::new(),
+      RefineStats::default(),
+      crease,
+    ));
   }
 
-  // Memoized like guard_cache below: vertex/probe positions repeat across re-triangulations, and
-  // each uncached probe costs several interpreter invocations (embed + FD frame + thickness).
+  // Memoized like the per-run guard caches: vertex/probe positions repeat across
+  // re-triangulations, and each uncached probe costs several interpreter invocations (embed + FD
+  // frame + thickness).
   let probe_cache: std::cell::RefCell<fxhash::FxHashMap<[u32; 2], SurfPt>> =
     std::cell::RefCell::new(fxhash::FxHashMap::default());
   let probe = |uv: Vec2| -> Result<SurfPt, ErrorStack> {
@@ -979,25 +1072,72 @@ pub fn tessellate_2d_paths_embedded_refined(
       let with_roots = guards
         .and_then(|g| insert_boundary_guard_roots(path, g, &mut crease))
         .unwrap_or_else(|| path.clone());
-      densify_loop_under_embed(&with_roots, &probe, guards, tol, &mut crease)
+      densify_loop_under_embed(&with_roots, &probe, guards, tol, SurfSel::Both, &mut crease)
     })
     .collect::<Result<Vec<_>, _>>()?;
   let (coords, subpath_lengths) = flatten_paths(&dense)?;
-
-  let bbox_diag = {
-    let (mut lo, mut hi) = (Vec2::repeat(f32::INFINITY), Vec2::repeat(f32::NEG_INFINITY));
-    for c in coords.chunks_exact(2) {
-      let p = Vec2::new(c[0], c[1]);
-      lo = lo.inf(&p);
-      hi = hi.sup(&p);
-    }
-    (hi - lo).norm()
+  let (min_split_edge, dedup_radius) = domain_scales(&coords);
+  let env = RefineEnv {
+    probe: &probe,
+    coords: &coords,
+    subpath_lengths: &subpath_lengths,
+    flipped,
+    tol,
+    min_split_edge,
+    dedup_radius,
   };
-  let min_split_edge = bbox_diag * MIN_SPLIT_EDGE_FRAC;
-  let mut dedup = DedupGrid::new((bbox_diag * DEDUP_RADIUS_FRAC).max(DEFAULT_MIN_SEGMENT_LENGTH));
+  let (mesh, domain_uvs, stats) = refine_cap(&env, SurfSel::Both, guards, &mut crease)?;
+  Ok((mesh, domain_uvs, stats, crease))
+}
+
+/// Rung-0 floor + dedup radius derived from the densified boundary's bbox diagonal.
+fn domain_scales(coords: &[f32]) -> (f32, f32) {
+  let (mut lo, mut hi) = (Vec2::repeat(f32::INFINITY), Vec2::repeat(f32::NEG_INFINITY));
+  for c in coords.chunks_exact(2) {
+    let p = Vec2::new(c[0], c[1]);
+    lo = lo.inf(&p);
+    hi = hi.sup(&p);
+  }
+  let bbox_diag = (hi - lo).norm();
+  (
+    bbox_diag * MIN_SPLIT_EDGE_FRAC,
+    (bbox_diag * DEDUP_RADIUS_FRAC).max(DEFAULT_MIN_SEGMENT_LENGTH),
+  )
+}
+
+type Probe<'a> = &'a dyn Fn(Vec2) -> Result<SurfPt, ErrorStack>;
+
+/// Everything shared between the refinement passes of one tessellation: the (memoizing) surface
+/// probe and the densified boundary.
+struct RefineEnv<'a> {
+  probe: Probe<'a>,
+  coords: &'a [f32],
+  subpath_lengths: &'a [u32],
+  flipped: bool,
+  tol: f32,
+  min_split_edge: f32,
+  dedup_radius: f32,
+}
+
+/// One a-posteriori interior refinement pass over the shared boundary (see
+/// [`tessellate_2d_paths_embedded_refined`]'s docs for the loop's semantics), measuring the
+/// surface(s) selected by `sel` and positioning the returned mesh on `sel`'s primary surface.
+/// Includes the crease-alignment post-pass.
+fn refine_cap(
+  env: &RefineEnv,
+  sel: SurfSel,
+  guards: Option<GuardEval>,
+  crease: &mut CreaseUvs,
+) -> Result<(LinkedMesh<()>, Vec<Vec2>, RefineStats), ErrorStack> {
+  let mut stats = RefineStats::default();
+  let probe = env.probe;
+  let (coords, subpath_lengths, tol) = (env.coords, env.subpath_lengths, env.tol);
+
+  let mut dedup = DedupGrid::new(env.dedup_radius);
   for c in coords.chunks_exact(2) {
     dedup.try_insert(Vec2::new(c[0], c[1]));
   }
+  // Per-pass: different passes may see different guard subsets, so cached values can't cross.
   let mut guard_cache: fxhash::FxHashMap<[u32; 2], Option<std::rc::Rc<Vec<f32>>>> =
     fxhash::FxHashMap::default();
 
@@ -1014,7 +1154,7 @@ pub fn tessellate_2d_paths_embedded_refined(
 
   for _ in 0..REFINE_MAX_ITERS {
     let (out_xy, indices, _mapping) =
-      run_triangulation_with_holes(&coords, &subpath_lengths, cdt_options, &interior)?;
+      run_triangulation_with_holes(coords, subpath_lengths, cdt_options, &interior)?;
     if indices.is_empty() {
       return Err(ErrorStack::new("CGAL triangulation returned no triangles"));
     }
@@ -1043,7 +1183,14 @@ pub fn tessellate_2d_paths_embedded_refined(
     for tri in indices.chunks_exact(3) {
       let (i, j, k) = (tri[0] as usize, tri[1] as usize, tri[2] as usize);
       let dev = embedded_triangle_deviation(
-        verts_2d[i], verts_2d[j], verts_2d[k], verts_3d[i], verts_3d[j], verts_3d[k], &probe,
+        verts_2d[i],
+        verts_2d[j],
+        verts_2d[k],
+        verts_3d[i],
+        verts_3d[j],
+        verts_3d[k],
+        probe,
+        sel,
       )?;
       if dev <= tol {
         continue;
@@ -1056,9 +1203,11 @@ pub fn tessellate_2d_paths_embedded_refined(
       // Delaunay pass to fight (the spiderweb-knot failure mode).
       let mut inserted = false;
       let mut straddling = false;
-      if let (Some(gi), Some(gj), Some(gk)) =
-        (guard_at(verts_2d[i]), guard_at(verts_2d[j]), guard_at(verts_2d[k]))
-      {
+      if let (Some(gi), Some(gj), Some(gk)) = (
+        guard_at(verts_2d[i]),
+        guard_at(verts_2d[j]),
+        guard_at(verts_2d[k]),
+      ) {
         let corners = [(verts_2d[i], &gi), (verts_2d[j], &gj), (verts_2d[k], &gk)];
         for e in 0..3 {
           let (pa, ga) = corners[e];
@@ -1068,7 +1217,7 @@ pub fn tessellate_2d_paths_embedded_refined(
               straddling = true;
               if let Some(root) = bisect_guard_root(pa, pb, 0., 1., g_ix, guards.unwrap()) {
                 if dedup.try_insert(root) {
-                  record_crease(&mut crease, root, g_ix);
+                  record_crease(crease, root, g_ix);
                   fresh.push(root.x);
                   fresh.push(root.y);
                   inserted = true;
@@ -1092,7 +1241,7 @@ pub fn tessellate_2d_paths_embedded_refined(
           .norm()
           .max((verts_2d[k] - verts_2d[j]).norm())
           .max((verts_2d[i] - verts_2d[k]).norm());
-        if longest < min_split_edge {
+        if longest < env.min_split_edge {
           stats.stalled += 1;
           continue;
         }
@@ -1127,9 +1276,9 @@ pub fn tessellate_2d_paths_embedded_refined(
   }
 
   let (mut domain_uvs, verts, mut indices) = result.unwrap();
-  let verts: Vec<Vec3> = verts.iter().map(|s| s.top).collect();
+  let verts: Vec<Vec3> = verts.iter().map(|s| s.pos(sel)).collect();
   // Same −(φ_u × φ_v) default facing as `tessellate_2d_paths_embedded`.
-  if !flipped {
+  if !env.flipped {
     for tri in indices.chunks_mut(3) {
       tri.swap(0, 2);
     }
@@ -1146,10 +1295,6 @@ pub fn tessellate_2d_paths_embedded_refined(
   // two edges of one triangle the second split's spoke connects the two on-crease vertices,
   // edge-chaining the crease for the sharp-marking downstream.
   if let Some(g) = guards {
-    use mesh::{
-      linked_mesh::{DisplacementNormalMethod, EdgeSplitPos},
-      slotmap_utils::vkey_ix,
-    };
     let mut guard_at = |uv: Vec2| -> Option<std::rc::Rc<Vec<f32>>> {
       guard_cache
         .entry([uv.x.to_bits(), uv.y.to_bits()])
@@ -1182,8 +1327,13 @@ pub fn tessellate_2d_paths_embedded_refined(
       ) else {
         continue;
       };
-      let samples: [(f32, &[f32]); 5] =
-        [(0., &ga), (0.25, &g25), (0.5, &g50), (0.75, &g75), (1., &gb)];
+      let samples: [(f32, &[f32]); 5] = [
+        (0., &ga),
+        (0.25, &g25),
+        (0.5, &g50),
+        (0.75, &g75),
+        (1., &gb),
+      ];
       let n_guards = samples.iter().map(|(_, v)| v.len()).min().unwrap();
       let mut found: Option<(Vec2, usize)> = None;
       'guards: for k in 0..n_guards {
@@ -1208,17 +1358,486 @@ pub fn tessellate_2d_paths_embedded_refined(
       }
       let new_vk = mesh.split_edge(
         ek,
-        EdgeSplitPos { pos: t, start_vtx_key: va },
+        EdgeSplitPos {
+          pos: t,
+          start_vtx_key: va,
+        },
         DisplacementNormalMethod::Interpolate,
       );
-      mesh.vertices[new_vk].position = probe(root)?.top;
-      record_crease(&mut crease, root, k);
+      mesh.vertices[new_vk].position = probe(root)?.pos(sel);
+      record_crease(crease, root, k);
       debug_assert_eq!(vkey_ix(&new_vk) as usize - 1, domain_uvs.len());
       domain_uvs.push(root);
     }
   }
 
-  Ok((mesh, domain_uvs, stats, crease))
+  Ok((mesh, domain_uvs, stats))
+}
+
+/// One boundary loop of a two-cap solid: per ring slot, the top-cap / offset-cap vertex index
+/// (each cap's own `vkey_ix - 1` space).  Both rails follow the same domain point sequence in
+/// wall-canonical direction (the border-edge orientation inside the *assembled*, flipped top-cap
+/// face), so slot k pairs 1:1 for wall stitching.
+pub struct TessRing {
+  pub top: Vec<usize>,
+  pub off: Vec<usize>,
+}
+
+/// The assembled closed solid from [`tessellate_2d_paths_embedded_two_caps`], plus everything
+/// `embed_path` needs to sharp-mark and author attributes onto it.  Top-cap vertices are
+/// `vkey(i + 1, 1)` aligned with `top_uvs`; offset-cap vertex keys are listed in `off_vkeys`,
+/// aligned with `off_uvs`.  Wall faces are the ones in neither face set.
+pub struct TwoCapSolid {
+  pub mesh: LinkedMesh<()>,
+  pub top_uvs: Vec<Vec2>,
+  pub off_uvs: Vec<Vec2>,
+  pub off_vkeys: Vec<VertexKey>,
+  pub top_faces: fxhash::FxHashSet<FaceKey>,
+  pub off_faces: fxhash::FxHashSet<FaceKey>,
+  pub top_crease: CreaseUvs,
+  pub off_crease: CreaseUvs,
+  pub rings: Vec<TessRing>,
+  pub stats: RefineStats,
+}
+
+struct CapBorder {
+  adj: fxhash::FxHashMap<usize, Vec<usize>>,
+  ix_by_uv: fxhash::FxHashMap<[u32; 2], usize>,
+}
+
+fn cap_border(mesh: &LinkedMesh<()>, uvs: &[Vec2]) -> CapBorder {
+  let mut adj: fxhash::FxHashMap<usize, Vec<usize>> = fxhash::FxHashMap::default();
+  for edge in mesh.edges.values() {
+    if edge.faces.len() != 1 {
+      continue;
+    }
+    let a = vkey_ix(&edge.vertices[0]) as usize - 1;
+    let b = vkey_ix(&edge.vertices[1]) as usize - 1;
+    adj.entry(a).or_default().push(b);
+    adj.entry(b).or_default().push(a);
+  }
+  let ix_by_uv = uvs
+    .iter()
+    .enumerate()
+    .map(|(i, uv)| ([uv.x.to_bits(), uv.y.to_bits()], i))
+    .collect();
+  CapBorder { adj, ix_by_uv }
+}
+
+fn uv_bits(uv: Vec2) -> [u32; 2] {
+  [uv.x.to_bits(), uv.y.to_bits()]
+}
+
+/// Walks the border loop containing `dense_ring`'s vertices (all preserved as constrained CDT
+/// vertices), returning its vertex indices starting at `dense_ring[0]` and oriented to the dense
+/// ring's direction.  `None` when the loop structure is unexpected (e.g. loops touching at a
+/// vertex, where a border vertex has more than 2 border neighbors).
+fn walk_boundary_ring(border: &CapBorder, dense_ring: &[Vec2]) -> Option<Vec<usize>> {
+  let start = *border.ix_by_uv.get(&uv_bits(dense_ring[0]))?;
+  let mut ring = vec![start];
+  let nbrs = border.adj.get(&start)?;
+  if nbrs.len() != 2 {
+    return None;
+  }
+  let (mut prev, mut cur) = (start, nbrs[0]);
+  while cur != start {
+    ring.push(cur);
+    if ring.len() > border.adj.len() {
+      return None;
+    }
+    let nbrs = border.adj.get(&cur)?;
+    if nbrs.len() != 2 {
+      return None;
+    }
+    let next = if nbrs[0] == prev { nbrs[1] } else { nbrs[0] };
+    prev = cur;
+    cur = next;
+  }
+  // Dense vertices appear on the loop in cyclic order, so the walk direction matches the dense
+  // direction iff dense[1] shows up before dense[2].
+  let pos_in_ring: fxhash::FxHashMap<usize, usize> =
+    ring.iter().enumerate().map(|(k, &ix)| (ix, k)).collect();
+  let p1 = *pos_in_ring.get(border.ix_by_uv.get(&uv_bits(dense_ring[1]))?)?;
+  let p2 = *pos_in_ring.get(border.ix_by_uv.get(&uv_bits(dense_ring[2]))?)?;
+  if p1 > p2 {
+    ring[1..].reverse();
+  }
+  Some(ring)
+}
+
+/// Slot-merge tolerance along a dense boundary segment: points from the two caps within this
+/// parametric distance are treated as one shared rail slot instead of split into sliver rungs.
+const RING_SNAP_T: f32 = 1e-4;
+
+/// Splices each cap's missing boundary vertices into the other's rail (via `split_edge` on the
+/// bracketing border edge, positioned on that cap's own surface) so both rails carry the same
+/// domain point sequence.  Needed because the min-angle mesher (encroachment) and the crease
+/// post-pass each split border edges independently per cap.
+#[allow(clippy::too_many_arguments)]
+fn conform_ring_pair(
+  dense_ring: &[Vec2],
+  ring_a: &[usize],
+  mesh_a: &mut LinkedMesh<()>,
+  uvs_a: &mut Vec<Vec2>,
+  sel_a: SurfSel,
+  ring_b: &[usize],
+  mesh_b: &mut LinkedMesh<()>,
+  uvs_b: &mut Vec<Vec2>,
+  sel_b: SurfSel,
+  probe: Probe,
+) -> Result<Option<(Vec<usize>, Vec<usize>)>, ErrorStack> {
+  let m = dense_ring.len();
+  let anchors = |ring: &[usize], uvs: &[Vec2]| -> Option<Vec<usize>> {
+    let dense_slot: fxhash::FxHashMap<[u32; 2], usize> = dense_ring
+      .iter()
+      .enumerate()
+      .map(|(s, uv)| (uv_bits(*uv), s))
+      .collect();
+    let mut out = vec![usize::MAX; m];
+    for (k, &ix) in ring.iter().enumerate() {
+      if let Some(&s) = dense_slot.get(&uv_bits(uvs[ix])) {
+        out[s] = k;
+      }
+    }
+    (out.iter().all(|&k| k != usize::MAX) && out.windows(2).all(|w| w[0] < w[1])).then_some(out)
+  };
+  let (Some(anchors_a), Some(anchors_b)) = (anchors(ring_a, uvs_a), anchors(ring_b, uvs_b)) else {
+    return Ok(None);
+  };
+
+  let mut out_a: Vec<usize> = Vec::with_capacity(ring_a.len().max(ring_b.len()));
+  let mut out_b: Vec<usize> = Vec::with_capacity(out_a.capacity());
+  let split = |mesh: &mut LinkedMesh<()>,
+               uvs: &mut Vec<Vec2>,
+               sel: SurfSel,
+               prev: usize,
+               next: usize,
+               rel: f32,
+               uv: Vec2|
+   -> Result<usize, ErrorStack> {
+    let va = vkey(prev as u32 + 1, 1);
+    let vb = vkey(next as u32 + 1, 1);
+    let ek = mesh
+      .get_edge_key([va, vb])
+      .ok_or_else(|| ErrorStack::new("two-cap ring conform: bracketing border edge not found"))?;
+    let new_vk = mesh.split_edge(
+      ek,
+      EdgeSplitPos {
+        pos: rel.clamp(1e-3, 1. - 1e-3),
+        start_vtx_key: va,
+      },
+      DisplacementNormalMethod::Interpolate,
+    );
+    mesh.vertices[new_vk].position = probe(uv)?.pos(sel);
+    debug_assert_eq!(vkey_ix(&new_vk) as usize - 1, uvs.len());
+    uvs.push(uv);
+    Ok(vkey_ix(&new_vk) as usize - 1)
+  };
+
+  for s in 0..m {
+    let (seg_a, seg_b) = (dense_ring[s], dense_ring[(s + 1) % m]);
+    let seg = seg_b - seg_a;
+    let inv_len2 = 1. / seg.norm_squared();
+    let extras = |ring: &[usize], uvs: &[Vec2], anchors: &[usize]| -> Vec<(f32, usize)> {
+      let from = anchors[s] + 1;
+      let to = if s + 1 < m {
+        anchors[s + 1]
+      } else {
+        ring.len()
+      };
+      ring[from..to]
+        .iter()
+        .map(|&ix| ((uvs[ix] - seg_a).dot(&seg) * inv_len2, ix))
+        .collect()
+    };
+    let ea = extras(ring_a, uvs_a, &anchors_a);
+    let eb = extras(ring_b, uvs_b, &anchors_b);
+
+    // Merge the two rails' extra points into shared slots by parametric position.
+    let mut slots: Vec<(Option<usize>, Option<usize>, f32)> = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    while i < ea.len() || j < eb.len() {
+      match (ea.get(i).copied(), eb.get(j).copied()) {
+        (Some((ta, ixa)), Some((tb, ixb))) => {
+          if uv_bits(uvs_a[ixa]) == uv_bits(uvs_b[ixb]) || (ta - tb).abs() < RING_SNAP_T {
+            slots.push((Some(ixa), Some(ixb), ta));
+            i += 1;
+            j += 1;
+          } else if ta < tb {
+            slots.push((Some(ixa), None, ta));
+            i += 1;
+          } else {
+            slots.push((None, Some(ixb), tb));
+            j += 1;
+          }
+        }
+        (Some((ta, ixa)), None) => {
+          slots.push((Some(ixa), None, ta));
+          i += 1;
+        }
+        (None, Some((tb, ixb))) => {
+          slots.push((None, Some(ixb), tb));
+          j += 1;
+        }
+        (None, None) => unreachable!(),
+      }
+    }
+
+    // Next existing rail vertex after each slot (defaults to the segment-end anchor at t=1).
+    let next_existing = |get: &dyn Fn(&(Option<usize>, Option<usize>, f32)) -> Option<usize>,
+                         end: usize|
+     -> Vec<(usize, f32)> {
+      let mut out = vec![(end, 1.); slots.len()];
+      let mut carry = (end, 1.);
+      for si in (0..slots.len()).rev() {
+        out[si] = carry;
+        if let Some(ix) = get(&slots[si]) {
+          carry = (ix, slots[si].2);
+        }
+      }
+      out
+    };
+    let end_a = ring_a[if s + 1 < m { anchors_a[s + 1] } else { 0 }];
+    let end_b = ring_b[if s + 1 < m { anchors_b[s + 1] } else { 0 }];
+    let next_a = next_existing(&|slot| slot.0, end_a);
+    let next_b = next_existing(&|slot| slot.1, end_b);
+
+    out_a.push(ring_a[anchors_a[s]]);
+    out_b.push(ring_b[anchors_b[s]]);
+    let mut prev_a = (ring_a[anchors_a[s]], 0f32);
+    let mut prev_b = (ring_b[anchors_b[s]], 0f32);
+    for (si, &(a, b, t)) in slots.iter().enumerate() {
+      let a_ix = match a {
+        Some(ix) => ix,
+        None => {
+          let (nix, nt) = next_a[si];
+          let uv = uvs_b[b.unwrap()];
+          split(
+            mesh_a,
+            uvs_a,
+            sel_a,
+            prev_a.0,
+            nix,
+            (t - prev_a.1) / (nt - prev_a.1),
+            uv,
+          )?
+        }
+      };
+      let b_ix = match b {
+        Some(ix) => ix,
+        None => {
+          let (nix, nt) = next_b[si];
+          let uv = uvs_a[a.unwrap()];
+          split(
+            mesh_b,
+            uvs_b,
+            sel_b,
+            prev_b.0,
+            nix,
+            (t - prev_b.1) / (nt - prev_b.1),
+            uv,
+          )?
+        }
+      };
+      out_a.push(a_ix);
+      out_b.push(b_ix);
+      prev_a = (a_ix, t);
+      prev_b = (b_ix, t);
+    }
+  }
+
+  Ok(Some((out_a, out_b)))
+}
+
+/// Whether `ring`'s direction matches the border-edge orientation inside its (pre-reversal) cap
+/// face.  The wall-canonical direction is the *opposite*: `extrude_with_offsets` reverses the
+/// original faces before deriving the border direction, so its walls follow the flipped cycle.
+fn ring_matches_face_winding(mesh: &LinkedMesh<()>, ring: &[usize]) -> Option<bool> {
+  let va = vkey(ring[0] as u32 + 1, 1);
+  let vb = vkey(ring[1] as u32 + 1, 1);
+  let ek = mesh.get_edge_key([va, vb])?;
+  let &fk = mesh.edges[ek].faces.first()?;
+  let vs = mesh.faces[fk].vertices;
+  Some((0..3).any(|i| vs[i] == va && vs[(i + 1) % 3] == vb))
+}
+
+/// §12.2b per-cap independent interior tessellation: refines the top cap for φ's curvature only
+/// and the offset cap for Ψ's, sharing just the densified boundary (which still tracks the worse
+/// of both surfaces — the walls are ruled between the rails), then assembles the closed solid
+/// directly — both caps plus ruled wall strips — instead of mirroring one CDT via extrusion.  A
+/// spatially-varying thickness no longer duplicates its crease/curvature Steiner points onto the
+/// (often much flatter) top cap.
+///
+/// `guards_top` is the embed-sourced guard subset: thickness creases don't kink φ, so the top
+/// pass must not chase them (nor edge-split them in the crease post-pass).  The boundary pass
+/// keeps the full set — thickness creases crossing the boundary kink the walls.
+///
+/// Returns `Ok(None)` when a topology precondition fails (boundary loops touching at a vertex);
+/// the caller falls back to the shared-CDT path.
+#[allow(clippy::too_many_arguments)]
+pub fn tessellate_2d_paths_embedded_two_caps(
+  paths: &[Vec<Vec2>],
+  flipped: bool,
+  tol: f32,
+  embed: impl Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  offset_surface: &dyn Fn(Vec2) -> Result<Vec3, ErrorStack>,
+  guards: Option<GuardEval>,
+  guards_top: Option<GuardEval>,
+) -> Result<Option<TwoCapSolid>, ErrorStack> {
+  if paths.is_empty() {
+    return Ok(None);
+  }
+
+  let probe_cache: std::cell::RefCell<fxhash::FxHashMap<[u32; 2], SurfPt>> =
+    std::cell::RefCell::new(fxhash::FxHashMap::default());
+  let probe = |uv: Vec2| -> Result<SurfPt, ErrorStack> {
+    let key = uv_bits(uv);
+    if let Some(&hit) = probe_cache.borrow().get(&key) {
+      return Ok(hit);
+    }
+    let pt = SurfPt {
+      top: embed(uv)?,
+      off: offset_surface(uv)?,
+    };
+    probe_cache.borrow_mut().insert(key, pt);
+    Ok(pt)
+  };
+
+  let mut boundary_crease = CreaseUvs::default();
+  let dense = paths
+    .iter()
+    .map(|path| {
+      let with_roots = guards
+        .and_then(|g| insert_boundary_guard_roots(path, g, &mut boundary_crease))
+        .unwrap_or_else(|| path.clone());
+      densify_loop_under_embed(
+        &with_roots,
+        &probe,
+        guards,
+        tol,
+        SurfSel::Both,
+        &mut boundary_crease,
+      )
+    })
+    .collect::<Result<Vec<_>, _>>()?;
+  let (coords, subpath_lengths) = flatten_paths(&dense)?;
+  let (min_split_edge, dedup_radius) = domain_scales(&coords);
+  let env = RefineEnv {
+    probe: &probe,
+    coords: &coords,
+    subpath_lengths: &subpath_lengths,
+    flipped,
+    tol,
+    min_split_edge,
+    dedup_radius,
+  };
+
+  let mut top_crease = boundary_crease.clone();
+  let mut off_crease = boundary_crease;
+  let (mut mesh_top, mut top_uvs, stats_top) =
+    refine_cap(&env, SurfSel::Top, guards_top, &mut top_crease)?;
+  let (mut mesh_off, mut off_uvs, stats_off) =
+    refine_cap(&env, SurfSel::Off, guards, &mut off_crease)?;
+  let stats = RefineStats {
+    stalled: stats_top.stalled + stats_off.stalled,
+    budget_hit: stats_top.budget_hit || stats_off.budget_hit,
+    converged: stats_top.converged && stats_off.converged,
+  };
+
+  let walked: Option<Vec<(Vec<usize>, Vec<usize>)>> = {
+    let border_top = cap_border(&mesh_top, &top_uvs);
+    let border_off = cap_border(&mesh_off, &off_uvs);
+    dense
+      .iter()
+      .map(|dr| {
+        Some((
+          walk_boundary_ring(&border_top, dr)?,
+          walk_boundary_ring(&border_off, dr)?,
+        ))
+      })
+      .collect()
+  };
+  let Some(walked) = walked else {
+    return Ok(None);
+  };
+
+  let mut rings: Vec<TessRing> = Vec::with_capacity(dense.len());
+  for (dense_ring, (ring_top, ring_off)) in dense.iter().zip(&walked) {
+    let Some((top, off)) = conform_ring_pair(
+      dense_ring,
+      ring_top,
+      &mut mesh_top,
+      &mut top_uvs,
+      SurfSel::Top,
+      ring_off,
+      &mut mesh_off,
+      &mut off_uvs,
+      SurfSel::Off,
+      &probe,
+    )?
+    else {
+      return Ok(None);
+    };
+    rings.push(TessRing { top, off });
+  }
+
+  // Wall-canonical direction is the border edge's orientation in the *assembled* (flipped)
+  // top-cap face — `extrude_with_offsets` derives it after reversing the originals — so a ring
+  // aligned with the pre-reversal face here must be reversed, else the walls wind inward.
+  for ring in &mut rings {
+    match ring_matches_face_winding(&mesh_top, &ring.top) {
+      Some(true) => {
+        ring.top.reverse();
+        ring.off.reverse();
+      }
+      Some(false) => {}
+      None => return Ok(None),
+    }
+  }
+
+  // Assemble, mirroring `extrude_along_normals`' conventions: the top cap's faces flip to face
+  // outward, the offset cap keeps the tessellator winding, and walls follow the post-flip
+  // border-edge direction.
+  let top_faces: fxhash::FxHashSet<FaceKey> = mesh_top.faces.keys().collect();
+  let mut mesh = mesh_top;
+  for &fk in &top_faces {
+    mesh.faces[fk].vertices.reverse();
+  }
+  let off_vkeys: Vec<VertexKey> = (0..off_uvs.len())
+    .map(|j| {
+      let pos = mesh_off.vertices[vkey(j as u32 + 1, 1)].position;
+      mesh.vertices.insert(Vertex::new(pos))
+    })
+    .collect();
+  let mut off_faces = fxhash::FxHashSet::default();
+  for face in mesh_off.faces.values() {
+    let vs = face.vertices.map(|vk| off_vkeys[vkey_ix(&vk) as usize - 1]);
+    off_faces.insert(mesh.add_face::<false>(vs, ()));
+  }
+  for ring in &rings {
+    let m = ring.top.len();
+    for k in 0..m {
+      let v0 = vkey(ring.top[k] as u32 + 1, 1);
+      let v1 = vkey(ring.top[(k + 1) % m] as u32 + 1, 1);
+      let nv0 = off_vkeys[ring.off[k]];
+      let nv1 = off_vkeys[ring.off[(k + 1) % m]];
+      mesh.add_face::<false>([nv1, v1, v0], ());
+      mesh.add_face::<false>([nv0, nv1, v0], ());
+    }
+  }
+
+  Ok(Some(TwoCapSolid {
+    mesh,
+    top_uvs,
+    off_uvs,
+    off_vkeys,
+    top_faces,
+    off_faces,
+    top_crease,
+    off_crease,
+    rings,
+    stats,
+  }))
 }
 
 /// Which surface-normal source `embed_path` uses — always for the thickening offset direction, and
@@ -1246,9 +1865,9 @@ impl NormalMode {
   }
 }
 
-/// A finite-difference tangent frame of the embedding φ at a domain point: position, the two partial
-/// derivatives, and the unit surface normal.  This is the fallback for a T2 analytic frame and the
-/// first-order basis for metric-tensor (`JᵀJ`) sizing; see design §10.
+/// A finite-difference tangent frame of the embedding φ at a domain point: position, the two
+/// partial derivatives, and the unit surface normal.  This is the fallback for a T2 analytic frame
+/// and the first-order basis for metric-tensor (`JᵀJ`) sizing; see design §10.
 #[derive(Clone, Copy, Debug)]
 pub struct EmbedFrame {
   pub pos: Vec3,
@@ -1273,7 +1892,12 @@ pub fn estimate_embed_frame(
   } else {
     Vec3::zeros()
   };
-  Ok(EmbedFrame { pos, du, dv, normal })
+  Ok(EmbedFrame {
+    pos,
+    du,
+    dv,
+    normal,
+  })
 }
 
 /// Analytic embedding frame source: the exact partials φ_u, φ_v of an embedding closure obtained by
@@ -1287,9 +1911,9 @@ pub struct AutodiffEmbedFrame {
 }
 
 impl AutodiffEmbedFrame {
-  /// Build the analytic partials of `embed` (a `vec2 -> vec3` closure).  Returns `None` when `embed`
-  /// is not a plain closure or autodiff bails on some construct in its body — the caller then falls
-  /// back to [`estimate_embed_frame`].
+  /// Build the analytic partials of `embed` (a `vec2 -> vec3` closure).  Returns `None` when
+  /// `embed` is not a plain closure or autodiff bails on some construct in its body — the caller
+  /// then falls back to [`estimate_embed_frame`].
   pub fn try_build(
     ctx: &crate::EvalCtx,
     embed: &std::rc::Rc<crate::Callable>,
@@ -1297,8 +1921,18 @@ impl AutodiffEmbedFrame {
     let crate::Callable::Closure(closure) = &**embed else {
       return None;
     };
-    let du = crate::autodiff::build_directional_derivative(ctx, closure, &crate::Value::Vec2(Vec2::new(1., 0.))).ok()?;
-    let dv = crate::autodiff::build_directional_derivative(ctx, closure, &crate::Value::Vec2(Vec2::new(0., 1.))).ok()?;
+    let du = crate::autodiff::build_directional_derivative(
+      ctx,
+      closure,
+      &crate::Value::Vec2(Vec2::new(1., 0.)),
+    )
+    .ok()?;
+    let dv = crate::autodiff::build_directional_derivative(
+      ctx,
+      closure,
+      &crate::Value::Vec2(Vec2::new(0., 1.)),
+    )
+    .ok()?;
     Some(AutodiffEmbedFrame {
       embed: std::rc::Rc::clone(embed),
       du: std::rc::Rc::new(crate::Callable::Closure(du)),
@@ -1331,7 +1965,12 @@ impl AutodiffEmbedFrame {
     } else {
       Vec3::zeros()
     };
-    Ok(EmbedFrame { pos, du, dv, normal })
+    Ok(EmbedFrame {
+      pos,
+      du,
+      dv,
+      normal,
+    })
   }
 }
 
@@ -1448,8 +2087,9 @@ mod native_tests {
 
   /// Native stand-in for CGAL's constrained-Delaunay triangulation of a single loop, so the
   /// otherwise-wasm-only embed_path refinement path is exercisable under `cargo test`.  Mirrors the
-  /// CGAL semantics: quality-refines iff `options.refine()`, so the "no slivers" regression test still
-  /// fails if the min-angle floor is ever dropped.  The mapping is unused by the refine caller.
+  /// CGAL semantics: quality-refines iff `options.refine()`, so the "no slivers" regression test
+  /// still fails if the min-angle floor is ever dropped.  The mapping is unused by the refine
+  /// caller.
   pub(super) fn spade_refined_triangulation(
     vertices: &[f32],
     options: CgalCdtOptions,
@@ -1459,7 +2099,10 @@ mod native_tests {
       AngleLimit, ConstrainedDelaunayTriangulation, Point2, RefinementParameters, Triangulation,
     };
 
-    let boundary: Vec<Vec2> = vertices.chunks_exact(2).map(|c| Vec2::new(c[0], c[1])).collect();
+    let boundary: Vec<Vec2> = vertices
+      .chunks_exact(2)
+      .map(|c| Vec2::new(c[0], c[1]))
+      .collect();
     let mut cdt = ConstrainedDelaunayTriangulation::<Point2<f64>>::new();
     cdt
       .add_constraint_edges(
@@ -1475,7 +2118,9 @@ mod native_tests {
     if let Some(sq_sine) = options.min_angle_squared_sine.filter(|_| options.refine()) {
       cdt.refine(
         RefinementParameters::<f64>::new()
-          .with_angle_limit(AngleLimit::from_deg((sq_sine.sqrt().asin().to_degrees()) as f64))
+          .with_angle_limit(AngleLimit::from_deg(
+            (sq_sine.sqrt().asin().to_degrees()) as f64,
+          ))
           .exclude_outer_faces(true),
       );
     }
@@ -1559,7 +2204,12 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
       let uv = Vec2::new(x, y);
       let a = analytic.frame(&ctx, uv).unwrap();
       let fd = estimate_embed_frame(uv, 1e-3, &embed).unwrap();
-      assert!((a.du - fd.du).norm() < 1e-2, "du @ {uv:?}: {:?} vs {:?}", a.du, fd.du);
+      assert!(
+        (a.du - fd.du).norm() < 1e-2,
+        "du @ {uv:?}: {:?} vs {:?}",
+        a.du,
+        fd.du
+      );
       assert!((a.dv - fd.dv).norm() < 1e-2, "dv @ {uv:?}");
       assert!((a.normal - fd.normal).norm() < 1e-2, "normal @ {uv:?}");
     }
@@ -1586,13 +2236,19 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
       Vec2::new(4., 1.),
       Vec2::new(0., 1.),
     ];
-    let embed = |p: Vec2| -> Result<Vec3, ErrorStack> {
-      Ok(Vec3::new(p.x, (p.x * 2.0).sin() * 0.6, p.y))
-    };
+    let embed =
+      |p: Vec2| -> Result<Vec3, ErrorStack> { Ok(Vec3::new(p.x, (p.x * 2.0).sin() * 0.6, p.y)) };
     let probe = |p: Vec2| embed(p).map(|e| SurfPt { top: e, off: e });
     let tol = 0.01;
-    let dense =
-      densify_loop_under_embed(&loop_2d, &probe, None, tol, &mut CreaseUvs::default()).unwrap();
+    let dense = densify_loop_under_embed(
+      &loop_2d,
+      &probe,
+      None,
+      tol,
+      SurfSel::Both,
+      &mut CreaseUvs::default(),
+    )
+    .unwrap();
 
     assert!(
       dense.len() > loop_2d.len(),
@@ -1634,7 +2290,11 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
     let guards = |p: Vec2| Some(vec![(p.x * 2.).cos()]);
     let mut crease = CreaseUvs::default();
     let out = insert_boundary_guard_roots(&loop_2d, &guards, &mut crease).unwrap();
-    assert_eq!(crease.len(), 6, "every inserted root should be recorded as a crease point");
+    assert_eq!(
+      crease.len(),
+      6,
+      "every inserted root should be recorded as a crease point"
+    );
     // cos(2x) = 0 at x = π/4, 3π/4, 5π/4, 7π/4 → 0.785, 2.356, 3.927 within [0, 4], on both
     // x-parallel edges; the x=0/x=4 edges gain nothing.
     for target in [0.785398f32, 2.356194, 3.926991] {
@@ -1663,16 +2323,32 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
     ];
     let probe = |p: Vec2| -> Result<SurfPt, ErrorStack> {
       let top = Vec3::new(p.x, 0., p.y);
-      Ok(SurfPt { top, off: top + Vec3::new(0., 0.2 + (p.x * 2.0).sin() * 0.6, 0.) })
+      Ok(SurfPt {
+        top,
+        off: top + Vec3::new(0., 0.2 + (p.x * 2.0).sin() * 0.6, 0.),
+      })
     };
-    let dense =
-      densify_loop_under_embed(&loop_2d, &probe, None, 0.01, &mut CreaseUvs::default()).unwrap();
-    assert!(dense.len() > loop_2d.len(), "offset-bending edges should add points");
+    let dense = densify_loop_under_embed(
+      &loop_2d,
+      &probe,
+      None,
+      0.01,
+      SurfSel::Both,
+      &mut CreaseUvs::default(),
+    )
+    .unwrap();
+    assert!(
+      dense.len() > loop_2d.len(),
+      "offset-bending edges should add points"
+    );
     let interior_on_x0 = dense
       .iter()
       .filter(|p| p.x.abs() < 1e-4 && p.y > 1e-4 && p.y < 1.0 - 1e-4)
       .count();
-    assert_eq!(interior_on_x0, 0, "edge straight on both surfaces must not densify");
+    assert_eq!(
+      interior_on_x0, 0,
+      "edge straight on both surfaces must not densify"
+    );
   }
 
   /// For a single (hole-free) loop, the with-holes cap must remap to the exact same shared-vertex

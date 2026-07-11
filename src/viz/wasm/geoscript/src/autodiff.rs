@@ -153,7 +153,10 @@ impl<'a> DerivCtx<'a> {
   fn fresh(&mut self, prefix: &str) -> Sym {
     let n = self.gensym;
     self.gensym += 1;
-    self.ctx.interned_symbols.intern(&format!("__grad_{prefix}_{n}"))
+    self
+      .ctx
+      .interned_symbols
+      .intern(&format!("__grad_{prefix}_{n}"))
   }
 
   fn primal_type(&mut self, e: &Expr) -> Option<ArgType> {
@@ -286,7 +289,9 @@ impl<'a> DerivCtx<'a> {
           Ok((expr.clone(), Tangent::Zero))
         }
       }
-      Expr::BinOp { op, lhs, rhs, loc, .. } => {
+      Expr::BinOp {
+        op, lhs, rhs, loc, ..
+      } => {
         let name = op.get_builtin_fn_name();
         match name.and_then(|n| lookup_rule(n).map(|r| (n, r))) {
           Some((_, rule)) => {
@@ -307,7 +312,11 @@ impl<'a> DerivCtx<'a> {
           )),
         }
       }
-      Expr::PrefixOp { op, expr: inner, loc } => {
+      Expr::PrefixOp {
+        op,
+        expr: inner,
+        loc,
+      } => {
         let name = op.get_builtin_fn_name();
         match lookup_rule(name) {
           Some(rule) => {
@@ -387,7 +396,9 @@ impl<'a> DerivCtx<'a> {
               None => {
                 let fn_name = self.ctx.with_resolved_sym(*name, |s| s.to_owned());
                 Err(self.err(
-                  format!("autodiff: call to non-constant function `{fn_name}` is not differentiable"),
+                  format!(
+                    "autodiff: call to non-constant function `{fn_name}` is not differentiable"
+                  ),
                   *loc,
                 ))
               }
@@ -550,7 +561,10 @@ impl<'a> DerivCtx<'a> {
     let primal = Expr::Conditional {
       cond: Box::new(primal_cond.clone()),
       then: Box::new(then_p.clone()),
-      else_if_exprs: elif.iter().map(|(c, p, _)| (c.clone(), p.clone())).collect(),
+      else_if_exprs: elif
+        .iter()
+        .map(|(c, p, _)| (c.clone(), p.clone()))
+        .collect(),
       else_expr: else_pt.as_ref().map(|(p, _)| Box::new(p.clone())),
       loc,
     };
@@ -558,7 +572,9 @@ impl<'a> DerivCtx<'a> {
 
     let all_zero = matches!(then_t, Tangent::Zero)
       && elif.iter().all(|(_, _, t)| matches!(t, Tangent::Zero))
-      && else_pt.as_ref().map_or(true, |(_, t)| matches!(t, Tangent::Zero));
+      && else_pt
+        .as_ref()
+        .map_or(true, |(_, t)| matches!(t, Tangent::Zero));
     if all_zero {
       return Ok((primal_atom, Tangent::Zero));
     }
@@ -574,11 +590,15 @@ impl<'a> DerivCtx<'a> {
       // No `else`: the false branch has no defined tangent; a zero of the `then` branch's type is
       // the only sensible choice.
       None => {
-        let ty = self.primal_type(&then_p).ok_or_else(|| {
-          self.err("autodiff: could not determine conditional branch type", loc)
+        let ty = self
+          .primal_type(&then_p)
+          .ok_or_else(|| self.err("autodiff: could not determine conditional branch type", loc))?;
+        let zero = zero_value(ty).ok_or_else(|| {
+          self.err(
+            format!("autodiff: cannot synthesize a zero tangent for type {ty:?}"),
+            loc,
+          )
         })?;
-        let zero = zero_value(ty)
-          .ok_or_else(|| self.err(format!("autodiff: cannot synthesize a zero tangent for type {ty:?}"), loc))?;
         lit(zero, loc)
       }
     };
@@ -609,13 +629,14 @@ impl<'a> DerivCtx<'a> {
           expr.clone()
         }
       }
-      Expr::BinOp { op, lhs, rhs, loc, .. } => binop(
-        *op,
-        self.subst_primal(lhs)?,
-        self.subst_primal(rhs)?,
-        *loc,
-      ),
-      Expr::PrefixOp { op, expr: inner, loc } => Expr::PrefixOp {
+      Expr::BinOp {
+        op, lhs, rhs, loc, ..
+      } => binop(*op, self.subst_primal(lhs)?, self.subst_primal(rhs)?, *loc),
+      Expr::PrefixOp {
+        op,
+        expr: inner,
+        loc,
+      } => Expr::PrefixOp {
         op: *op,
         expr: Box::new(self.subst_primal(inner)?),
         loc: *loc,
@@ -698,38 +719,78 @@ pub fn is_differentiable(name: &str) -> bool {
 
 fn require_non_mesh(dcx: &mut DerivCtx, e: &Expr, loc: SourceLoc) -> Result<(), ErrorStack> {
   if matches!(dcx.primal_type(e), Some(ArgType::Mesh)) {
-    return Err(dcx.err("autodiff: mesh-valued arithmetic is not differentiable", loc));
+    return Err(dcx.err(
+      "autodiff: mesh-valued arithmetic is not differentiable",
+      loc,
+    ));
   }
   Ok(())
 }
 
-fn require_scalar(dcx: &mut DerivCtx, e: &Expr, what: &str, loc: SourceLoc) -> Result<(), ErrorStack> {
+fn require_scalar(
+  dcx: &mut DerivCtx,
+  e: &Expr,
+  what: &str,
+  loc: SourceLoc,
+) -> Result<(), ErrorStack> {
   match dcx.primal_type(e) {
     Some(ArgType::Float | ArgType::Numeric | ArgType::Int) | None => Ok(()),
     Some(other) => Err(dcx.err(
-      format!("autodiff: `{what}` differentiation is only supported for scalar operands (got {other:?})"),
+      format!(
+        "autodiff: `{what}` differentiation is only supported for scalar operands (got {other:?})"
+      ),
       loc,
     )),
   }
 }
 
-fn d_add(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_add(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(t_add(d[0].clone(), d[1].clone(), loc))
 }
 
-fn d_sub(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_sub(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(t_sub(d[0].clone(), d[1].clone(), loc))
 }
 
-fn d_neg(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_neg(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(t_neg(d[0].clone(), loc))
 }
 
-fn d_pos(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], _loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_pos(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  _loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(d[0].clone())
 }
 
-fn d_mul(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_mul(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   require_non_mesh(dcx, &a[0], loc)?;
   require_non_mesh(dcx, &a[1], loc)?;
   Ok(t_add(
@@ -739,7 +800,13 @@ fn d_mul(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLo
   ))
 }
 
-fn d_div(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_div(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   require_non_mesh(dcx, &a[0], loc)?;
   require_non_mesh(dcx, &a[1], loc)?;
   let num = t_sub(
@@ -751,17 +818,35 @@ fn d_div(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLo
   Ok(t_div_by(num, denom, loc))
 }
 
-fn d_sin(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_sin(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   let scale = builtin_call(dcx.ctx, "cos", vec![a[0].clone()], loc);
   Ok(t_scale(scale, d[0].clone(), loc))
 }
 
-fn d_cos(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_cos(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   let scale = neg(builtin_call(dcx.ctx, "sin", vec![a[0].clone()], loc), loc);
   Ok(t_scale(scale, d[0].clone(), loc))
 }
 
-fn d_tan(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_tan(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // sec²(a) = 1 + tan²(a); reuse the primal `tan(a)`.
   let scale = binop(
     BinOp::Add,
@@ -772,31 +857,77 @@ fn d_tan(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc)
   Ok(t_scale(scale, d[0].clone(), loc))
 }
 
-fn d_exp(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_exp(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(t_scale(p.clone(), d[0].clone(), loc))
 }
 
-fn d_ln(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_ln(
+  _: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   Ok(t_div_by(d[0].clone(), a[0].clone(), loc))
 }
 
-fn d_log2(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
-  let denom = binop(BinOp::Mul, a[0].clone(), fl(std::f32::consts::LN_2, loc), loc);
+fn d_log2(
+  _: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let denom = binop(
+    BinOp::Mul,
+    a[0].clone(),
+    fl(std::f32::consts::LN_2, loc),
+    loc,
+  );
   Ok(t_div_by(d[0].clone(), denom, loc))
 }
 
-fn d_log10(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
-  let denom = binop(BinOp::Mul, a[0].clone(), fl(std::f32::consts::LN_10, loc), loc);
+fn d_log10(
+  _: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let denom = binop(
+    BinOp::Mul,
+    a[0].clone(),
+    fl(std::f32::consts::LN_10, loc),
+    loc,
+  );
   Ok(t_div_by(d[0].clone(), denom, loc))
 }
 
-fn d_sqrt(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_sqrt(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // da / (2·sqrt(a)); reuse the primal.
   let denom = binop(BinOp::Mul, fl(2., loc), p.clone(), loc);
   Ok(t_div_by(d[0].clone(), denom, loc))
 }
 
-fn d_sigmoid(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_sigmoid(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // σ·(1−σ); reuse the primal σ.
   let scale = binop(
     BinOp::Mul,
@@ -807,7 +938,13 @@ fn d_sigmoid(_: &mut DerivCtx, _a: &[Expr], p: &Expr, d: &[Tangent], loc: Source
   Ok(t_scale(scale, d[0].clone(), loc))
 }
 
-fn d_pow(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_pow(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   let (base, exp) = (&a[0], &a[1]);
   match &d[1] {
     // Constant exponent: b·a^(b−1)·da (safe power rule).
@@ -829,7 +966,13 @@ fn d_pow(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc
   }
 }
 
-fn d_abs(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_abs(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   require_scalar(dcx, &a[0], "abs", loc)?;
   match &d[0] {
     Tangent::Zero => Ok(Tangent::Zero),
@@ -847,7 +990,12 @@ fn d_abs(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLo
 }
 
 /// Branch-select derivative: `if cond { da } else { db }`.
-fn branch_select(cond: Expr, da: Tangent, db: Tangent, loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn branch_select(
+  cond: Expr,
+  da: Tangent,
+  db: Tangent,
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   if matches!(da, Tangent::Zero) && matches!(db, Tangent::Zero) {
     return Ok(Tangent::Zero);
   }
@@ -867,24 +1015,43 @@ fn reify_scalar(t: Tangent, loc: SourceLoc) -> Expr {
   }
 }
 
-fn d_min(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_min(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   require_scalar(dcx, &a[0], "min", loc)?;
   require_scalar(dcx, &a[1], "min", loc)?;
   let cond = binop(BinOp::Lte, a[0].clone(), a[1].clone(), loc);
   branch_select(cond, d[0].clone(), d[1].clone(), loc)
 }
 
-fn d_max(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_max(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   require_scalar(dcx, &a[0], "max", loc)?;
   require_scalar(dcx, &a[1], "max", loc)?;
   let cond = binop(BinOp::Gte, a[0].clone(), a[1].clone(), loc);
   branch_select(cond, d[0].clone(), d[1].clone(), loc)
 }
 
-fn d_clamp(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_clamp(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // clamp(lo, hi, x); derivative selects dlo / dhi / dx by region.
   require_scalar(dcx, &a[2], "clamp", loc)?;
-  if matches!(d[0], Tangent::Zero) && matches!(d[1], Tangent::Zero) && matches!(d[2], Tangent::Zero) {
+  if matches!(d[0], Tangent::Zero) && matches!(d[1], Tangent::Zero) && matches!(d[2], Tangent::Zero)
+  {
     return Ok(Tangent::Zero);
   }
   let (lo, hi, x) = (&a[0], &a[1], &a[2]);
@@ -899,7 +1066,13 @@ fn d_clamp(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: Source
   }))
 }
 
-fn d_smoothstep(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_smoothstep(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // smoothstep(e0, e1, x); v1 supports constant edges only.
   if !matches!(d[0], Tangent::Zero) || !matches!(d[1], Tangent::Zero) {
     return Err(dcx.err(
@@ -914,12 +1087,22 @@ fn d_smoothstep(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: S
   };
   let (e0, e1, x) = (&a[0], &a[1], &a[2]);
   let denom = binop(BinOp::Sub, e1.clone(), e0.clone(), loc);
-  let t = binop(BinOp::Div, binop(BinOp::Sub, x.clone(), e0.clone(), loc), denom.clone(), loc);
+  let t = binop(
+    BinOp::Div,
+    binop(BinOp::Sub, x.clone(), e0.clone(), loc),
+    denom.clone(),
+    loc,
+  );
   // 6·t·(1−t) / (e1−e0)
   let bump = binop(
     BinOp::Mul,
     fl(6., loc),
-    binop(BinOp::Mul, t.clone(), binop(BinOp::Sub, fl(1., loc), t, loc), loc),
+    binop(
+      BinOp::Mul,
+      t.clone(),
+      binop(BinOp::Sub, fl(1., loc), t, loc),
+      loc,
+    ),
     loc,
   );
   let scale = binop(BinOp::Div, bump, denom, loc);
@@ -938,7 +1121,13 @@ fn d_smoothstep(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: S
   }))
 }
 
-fn d_lerp(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_lerp(
+  _: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // lerp(t, a, b) = a·(1−t) + b·t; d = da·(1−t) + db·t + dt·(b−a).
   let (t, av, bv) = (&a[0], &a[1], &a[2]);
   let one_minus_t = binop(BinOp::Sub, fl(1., loc), t.clone(), loc);
@@ -949,10 +1138,19 @@ fn d_lerp(_: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc
   Ok(t_add(t_add(term_a, term_b, loc), term_t, loc))
 }
 
-fn d_atan2(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_atan2(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // atan2(y, x); d = (x·dy − y·dx) / (x² + y²).  The single-arg vec2 overload is unsupported.
   if a.len() != 2 {
-    return Err(dcx.err("autodiff: only the 2-argument form of `atan2` is differentiable", loc));
+    return Err(dcx.err(
+      "autodiff: only the 2-argument form of `atan2` is differentiable",
+      loc,
+    ));
   }
   require_scalar(dcx, &a[0], "atan2", loc)?;
   require_scalar(dcx, &a[1], "atan2", loc)?;
@@ -971,39 +1169,97 @@ fn d_atan2(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: Source
   Ok(t_div_by(num, denom, loc))
 }
 
-fn d_deg2rad(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
-  Ok(t_scale(fl(std::f32::consts::PI / 180., loc), d[0].clone(), loc))
+fn d_deg2rad(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  Ok(t_scale(
+    fl(std::f32::consts::PI / 180., loc),
+    d[0].clone(),
+    loc,
+  ))
 }
 
-fn d_rad2deg(_: &mut DerivCtx, _a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
-  Ok(t_scale(fl(180. / std::f32::consts::PI, loc), d[0].clone(), loc))
+fn d_rad2deg(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  Ok(t_scale(
+    fl(180. / std::f32::consts::PI, loc),
+    d[0].clone(),
+    loc,
+  ))
 }
 
-fn d_dot(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_dot(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   let t1 = match &d[0] {
     Tangent::Zero => Tangent::Zero,
-    Tangent::Expr(e) => Tangent::Expr(builtin_call(dcx.ctx, "dot", vec![e.clone(), a[1].clone()], loc)),
+    Tangent::Expr(e) => Tangent::Expr(builtin_call(
+      dcx.ctx,
+      "dot",
+      vec![e.clone(), a[1].clone()],
+      loc,
+    )),
   };
   let t2 = match &d[1] {
     Tangent::Zero => Tangent::Zero,
-    Tangent::Expr(e) => Tangent::Expr(builtin_call(dcx.ctx, "dot", vec![a[0].clone(), e.clone()], loc)),
+    Tangent::Expr(e) => Tangent::Expr(builtin_call(
+      dcx.ctx,
+      "dot",
+      vec![a[0].clone(), e.clone()],
+      loc,
+    )),
   };
   Ok(t_add(t1, t2, loc))
 }
 
-fn d_cross(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_cross(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   let t1 = match &d[0] {
     Tangent::Zero => Tangent::Zero,
-    Tangent::Expr(e) => Tangent::Expr(builtin_call(dcx.ctx, "cross", vec![e.clone(), a[1].clone()], loc)),
+    Tangent::Expr(e) => Tangent::Expr(builtin_call(
+      dcx.ctx,
+      "cross",
+      vec![e.clone(), a[1].clone()],
+      loc,
+    )),
   };
   let t2 = match &d[1] {
     Tangent::Zero => Tangent::Zero,
-    Tangent::Expr(e) => Tangent::Expr(builtin_call(dcx.ctx, "cross", vec![a[0].clone(), e.clone()], loc)),
+    Tangent::Expr(e) => Tangent::Expr(builtin_call(
+      dcx.ctx,
+      "cross",
+      vec![a[0].clone(), e.clone()],
+      loc,
+    )),
   };
   Ok(t_add(t1, t2, loc))
 }
 
-fn d_normalize(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_normalize(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // n = normalize(v);  d = (dv − n·dot(n, dv)) / ‖v‖
   let dv = match &d[0] {
     Tangent::Zero => return Ok(Tangent::Zero),
@@ -1017,7 +1273,13 @@ fn d_normalize(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: Sou
   Ok(Tangent::Expr(binop(BinOp::Div, numer, len_v, loc)))
 }
 
-fn d_len(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_len(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // d‖v‖ = dot(v, dv) / ‖v‖; reuse the primal length.
   match &d[0] {
     Tangent::Zero => Ok(Tangent::Zero),
@@ -1028,7 +1290,13 @@ fn d_len(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc
   }
 }
 
-fn d_distance(dcx: &mut DerivCtx, a: &[Expr], p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_distance(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   // distance(a, b) = ‖a−b‖;  d = dot(a−b, da−db) / dist
   let ddiff = t_sub(d[0].clone(), d[1].clone(), loc);
   match ddiff {
@@ -1058,11 +1326,23 @@ fn vec_constructor(
   Ok(Tangent::Expr(builtin_call(dcx.ctx, name, comps, loc)))
 }
 
-fn d_vec2(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_vec2(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   vec_constructor(dcx, "vec2", a, d, loc)
 }
 
-fn d_vec3(dcx: &mut DerivCtx, a: &[Expr], _p: &Expr, d: &[Tangent], loc: SourceLoc) -> Result<Tangent, ErrorStack> {
+fn d_vec3(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
   vec_constructor(dcx, "vec3", a, d, loc)
 }
 
@@ -1260,9 +1540,7 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
   let cap = Rc::new(Scope::default());
   let mut comps = Vec::with_capacity(partials.len());
   for (i, partial) in partials.into_iter().enumerate() {
-    let sym = ctx
-      .interned_symbols
-      .intern(&format!("__grad_partial_{i}"));
+    let sym = ctx.interned_symbols.intern(&format!("__grad_partial_{i}"));
     cap.insert(sym, Value::Callable(Rc::new(Callable::Closure(partial))));
     comps.push(Expr::Call {
       call: FunctionCall {
@@ -1324,7 +1602,8 @@ mod tests {
     assert!(d < tol, "{msg}: {a:?} vs {b:?} (|Δ|={d})");
   }
 
-  /// Analytic directional derivative of a `vec2 -> vec3` embedding should match central differences.
+  /// Analytic directional derivative of a `vec2 -> vec3` embedding should match central
+  /// differences.
   #[test]
   fn test_embedding_partials_match_finite_diff() {
     let src = r#"
@@ -1341,7 +1620,13 @@ dv = deriv(phi, vec2(0, 1))
     let dv = ctx.get_global("dv").unwrap();
 
     let h = 1e-3f32;
-    for &(x, y) in &[(0.3, 0.7), (-0.5, 0.2), (1.1, -0.4), (0.0, 0.0), (-1.0, -1.0)] {
+    for &(x, y) in &[
+      (0.3, 0.7),
+      (-0.5, 0.2),
+      (1.1, -0.4),
+      (0.0, 0.0),
+      (-1.0, -1.0),
+    ] {
       let p = Vec2::new(x, y);
       let fd_u = (call_v3(&ctx, &phi, p + Vec2::new(h, 0.))
         - call_v3(&ctx, &phi, p - Vec2::new(h, 0.)))
@@ -1448,12 +1733,16 @@ dg = deriv(g, vec3(1, 0, 0))
 
     let call_v3_from_v3 = |f: &Value, p: Vec3| -> Vec3 {
       let Value::Callable(c) = f else { panic!() };
-      let out = ctx.invoke_callable(c, &[Value::Vec3(p)], EMPTY_KWARGS).unwrap();
+      let out = ctx
+        .invoke_callable(c, &[Value::Vec3(p)], EMPTY_KWARGS)
+        .unwrap();
       *out.as_vec3().unwrap()
     };
     let call_f_from_v3 = |f: &Value, p: Vec3| -> f32 {
       let Value::Callable(c) = f else { panic!() };
-      let out = ctx.invoke_callable(c, &[Value::Vec3(p)], EMPTY_KWARGS).unwrap();
+      let out = ctx
+        .invoke_callable(c, &[Value::Vec3(p)], EMPTY_KWARGS)
+        .unwrap();
       out.as_float().unwrap()
     };
 
@@ -1463,7 +1752,10 @@ dg = deriv(g, vec3(1, 0, 0))
         - call_f_from_v3(&f, p - Vec3::new(h, 0., 0.)))
         / (2. * h);
       let an_len = call_f_from_v3(&df, p);
-      assert!((fd_len - an_len).abs() < 1e-2, "len du: {an_len} vs {fd_len}");
+      assert!(
+        (fd_len - an_len).abs() < 1e-2,
+        "len du: {an_len} vs {fd_len}"
+      );
 
       let fd_n = (call_v3_from_v3(&g, p + Vec3::new(h, 0., 0.))
         - call_v3_from_v3(&g, p - Vec3::new(h, 0., 0.)))
@@ -1487,7 +1779,8 @@ du = deriv(phi, vec2(1, 0))
     let du = ctx.get_global("du").unwrap();
     let h = 1e-3f32;
     let p = Vec2::new(0.6, -0.3);
-    let fd = (call_v3(&ctx, &phi, p + Vec2::new(h, 0.)) - call_v3(&ctx, &phi, p - Vec2::new(h, 0.)))
+    let fd = (call_v3(&ctx, &phi, p + Vec2::new(h, 0.))
+      - call_v3(&ctx, &phi, p - Vec2::new(h, 0.)))
       / (2. * h);
     assert_close_v3(call_v3(&ctx, &du, p), fd, 1e-2, "let-shared du");
   }
@@ -1505,7 +1798,8 @@ du = deriv(phi, vec2(1, 0))
     let du = ctx.get_global("du").unwrap();
     let h = 1e-3f32;
     let p = Vec2::new(0.6, -0.3);
-    let fd = (call_v3(&ctx, &phi, p + Vec2::new(h, 0.)) - call_v3(&ctx, &phi, p - Vec2::new(h, 0.)))
+    let fd = (call_v3(&ctx, &phi, p + Vec2::new(h, 0.))
+      - call_v3(&ctx, &phi, p - Vec2::new(h, 0.)))
       / (2. * h);
     assert_close_v3(call_v3(&ctx, &du, p), fd, 1e-2, "inlined du");
   }
@@ -1526,7 +1820,10 @@ dg = grad(g)
       .invoke_callable(c, &[Value::Vec2(Vec2::new(0.5, 2.0))], EMPTY_KWARGS)
       .unwrap();
     let g2 = *out.as_vec2().unwrap();
-    assert!((g2.x - 1.0).abs() < 1e-4 && (g2.y - 3.0).abs() < 1e-4, "grad f = {g2:?}");
+    assert!(
+      (g2.x - 1.0).abs() < 1e-4 && (g2.y - 3.0).abs() < 1e-4,
+      "grad f = {g2:?}"
+    );
 
     let dg = ctx.get_global("dg").unwrap();
     assert!((call_scalar(&ctx, &dg, 3.0) - 6.0).abs() < 1e-3);
@@ -1608,7 +1905,9 @@ du = deriv(phi, vec2(1, 0))
         _ => None,
       })
       .expect("du assignment");
-    let Value::Callable(c) = &du else { panic!("du not a callable") };
+    let Value::Callable(c) = &du else {
+      panic!("du not a callable")
+    };
     let Callable::Closure(closure) = &**c else {
       panic!("du not a closure")
     };

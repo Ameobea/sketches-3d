@@ -113,8 +113,13 @@ impl GuardCtx<'_> {
       } => {
         self.liftable(cond)
           && self.liftable(then)
-          && else_if_exprs.iter().all(|(c, e)| self.liftable(c) && self.liftable(e))
-          && else_expr.as_deref().map(|e| self.liftable(e)).unwrap_or(true)
+          && else_if_exprs
+            .iter()
+            .all(|(c, e)| self.liftable(c) && self.liftable(e))
+          && else_expr
+            .as_deref()
+            .map(|e| self.liftable(e))
+            .unwrap_or(true)
       }
       // Blocks bind locals; lifting one out of context is not worth reasoning about.
       Expr::Block { .. } => false,
@@ -130,7 +135,9 @@ impl GuardCtx<'_> {
   /// Guards hiding in a boolean condition: each ordered comparison contributes `lhs − rhs`.
   fn collect_cond_guards(&mut self, cond: &Expr) {
     match cond {
-      Expr::BinOp { op, lhs, rhs, loc, .. } => match op {
+      Expr::BinOp {
+        op, lhs, rhs, loc, ..
+      } => match op {
         BinOp::Gt | BinOp::Gte | BinOp::Lt | BinOp::Lte => {
           self.push_guard(sub((**lhs).clone(), (**rhs).clone(), *loc));
         }
@@ -163,9 +170,10 @@ impl GuardCtx<'_> {
         }
       }
       FunctionCallTarget::Literal(callable) => match &**callable {
-        crate::Callable::Builtin { fn_entry_ix, .. } => {
-          crate::builtins::fn_defs::fn_sigs().entries[*fn_entry_ix].0.to_owned()
-        }
+        crate::Callable::Builtin { fn_entry_ix, .. } => crate::builtins::fn_defs::fn_sigs().entries
+          [*fn_entry_ix]
+          .0
+          .to_owned(),
         _ => return,
       },
     };
@@ -335,8 +343,13 @@ pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> 
   // Resolves builtin call targets (eval-time name lookup is scope-only, so synthesized calls like
   // the lattice guards' `sin` would otherwise not resolve) and const-folds, same as autodiff.
   let captured_consts = captured.collect_bindings_innermost_first();
-  crate::optimizer::optimize_synthesized_closure_body(ctx, &input.params, &captured_consts, &mut stmts)
-    .ok()?;
+  crate::optimizer::optimize_synthesized_closure_body(
+    ctx,
+    &input.params,
+    &captured_consts,
+    &mut stmts,
+  )
+  .ok()?;
 
   Some(Closure {
     params: Rc::clone(&input.params),
@@ -385,7 +398,11 @@ f = |p: vec2|: num { t = cos(p.x * scale) * cos(p.y * scale)
       let vals = eval_guards_at(&ctx, &guards, &[Value::Vec2(Vec2::new(x, y))]);
       assert_eq!(vals.len(), 1);
       let expected = (x * 2.).cos() * (y * 2.).cos();
-      assert!((vals[0] - expected).abs() < 1e-5, "at ({x},{y}): {} vs {expected}", vals[0]);
+      assert!(
+        (vals[0] - expected).abs() < 1e-5,
+        "at ({x},{y}): {} vs {expected}",
+        vals[0]
+      );
     }
   }
 
@@ -398,17 +415,23 @@ h = |p: vec2| if p.x > 1 { p.x } else { 2 - p.x }
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
 
-    let Callable::Closure(c) = &*get_closure(&ctx, "f") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "f") else {
+      panic!()
+    };
     let gf = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(&ctx, &gf, &[Value::Vec2(Vec2::new(3., 1.))]);
     assert_eq!(v, vec![2.]); // x − y
 
-    let Callable::Closure(c) = &*get_closure(&ctx, "g") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "g") else {
+      panic!()
+    };
     let gg = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(&ctx, &gg, &[Value::Vec2(Vec2::new(0.25, 0.))]);
     assert_eq!(v, vec![0.25, -0.75]); // x − lo, x − hi
 
-    let Callable::Closure(c) = &*get_closure(&ctx, "h") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "h") else {
+      panic!()
+    };
     let gh = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(&ctx, &gh, &[Value::Vec2(Vec2::new(1.5, 0.))]);
     assert_eq!(v, vec![0.5]); // x − 1
@@ -434,15 +457,27 @@ blocky = |p: vec2| {
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
 
-    let Callable::Closure(c) = &*get_closure(&ctx, "f") else { panic!() };
-    assert!(extract_guards(&ctx, c).is_none(), "nested-closure abs must not be lifted");
+    let Callable::Closure(c) = &*get_closure(&ctx, "f") else {
+      panic!()
+    };
+    assert!(
+      extract_guards(&ctx, c).is_none(),
+      "nested-closure abs must not be lifted"
+    );
 
-    let Callable::Closure(c) = &*get_closure(&ctx, "smooth") else { panic!() };
-    assert!(extract_guards(&ctx, c).is_none(), "smooth closure has no guards");
+    let Callable::Closure(c) = &*get_closure(&ctx, "smooth") else {
+      panic!()
+    };
+    assert!(
+      extract_guards(&ctx, c).is_none(),
+      "smooth closure has no guards"
+    );
 
     // The `abs(t)` guard references the branch-local `t` (unliftable), but the `p.x > 0`
     // comparison still contributes its boundary.
-    let Callable::Closure(c) = &*get_closure(&ctx, "blocky") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "blocky") else {
+      panic!()
+    };
     let gb = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(&ctx, &gb, &[Value::Vec2(Vec2::new(0.7, 0.))]);
     assert_eq!(v, vec![0.7]);
@@ -457,17 +492,27 @@ rnd = |p: vec2| round(p.x)
     let ctx = parse_and_eval_program(src).unwrap();
 
     // fract → sin(π·x) (zeros at integers) + abs → fract(x) − 0.5 (zeros at half-integers).
-    let Callable::Closure(c) = &*get_closure(&ctx, "tri") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "tri") else {
+      panic!()
+    };
     let g = extract_guards(&ctx, c).unwrap();
     let at = |x: f32| eval_guards_at(&ctx, &g, &[Value::Vec2(Vec2::new(x, 0.))]);
     let (below, on, above) = (at(0.9), at(1.0), at(1.1));
     assert_eq!(on.len(), 2);
     assert!(on[0].abs() < 1e-5, "sin(π·1) should vanish, got {}", on[0]);
-    assert!(below[0] > 0. && above[0] < 0., "lattice guard must flip sign across the integer");
-    assert!(at(0.5)[1].abs() < 1e-5, "abs guard should vanish at the half-integer");
+    assert!(
+      below[0] > 0. && above[0] < 0.,
+      "lattice guard must flip sign across the integer"
+    );
+    assert!(
+      at(0.5)[1].abs() < 1e-5,
+      "abs guard should vanish at the half-integer"
+    );
 
     // round → cos(π·x) (zeros at half-integers).
-    let Callable::Closure(c) = &*get_closure(&ctx, "rnd") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "rnd") else {
+      panic!()
+    };
     let g = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(&ctx, &g, &[Value::Vec2(Vec2::new(1.5, 0.))]);
     assert_eq!(v.len(), 1);
@@ -478,14 +523,23 @@ rnd = |p: vec2| round(p.x)
   fn two_arg_thickness_guard_shape() {
     let src = "t = |pos: vec3, uv: vec2| 0.1 + abs(cos(uv.x * 2) * cos(uv.y * 2))";
     let ctx = parse_and_eval_program(src).unwrap();
-    let Callable::Closure(c) = &*get_closure(&ctx, "t") else { panic!() };
+    let Callable::Closure(c) = &*get_closure(&ctx, "t") else {
+      panic!()
+    };
     let g = extract_guards(&ctx, c).unwrap();
     let v = eval_guards_at(
       &ctx,
       &g,
-      &[Value::Vec3(crate::Vec3::new(9., 9., 9.)), Value::Vec2(Vec2::new(0.785398, 0.))],
+      &[
+        Value::Vec3(crate::Vec3::new(9., 9., 9.)),
+        Value::Vec2(Vec2::new(0.785398, 0.)),
+      ],
     );
     assert_eq!(v.len(), 1);
-    assert!(v[0].abs() < 1e-4, "guard should vanish at u=π/4, got {}", v[0]);
+    assert!(
+      v[0].abs() < 1e-4,
+      "guard should vanish at u=π/4, got {}",
+      v[0]
+    );
   }
 }

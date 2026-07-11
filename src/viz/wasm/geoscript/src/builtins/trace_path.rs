@@ -3977,9 +3977,12 @@ mesh = tessellate_path(path)
   fn test_tessellate_path_plane_override() {
     // Asymmetric triangle so the u/v axis assignment is observable: 2 units along u, 1 along v.
     fn tessellate(plane: Option<&str>, engine: &str) -> (Vec<Vector3<f32>>, Vector3<f32>) {
-      let arg = plane.map(|p| format!(", plane=\"{p}\"")).unwrap_or_default();
+      let arg = plane
+        .map(|p| format!(", plane=\"{p}\""))
+        .unwrap_or_default();
       let src = format!(
-        "path = [vec2(0, 0), vec2(2, 0), vec2(0, 1)]\nmesh = tessellate_path(path{arg}, engine=\"{engine}\")\n"
+        "path = [vec2(0, 0), vec2(2, 0), vec2(0, 1)]\nmesh = tessellate_path(path{arg}, \
+         engine=\"{engine}\")\n"
       );
       let ctx = parse_and_eval_program(&src).unwrap();
       let mesh_val = ctx.get_global("mesh").unwrap();
@@ -3992,17 +3995,27 @@ mesh = tessellate_path(path)
     let approx = |a: f32, b: f32| (a - b).abs() < 1e-5;
     let extent = |ps: &[Vector3<f32>], axis: usize| ps.iter().map(|p| p[axis]).fold(0f32, f32::max);
     // Both engines must land the mesh in the same plane and face the same +normal axis.
-    let check = |plane: Option<&str>, flat_axis: usize, u_axis: usize, v_axis: usize, normal: usize| {
-      for engine in ["cgal", "lyon"] {
-        let (ps, n) = tessellate(plane, engine);
-        assert!(ps.iter().all(|p| approx(p[flat_axis], 0.)), "{plane:?} {engine} flat");
-        assert!(approx(extent(&ps, u_axis), 2.), "{plane:?} {engine} u extent");
-        assert!(approx(extent(&ps, v_axis), 1.), "{plane:?} {engine} v extent");
-        let mut want = Vector3::zeros();
-        want[normal] = 1.;
-        assert!((n - want).norm() < 1e-5, "{plane:?} {engine} normal {n:?}");
-      }
-    };
+    let check =
+      |plane: Option<&str>, flat_axis: usize, u_axis: usize, v_axis: usize, normal: usize| {
+        for engine in ["cgal", "lyon"] {
+          let (ps, n) = tessellate(plane, engine);
+          assert!(
+            ps.iter().all(|p| approx(p[flat_axis], 0.)),
+            "{plane:?} {engine} flat"
+          );
+          assert!(
+            approx(extent(&ps, u_axis), 2.),
+            "{plane:?} {engine} u extent"
+          );
+          assert!(
+            approx(extent(&ps, v_axis), 1.),
+            "{plane:?} {engine} v extent"
+          );
+          let mut want = Vector3::zeros();
+          want[normal] = 1.;
+          assert!((n - want).norm() < 1e-5, "{plane:?} {engine} normal {n:?}");
+        }
+      };
 
     // (flat, u→, v→, +normal): default XZ ⇒ u→x, v→z, faces +Y.
     check(None, 1, 0, 2, 1);
