@@ -32,10 +32,12 @@ lto = "fat"
 [profile.dev]
 debug-assertions = true
 
-# Fast-compile profile for local dev: thin LTO + parallel codegen units
-# Skips fat LTO and CGU=1 which dominate the release build time.
+# Fast-iteration profile for local dev: incremental, no LTO, no debuginfo
+# (wasm-bindgen strips DWARF anyway; the name section survives for stack traces).
 # Use with: cargo build --profile dev-opt
 [profile.dev-opt]
 inherits = "release"
-codegen-units = 16
-lto = "thin"
+codegen-units = 256
+lto = "off"
+incremental = true
+debug = 0

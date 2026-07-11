@@ -108,7 +108,7 @@ build-csg-sandbox:
 build-geoscript-repl:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
-  ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
+  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
   cp ./build/geoscript_repl* ../wasmComp
 
 build-geoscript-repl-release:
@@ -120,7 +120,7 @@ build-geoscript-repl-release:
 build-geoscript-analysis:
   RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_analysis_wasm
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
-  ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
+  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
   cp ./build/geoscript_analysis_wasm* ../wasmComp
 
 build-geoscript-analysis-release:
@@ -130,8 +130,21 @@ build-geoscript-analysis-release:
   cp ./build/geoscript_analysis_wasm* ../wasmComp
 
 build-geoscript:
-  just build-geoscript-repl
-  just build-geoscript-analysis
+  #!/bin/bash
+  set -e
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl --package geoscript_analysis_wasm
+  export WASM_OPT_LEVEL=O2
+  (
+    wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
+    ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
+    cp ./build/geoscript_repl* ../wasmComp
+  ) & repl=$!
+  (
+    wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
+    ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
+    cp ./build/geoscript_analysis_wasm* ../wasmComp
+  ) & analysis=$!
+  wait $repl && wait $analysis
 
 build-flight-recorder:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder

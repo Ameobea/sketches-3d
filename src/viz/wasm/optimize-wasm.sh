@@ -5,7 +5,8 @@
 # shipped a corrupt geoscript_analysis to prod). Invalid output fails the build.
 set -euo pipefail
 
-flags=(-g -O4 --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int
+# WASM_OPT_LEVEL=O2 for dev builds; -O2 matches -O4's output size at ~3x the speed
+flags=(-g "-${WASM_OPT_LEVEL:-O4}" --enable-simd --enable-relaxed-simd --enable-nontrapping-float-to-int
   --precompute-propagate --strip-dwarf -c --enable-bulk-memory)
 
 for f in "$@"; do
