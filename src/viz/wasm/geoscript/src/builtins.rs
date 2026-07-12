@@ -33,6 +33,7 @@ use crate::mesh_ops::mesh_ops::{
   get_geodesics_loaded, isotropic_remesh, remesh_planar_patches, smooth_mesh,
   tessellate_svg_path_with_lyon, SmoothType,
 };
+use crate::mesh_ops::tessellate_polygon::GuardEval;
 use crate::mesh_ops::voxels::sample_voxels;
 use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
@@ -2903,7 +2904,7 @@ fn embed_path_impl(
             .collect(),
         )
       };
-      let guard_eval: Option<crate::mesh_ops::tessellate_polygon::GuardEval> =
+      let guard_eval: Option<GuardEval> =
         (embed_guards.is_some() || thick_guards.is_some()).then_some(&eval_guards);
 
       let pos_key = |p: Vec3| [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()];
@@ -10992,7 +10993,7 @@ mesh = embed_path(
     let bad = r#"
 mesh = embed_path(
   path=[vec2(0, 0), vec2(2, 0), vec2(2, 2), vec2(0, 2)],
-  embed=|p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) },
+  embed=|p: vec2|: vec3 { vec3(p.x, fbm(vec3(p.x, p.y, 0)), p.y) },
   thickness=0.3,
   normal_mode="autodiff"
 )

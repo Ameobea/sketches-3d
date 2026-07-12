@@ -6,6 +6,7 @@ use std::cell::UnsafeCell;
 use std::{
   any::Any,
   cell::{Cell, RefCell},
+  collections::HashMap,
   collections::VecDeque,
   fmt::{Debug, Display},
   rc::{self, Rc},
@@ -1229,7 +1230,7 @@ unsafe impl Sync for SyncValue {}
 
 static EMPTY_ARGS_INNER: Vec<SyncValue> = Vec::new();
 static EMPTY_KWARGS_INNER: FxHashMap<Sym, SyncValue> =
-  std::collections::HashMap::with_hasher(fxhash::FxBuildHasher::new());
+  HashMap::with_hasher(fxhash::FxBuildHasher::new());
 
 const EMPTY_ARGS: &'static Vec<Value> = unsafe { std::mem::transmute(&EMPTY_ARGS_INNER) };
 const EMPTY_KWARGS: &'static FxHashMap<Sym, Value> =

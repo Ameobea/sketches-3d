@@ -1,3 +1,7 @@
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
   linked_mesh::{DisplacementNormalMethod, EdgeSplitPos, FaceKey, Vec3, Vertex, VertexKey},
   slotmap_utils::{vkey, vkey_ix},
@@ -5,7 +9,7 @@ use mesh::{
 };
 
 use super::adaptive_sampler::DEFAULT_MIN_SEGMENT_LENGTH;
-use crate::{ErrorStack, Vec2};
+use crate::{autodiff, Callable, ErrorStack, EvalCtx, Value, Vec2};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -674,8 +678,8 @@ fn densify_segment_under_embed(
   b: Vec2,
   ea: SurfPt,
   eb: SurfPt,
-  ga: Option<std::rc::Rc<Vec<f32>>>,
-  gb: Option<std::rc::Rc<Vec<f32>>>,
+  ga: Option<Rc<Vec<f32>>>,
+  gb: Option<Rc<Vec<f32>>>,
   probe: &impl Fn(Vec2) -> Result<SurfPt, ErrorStack>,
   guards: Option<GuardEval>,
   tol: f32,
@@ -701,7 +705,7 @@ fn densify_segment_under_embed(
         continue;
       }
       let eroot = probe(root)?;
-      let groot = g(root).map(std::rc::Rc::new);
+      let groot = g(root).map(Rc::new);
       record_crease(crease, root, k);
       densify_segment_under_embed(
         a,
@@ -743,7 +747,7 @@ fn densify_segment_under_embed(
     return Ok(());
   }
   let gmid = match guards {
-    Some(g) if ga.is_some() => g(mid).map(std::rc::Rc::new),
+    Some(g) if ga.is_some() => g(mid).map(Rc::new),
     _ => None,
   };
   densify_segment_under_embed(
@@ -794,10 +798,10 @@ fn densify_loop_under_embed(
   let n = loop_2d.len();
   let mut out = Vec::with_capacity(n * 2);
   let mut probed: Vec<SurfPt> = Vec::with_capacity(n);
-  let mut gvals: Vec<Option<std::rc::Rc<Vec<f32>>>> = Vec::with_capacity(n);
+  let mut gvals: Vec<Option<Rc<Vec<f32>>>> = Vec::with_capacity(n);
   for &p in loop_2d {
     probed.push(probe(p)?);
-    gvals.push(guards.and_then(|g| g(p)).map(std::rc::Rc::new));
+    gvals.push(guards.and_then(|g| g(p)).map(Rc::new));
   }
   for k in 0..n {
     let j = (k + 1) % n;
@@ -883,7 +887,7 @@ const DEDUP_RADIUS_FRAC: f32 = 1e-5;
 struct DedupGrid {
   radius_sq: f32,
   inv_cell: f32,
-  cells: fxhash::FxHashMap<(i32, i32), Vec<Vec2>>,
+  cells: FxHashMap<(i32, i32), Vec<Vec2>>,
 }
 
 impl DedupGrid {
@@ -891,7 +895,7 @@ impl DedupGrid {
     DedupGrid {
       radius_sq: radius * radius,
       inv_cell: 1. / radius,
-      cells: fxhash::FxHashMap::default(),
+      cells: FxHashMap::default(),
     }
   }
 
@@ -924,7 +928,7 @@ fn clear_straddle(ga: f32, gb: f32) -> bool {
 
 /// Domain points inserted on guard zero sets, with a bitmask of which guards vanish there.
 /// Consumed by `embed_path` to sharp-mark crease edges.
-pub type CreaseUvs = fxhash::FxHashMap<[u32; 2], u16>;
+pub type CreaseUvs = FxHashMap<[u32; 2], u16>;
 
 fn record_crease(crease: &mut CreaseUvs, p: Vec2, g_ix: usize) {
   *crease.entry([p.x.to_bits(), p.y.to_bits()]).or_insert(0) |= 1 << g_ix.min(15);
@@ -1049,8 +1053,7 @@ pub fn tessellate_2d_paths_embedded_refined(
   // Memoized like the per-run guard caches: vertex/probe positions repeat across
   // re-triangulations, and each uncached probe costs several interpreter invocations (embed + FD
   // frame + thickness).
-  let probe_cache: std::cell::RefCell<fxhash::FxHashMap<[u32; 2], SurfPt>> =
-    std::cell::RefCell::new(fxhash::FxHashMap::default());
+  let probe_cache: RefCell<FxHashMap<[u32; 2], SurfPt>> = RefCell::new(FxHashMap::default());
   let probe = |uv: Vec2| -> Result<SurfPt, ErrorStack> {
     let key = [uv.x.to_bits(), uv.y.to_bits()];
     if let Some(&hit) = probe_cache.borrow().get(&key) {
@@ -1138,8 +1141,7 @@ fn refine_cap(
     dedup.try_insert(Vec2::new(c[0], c[1]));
   }
   // Per-pass: different passes may see different guard subsets, so cached values can't cross.
-  let mut guard_cache: fxhash::FxHashMap<[u32; 2], Option<std::rc::Rc<Vec<f32>>>> =
-    fxhash::FxHashMap::default();
+  let mut guard_cache: FxHashMap<[u32; 2], Option<Rc<Vec<f32>>>> = FxHashMap::default();
 
   // Quality-refining CDT: min-angle Steiner points split slivers and long boundary edges that the
   // deviation test alone can't reach.  Native `cargo test` serves this via `spade` (see
@@ -1170,11 +1172,11 @@ fn refine_cap(
 
     // Lazily evaluated + memoized by position bits so values survive re-triangulation (vertex
     // order changes across iterations, positions mostly don't).
-    let mut guard_at = |uv: Vec2| -> Option<std::rc::Rc<Vec<f32>>> {
+    let mut guard_at = |uv: Vec2| -> Option<Rc<Vec<f32>>> {
       let g = guards?;
       guard_cache
         .entry([uv.x.to_bits(), uv.y.to_bits()])
-        .or_insert_with(|| g(uv).map(std::rc::Rc::new))
+        .or_insert_with(|| g(uv).map(Rc::new))
         .clone()
     };
 
@@ -1295,10 +1297,10 @@ fn refine_cap(
   // two edges of one triangle the second split's spoke connects the two on-crease vertices,
   // edge-chaining the crease for the sharp-marking downstream.
   if let Some(g) = guards {
-    let mut guard_at = |uv: Vec2| -> Option<std::rc::Rc<Vec<f32>>> {
+    let mut guard_at = |uv: Vec2| -> Option<Rc<Vec<f32>>> {
       guard_cache
         .entry([uv.x.to_bits(), uv.y.to_bits()])
-        .or_insert_with(|| g(uv).map(std::rc::Rc::new))
+        .or_insert_with(|| g(uv).map(Rc::new))
         .clone()
     };
     for ek in mesh.edges.keys().collect::<Vec<_>>() {
@@ -1392,8 +1394,8 @@ pub struct TwoCapSolid {
   pub top_uvs: Vec<Vec2>,
   pub off_uvs: Vec<Vec2>,
   pub off_vkeys: Vec<VertexKey>,
-  pub top_faces: fxhash::FxHashSet<FaceKey>,
-  pub off_faces: fxhash::FxHashSet<FaceKey>,
+  pub top_faces: FxHashSet<FaceKey>,
+  pub off_faces: FxHashSet<FaceKey>,
   pub top_crease: CreaseUvs,
   pub off_crease: CreaseUvs,
   pub rings: Vec<TessRing>,
@@ -1401,12 +1403,12 @@ pub struct TwoCapSolid {
 }
 
 struct CapBorder {
-  adj: fxhash::FxHashMap<usize, Vec<usize>>,
-  ix_by_uv: fxhash::FxHashMap<[u32; 2], usize>,
+  adj: FxHashMap<usize, Vec<usize>>,
+  ix_by_uv: FxHashMap<[u32; 2], usize>,
 }
 
 fn cap_border(mesh: &LinkedMesh<()>, uvs: &[Vec2]) -> CapBorder {
-  let mut adj: fxhash::FxHashMap<usize, Vec<usize>> = fxhash::FxHashMap::default();
+  let mut adj: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
   for edge in mesh.edges.values() {
     if edge.faces.len() != 1 {
       continue;
@@ -1455,7 +1457,7 @@ fn walk_boundary_ring(border: &CapBorder, dense_ring: &[Vec2]) -> Option<Vec<usi
   }
   // Dense vertices appear on the loop in cyclic order, so the walk direction matches the dense
   // direction iff dense[1] shows up before dense[2].
-  let pos_in_ring: fxhash::FxHashMap<usize, usize> =
+  let pos_in_ring: FxHashMap<usize, usize> =
     ring.iter().enumerate().map(|(k, &ix)| (ix, k)).collect();
   let p1 = *pos_in_ring.get(border.ix_by_uv.get(&uv_bits(dense_ring[1]))?)?;
   let p2 = *pos_in_ring.get(border.ix_by_uv.get(&uv_bits(dense_ring[2]))?)?;
@@ -1473,7 +1475,6 @@ const RING_SNAP_T: f32 = 1e-4;
 /// bracketing border edge, positioned on that cap's own surface) so both rails carry the same
 /// domain point sequence.  Needed because the min-angle mesher (encroachment) and the crease
 /// post-pass each split border edges independently per cap.
-#[allow(clippy::too_many_arguments)]
 fn conform_ring_pair(
   dense_ring: &[Vec2],
   ring_a: &[usize],
@@ -1488,7 +1489,7 @@ fn conform_ring_pair(
 ) -> Result<Option<(Vec<usize>, Vec<usize>)>, ErrorStack> {
   let m = dense_ring.len();
   let anchors = |ring: &[usize], uvs: &[Vec2]| -> Option<Vec<usize>> {
-    let dense_slot: fxhash::FxHashMap<[u32; 2], usize> = dense_ring
+    let dense_slot: FxHashMap<[u32; 2], usize> = dense_ring
       .iter()
       .enumerate()
       .map(|(s, uv)| (uv_bits(*uv), s))
@@ -1688,8 +1689,7 @@ pub fn tessellate_2d_paths_embedded_two_caps(
     return Ok(None);
   }
 
-  let probe_cache: std::cell::RefCell<fxhash::FxHashMap<[u32; 2], SurfPt>> =
-    std::cell::RefCell::new(fxhash::FxHashMap::default());
+  let probe_cache: RefCell<FxHashMap<[u32; 2], SurfPt>> = RefCell::new(FxHashMap::default());
   let probe = |uv: Vec2| -> Result<SurfPt, ErrorStack> {
     let key = uv_bits(uv);
     if let Some(&hit) = probe_cache.borrow().get(&key) {
@@ -1798,10 +1798,10 @@ pub fn tessellate_2d_paths_embedded_two_caps(
   // Assemble, mirroring `extrude_along_normals`' conventions: the top cap's faces flip to face
   // outward, the offset cap keeps the tessellator winding, and walls follow the post-flip
   // border-edge direction.
-  let top_faces: fxhash::FxHashSet<FaceKey> = mesh_top.faces.keys().collect();
+  let top_faces: FxHashSet<FaceKey> = mesh_top.faces.keys().collect();
   let mut mesh = mesh_top;
   for &fk in &top_faces {
-    mesh.faces[fk].vertices.reverse();
+    mesh.faces[fk].vertices.swap(0, 2);
   }
   let off_vkeys: Vec<VertexKey> = (0..off_uvs.len())
     .map(|j| {
@@ -1809,7 +1809,7 @@ pub fn tessellate_2d_paths_embedded_two_caps(
       mesh.vertices.insert(Vertex::new(pos))
     })
     .collect();
-  let mut off_faces = fxhash::FxHashSet::default();
+  let mut off_faces = FxHashSet::default();
   for face in mesh_off.faces.values() {
     let vs = face.vertices.map(|vk| off_vkeys[vkey_ix(&vk) as usize - 1]);
     off_faces.insert(mesh.add_face::<false>(vs, ()));
@@ -1902,51 +1902,35 @@ pub fn estimate_embed_frame(
 
 /// Analytic embedding frame source: the exact partials φ_u, φ_v of an embedding closure obtained by
 /// forward-mode autodiff, evaluated per domain sample.  The two derivative closures are built once
-/// (via [`crate::autodiff::build_directional_derivative`]) and reused across samples — the top rung
+/// (via [`autodiff::build_directional_derivative`]) and reused across samples — the top rung
 /// of the T2 frame-source ladder (`user frame > autodiff > finite-diff`).
 pub struct AutodiffEmbedFrame {
-  embed: std::rc::Rc<crate::Callable>,
-  du: std::rc::Rc<crate::Callable>,
-  dv: std::rc::Rc<crate::Callable>,
+  embed: Rc<Callable>,
+  du: Rc<Callable>,
+  dv: Rc<Callable>,
 }
 
 impl AutodiffEmbedFrame {
   /// Build the analytic partials of `embed` (a `vec2 -> vec3` closure).  Returns `None` when
   /// `embed` is not a plain closure or autodiff bails on some construct in its body — the caller
   /// then falls back to [`estimate_embed_frame`].
-  pub fn try_build(
-    ctx: &crate::EvalCtx,
-    embed: &std::rc::Rc<crate::Callable>,
-  ) -> Option<AutodiffEmbedFrame> {
-    let crate::Callable::Closure(closure) = &**embed else {
+  pub fn try_build(ctx: &EvalCtx, embed: &Rc<Callable>) -> Option<AutodiffEmbedFrame> {
+    let Callable::Closure(closure) = &**embed else {
       return None;
     };
-    let du = crate::autodiff::build_directional_derivative(
-      ctx,
-      closure,
-      &crate::Value::Vec2(Vec2::new(1., 0.)),
-    )
-    .ok()?;
-    let dv = crate::autodiff::build_directional_derivative(
-      ctx,
-      closure,
-      &crate::Value::Vec2(Vec2::new(0., 1.)),
-    )
-    .ok()?;
+    let du =
+      autodiff::build_directional_derivative(ctx, closure, &Value::Vec2(Vec2::new(1., 0.))).ok()?;
+    let dv =
+      autodiff::build_directional_derivative(ctx, closure, &Value::Vec2(Vec2::new(0., 1.))).ok()?;
     Some(AutodiffEmbedFrame {
-      embed: std::rc::Rc::clone(embed),
-      du: std::rc::Rc::new(crate::Callable::Closure(du)),
-      dv: std::rc::Rc::new(crate::Callable::Closure(dv)),
+      embed: Rc::clone(embed),
+      du: Rc::new(Callable::Closure(du)),
+      dv: Rc::new(Callable::Closure(dv)),
     })
   }
 
-  fn eval_vec3(
-    ctx: &crate::EvalCtx,
-    f: &std::rc::Rc<crate::Callable>,
-    uv: Vec2,
-    role: &str,
-  ) -> Result<Vec3, ErrorStack> {
-    let out = ctx.invoke_callable(f, &[crate::Value::Vec2(uv)], crate::EMPTY_KWARGS)?;
+  fn eval_vec3(ctx: &EvalCtx, f: &Rc<Callable>, uv: Vec2, role: &str) -> Result<Vec3, ErrorStack> {
+    let out = ctx.invoke_callable(f, &[Value::Vec2(uv)], crate::EMPTY_KWARGS)?;
     out.as_vec3().copied().ok_or_else(|| {
       ErrorStack::new(format!(
         "autodiff embed frame: expected Vec3 from {role}, found: {out:?}"
@@ -1955,7 +1939,7 @@ impl AutodiffEmbedFrame {
   }
 
   /// The analytic frame at `uv`: position from φ, partials from φ_u/φ_v, normal `φ_u × φ_v`.
-  pub fn frame(&self, ctx: &crate::EvalCtx, uv: Vec2) -> Result<EmbedFrame, ErrorStack> {
+  pub fn frame(&self, ctx: &EvalCtx, uv: Vec2) -> Result<EmbedFrame, ErrorStack> {
     let pos = Self::eval_vec3(ctx, &self.embed, uv, "embed")?;
     let du = Self::eval_vec3(ctx, &self.du, uv, "d(embed)/du")?;
     let dv = Self::eval_vec3(ctx, &self.dv, uv, "d(embed)/dv")?;
@@ -1985,8 +1969,6 @@ pub fn tessellate_lyon_path(
   flipped: bool,
   plane: TessPlane,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
-  use std::collections::HashMap;
-
   use lyon_tessellation::{
     geom::Point, geometry_builder::Positions, BuffersBuilder, FillOptions, FillTessellator,
     VertexBuffers,
@@ -2010,7 +1992,7 @@ pub fn tessellate_lyon_path(
 
   let mut deduped_verts: Vec<Vec3> = Vec::with_capacity(buffers.vertices.len());
   let mut vert_remap: Vec<u32> = Vec::with_capacity(buffers.vertices.len());
-  let mut pos_to_idx: HashMap<(u32, u32), u32> = HashMap::new();
+  let mut pos_to_idx: FxHashMap<(u32, u32), u32> = FxHashMap::default();
 
   for p in &buffers.vertices {
     let key = (p.x.to_bits(), p.y.to_bits());
@@ -2188,10 +2170,10 @@ bump = |p: vec2|: vec3 {
   r2 = p.x*p.x + p.y*p.y
   vec3(p.x, exp(-r2), p.y)
 }
-opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
+opaque = |p: vec2|: vec3 { vec3(p.x, fbm(vec3(p.x, p.y, 0)), p.y) }
 "#;
     let ctx = crate::parse_and_eval_program(src).unwrap();
-    let crate::Value::Callable(bump) = ctx.get_global("bump").unwrap() else {
+    let Value::Callable(bump) = ctx.get_global("bump").unwrap() else {
       panic!("bump not callable")
     };
 
@@ -2214,8 +2196,8 @@ opaque = |p: vec2|: vec3 { vec3(p.x, floor(p.y), p.y) }
       assert!((a.normal - fd.normal).norm() < 1e-2, "normal @ {uv:?}");
     }
 
-    // Graceful fallback: `floor` has no derivative rule, so `try_build` returns None.
-    let crate::Value::Callable(opaque) = ctx.get_global("opaque").unwrap() else {
+    // Graceful fallback: `fbm` has no derivative rule, so `try_build` returns None.
+    let Value::Callable(opaque) = ctx.get_global("opaque").unwrap() else {
       panic!("opaque not callable")
     };
     assert!(

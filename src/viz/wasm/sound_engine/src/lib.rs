@@ -1,6 +1,6 @@
 #![allow(clippy::missing_safety_doc)]
 
-use std::collections::HashMap;
+use fxhash::FxHashMap;
 
 const FRAME_SIZE: usize = 128;
 const MAX_VOICES: usize = 64;
@@ -373,14 +373,12 @@ impl ListenerPose {
   }
 }
 
-// ---- ctx -------------------------------------------------------------------
-
 pub struct Ctx {
   sample_rate: f32,
   master_gain: f32,
-  samples: HashMap<u32, Sample>,
+  samples: FxHashMap<u32, Sample>,
   voices: [Voice; MAX_VOICES],
-  spatial_handles: HashMap<u32, usize>,
+  spatial_handles: FxHashMap<u32, usize>,
   age_counter: u64,
   out_l: [f32; FRAME_SIZE],
   out_r: [f32; FRAME_SIZE],
@@ -395,9 +393,9 @@ impl Ctx {
     Self {
       sample_rate,
       master_gain: 1.0,
-      samples: HashMap::new(),
+      samples: FxHashMap::default(),
       voices: [const { Voice::empty() }; MAX_VOICES],
-      spatial_handles: HashMap::new(),
+      spatial_handles: FxHashMap::default(),
       age_counter: 0,
       out_l: [0.0; FRAME_SIZE],
       out_r: [0.0; FRAME_SIZE],
@@ -724,7 +722,7 @@ pub extern "C" fn sound_engine_process(ctx: *mut Ctx) {
 
 fn mix_voice(
   v: &mut Voice,
-  samples: &HashMap<u32, Sample>,
+  samples: &FxHashMap<u32, Sample>,
   listener: &ListenerPose,
   out_l: &mut [f32; FRAME_SIZE],
   out_r: &mut [f32; FRAME_SIZE],

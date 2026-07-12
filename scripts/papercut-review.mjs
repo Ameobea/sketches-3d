@@ -35,7 +35,8 @@ function render(file) {
     const parts = [];
     for (const b of blocks) {
       if (b.type === 'text' && b.text) parts.push(clip(b.text, 1200));
-      else if (b.type === 'tool_use') parts.push(`[tool ${b.name}] ${clip(JSON.stringify(b.input ?? {}), 300)}`);
+      else if (b.type === 'tool_use')
+        parts.push(`[tool ${b.name}] ${clip(JSON.stringify(b.input ?? {}), 300)}`);
       else if (b.type === 'tool_result') {
         const c = Array.isArray(b.content) ? b.content.map(x => x.text ?? '').join(' ') : b.content;
         parts.push(`[result] ${clip(typeof c === 'string' ? c : JSON.stringify(c), 700)}`);

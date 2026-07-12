@@ -1891,7 +1891,7 @@
 
 <svelte:window bind:innerWidth />
 
-{#if hasAnyControls}
+{#if hasAnyControls && !userData?.renderMode}
   <ControlsPanel
     controls={lastControls}
     {treeState}

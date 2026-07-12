@@ -20,7 +20,9 @@ or mine the whole current session at once with \`yarn papercut:review\` (the \`/
 
 export function author() {
   try {
-    return execFileSync('git', ['config', 'user.name'], { encoding: 'utf8' }).trim() || os.userInfo().username;
+    return (
+      execFileSync('git', ['config', 'user.name'], { encoding: 'utf8' }).trim() || os.userInfo().username
+    );
   } catch {
     return os.userInfo().username;
   }

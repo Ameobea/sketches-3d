@@ -713,10 +713,6 @@ pub fn is_differentiable(name: &str) -> bool {
   DERIV_RULES.contains_key(name)
 }
 
-// ---------------------------------------------------------------------------
-// Derivative rules
-// ---------------------------------------------------------------------------
-
 fn require_non_mesh(dcx: &mut DerivCtx, e: &Expr, loc: SourceLoc) -> Result<(), ErrorStack> {
   if matches!(dcx.primal_type(e), Some(ArgType::Mesh)) {
     return Err(dcx.err(
@@ -855,6 +851,88 @@ fn d_tan(
     loc,
   );
   Ok(t_scale(scale, d[0].clone(), loc))
+}
+
+fn d_sinh(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let scale = builtin_call(dcx.ctx, "cosh", vec![a[0].clone()], loc);
+  Ok(t_scale(scale, d[0].clone(), loc))
+}
+
+fn d_cosh(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let scale = builtin_call(dcx.ctx, "sinh", vec![a[0].clone()], loc);
+  Ok(t_scale(scale, d[0].clone(), loc))
+}
+
+fn d_tanh(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  // sech²(a) = 1 − tanh²(a); reuse the primal.
+  let scale = binop(
+    BinOp::Sub,
+    fl(1., loc),
+    binop(BinOp::Mul, p.clone(), p.clone(), loc),
+    loc,
+  );
+  Ok(t_scale(scale, d[0].clone(), loc))
+}
+
+fn d_asin(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let one_minus_a2 = binop(
+    BinOp::Sub,
+    fl(1., loc),
+    binop(BinOp::Mul, a[0].clone(), a[0].clone(), loc),
+    loc,
+  );
+  let denom = builtin_call(dcx.ctx, "sqrt", vec![one_minus_a2], loc);
+  Ok(t_div_by(d[0].clone(), denom, loc))
+}
+
+fn d_acos(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  Ok(t_neg(d_asin(dcx, a, p, d, loc)?, loc))
+}
+
+fn d_atan(
+  _: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  let denom = binop(
+    BinOp::Add,
+    fl(1., loc),
+    binop(BinOp::Mul, a[0].clone(), a[0].clone(), loc),
+    loc,
+  );
+  Ok(t_div_by(d[0].clone(), denom, loc))
 }
 
 fn d_exp(
@@ -1121,6 +1199,40 @@ fn d_smoothstep(
   }))
 }
 
+fn d_linearstep(
+  dcx: &mut DerivCtx,
+  a: &[Expr],
+  _p: &Expr,
+  d: &[Tangent],
+  loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  if !matches!(d[0], Tangent::Zero) || !matches!(d[1], Tangent::Zero) {
+    return Err(dcx.err(
+      "autodiff: `linearstep` with non-constant edges is not supported",
+      loc,
+    ));
+  }
+  let dx = match &d[2] {
+    Tangent::Zero => return Ok(Tangent::Zero),
+    Tangent::Expr(e) => e.clone(),
+  };
+  let (e0, e1, x) = (&a[0], &a[1], &a[2]);
+  let denom = binop(BinOp::Sub, e1.clone(), e0.clone(), loc);
+  let inside = binop(
+    BinOp::And,
+    binop(BinOp::Gt, x.clone(), e0.clone(), loc),
+    binop(BinOp::Lt, x.clone(), e1.clone(), loc),
+    loc,
+  );
+  Ok(Tangent::Expr(Expr::Conditional {
+    cond: Box::new(inside),
+    then: Box::new(binop(BinOp::Div, dx, denom, loc)),
+    else_if_exprs: vec![],
+    else_expr: Some(Box::new(fl(0., loc))),
+    loc,
+  }))
+}
+
 fn d_lerp(
   _: &mut DerivCtx,
   a: &[Expr],
@@ -1346,6 +1458,16 @@ fn d_vec3(
   vec_constructor(dcx, "vec3", a, d, loc)
 }
 
+fn d_const_zero(
+  _: &mut DerivCtx,
+  _a: &[Expr],
+  _p: &Expr,
+  _d: &[Tangent],
+  _loc: SourceLoc,
+) -> Result<Tangent, ErrorStack> {
+  Ok(Tangent::Zero)
+}
+
 static DERIV_RULES: phf::Map<&'static str, DerivRule> = phf::phf_map! {
   "add" => d_add as DerivRule,
   "sub" => d_sub,
@@ -1356,6 +1478,12 @@ static DERIV_RULES: phf::Map<&'static str, DerivRule> = phf::phf_map! {
   "sin" => d_sin,
   "cos" => d_cos,
   "tan" => d_tan,
+  "sinh" => d_sinh,
+  "cosh" => d_cosh,
+  "tanh" => d_tanh,
+  "asin" => d_asin,
+  "acos" => d_acos,
+  "atan" => d_atan,
   "exp" => d_exp,
   "ln" => d_ln,
   "log2" => d_log2,
@@ -1368,10 +1496,17 @@ static DERIV_RULES: phf::Map<&'static str, DerivRule> = phf::phf_map! {
   "max" => d_max,
   "clamp" => d_clamp,
   "smoothstep" => d_smoothstep,
+  "linearstep" => d_linearstep,
   "atan2" => d_atan2,
   "lerp" => d_lerp,
   "deg2rad" => d_deg2rad,
   "rad2deg" => d_rad2deg,
+  "fract" => d_pos,
+  "floor" => d_const_zero,
+  "ceil" => d_const_zero,
+  "round" => d_const_zero,
+  "trunc" => d_const_zero,
+  "signum" => d_const_zero,
   "dot" => d_dot,
   "cross" => d_cross,
   "normalize" => d_normalize,
@@ -1683,6 +1818,12 @@ cyl_dv = deriv(cyl, vec2(0, 1))
       ("|x: float| sin(x)", &[0.2, 1.0, -0.7]),
       ("|x: float| cos(x)", &[0.2, 1.0, -0.7]),
       ("|x: float| tan(x)", &[0.2, 0.9, -0.5]),
+      ("|x: float| sinh(x)", &[0.2, -0.9, 1.1]),
+      ("|x: float| cosh(x)", &[0.2, -0.9, 1.1]),
+      ("|x: float| tanh(x)", &[0.2, -1.0, 0.7]),
+      ("|x: float| asin(x)", &[-0.6, 0.1, 0.8]),
+      ("|x: float| acos(x)", &[-0.6, 0.1, 0.8]),
+      ("|x: float| atan(x)", &[0.5, -1.3, 2.3]),
       ("|x: float| exp(x)", &[0.2, 1.0, -0.7]),
       ("|x: float| ln(x)", &[0.5, 1.0, 2.3]),
       ("|x: float| sqrt(x)", &[0.5, 1.0, 2.3]),
@@ -1694,6 +1835,8 @@ cyl_dv = deriv(cyl, vec2(0, 1))
       ("|x: float| max(x, 1)", &[0.5, 1.3, -0.2]),
       ("|x: float| clamp(0, 1, x)", &[-0.5, 0.3, 1.7]),
       ("|x: float| smoothstep(0, 1, x)", &[-0.5, 0.3, 0.8, 1.7]),
+      ("|x: float| linearstep(0, 1, x)", &[-0.5, 0.3, 0.8, 1.7]),
+      ("|x: float| fract(x)", &[0.3, -0.6, 2.4]),
       ("|x: float| atan2(x, 2)", &[0.5, -1.3, 2.3]),
       ("|x: float| atan2(1.5, x)", &[0.5, 2.3, -1.1]),
       ("|x: float| x*x*x + 2*x", &[0.5, -1.3, 2.3]),
@@ -1761,6 +1904,21 @@ dg = deriv(g, vec3(1, 0, 0))
         - call_v3_from_v3(&g, p - Vec3::new(h, 0., 0.)))
         / (2. * h);
       assert_close_v3(call_v3_from_v3(&dg, p), fd_n, 1e-2, "normalize du");
+    }
+  }
+
+  /// Piecewise-constant builtins carry a symbolic-zero tangent, so they no longer error and
+  /// contribute exactly 0.
+  #[test]
+  fn test_piecewise_constant_zero_tangent() {
+    let src = r#"
+f = |x: float| floor(x) + ceil(x) + round(x) + trunc(x) + signum(x) + x*x
+df = deriv(f, 1.0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let df = ctx.get_global("df").unwrap();
+    for &x in &[0.3f32, -1.7, 2.4] {
+      assert_eq!(call_scalar(&ctx, &df, x), 2. * x);
     }
   }
 
@@ -1958,8 +2116,8 @@ du = deriv(phi, vec2(1, 0))
         "does not match",
       ),
       (
-        "f = |p: float| floor(p)\nd = deriv(f, 1.0)",
-        "no derivative rule for builtin `floor`",
+        "f = |p: vec3| fbm(p)\nd = deriv(f, vec3(1, 0, 0))",
+        "no derivative rule for builtin `fbm`",
       ),
       (
         "f = |p: float| p % 2\nd = deriv(f, 1.0)",
@@ -1979,7 +2137,7 @@ du = deriv(phi, vec2(1, 0))
   /// Node-located bail-outs carry a real source location (not the default 0).
   #[test]
   fn test_bailout_has_source_loc() {
-    let err = deriv_err("f = |p: float| floor(p)\nd = deriv(f, 1.0)");
+    let err = deriv_err("f = |p: vec3| fbm(p)\nd = deriv(f, vec3(1, 0, 0))");
     assert!(
       err.loc.is_some() && err.loc != Some((0, 0)),
       "expected a non-default source loc, got {:?}",

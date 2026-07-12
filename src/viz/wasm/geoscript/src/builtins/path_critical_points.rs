@@ -1,8 +1,8 @@
-use std::collections::HashSet;
+use fxhash::FxHashSet;
 
 use crate::Vec2;
 
-pub(crate) type VertexSet = HashSet<(u32, u32)>;
+pub(crate) type VertexSet = FxHashSet<(u32, u32)>;
 
 pub(crate) struct CriticalPointConfig {
   pub angle_threshold: f32,
@@ -13,7 +13,7 @@ impl Default for CriticalPointConfig {
   fn default() -> Self {
     CriticalPointConfig {
       angle_threshold: 0.3,
-      segment_fraction: 0.0,
+      segment_fraction: 0.,
     }
   }
 }
