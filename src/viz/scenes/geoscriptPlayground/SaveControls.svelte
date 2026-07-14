@@ -15,6 +15,7 @@
   import { resolve } from '$app/paths';
   import { untrack } from 'svelte';
   import ForkCompositionButton from './ForkCompositionButton.svelte';
+  import TagsInput from './TagsInput.svelte';
 
   let {
     viz,
@@ -41,6 +42,7 @@
   let title = $state(untrack(() => comp?.title || ''));
   let description = $state(untrack(() => comp?.description || ''));
   let isShared = $state(untrack(() => comp?.is_shared || false));
+  let tags = $state<string[]>(untrack(() => [...(comp?.tags ?? [])]));
 
   let status = $state<
     { type: 'ok'; msg: string; seq: number } | { type: 'error'; msg: string } | { type: 'loading' } | null
@@ -60,6 +62,7 @@
         metadata: metadataRes.metadata,
         tree: getCurrentTree(),
         is_shared: isShared,
+        tags,
       });
       return { type: 'ok', comp };
     } catch (error) {
@@ -85,9 +88,7 @@
           materials,
           preludeEjected,
           environment,
-          title,
-          description,
-          isShared,
+          { title, description, isShared, tags },
           userData
         );
         if (res.type === 'error') {
@@ -129,6 +130,9 @@
 
     <label for="description-input">description</label>
     <textarea id="description-input" rows="3" bind:value={description}></textarea>
+
+    <label for="tags-input">tags</label>
+    <TagsInput id="tags-input" bind:tags />
   </div>
 
   <div class="controls">

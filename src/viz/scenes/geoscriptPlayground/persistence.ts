@@ -208,6 +208,13 @@ export const buildCompositionVersionMetadata = (
   return { type: 'ok', metadata };
 };
 
+export interface CompositionMeta {
+  title: string;
+  description: string;
+  isShared: boolean;
+  tags: string[];
+}
+
 export const saveNewVersion = async (
   comp: Composition,
   currentTree: TreeDef,
@@ -215,9 +222,7 @@ export const saveNewVersion = async (
   materials: MaterialDefinitions,
   preludeEjected: boolean,
   environment: EnvironmentConfig | undefined,
-  title: string,
-  description: string,
-  isShared: boolean,
+  { title, description, isShared, tags }: CompositionMeta,
   userData?: GeoscriptPlaygroundUserData
 ): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
   try {
@@ -229,10 +234,11 @@ export const saveNewVersion = async (
 
     await Promise.all([
       createCompositionVersion(comp.id, { tree: currentTree, metadata }),
-      updateComposition(comp.id, ['title', 'description', 'is_shared'], {
+      updateComposition(comp.id, ['title', 'description', 'is_shared', 'tags'], {
         title,
         description,
         is_shared: isShared,
+        tags,
       }),
     ]);
     saveState(

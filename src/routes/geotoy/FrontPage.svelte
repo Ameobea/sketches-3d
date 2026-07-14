@@ -59,6 +59,13 @@
             </div>
           </div>
         {/if}
+        {#if composition.comp.tags.length}
+          <div class="composition-tags">
+            {#each composition.comp.tags as tag (tag)}
+              <span class="chip">{tag}</span>
+            {/each}
+          </div>
+        {/if}
         <div class="composition-author">
           author:
           <a href={resolve(`/geotoy/user/${composition.comp.author_id}`)}>
@@ -136,6 +143,21 @@
     aspect-ratio: 1;
     object-fit: cover;
     display: block;
+  }
+
+  .composition-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0 2px;
+  }
+
+  .chip {
+    background: #2f2f2f;
+    border: 1px solid #4a4a4a;
+    color: #ccc;
+    padding: 0 5px;
+    font-size: 12px;
   }
 
   .composition-author {

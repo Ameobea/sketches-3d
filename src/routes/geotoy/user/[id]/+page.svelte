@@ -64,6 +64,13 @@
                 {comp.is_shared ? 'public' : 'private'}
               </span>
             </div>
+            {#if comp.tags.length}
+              <div class="tags">
+                {#each comp.tags as tag (tag)}
+                  <span class="chip">{tag}</span>
+                {/each}
+              </div>
+            {/if}
           </div>
 
           <div class="actions">
@@ -172,6 +179,21 @@
     display: flex;
     flex-wrap: wrap;
     gap: 32px;
+  }
+
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+  }
+
+  .chip {
+    background: #2f2f2f;
+    border: 1px solid #4a4a4a;
+    color: #ccc;
+    padding: 0 5px;
+    font-size: 11px;
   }
 
   .actions {

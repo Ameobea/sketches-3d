@@ -2,6 +2,7 @@
   import { untrack } from 'svelte';
   import { createMaterial } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDef } from 'src/geoscript/materials';
+  import TagsInput from '../TagsInput.svelte';
 
   let {
     material,
@@ -14,6 +15,8 @@
   } = $props();
 
   let name = $state(untrack(() => material.name));
+  let description = $state('');
+  let tags = $state<string[]>([]);
   let isShared = $state(false);
   let isSaving = $state(false);
   let error = $state<string | null>(null);
@@ -22,7 +25,7 @@
     isSaving = true;
     error = null;
     try {
-      await createMaterial({ ...material, name }, isShared);
+      await createMaterial({ ...material, name }, isShared, { description, tags });
       onsave();
     } catch (e: any) {
       error = e.message;
@@ -43,6 +46,20 @@
     <div class="form-group">
       <label for="material-name">name</label>
       <input id="material-name" type="text" bind:value={name} />
+    </div>
+    <div class="form-group">
+      <label for="material-description">description</label>
+      <textarea
+        id="material-description"
+        rows="3"
+        maxlength="2000"
+        placeholder="what it looks like; credit / attribution / license"
+        bind:value={description}
+      ></textarea>
+    </div>
+    <div class="form-group">
+      <label for="material-tags">tags</label>
+      <TagsInput id="material-tags" bind:tags />
     </div>
     <div class="form-group">
       <label for="material-shared">public</label>
@@ -78,13 +95,19 @@
     margin-bottom: 4px;
     font-size: 12px;
   }
-  input[type='text'] {
+  input[type='text'],
+  textarea {
     width: 100%;
+    box-sizing: border-box;
     background-color: #1a1a1a;
     color: #eee;
     border: 1px solid #444;
     padding: 4px 6px;
     font-size: 12px;
+    font-family: inherit;
+  }
+  textarea {
+    resize: vertical;
   }
   .buttons {
     display: flex;

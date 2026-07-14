@@ -1,6 +1,6 @@
 use axum::{
-  extract::{Path, Query, State},
   Extension, Json,
+  extract::{Path, State},
 };
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -11,54 +11,82 @@ use tracing::error;
 use url::Url;
 use uuid::Uuid;
 
-use crate::{auth::User, server::APIError};
+use crate::{
+  auth::User,
+  server::APIError,
+  tags::{TEXTURE_TAGS, load_tags, load_tags_one, set_tags},
+};
+
+const TEXTURE_SELECT: &str =
+  "SELECT textures.id, textures.name, textures.description, textures.thumbnail_url, textures.url, \
+   textures.source_url, textures.owner_id, users.username as owner_name, textures.created_at, \
+   textures.is_shared FROM textures JOIN users ON textures.owner_id = users.id";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Texture {
   id: i64,
   name: String,
+  description: String,
   thumbnail_url: Url,
   url: Url,
+  source_url: Option<String>,
   owner_id: i64,
   owner_name: String,
   created_at: DateTime<Utc>,
   is_shared: bool,
+  tags: Vec<String>,
 }
 
 #[derive(FromRow, Debug)]
 pub struct TextureRow {
   id: i64,
   name: String,
+  description: String,
   thumbnail_url: String,
   url: String,
+  source_url: Option<String>,
   owner_id: i64,
   owner_name: String,
   created_at: DateTime<Utc>,
   is_shared: bool,
 }
 
-impl TryFrom<TextureRow> for Texture {
-  type Error = APIError;
+impl TextureRow {
+  fn into_texture(self, tags: Vec<String>) -> Result<Texture, APIError> {
+    let parse = |url: &str| {
+      Url::parse(url).map_err(|err| {
+        error!("invalid URL in db: {url}: {err}");
+        APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+      })
+    };
 
-  fn try_from(row: TextureRow) -> Result<Self, Self::Error> {
     Ok(Texture {
-      id: row.id,
-      name: row.name,
-      thumbnail_url: Url::parse(&row.thumbnail_url).map_err(|err| {
-        error!("invalid thumbnail URL in db: {}: {err}", row.thumbnail_url);
-        APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-      })?,
-      url: Url::parse(&row.url).map_err(|err| {
-        error!("invalid URL in db: {}: {err}", row.url);
-        APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
-      })?,
-      owner_id: row.owner_id,
-      owner_name: row.owner_name,
-      created_at: row.created_at,
-      is_shared: row.is_shared,
+      id: self.id,
+      name: self.name,
+      description: self.description,
+      thumbnail_url: parse(&self.thumbnail_url)?,
+      url: parse(&self.url)?,
+      source_url: self.source_url,
+      owner_id: self.owner_id,
+      owner_name: self.owner_name,
+      created_at: self.created_at,
+      is_shared: self.is_shared,
+      tags,
     })
   }
+}
+
+async fn attach_tags(pool: &SqlitePool, rows: Vec<TextureRow>) -> Result<Vec<Texture>, APIError> {
+  let ids: Vec<i64> = rows.iter().map(|row| row.id).collect();
+  let mut tags_by_id = load_tags(pool, TEXTURE_TAGS, &ids).await?;
+  rows
+    .into_iter()
+    .map(|row| {
+      let tags = tags_by_id.remove(&row.id).unwrap_or_default();
+      row.into_texture(tags)
+    })
+    .collect()
 }
 
 pub async fn list_textures(
@@ -67,26 +95,22 @@ pub async fn list_textures(
 ) -> Result<Json<Vec<Texture>>, APIError> {
   let user_id = user_opt.as_ref().map_or(-1, |u| u.id);
 
-  let textures = sqlx::query_as::<_, TextureRow>(
-    r#"
-    SELECT textures.id, textures.name, textures.thumbnail_url, textures.url, textures.owner_id, users.username as owner_name, textures.created_at, textures.is_shared
-    FROM textures
-    JOIN users ON textures.owner_id = users.id
-    WHERE textures.is_shared OR textures.owner_id = ?
-    ORDER BY textures.created_at DESC
-    "#,
-  )
+  let rows = sqlx::query_as::<_, TextureRow>(sqlx::AssertSqlSafe(format!(
+    "{TEXTURE_SELECT} WHERE textures.is_shared OR textures.owner_id = ? ORDER BY \
+     textures.created_at DESC"
+  )))
   .bind(user_id)
   .fetch_all(&pool)
   .await
   .map_err(|err| {
     error!("Error fetching textures: {err}");
-    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch textures")
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "Failed to fetch textures",
+    )
   })?;
 
-  let textures: Result<Vec<Texture>, APIError> =
-    textures.into_iter().map(|row| row.try_into()).collect();
-  Ok(Json(textures?))
+  Ok(Json(attach_tags(&pool, rows).await?))
 }
 
 pub async fn get_texture(
@@ -101,14 +125,9 @@ pub async fn get_texture(
     )
   }
 
-  let texture_row = sqlx::query_as::<_, TextureRow>(
-    r#"
-    SELECT textures.id, textures.name, textures.thumbnail_url, textures.url, textures.owner_id, users.username as owner_name, textures.created_at, textures.is_shared
-    FROM textures
-    JOIN users ON textures.owner_id = users.id
-    WHERE textures.id = ?
-    "#,
-  )
+  let texture_row = sqlx::query_as::<_, TextureRow>(sqlx::AssertSqlSafe(format!(
+    "{TEXTURE_SELECT} WHERE textures.id = ?"
+  )))
   .bind(texture_id)
   .fetch_one(&pool)
   .await
@@ -117,21 +136,15 @@ pub async fn get_texture(
     _ => {
       error!("Error fetching texture: {err}");
       APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to fetch texture")
-    }
+    },
   })?;
 
-  if texture_row.is_shared {
-    return Ok(Json(texture_row.try_into()?));
-  }
-
-  let Some(user) = user_opt else {
-    return Err(not_found());
-  };
-  if user.id != texture_row.owner_id {
+  if !texture_row.is_shared && user_opt.map_or(true, |user| user.id != texture_row.owner_id) {
     return Err(not_found());
   }
 
-  Ok(Json(texture_row.try_into()?))
+  let tags = load_tags_one(&pool, TEXTURE_TAGS, texture_id).await?;
+  Ok(Json(texture_row.into_texture(tags)?))
 }
 
 #[derive(Deserialize)]
@@ -155,28 +168,17 @@ pub async fn get_multiple_textures(
     .map(|id| id.to_string())
     .collect::<Vec<_>>()
     .join(", ");
-  let query = if admin_token.as_ref().map(|t| t.as_str())
-    == Some(crate::server::settings().admin_token.as_str())
-  {
-    format!(
-      r#"
-    SELECT textures.id, textures.name, textures.thumbnail_url, textures.url, textures.owner_id, users.username as owner_name, textures.created_at, textures.is_shared
-    FROM textures
-    JOIN users ON textures.owner_id = users.id
-    WHERE textures.id IN ({ids_str})
-    "#
-    )
+  let is_admin = admin_token.as_deref() == Some(crate::server::settings().admin_token.as_str());
+  let query = if is_admin {
+    format!("{TEXTURE_SELECT} WHERE textures.id IN ({ids_str})")
   } else {
     format!(
-      r#"
-    SELECT textures.id, textures.name, textures.thumbnail_url, textures.url, textures.owner_id, users.username as owner_name, textures.created_at, textures.is_shared
-    FROM textures
-    JOIN users ON textures.owner_id = users.id
-    WHERE textures.id IN ({ids_str}) AND (textures.is_shared OR textures.owner_id = ?)
-    "#
+      "{TEXTURE_SELECT} WHERE textures.id IN ({ids_str}) AND (textures.is_shared OR \
+       textures.owner_id = ?)"
     )
   };
-  let textures = sqlx::query_as::<_, TextureRow>(sqlx::AssertSqlSafe(query))
+
+  let rows = sqlx::query_as::<_, TextureRow>(sqlx::AssertSqlSafe(query))
     .bind(user_id)
     .fetch_all(&pool)
     .await
@@ -188,18 +190,15 @@ pub async fn get_multiple_textures(
       )
     })?;
 
-  let textures: Result<Vec<Texture>, APIError> =
-    textures.into_iter().map(|row| row.try_into()).collect();
-  Ok(Json(textures?))
+  Ok(Json(attach_tags(&pool, rows).await?))
 }
 
 async fn create_texture_inner(
   pool: SqlitePool,
   client: &reqwest::Client,
   user: User,
-  name: &str,
+  meta: CreateTextureQuery,
   texture_data: Bytes,
-  is_shared: Option<bool>,
   source_url: Option<String>,
 ) -> Result<Json<Texture>, APIError> {
   let client_clone = client.clone();
@@ -289,20 +288,26 @@ async fn create_texture_inner(
   let texture_url = texture_url_res?;
   let thumbnail_url = thumbnail_url_res?;
 
+  let mut tx = pool.begin().await.map_err(|err| {
+    error!("Failed to begin transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
   let texture_id = sqlx::query_scalar::<_, i64>(
     r#"
-    INSERT INTO textures (name, thumbnail_url, url, owner_id, is_shared, source_url)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO textures (name, description, thumbnail_url, url, owner_id, is_shared, source_url)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     RETURNING id
     "#,
   )
-  .bind(name)
+  .bind(&meta.name)
+  .bind(meta.description.unwrap_or_default())
   .bind(&thumbnail_url)
   .bind(&texture_url)
   .bind(user.id)
-  .bind(is_shared.unwrap_or(false))
+  .bind(meta.is_shared.unwrap_or(false))
   .bind(source_url)
-  .fetch_one(&pool)
+  .fetch_one(&mut *tx)
   .await
   .map_err(|err| {
     error!("Error creating texture in db: {err}");
@@ -312,24 +317,34 @@ async fn create_texture_inner(
     )
   })?;
 
+  set_tags(&mut tx, TEXTURE_TAGS, texture_id, &meta.tag).await?;
+
+  tx.commit().await.map_err(|err| {
+    error!("Failed to commit transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
   get_texture(State(pool), Path(texture_id), Extension(Some(user))).await
 }
 
 #[derive(Deserialize)]
 pub struct CreateTextureQuery {
   name: String,
+  description: Option<String>,
   is_shared: Option<bool>,
+  #[serde(default)]
+  tag: Vec<String>,
 }
 
 pub async fn create_texture(
   State(pool): State<SqlitePool>,
-  Query(CreateTextureQuery { name, is_shared }): Query<CreateTextureQuery>,
+  axum_extra::extract::Query(meta): axum_extra::extract::Query<CreateTextureQuery>,
   Extension(user): Extension<User>,
   body: Bytes,
 ) -> Result<Json<Texture>, APIError> {
   let client = reqwest::Client::new();
 
-  create_texture_inner(pool, &client, user, &name, body, is_shared, None).await
+  create_texture_inner(pool, &client, user, meta, body, None).await
 }
 
 #[derive(Deserialize)]
@@ -339,7 +354,7 @@ pub struct CreateTextureFromURLBody {
 
 pub async fn create_texture_from_url(
   State(pool): State<SqlitePool>,
-  Query(CreateTextureQuery { name, is_shared }): Query<CreateTextureQuery>,
+  axum_extra::extract::Query(meta): axum_extra::extract::Query<CreateTextureQuery>,
   Extension(user): Extension<User>,
   Json(CreateTextureFromURLBody { url }): Json<CreateTextureFromURLBody>,
 ) -> Result<Json<Texture>, APIError> {
@@ -378,14 +393,118 @@ pub async fn create_texture_from_url(
     )
   })?;
 
-  create_texture_inner(
-    pool,
-    &client,
-    user,
-    &name,
-    texture_data,
-    is_shared,
-    Some(url),
+  create_texture_inner(pool, &client, user, meta, texture_data, Some(url)).await
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateTextureBody {
+  name: Option<String>,
+  description: Option<String>,
+  is_shared: Option<bool>,
+  tags: Option<Vec<String>>,
+}
+
+async fn owned_texture(
+  conn: &mut sqlx::SqliteConnection,
+  texture_id: i64,
+  user: &User,
+) -> Result<(), APIError> {
+  let owner_id = sqlx::query_scalar::<_, i64>("SELECT owner_id FROM textures WHERE id = ?")
+    .bind(texture_id)
+    .fetch_optional(conn)
+    .await
+    .map_err(|err| {
+      error!("Error fetching texture: {err}");
+      APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+    })?
+    .ok_or_else(|| APIError::new(StatusCode::NOT_FOUND, "Texture not found"))?;
+
+  if owner_id != user.id {
+    return Err(APIError::new(
+      StatusCode::FORBIDDEN,
+      "You do not have permission to modify this texture",
+    ));
+  }
+  Ok(())
+}
+
+pub async fn update_texture(
+  State(pool): State<SqlitePool>,
+  Path(texture_id): Path<i64>,
+  Extension(user): Extension<User>,
+  Json(body): Json<UpdateTextureBody>,
+) -> Result<Json<Texture>, APIError> {
+  let mut tx = pool.begin().await.map_err(|err| {
+    error!("Failed to begin transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
+  owned_texture(&mut tx, texture_id, &user).await?;
+
+  sqlx::query(
+    r#"
+    UPDATE textures
+    SET name = COALESCE(?, name),
+        description = COALESCE(?, description),
+        is_shared = COALESCE(?, is_shared)
+    WHERE id = ?
+    "#,
   )
+  .bind(body.name)
+  .bind(body.description)
+  .bind(body.is_shared)
+  .bind(texture_id)
+  .execute(&mut *tx)
   .await
+  .map_err(|err| {
+    error!("Failed to update texture: {err}");
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      "Failed to update texture",
+    )
+  })?;
+
+  if let Some(tags) = &body.tags {
+    set_tags(&mut tx, TEXTURE_TAGS, texture_id, tags).await?;
+  }
+
+  tx.commit().await.map_err(|err| {
+    error!("Failed to commit transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
+  get_texture(State(pool), Path(texture_id), Extension(Some(user))).await
+}
+
+pub async fn delete_texture(
+  State(pool): State<SqlitePool>,
+  Path(texture_id): Path<i64>,
+  Extension(user): Extension<User>,
+) -> Result<StatusCode, APIError> {
+  let mut tx = pool.begin().await.map_err(|err| {
+    error!("Failed to begin transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
+  owned_texture(&mut tx, texture_id, &user).await?;
+
+  sqlx::query("DELETE FROM textures WHERE id = ?")
+    .bind(texture_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| {
+      error!("Error deleting texture: {err}");
+      APIError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Failed to delete texture",
+      )
+    })?;
+
+  tx.commit().await.map_err(|err| {
+    error!("Failed to commit transaction: {err}");
+    APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
+  })?;
+
+  Ok(StatusCode::NO_CONTENT)
 }

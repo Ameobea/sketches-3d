@@ -27,12 +27,14 @@ export interface MaterialDefinitions {
 export interface MaterialDescriptor {
   id: number;
   name: string;
+  description: string;
   thumbnailUrl: string | null;
   materialDefinition: MaterialDef;
   ownerId: number;
   ownerName: string;
   createdAt: string;
   isShared: boolean;
+  tags: string[];
 }
 
 export type { PhysicalMaterialTextureField } from 'src/viz/materials/ui/host';

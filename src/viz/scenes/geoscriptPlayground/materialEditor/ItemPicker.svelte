@@ -4,6 +4,8 @@
   type Item = {
     id: string | number;
     name: string;
+    description?: string;
+    tags?: string[];
     thumbnailUrl?: string | null;
     url?: string | null;
   };
@@ -17,6 +19,7 @@
     showNoneOption = true,
     footerStart,
     footerEnd,
+    previewActions,
   }: {
     items: Item[];
     selectedId: string | number | null | undefined;
@@ -26,6 +29,7 @@
     showNoneOption?: boolean;
     footerStart?: Snippet;
     footerEnd?: Snippet;
+    previewActions?: Snippet<[Item]>;
   } = $props();
 
   let filteredItems = $state<Item[]>([]);
@@ -41,9 +45,13 @@
   });
 
   $effect(() => {
-    if (searchTerm) {
-      const lowerCaseSearchTerm = searchTerm.toLowerCase();
-      filteredItems = items.filter(item => item.name.toLowerCase().includes(lowerCaseSearchTerm));
+    const term = searchTerm.trim().toLowerCase();
+    if (term) {
+      filteredItems = items.filter(item =>
+        [item.name, item.description ?? '', ...(item.tags ?? [])].some(field =>
+          field.toLowerCase().includes(term)
+        )
+      );
     } else {
       filteredItems = items;
     }
@@ -103,15 +111,27 @@
     </div>
     <div class="preview-pane">
       {#if selectedItemForPreview}
-        {#if selectedItemForPreview.url || selectedItemForPreview.thumbnailUrl}
-          <img
-            src={selectedItemForPreview.url || selectedItemForPreview.thumbnailUrl}
-            alt={selectedItemForPreview.name}
-            crossorigin="anonymous"
-          />
+        {@const item = selectedItemForPreview}
+        {#if item.url || item.thumbnailUrl}
+          <img src={item.url || item.thumbnailUrl} alt={item.name} crossorigin="anonymous" />
         {:else}
           <div class="no-item" style="width: 200px; height: 200px;"></div>
         {/if}
+        <div class="meta">
+          {#if item.tags?.length}
+            <div class="tags">
+              {#each item.tags as tag (tag)}
+                <button class="chip" title="filter by “{tag}”" onclick={() => (searchTerm = tag)}>
+                  {tag}
+                </button>
+              {/each}
+            </div>
+          {/if}
+          {#if item.description}
+            <div class="description">{item.description}</div>
+          {/if}
+          {@render previewActions?.(item)}
+        </div>
       {:else}
         <div class="placeholder">select an item to preview</div>
       {/if}
@@ -198,15 +218,54 @@
   .preview-pane {
     flex: 0.75;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 6px;
     padding: 4px;
+    min-width: 0;
+    overflow-y: auto;
   }
   .preview-pane img {
     max-width: 100%;
-    max-height: 100%;
+    min-height: 0;
     object-fit: contain;
     flex: 1;
+  }
+  .meta {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+  }
+  .tags {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+  .chip {
+    background: #3a3a3a;
+    border: 1px solid #555;
+    color: #ddd;
+    padding: 1px 6px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .chip:hover {
+    background: #4a4a4a;
+    color: #fff;
+  }
+  .description {
+    font-size: 11px;
+    color: #aaa;
+    text-align: center;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 96px;
+    overflow-y: auto;
   }
   .placeholder {
     color: #888;

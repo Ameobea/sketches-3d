@@ -1,16 +1,16 @@
 use argon2::{
-  password_hash::{PasswordHasher, PasswordVerifier, SaltString},
   Argon2,
+  password_hash::{PasswordHasher, PasswordVerifier, SaltString},
 };
 use axum::{
+  Json,
   body::Body,
   extract::{Extension, State},
   http::{Request, StatusCode},
   middleware::Next,
   response::Response,
-  Json,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{Duration, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::{FromRow, SqlitePool};
@@ -57,14 +57,14 @@ pub async fn register(
   }
 
   let mut salt_bytes = [0u8; 16];
-  getrandom::fill(&mut salt_bytes)
-    .map_err(|_| APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to generate salt."))?;
-  let salt = SaltString::encode_b64(&salt_bytes).map_err(|_| {
+  getrandom::fill(&mut salt_bytes).map_err(|_| {
     APIError::new(
       StatusCode::INTERNAL_SERVER_ERROR,
-      "Failed to encode salt.",
+      "Failed to generate salt.",
     )
   })?;
+  let salt = SaltString::encode_b64(&salt_bytes)
+    .map_err(|_| APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to encode salt."))?;
   let hashed_password = Argon2::default()
     .hash_password(registration.password.as_bytes(), &salt)
     .map_err(|_| {

@@ -24,6 +24,15 @@
     </div>
     <label class="label" for="composition-details-description">Description:</label>
     <div class="value description" id="composition-details-description">{comp.description}</div>
+    {#if comp.tags.length}
+      <!-- svelte-ignore a11y_label_has_associated_control -->
+      <label class="label">Tags:</label>
+      <div class="value tags">
+        {#each comp.tags as tag (tag)}
+          <span class="chip">{tag}</span>
+        {/each}
+      </div>
+    {/if}
     {#if showFork && onForked}
       <ForkCompositionButton {comp} {onForked} />
     {/if}
@@ -62,6 +71,19 @@
     .description {
       max-height: 6em;
       overflow: auto;
+    }
+
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+
+    .chip {
+      background: #3a3a3a;
+      border: 1px solid #555;
+      padding: 0 5px;
+      font-size: 12px;
     }
   }
 </style>

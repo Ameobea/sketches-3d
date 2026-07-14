@@ -31,7 +31,12 @@ async fn render_transient(headers: HeaderMap, body: Bytes) -> Result<impl IntoRe
   let client = reqwest::Client::builder()
     .timeout(std::time::Duration::from_secs(15 * 60))
     .build()
-    .map_err(|err| APIError::new(StatusCode::INTERNAL_SERVER_ERROR, format!("http client: {err}")))?;
+    .map_err(|err| {
+      APIError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("http client: {err}"),
+      )
+    })?;
 
   let upstream = client
     .post(THUMBNAIL_GENERATOR_URL)
@@ -61,6 +66,8 @@ async fn render_transient(headers: HeaderMap, body: Bytes) -> Result<impl IntoRe
     .map_err(|_| APIError::new(StatusCode::BAD_GATEWAY, "Invalid upstream status"))?;
 
   let mut resp = (axum_status, body_bytes).into_response();
-  resp.headers_mut().insert(header::CONTENT_TYPE, content_type);
+  resp
+    .headers_mut()
+    .insert(header::CONTENT_TYPE, content_type);
   Ok(resp)
 }

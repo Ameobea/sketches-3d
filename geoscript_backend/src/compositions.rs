@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 
-use crate::{auth::User, render_thumbnail::render_thumbnail};
+use crate::{
+  auth::User,
+  render_thumbnail::render_thumbnail,
+  tags::{COMPOSITION_TAGS, load_tags, load_tags_one, set_tags},
+};
 use axum::{
   Json,
   extract::{Extension, Path, Query, State},
@@ -75,6 +79,9 @@ pub struct Composition {
   pub updated_at: DateTime<Utc>,
   pub is_shared: bool,
   pub is_featured: bool,
+  /// Lives in the `composition_tags` join table rather than on the row; populated after the fetch.
+  #[sqlx(skip)]
+  pub tags: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -100,6 +107,8 @@ pub struct CreateComposition {
   pub tree: sqlx::types::Json<TreeDef>,
   pub is_shared: bool,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
+  #[serde(default)]
+  pub tags: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -122,6 +131,7 @@ pub struct UpdateCompositionPatch {
   pub title: Option<String>,
   pub description: Option<String>,
   pub is_shared: Option<bool>,
+  pub tags: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,8 +177,8 @@ pub async fn create_composition(
   })?;
 
   let version_id = sqlx::query(
-    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
-     RETURNING id",
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) RETURNING \
+     id",
   )
   .bind(id)
   .bind(&payload.tree)
@@ -188,6 +198,8 @@ pub async fn create_composition(
       format!("Failed to get inserted composition version id: {err}"),
     )
   })?;
+
+  set_tags(&mut tx, COMPOSITION_TAGS, id, &payload.tags).await?;
 
   tx.commit().await.map_err(|err| {
     APIError::new(
@@ -251,8 +263,8 @@ pub async fn create_composition_version(
   }
 
   let version = sqlx::query_as::<_, CompositionVersion>(
-    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
-     RETURNING *",
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) RETURNING \
+     *",
   )
   .bind(composition_id)
   .bind(&payload.tree)
@@ -358,8 +370,8 @@ pub async fn fork_composition(
   })?;
 
   let version_id = sqlx::query(
-    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) \
-     RETURNING id",
+    "INSERT INTO composition_versions (composition_id, tree, metadata) VALUES (?, ?, ?) RETURNING \
+     id",
   )
   .bind(forked_composition_id)
   .bind(&latest_version.tree)
@@ -380,7 +392,7 @@ pub async fn fork_composition(
     )
   })?;
 
-  let forked_composition = sqlx::query_as::<_, Composition>(
+  let mut forked_composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
      u.id WHERE c.id = ?",
   )
@@ -393,6 +405,15 @@ pub async fn fork_composition(
       format!("Failed to fetch forked composition with username: {err}"),
     )
   })?;
+
+  let original_tags = load_tags_one(&mut *tx, COMPOSITION_TAGS, composition_id).await?;
+  forked_composition.tags = set_tags(
+    &mut tx,
+    COMPOSITION_TAGS,
+    forked_composition_id,
+    &original_tags,
+  )
+  .await?;
 
   tx.commit().await.map_err(|err| {
     APIError::new(
@@ -435,7 +456,7 @@ pub async fn get_composition(
     false
   };
 
-  let composition = sqlx::query_as::<_, Composition>(
+  let mut composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
      u.id WHERE c.id = ?",
   )
@@ -444,18 +465,14 @@ pub async fn get_composition(
   .await
   .map_err(|_| not_found())?;
 
-  if composition.is_shared || is_admin {
-    return Ok(Json(composition));
-  }
-
-  let Some(user) = user_opt else {
-    return Err(not_found());
-  };
-
-  if user.id != composition.author_id {
+  let visible = composition.is_shared
+    || is_admin
+    || user_opt.is_some_and(|user| user.id == composition.author_id);
+  if !visible {
     return Err(not_found());
   }
 
+  composition.tags = load_tags_one(&pool, COMPOSITION_TAGS, composition_id).await?;
   Ok(Json(composition))
 }
 
@@ -656,7 +673,9 @@ ORDER BY c.updated_at DESC
     } else {
       // Stub TreeDef containing only an empty `_root`. Used as a placeholder when the
       // caller didn't ask for the actual code.
-      "'{\"version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]}],\"children\":[]}}}' as latest_tree"
+      "'{\"version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"\
+       name\":\"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":\
+       [1,1,1]}],\"children\":[]}}}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),
@@ -678,6 +697,9 @@ ORDER BY c.updated_at DESC
     )
   })?;
 
+  let ids: Vec<i64> = rows.iter().map(|row| row.comp.id).collect();
+  let mut tags_by_id = load_tags(pool, COMPOSITION_TAGS, &ids).await?;
+
   let result = rows
     .into_iter()
     .map(|row| {
@@ -689,10 +711,9 @@ ORDER BY c.updated_at DESC
         thumbnail_url: row.latest_thumbnail_url,
         metadata: row.latest_metadata,
       };
-      PublicComposition {
-        comp: row.comp,
-        latest,
-      }
+      let mut comp = row.comp;
+      comp.tags = tags_by_id.remove(&comp.id).unwrap_or_default();
+      PublicComposition { comp, latest }
     })
     .collect();
 
@@ -766,9 +787,10 @@ pub async fn update_composition(
   Path(composition_id): Path<i64>,
   Json(payload): Json<UpdateCompositionRequest>,
 ) -> Result<Json<Composition>, APIError> {
-  let allowed_fields = &["title", "description", "is_shared"];
+  let allowed_fields = &["title", "description", "is_shared", "tags"];
   let mut set_clauses = Vec::with_capacity(payload.field_mask.len());
   let mut args = SqliteArguments::default();
+  let mut new_tags: Option<&[String]> = None;
 
   for field in &payload.field_mask {
     if !allowed_fields.contains(&field.as_str()) {
@@ -793,37 +815,69 @@ pub async fn update_composition(
           set_clauses.push("is_shared = ?".to_owned());
           args.add(v as i32).unwrap();
         },
+      // not a column on `compositions`; lives in the `composition_tags` join table
+      "tags" => new_tags = payload.patch.tags.as_deref(),
       _ => unreachable!("Unexpected field in field_mask: {field}"),
     }
   }
 
-  if set_clauses.is_empty() {
+  if set_clauses.is_empty() && new_tags.is_none() {
     return Err(APIError::new(
       StatusCode::BAD_REQUEST,
       "No valid fields to update".to_owned(),
     ));
   }
 
-  let set_clause = set_clauses.join(", ");
-  let query = format!("UPDATE compositions SET {set_clause} WHERE id = ? AND author_id = ?;");
-  args.add(composition_id).unwrap();
-  args.add(user.id).unwrap();
-  let result = sqlx::query_with(sqlx::AssertSqlSafe(query), args)
-    .execute(&pool)
+  let mut tx = pool.begin().await.map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to begin transaction: {err}"),
+    )
+  })?;
+
+  sqlx::query_scalar::<_, i64>("SELECT id FROM compositions WHERE id = ? AND author_id = ?")
+    .bind(composition_id)
+    .bind(user.id)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(|err| {
       APIError::new(
         StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to update composition: {err}"),
+        format!("Failed to check composition ownership: {err}"),
+      )
+    })?
+    .ok_or_else(|| {
+      APIError::new(
+        StatusCode::NOT_FOUND,
+        "Composition not found or you do not have permission to modify it".to_owned(),
       )
     })?;
 
-  if result.rows_affected() == 0 {
-    return Err(APIError::new(
-      StatusCode::NOT_FOUND,
-      "Composition not found or you do not have permission to modify it".to_owned(),
-    ));
+  if !set_clauses.is_empty() {
+    let set_clause = set_clauses.join(", ");
+    let query = format!("UPDATE compositions SET {set_clause} WHERE id = ?;");
+    args.add(composition_id).unwrap();
+    sqlx::query_with(sqlx::AssertSqlSafe(query), args)
+      .execute(&mut *tx)
+      .await
+      .map_err(|err| {
+        APIError::new(
+          StatusCode::INTERNAL_SERVER_ERROR,
+          format!("Failed to update composition: {err}"),
+        )
+      })?;
   }
+
+  if let Some(tags) = new_tags {
+    set_tags(&mut tx, COMPOSITION_TAGS, composition_id, tags).await?;
+  }
+
+  tx.commit().await.map_err(|err| {
+    APIError::new(
+      StatusCode::INTERNAL_SERVER_ERROR,
+      format!("Failed to commit transaction: {err}"),
+    )
+  })?;
 
   get_composition(
     State(pool.clone()),
@@ -875,7 +929,10 @@ mod tests {
     let out = serde_json::to_value(&tree).unwrap();
     let inst = &out["nodes"]["r"]["instances"][0];
     assert_eq!(inst["id"], "deadbeef");
-    assert!(inst.get("transform").is_none(), "id/pos must sit flat, not nested");
+    assert!(
+      inst.get("transform").is_none(),
+      "id/pos must sit flat, not nested"
+    );
     assert_eq!(inst["pos"][0].as_f64(), Some(0.0));
   }
 

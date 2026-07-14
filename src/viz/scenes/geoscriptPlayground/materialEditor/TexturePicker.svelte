@@ -7,6 +7,7 @@
   } from 'src/geoscript/geotoyAPIClient';
   import { untrack } from 'svelte';
   import ItemPicker from './ItemPicker.svelte';
+  import TextureUploader from './TextureUploader.svelte';
   import { Textures } from './state.svelte';
 
   let {
@@ -26,19 +27,23 @@
   const origSelectedTextureId = untrack(() => selectedTextureId);
   let textures = $state<TextureDescriptor[]>([]);
   let isLoading = $state(true);
+  let editing = $state<TextureDescriptor | null>(null);
+
+  const refresh = async () => {
+    const textureList = await listTextures();
+    const texturesMap: Record<number, TextureDescriptor> = {};
+    for (const texture of textureList) {
+      texturesMap[texture.id] = texture;
+    }
+    Textures.textures = texturesMap;
+
+    textures = textureList;
+    isLoading = false;
+  };
 
   $effect(() => {
     isLoading = true;
-    listTextures().then(textureList => {
-      const texturesMap: Record<number, TextureDescriptor> = {};
-      for (const texture of textureList) {
-        texturesMap[texture.id] = texture;
-      }
-      Textures.textures = texturesMap;
-
-      textures = textureList;
-      isLoading = false;
-    });
+    refresh();
   });
 
   const onselect = (id: TextureID | null | string) => {
@@ -51,8 +56,34 @@
 
 {#if isLoading}
   <div class="loading">loading...</div>
+{:else if editing}
+  <TextureUploader
+    texture={editing}
+    onclose={() => (editing = null)}
+    onupload={() => {
+      editing = null;
+      refresh();
+    }}
+    ondelete={() => {
+      if (editing && selectedTextureId === editing.id) {
+        onselectInner(null);
+      }
+      editing = null;
+      refresh();
+    }}
+  />
 {:else}
   <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={textures} {onclose}>
+    {#snippet previewActions(item)}
+      {#if me && textures.find(t => t.id === item.id)?.ownerId === me.id}
+        <button
+          class="footer-button edit-button"
+          onclick={() => (editing = textures.find(t => t.id === item.id) ?? null)}
+        >
+          edit metadata
+        </button>
+      {/if}
+    {/snippet}
     {#snippet footerStart()}
       {#if me}
         <button class="footer-button" onclick={onupload}>upload new</button>
@@ -92,5 +123,9 @@
   }
   :global(.footer-button:hover) {
     background: #3d3d3d;
+  }
+  .edit-button {
+    font-size: 11px;
+    padding: 4px 8px;
   }
 </style>

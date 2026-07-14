@@ -2,94 +2,143 @@
   import {
     createTexture,
     createTextureFromURL,
+    updateTexture,
+    deleteTexture,
     type TextureDescriptor,
     APIError,
   } from 'src/geoscript/geotoyAPIClient';
+  import TagsInput from '../TagsInput.svelte';
   import { Textures } from './state.svelte';
+  import { untrack } from 'svelte';
 
   let {
+    texture,
     onclose = () => {},
     onupload = (_texture: TextureDescriptor) => {},
+    ondelete = () => {},
   }: {
+    /** When set, the form edits this texture's metadata in place rather than creating a new one. */
+    texture?: TextureDescriptor;
     onclose: () => void;
     onupload: (texture: TextureDescriptor) => void;
+    ondelete?: () => void;
   } = $props();
 
+  const isEdit = untrack(() => !!texture);
+
   let uploadMethod: 'file' | 'url' = $state('file');
-  let name = $state('');
-  let isShared = $state(false);
+  let name = $state(untrack(() => texture?.name ?? ''));
+  let description = $state(untrack(() => texture?.description ?? ''));
+  let tags = $state<string[]>(untrack(() => [...(texture?.tags ?? [])]));
+  let isShared = $state(untrack(() => texture?.isShared ?? false));
   let fileInput = $state<HTMLInputElement | null>(null);
   let urlInput = $state('');
   let status = $state<
     { type: 'ok'; msg: string } | { type: 'error'; msg: string } | { type: 'loading' } | null
   >(null);
 
-  const handleSubmit = async () => {
+  const withStatus = async (okMsg: string, run: () => Promise<void>) => {
     status = { type: 'loading' };
     try {
-      let texture: TextureDescriptor;
-      if (uploadMethod === 'file') {
+      await run();
+      status = { type: 'ok', msg: okMsg };
+    } catch (e) {
+      status = { type: 'error', msg: e instanceof APIError ? e.message : 'an unknown error occurred' };
+    }
+  };
+
+  const handleSubmit = () =>
+    withStatus(isEdit ? 'texture updated!' : 'texture uploaded!', async () => {
+      let updated: TextureDescriptor;
+      if (texture) {
+        updated = await updateTexture(texture.id, { name, description, isShared, tags });
+      } else if (uploadMethod === 'file') {
         if (!fileInput?.files?.length) {
-          status = { type: 'error', msg: 'no file selected' };
-          return;
+          throw new APIError(400, 'no file selected');
         }
-        texture = await createTexture(name, fileInput.files[0], isShared);
+        updated = await createTexture({ name, description, isShared, tags }, fileInput.files[0]);
       } else {
         if (!urlInput) {
-          status = { type: 'error', msg: 'no URL provided' };
-          return;
+          throw new APIError(400, 'no URL provided');
         }
-        texture = await createTextureFromURL(name, urlInput, isShared);
+        updated = await createTextureFromURL({ name, description, isShared, tags }, urlInput);
       }
-      Textures.textures[texture.id] = texture;
-      onupload(texture);
-      status = { type: 'ok', msg: 'texture uploaded!' };
-    } catch (e) {
-      if (e instanceof APIError) {
-        status = { type: 'error', msg: e.message };
-      } else {
-        status = { type: 'error', msg: 'an unknown error occurred' };
-      }
+      Textures.textures[updated.id] = updated;
+      onupload(updated);
+    });
+
+  const handleDelete = () => {
+    if (!texture || !confirm(`permanently delete texture “${texture.name}”?`)) {
+      return;
     }
+    return withStatus('texture deleted', async () => {
+      await deleteTexture(texture.id);
+      delete Textures.textures[texture.id];
+      ondelete();
+    });
   };
 </script>
 
 <div>
   <div class="texture-uploader">
-    <div class="header">upload new texture</div>
+    <div class="header">{isEdit ? 'edit texture' : 'upload new texture'}</div>
     <div class="content">
-      <div class="instructions">
-        <ul>
-          <li>most common image formats are accepted</li>
-          <li>
-            seamless/tileable texture are <i>highly</i>
-            recommended
-          </li>
-          <li>textures should be square and ideally a power of two for best performance</li>
-        </ul>
-      </div>
+      {#if !isEdit}
+        <div class="instructions">
+          <ul>
+            <li>most common image formats are accepted</li>
+            <li>
+              seamless/tileable texture are <i>highly</i>
+              recommended
+            </li>
+            <li>textures should be square and ideally a power of two for best performance</li>
+          </ul>
+        </div>
+      {/if}
       <div class="form-grid">
         <label for="name-input">name</label>
         <input id="name-input" type="text" bind:value={name} />
 
+        <label for="description-input">description</label>
+        <textarea
+          id="description-input"
+          rows="3"
+          maxlength="2000"
+          placeholder="what it looks like; credit / attribution / license"
+          bind:value={description}
+        ></textarea>
+
+        <label for="tags-input">tags</label>
+        <TagsInput id="tags-input" bind:tags />
+
         <label for="is-shared-checkbox">public</label>
         <input id="is-shared-checkbox" type="checkbox" bind:checked={isShared} />
 
-        <!-- svelte-ignore a11y_label_has_associated_control -->
-        <label>method</label>
-        <div class="toggle-group">
-          <button class:selected={uploadMethod === 'file'} onclick={() => (uploadMethod = 'file')}>
-            file
-          </button>
-          <button class:selected={uploadMethod === 'url'} onclick={() => (uploadMethod = 'url')}>url</button>
-        </div>
+        {#if !isEdit}
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label>method</label>
+          <div class="toggle-group">
+            <button class:selected={uploadMethod === 'file'} onclick={() => (uploadMethod = 'file')}>
+              file
+            </button>
+            <button class:selected={uploadMethod === 'url'} onclick={() => (uploadMethod = 'url')}>
+              url
+            </button>
+          </div>
 
-        {#if uploadMethod === 'file'}
-          <label for="file-input">file</label>
-          <input id="file-input" type="file" bind:this={fileInput} />
-        {:else}
-          <label for="url-input">url</label>
-          <input id="url-input" type="text" bind:value={urlInput} />
+          {#if uploadMethod === 'file'}
+            <label for="file-input">file</label>
+            <input id="file-input" type="file" bind:this={fileInput} />
+          {:else}
+            <label for="url-input">url</label>
+            <input id="url-input" type="text" bind:value={urlInput} />
+          {/if}
+        {:else if texture?.sourceUrl}
+          <!-- svelte-ignore a11y_label_has_associated_control -->
+          <label>source</label>
+          <a class="source-url" href={texture.sourceUrl} target="_blank" rel="noreferrer noopener">
+            {texture.sourceUrl}
+          </a>
         {/if}
       </div>
     </div>
@@ -101,9 +150,14 @@
           </div>
         {/if}
       </div>
+      {#if isEdit}
+        <button class="footer-button delete" onclick={handleDelete} disabled={status?.type === 'loading'}>
+          delete
+        </button>
+      {/if}
       <button class="footer-button" onclick={onclose}>cancel</button>
       <button class="footer-button" onclick={handleSubmit} disabled={status?.type === 'loading'}>
-        {#if status?.type === 'loading'}loading...{:else}submit{/if}
+        {#if status?.type === 'loading'}loading...{:else if isEdit}save{:else}submit{/if}
       </button>
     </div>
   </div>
@@ -149,13 +203,23 @@
     text-align: right;
   }
   input[type='text'],
-  input[type='file'] {
+  input[type='file'],
+  textarea {
     background-color: #1a1a1a;
     color: #eee;
     border: 1px solid #444;
     padding: 4px 6px;
     font-size: 12px;
     font-family: inherit;
+  }
+  textarea {
+    resize: vertical;
+    align-self: start;
+  }
+  .source-url {
+    font-size: 11px;
+    color: #7ab;
+    overflow-wrap: anywhere;
   }
   .toggle-group {
     display: flex;
@@ -190,5 +254,8 @@
   }
   .status.error {
     color: red;
+  }
+  .footer-button.delete:hover {
+    background: #5a2020;
   }
 </style>

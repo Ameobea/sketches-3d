@@ -90,6 +90,7 @@
       author_username: '_transient',
       title: '_transient',
       description: '',
+      tags: [],
       created_at: now,
       updated_at: now,
       is_shared: false,

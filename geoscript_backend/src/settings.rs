@@ -32,7 +32,8 @@ pub struct ServerSettings {
   pub port: u16,
   pub admin_token: String,
   /// Token authorizing transient-render requests for the CLI / agent tooling.
-  /// Distinct from `admin_token` so the LLM-facing workflow doesn't need the full admin credential.
+  /// Distinct from `admin_token` so the LLM-facing workflow doesn't need the full admin
+  /// credential.
   pub cli_token: String,
   #[serde(default = "default_usize::<524288000>")]
   pub max_body_size_bytes: usize,

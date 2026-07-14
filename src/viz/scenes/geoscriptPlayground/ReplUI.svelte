@@ -219,6 +219,7 @@
       me: userData.me,
       renderMode: userData.renderMode,
     };
+    const forkedFrom = userData?.initialComposition?.comp;
     await saveNewVersion(
       newComp,
       treeState.serialize(),
@@ -226,9 +227,12 @@
       materialDefinitions,
       preludeEjected,
       environment,
-      userData?.initialComposition?.comp?.title ?? 'untitled (fork)',
-      userData?.initialComposition?.comp?.description ?? '',
-      userData?.initialComposition?.comp?.is_shared ?? false,
+      {
+        title: forkedFrom?.title ?? 'untitled (fork)',
+        description: forkedFrom?.description ?? '',
+        isShared: forkedFrom?.is_shared ?? false,
+        tags: forkedFrom?.tags ?? [],
+      },
       newUserData
     );
     userData = newUserData;

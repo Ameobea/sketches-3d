@@ -37,6 +37,7 @@ export interface Composition {
   updated_at: string;
   is_shared: boolean;
   is_featured: boolean;
+  tags: string[];
 }
 
 /** Scene-wide image-based lighting (IBL). */
@@ -139,6 +140,7 @@ export interface CreateComposition {
   tree: TreeDef;
   is_shared: boolean;
   metadata: CompositionVersionMetadata;
+  tags?: string[];
 }
 
 export interface CreateCompositionVersion {
@@ -357,6 +359,7 @@ export interface UpdateCompositionPatch {
   title?: string;
   description?: string;
   is_shared?: boolean;
+  tags?: string[];
 }
 
 export const updateComposition = (
@@ -427,12 +430,38 @@ export type TextureID = number;
 export interface TextureDescriptor {
   id: TextureID;
   name: string;
+  description: string;
   thumbnailUrl: string;
   url: string;
+  /** Where the texture was downloaded from, if it was created via `createTextureFromURL`. */
+  sourceUrl: string | null;
   ownerId: number;
   ownerName: string;
   createdAt: string;
+  isShared: boolean;
+  tags: string[];
 }
+
+/** Metadata common to both texture-creation paths; sent as query params. */
+export interface CreateTextureMeta {
+  name: string;
+  description?: string;
+  isShared: boolean;
+  tags?: string[];
+}
+
+const createTextureParams = ({ name, description, isShared, tags }: CreateTextureMeta): string => {
+  const searchParams = new URLSearchParams();
+  searchParams.set('name', name);
+  searchParams.set('is_shared', isShared.toString());
+  if (description) {
+    searchParams.set('description', description);
+  }
+  for (const tag of tags ?? []) {
+    searchParams.append('tag', tag);
+  }
+  return searchParams.toString();
+};
 
 export const listTextures = (
   fetch: typeof globalThis.fetch = globalThis.fetch
@@ -444,44 +473,51 @@ export const getTexture = (
 ): Promise<TextureDescriptor> => apiFetch<TextureDescriptor>(`/textures/${id}`, {}, fetch);
 
 export const createTexture = (
-  name: string,
+  meta: CreateTextureMeta,
   file: File,
-  is_shared: boolean,
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<TextureDescriptor> => {
-  const searchParams = new URLSearchParams();
-  searchParams.set('name', name);
-  searchParams.set('is_shared', is_shared.toString());
-
-  return apiFetch<TextureDescriptor>(
-    `/textures?${searchParams.toString()}`,
+): Promise<TextureDescriptor> =>
+  apiFetch<TextureDescriptor>(
+    `/textures?${createTextureParams(meta)}`,
     {
       method: 'POST',
       body: file,
     },
     fetch
   );
-};
 
 export const createTextureFromURL = (
-  name: string,
+  meta: CreateTextureMeta,
   url: string,
-  is_shared: boolean,
   fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<TextureDescriptor> => {
-  const searchParams = new URLSearchParams();
-  searchParams.set('name', name);
-  searchParams.set('is_shared', is_shared.toString());
-
-  return apiFetch<TextureDescriptor>(
-    `/textures/from_url?${searchParams.toString()}`,
+): Promise<TextureDescriptor> =>
+  apiFetch<TextureDescriptor>(
+    `/textures/from_url?${createTextureParams(meta)}`,
     {
       method: 'POST',
       body: JSON.stringify({ url }),
     },
     fetch
   );
-};
+
+export const updateTexture = (
+  id: TextureID,
+  patch: Partial<{ name: string; description: string; isShared: boolean; tags: string[] }>,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<TextureDescriptor> =>
+  apiFetch<TextureDescriptor>(
+    `/textures/${id}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+    fetch
+  );
+
+export const deleteTexture = (
+  id: TextureID,
+  fetch: typeof globalThis.fetch = globalThis.fetch
+): Promise<void> => apiFetch<void>(`/textures/${id}`, { method: 'DELETE' }, fetch);
 
 export const getMultipleTextures = (
   ids: TextureID[],
@@ -512,6 +548,7 @@ export const listMaterials = (
 export const createMaterial = (
   def: MaterialDef,
   isShared: boolean,
+  { description, tags }: { description?: string; tags?: string[] } = {},
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<MaterialDescriptor> =>
   apiFetch<MaterialDescriptor>(
@@ -520,8 +557,10 @@ export const createMaterial = (
       method: 'POST',
       body: JSON.stringify({
         name: def.name,
+        description,
         materialDefinition: def,
         isShared,
+        tags,
       }),
       headers: { 'Content-Type': 'application/json' },
     },
@@ -546,8 +585,10 @@ export const updateMaterial = (
   id: number,
   body: Partial<{
     name: string;
+    description: string;
     materialDefinition: MaterialDef;
     isShared: boolean;
+    tags: string[];
   }>,
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<MaterialDescriptor> =>
