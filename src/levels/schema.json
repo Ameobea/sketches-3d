@@ -996,6 +996,26 @@
                           "properties": {
                             "type": {
                               "type": "string",
+                              "const": "sampler2D"
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "vertex": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
                               "const": "int"
                             },
                             "value": {
@@ -1935,6 +1955,37 @@
                         "value"
                       ],
                       "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "spline"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }
@@ -2203,6 +2254,37 @@
                             "scale"
                           ],
                           "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "spline"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
                         }
                       },
                       "required": [
@@ -2553,6 +2635,37 @@
                         "value"
                       ],
                       "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "spline"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }
@@ -2882,6 +2995,37 @@
                             "scale"
                           ],
                           "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "spline"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
                         }
                       },
                       "required": [
@@ -4583,6 +4727,37 @@
                                 "scale"
                               ],
                               "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "spline"
+                            },
+                            "value": {
+                              "type": "array",
+                              "items": {
+                                "type": "array",
+                                "items": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "number"
+                                  }
+                                ]
+                              }
                             }
                           },
                           "required": [

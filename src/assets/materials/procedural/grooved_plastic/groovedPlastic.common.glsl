@@ -94,10 +94,7 @@ float gpSeamCarve(float b) {
 
 // AA'd seam visibility as (chamfer, gap) profiles, for the color + attenuation slots.
 vec2 gpSeamVis(float b, float aa) {
-  float mid = GP_HAIR_HW + 0.5 * GP_HAIR_WALL;
-  float w = max(0.5 * GP_HAIR_WALL, aa);
-  float chamfer = 1. - smoothstep(0., GP_SEAM_W, b);
-  float hair = 1. - smoothstep(mid - w, mid + w, b);
   // Isolated lines at the cell boundary: dissolve as they go sub-pixel.
-  return vec2(aaThinFeature(chamfer, aa, 2. * GP_SEAM_W), aaThinFeature(hair, aa, 2. * mid));
+  float chamfer = aaThinFeature(1. - smoothstep(0., GP_SEAM_W, b), aa, 2. * GP_SEAM_W);
+  return vec2(chamfer, aaLine(b, GP_HAIR_HW, GP_HAIR_WALL, aa));
 }

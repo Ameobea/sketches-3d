@@ -5,17 +5,11 @@
 // the marcher's first sample terminates over almost the whole surface. A glossy
 // tile / matte grout roughness split plus valley AO give the wet liminal-pool
 // read. AA is anisotropic: every slot filters the two grout-line families
-// against a per-axis pattern-space footprint from ptAA().
+// against a per-axis pattern-space footprint from patAA().
 
 // Overridable via `shaders.constants`, for swept/unwrapped meshes where world
 // projection smears. UV mode reads the base-surface vUv, so the carve is constant
 // along the view ray — no parallax slide; the relief reads as surface-painted.
-#ifndef PT_UV_MODE
-#define PT_UV_MODE 0 // 0 = world-space dominant-axis projection, 1 = mesh-UV pattern space
-#endif
-#ifndef PT_UV_SCALE
-#define PT_UV_SCALE vec2(1.0) // tiles per vUv unit along each axis (PT_UV_MODE == 1)
-#endif
 
 const float PT_CELL = 1.0; // tile pitch
 
@@ -34,33 +28,6 @@ const float PT_AO_GROUT     = 0.55; // indirect mul in the valley
 const float PT_DIRECT_GROUT = 0.7;  // direct mul in the valley
 
 const float PT_GROUT_DUTY = 2. * PT_GROUT_HW / PT_CELL; // one line family's area mean
-
-// Pattern-space projection: dominant-axis into 2D (Y→xz, X→zy, Z→xy) like the other
-// POM materials, or scaled mesh UV under PT_UV_MODE.
-vec2 ptProjectUV(vec3 pos, vec3 axisNormal) {
-#if PT_UV_MODE == 1
-  return vUv * PT_UV_SCALE;
-#else
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-#endif
-}
-
-// Per-axis pixel footprint in pattern units. Pattern space == world space under the
-// dominant-axis projection; under PT_UV_MODE it's the anisotropic screen-derivative
-// UV footprint scaled into pattern space.
-vec2 ptAA() {
-#if PT_UV_MODE == 1
-  return aaUvFootprint * PT_UV_SCALE;
-#else
-  return vec2(aaWorldFootprint);
-#endif
-}
 
 // Signed cell-local coords `cl` + per-axis distance to the nearest cell boundary.
 vec2 ptBoundaryDist(vec2 uv, out vec2 cl) {
@@ -94,6 +61,6 @@ float ptValleyVis(vec2 bd, vec2 aa) {
 // Relief collapse keyed to the bevel width on the carving (nearest-boundary) axis —
 // the denser screen-space axis flattens first.
 float ptReliefFade(vec2 bd) {
-  vec2 aa = ptAA();
+  vec2 aa = patAA();
   return reliefAAFade(bd.x <= bd.y ? aa.x : aa.y, PT_BEVEL_W);
 }

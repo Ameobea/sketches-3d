@@ -133,7 +133,10 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   return options;
 };
 
-const resolveCustomUniforms = (json: Record<string, CustomUniformJson>): Record<string, CustomUniformDef> => {
+const resolveCustomUniforms = (
+  json: Record<string, CustomUniformJson>,
+  textures: ReadonlyMap<string, THREE.Texture>
+): Record<string, CustomUniformDef> => {
   const out: Record<string, CustomUniformDef> = {};
   for (const [name, def] of Object.entries(json)) {
     const { vertex } = def;
@@ -142,6 +145,14 @@ const resolveCustomUniforms = (json: Record<string, CustomUniformJson>): Record<
       case 'int':
         out[name] = { type: def.type, value: def.value, vertex };
         break;
+      case 'sampler2D': {
+        const tex = textures.get(def.value);
+        if (!tex) {
+          throw new Error(`custom uniform "${name}": texture "${def.value}" not found in registry`);
+        }
+        out[name] = { type: 'sampler2D', value: tex, vertex };
+        break;
+      }
       case 'vec2':
         out[name] = { type: 'vec2', value: new THREE.Vector2().fromArray(def.value), vertex };
         break;
@@ -162,7 +173,10 @@ const resolveCustomUniforms = (json: Record<string, CustomUniformJson>): Record<
   return out;
 };
 
-const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShaders => {
+const resolveShaderShaders = (
+  shadersJson: ShaderShadersJson,
+  textures: ReadonlyMap<string, THREE.Texture>
+): CustomShaderShaders => {
   const shaders: CustomShaderShaders = {};
   copyDefined(shaders, shadersJson, [
     'customVertexFragment',
@@ -184,7 +198,7 @@ const resolveShaderShaders = (shadersJson: ShaderShadersJson): CustomShaderShade
     'constants',
   ]);
   if (shadersJson.customUniforms !== undefined)
-    shaders.customUniforms = resolveCustomUniforms(shadersJson.customUniforms);
+    shaders.customUniforms = resolveCustomUniforms(shadersJson.customUniforms, textures);
   return shaders;
 };
 
@@ -218,7 +232,7 @@ export const buildMaterial = (
 ): THREE.Material => {
   if (matDef.type === 'customShader') {
     const props = matDef.props ? resolveShaderProps(matDef.props, textures) : {};
-    const shaders = matDef.shaders ? resolveShaderShaders(matDef.shaders) : {};
+    const shaders = matDef.shaders ? resolveShaderShaders(matDef.shaders, textures) : {};
     const options = matDef.options ? resolveShaderOptions(matDef.options) : {};
     if (matDef.nonPermeable) {
       options.noOcclusion = true;

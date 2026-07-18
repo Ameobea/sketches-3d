@@ -84,6 +84,11 @@
         ]
       },
       "_meta": { "runtimeMs": 32.5, "count": 5, "codeHash": "c17961", "asyncDeps": [ "cgal" ] }
+    },
+    "corrugated_pipe": {
+      "type": "geoscript",
+      "file": "geo/corrugated_pipe.geo",
+      "_meta": { "runtimeMs": 129.7, "count": 5, "codeHash": "7ab8fbf3", "asyncDeps": [ "cgal" ] }
     }
   },
   "environment": {

@@ -77,3 +77,73 @@ float aaThinFeature(float coverage, float aa, float featureWidth) {
 float reliefAAFade(float aa, float featureWidth) {
   return 1. - smoothstep(AA_RELIEF_LO * featureWidth, AA_RELIEF_HI * featureWidth, aa);
 }
+
+// Coverage of one isolated dark line: a floor of half-width `floorHW` with
+// `wallW`-wide ramps, footprint-widened, then dissolved to zero as `fadeWidth`
+// goes sub-pixel. `offset` = |distance to the line's centerline|. The repeating-
+// pattern analog is aaSlot. Key `fadeWidth` to the full joint width (not the
+// line's own tiny width) so the line persists as long as the joint resolves.
+float aaLine(float offset, float floorHW, float wallW, float fadeWidth, float aa) {
+  float mid = floorHW + 0.5 * wallW;
+  float w = max(0.5 * wallW, aa);
+  return aaThinFeature(1. - smoothstep(mid - w, mid + w, offset), aa, fadeWidth);
+}
+
+// As above with the fade self-keyed to the line's own full width — the common case.
+float aaLine(float offset, float floorHW, float wallW, float aa) {
+  return aaLine(offset, floorHW, wallW, 2. * floorHW + wallW, aa);
+}
+
+// Dominant-axis projection (Y→xz, X→zy, Z→xy) shared by the world-space
+// materials and the POM marcher; `domUnproject` maps in-plane (depth-free)
+// vectors — e.g. a pattern-space gradient — back to world.
+int domAxis(vec3 n) {
+  vec3 a = abs(n);
+  if (a.y >= a.x && a.y >= a.z) { return 1; }
+  if (a.x >= a.z) { return 0; }
+  return 2;
+}
+
+vec2 domProject(vec3 p, int axis) {
+  if (axis == 1) { return p.xz; }
+  if (axis == 0) { return vec2(p.z, p.y); }
+  return vec2(p.x, p.y);
+}
+
+vec3 domUnproject(vec2 v, int axis) {
+  if (axis == 1) { return vec3(v.x, 0., v.y); }
+  if (axis == 0) { return vec3(0., v.y, v.x); }
+  return vec3(v.x, v.y, 0.);
+}
+
+// smoothstep paired with its derivative d/dx, so a profile's height and normal share one
+// definition instead of hand-transcribing the 6t(1-t) slope. .x = value, .y = slope.
+vec2 smoothstepVS(float e0, float e1, float x) {
+  float t = clamp((x - e0) / (e1 - e0), 0., 1.);
+  return vec2(t * t * (3. - 2. * t), 6. * t * (1. - t) / (e1 - e0));
+}
+
+// ---- Anisotropy-aware directional footprints --------------------------------
+// `aaWorldFootprint`/`ctx.aaFootprint` carry the footprint ellipse's MAJOR axis,
+// so an isolated line viewed along its own length over-fades at grazing — the
+// 1/NdotV stretch runs along the line while the across-line footprint stays
+// ≈ 1px. These instead project the ellipse (minor ≈ unitsPerPx, major stretched
+// 1/NdotV along the tangential view direction) onto a chosen direction: pass the
+// across-feature direction so a line's darkening survives until its true width
+// goes sub-pixel. Scale the result to tune fade reach (× 0.4 reads well for tile
+// joints — a little shimmer traded for detail persisting further out).
+float aaDirFootprint(vec3 d) {
+  vec3 n = normalize(vWorldNormal);
+  vec3 v = vWorldPos - cameraPosition;
+  float dist = max(length(v), 1e-4);
+  v /= dist;
+  float q = dot(d, v - dot(v, n) * n) / max(abs(dot(n, v)), 0.1);
+  return dist * unitsPerPxScale * sqrt(1. + q * q);
+}
+
+// As aaDirFootprint for a pattern-space direction under the dominant-axis
+// projection; UV-mode materials should map their direction through
+// uvFrameT/uvFrameB and call aaDirFootprint directly.
+float aaPatternDirFootprint(vec2 dp) {
+  return aaDirFootprint(domUnproject(dp, domAxis(vWorldNormal)));
+}

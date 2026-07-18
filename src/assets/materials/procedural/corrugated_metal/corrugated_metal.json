@@ -1,0 +1,33 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#4c4a50",
+      "roughness": 0.5,
+      "metalness": 0,
+      "envMapIntensity": 1.1
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.06,
+        "steps": 8,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 3,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "corrugatedMetal.common.glsl" },
+      "colorShader": { "file": "corrugatedMetal.color.glsl" },
+      "roughnessShader": { "file": "corrugatedMetal.roughness.glsl" },
+      "lightAttenuationShader": { "file": "corrugatedMetal.attenuation.glsl" },
+      "pomHeightShader": { "file": "corrugatedMetal.height.glsl" },
+      "pomNormalShader": { "file": "corrugatedMetal.normal.glsl" }
+    }
+  }
+}

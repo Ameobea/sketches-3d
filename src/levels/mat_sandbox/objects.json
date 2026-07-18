@@ -398,6 +398,46 @@
       "position": [-100, 3, 40],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "ribbed_tiles_wall",
+      "asset": "plat",
+      "material": "__ASSETS__/materials/procedural/ribbed_tiles",
+      "position": [33, 7.7, 50],
+      "rotation": [-1.5708, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "plat_2",
+      "asset": "plat",
+      "position": [48.9705, 8.2, -59.6407],
+      "rotation": [0, 0, 0],
+      "scale": [1.7097, 1, 1.7097],
+      "material": "__ASSETS__/materials/procedural/ribbed_tiles"
+    },
+    {
+      "id": "corrugated_metal_wall",
+      "asset": "plat",
+      "material": "__ASSETS__/materials/procedural/corrugated_metal",
+      "position": [55, 7.7, 50],
+      "rotation": [-1.5708, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "corrugated_pipe_demo",
+      "asset": "corrugated_pipe",
+      "material": "corrugated_metal_rings",
+      "position": [55, 3, 44],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "copper_tiles_wall",
+      "asset": "plat",
+      "material": "__ASSETS__/materials/procedural/copper_tiles",
+      "position": [84.9698, 18.3705, 55.941],
+      "rotation": [-1.1171, 0, 0.0733],
+      "scale": [1.7141, 1, 1]
     }
   ]
 }

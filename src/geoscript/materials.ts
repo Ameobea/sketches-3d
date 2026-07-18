@@ -96,6 +96,27 @@ const maybeLoadPomHeightTexture = (
 
 const EMPTY_TEXTURES: ReadonlyMap<string, THREE.Texture> = new Map();
 
+/* sampler2D custom uniforms in geotoy-format defs hold direct URLs (no textures registry);
+ * loaded with repeat wrap + trilinear mips and registered under the URL itself as the key. */
+const LoadedUrlTextures: Map<string, Promise<THREE.Texture> | THREE.Texture> = new Map();
+
+const loadUrlTexture = (
+  loader: THREE.ImageBitmapLoader,
+  url: string
+): Promise<THREE.Texture> | THREE.Texture => {
+  const cached = LoadedUrlTextures.get(url);
+  if (cached) {
+    return cached;
+  }
+  const texP = loadTexture(loader, url, {
+    magFilter: THREE.LinearFilter,
+    minFilter: THREE.LinearMipmapLinearFilter,
+  });
+  texP.then(tex => LoadedUrlTextures.set(url, tex));
+  LoadedUrlTextures.set(url, texP);
+  return texP;
+};
+
 export const buildMaterial = (
   loader: THREE.ImageBitmapLoader,
   def: MaterialDef,
@@ -118,15 +139,23 @@ export const buildMaterial = (
   const clearcoatNormalMapP = maybeLoadTexture(loader, p.clearcoatNormalMap);
   const pomHeightMapP = maybeLoadPomHeightTexture(loader, p.pomHeightMap);
 
+  const uniformTexUrls = Object.values(def.shaders?.customUniforms ?? {}).flatMap(u =>
+    u.type === 'sampler2D' && /^https?:\/\//.test(u.value) ? [u.value] : []
+  );
+  const uniformTexPs = uniformTexUrls.map(url => loadUrlTexture(loader, url));
+
   type Tex = THREE.Texture | undefined;
-  const finish = (r: {
-    map: Tex;
-    normalMap: Tex;
-    roughnessMap: Tex;
-    metalnessMap: Tex;
-    clearcoatNormalMap: Tex;
-    pomHeightMap: Tex;
-  }): THREE.Material => {
+  const finish = (
+    r: {
+      map: Tex;
+      normalMap: Tex;
+      roughnessMap: Tex;
+      metalnessMap: Tex;
+      clearcoatNormalMap: Tex;
+      pomHeightMap: Tex;
+    },
+    uniformTexs: THREE.Texture[]
+  ): THREE.Material => {
     const textures = new Map<string, THREE.Texture>();
     const put = (handle: string | undefined, tex: Tex, srgb = false) => {
       if (handle != null && tex) {
@@ -140,6 +169,7 @@ export const buildMaterial = (
     put(p.metalnessMap, r.metalnessMap);
     put(p.clearcoatNormalMap, r.clearcoatNormalMap);
     put(p.pomHeightMap, r.pomHeightMap);
+    uniformTexUrls.forEach((url, i) => textures.set(url, uniformTexs[i]));
     const mat = buildSharedMaterial(def, textures);
     mat.name = id;
     return mat;
@@ -153,19 +183,22 @@ export const buildMaterial = (
     clearcoatNormalMapP,
     pomHeightMapP,
   ] as const;
-  if (slotsP.every(v => !(v instanceof Promise))) {
-    return finish({
-      map: mapP as Tex,
-      normalMap: normalMapP as Tex,
-      roughnessMap: roughnessMapP as Tex,
-      metalnessMap: metalnessMapP as Tex,
-      clearcoatNormalMap: clearcoatNormalMapP as Tex,
-      pomHeightMap: pomHeightMapP as Tex,
-    });
+  if ([...slotsP, ...uniformTexPs].every(v => !(v instanceof Promise))) {
+    return finish(
+      {
+        map: mapP as Tex,
+        normalMap: normalMapP as Tex,
+        roughnessMap: roughnessMapP as Tex,
+        metalnessMap: metalnessMapP as Tex,
+        clearcoatNormalMap: clearcoatNormalMapP as Tex,
+        pomHeightMap: pomHeightMapP as Tex,
+      },
+      uniformTexPs as THREE.Texture[]
+    );
   }
-  return Promise.all(slotsP).then(
-    ([map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap]) =>
-      finish({ map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap })
+  return Promise.all([Promise.all(slotsP), Promise.all(uniformTexPs)]).then(
+    ([[map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap], uniformTexs]) =>
+      finish({ map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap }, uniformTexs)
   );
 };
 

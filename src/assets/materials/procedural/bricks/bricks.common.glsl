@@ -7,15 +7,9 @@
 // filters the two joint-line families against a per-axis pattern-space footprint.
 
 // Overridable knobs (#ifndef defaults, replaceable per-instance via shaders.constants).
-// NB: the grime/grain fbm domains aren't wrap-periodic, so BR_UV_MODE on a closed
+// NB: the grime/grain fbm domains aren't wrap-periodic, so PAT_UV_MODE on a closed
 // sweep will show a soot seam at the v-wrap (cf. moulding's cylinder-embedded grain
 // for the fix pattern if that use case matters).
-#ifndef BR_UV_MODE
-#define BR_UV_MODE 0 // 0 = world-space dominant-axis projection, 1 = mesh-UV pattern space
-#endif
-#ifndef BR_UV_SCALE
-#define BR_UV_SCALE vec2(1.0) // pattern units per vUv unit (BR_UV_MODE == 1)
-#endif
 #ifndef BR_CELL
 #define BR_CELL vec2(2.0, 1.0) // brick pitch (width, height)
 #endif
@@ -83,31 +77,6 @@
 const float BR_EDGE_W = BR_JOINT_HW + BR_BEVEL_W; // carve nonzero only within this of a boundary
 const vec2 BR_DUTY = 2. * BR_JOINT_HW / BR_CELL; // per-family joint area means
 
-// Pattern-space projection: dominant-axis into 2D (Y→xz, X→zy, Z→xy) like the other
-// POM materials, or scaled mesh UV under BR_UV_MODE.
-vec2 brProjectUV(vec3 pos, vec3 axisNormal) {
-#if BR_UV_MODE == 1
-  return vUv * BR_UV_SCALE;
-#else
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y);
-  }
-  return vec2(pos.x, pos.y);
-#endif
-}
-
-// Per-axis pixel footprint in pattern units.
-vec2 brAA() {
-#if BR_UV_MODE == 1
-  return aaUvFootprint * BR_UV_SCALE;
-#else
-  return vec2(aaWorldFootprint);
-#endif
-}
-
 // Running-bond cell: brickId for hashing, signed cell-local coords `cl`, and the
 // per-axis distance to the nearest joint centerline.
 vec2 brCellField(vec2 uv, out vec2 brickId, out vec2 cl) {
@@ -142,7 +111,7 @@ float brJointVis(vec2 bd, vec2 aa) {
 
 // Relief collapse keyed to the bevel width on the carving (nearest-joint) axis.
 float brReliefFade(vec2 bd) {
-  vec2 aa = brAA();
+  vec2 aa = patAA();
   return reliefAAFade(bd.x <= bd.y ? aa.x : aa.y, BR_BEVEL_W);
 }
 

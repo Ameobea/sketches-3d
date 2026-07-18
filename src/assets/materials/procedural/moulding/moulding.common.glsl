@@ -4,20 +4,11 @@
 // bottom edges, arriving while the flutes' rounded caps still have height so the
 // caps emerge through them as scallops; rows are separated by a deeper gap. Carve
 // and its gradient come from one function (mdCarveG) so the height and normal
-// slots can't drift apart. UV mode (MD_UV_MODE) reads mesh UVs for rail_sweep-style
+// slots can't drift apart. UV mode (PAT_UV_MODE) reads mesh UVs for rail_sweep-style
 // trim: with the default MD_ROW_PITCH of 1 the rows tile seamlessly across the
 // normalized v-wrap. Like pool_tiles UV mode, the carve is then constant along the
 // view ray — relief reads as surface-painted, shaded by the relief normal.
 
-#ifndef MD_UV_MODE
-#define MD_UV_MODE 0 // 0 = world-space dominant-axis projection, 1 = mesh-UV pattern space
-#endif
-#ifndef MD_UV_SCALE
-#define MD_UV_SCALE vec2(1.0) // pattern units per vUv unit (MD_UV_MODE == 1)
-#endif
-#ifndef MD_OFFSET
-#define MD_OFFSET vec2(0.0) // pattern-space shift, for aligning rows to geometry
-#endif
 #ifndef MD_ROW_PITCH
 #define MD_ROW_PITCH 1.0 // row spacing (pattern v period)
 #endif
@@ -73,31 +64,7 @@ const float MD_CAP_R1 = MD_FLUTE_HL + 1.05 * MD_R; // …wedges reach the cap ti
 const float MD_GAP_RAMP = 0.05 * MD_ROW_PITCH;
 // UV mode: noise-cylinder radius matching the grain's v frequency, so the wrap arc
 // length equals the planar domain span (grain density preserved, seam-free).
-const float MD_GRAIN_CYL_R = MD_UV_SCALE.y * MD_GRAIN_SCALE.y / 6.2832;
-
-// Pattern-space projection + alignment offset (dual-mode, cf. pool_tiles).
-vec2 mdProjectUV(vec3 pos, vec3 axisNormal) {
-#if MD_UV_MODE == 1
-  return vUv * MD_UV_SCALE - MD_OFFSET;
-#else
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz - MD_OFFSET;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y) - MD_OFFSET;
-  }
-  return vec2(pos.x, pos.y) - MD_OFFSET;
-#endif
-}
-
-// Per-axis pixel footprint in pattern units.
-vec2 mdAA() {
-#if MD_UV_MODE == 1
-  return aaUvFootprint * MD_UV_SCALE;
-#else
-  return vec2(aaWorldFootprint);
-#endif
-}
+const float MD_GRAIN_CYL_R = PAT_UV_SCALE.y * MD_GRAIN_SCALE.y / 6.2832;
 
 // smoothstep value + slope (the grid-tier lib isn't included for L0 materials).
 vec2 mdSSVS(float e0, float e1, float x) {
@@ -112,7 +79,7 @@ vec2 mdSSVS(float e0, float e1, float x) {
 float mdKeep = -1.;
 float mdKeepF() {
   if (mdKeep < 0.) {
-    mdKeep = reliefAAFade(mdAA().x, 0.5 * MD_R);
+    mdKeep = reliefAAFade(patAA().x, 0.5 * MD_R);
   }
   return mdKeep;
 }
@@ -164,7 +131,7 @@ vec2 mdCarveGrad(vec2 p) {
       return dcdd * gd;
     }
   }
-  return vec2(0., dBase * sv * reliefAAFade(mdAA().y, MD_GAP_RAMP));
+  return vec2(0., dBase * sv * reliefAAFade(patAA().y, MD_GAP_RAMP));
 }
 
 // AA'd recess coverage [0,1] shared by color/roughness/attenuation, from the SHARP

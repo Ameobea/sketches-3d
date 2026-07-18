@@ -3,10 +3,10 @@
 // soot patches over everything — grime sits on blocks and joints alike. Per-brick
 // jitter fades with footprint so subpixel bricks don't shimmer.
 vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
-  vec2 uv = brProjectUV(pos, vWorldNormal);
+  vec2 uv = patProjectUV(pos, vWorldNormal);
   vec2 brickId, cl;
   vec2 bd = brCellField(uv, brickId, cl);
-  vec2 aa = brAA();
+  vec2 aa = patAA();
   float aaS = max(aa.x, aa.y);
 
   float keep = 1. - fadeToMeanFactor(aaS, min(BR_CELL.x, BR_CELL.y));

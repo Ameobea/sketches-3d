@@ -488,9 +488,14 @@ export const loadLevelDef = (
   const matAssignedCbs = new Map<string, (mesh: THREE.Mesh) => void>();
   const getTextureRefsForMaterial = (matName: string): string[] => {
     const def = levelDef.materials?.[matName];
-    if (!def || def.type !== 'customShader' || !def.props) return [];
-    const p = def.props;
-    return TEXTURE_SLOTS.map(slot => p[slot]).filter((x): x is string => typeof x === 'string');
+    if (!def || def.type !== 'customShader') return [];
+    const refs = TEXTURE_SLOTS.map(slot => def.props?.[slot]).filter(
+      (x): x is string => typeof x === 'string'
+    );
+    for (const u of Object.values(def.shaders?.customUniforms ?? {})) {
+      if (u.type === 'sampler2D') refs.push(u.value);
+    }
+    return refs;
   };
 
   for (const matName of Object.keys(levelDef.materials ?? {})) {

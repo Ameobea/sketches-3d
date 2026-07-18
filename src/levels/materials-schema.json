@@ -992,6 +992,26 @@
                           "properties": {
                             "type": {
                               "type": "string",
+                              "const": "sampler2D"
+                            },
+                            "value": {
+                              "type": "string"
+                            },
+                            "vertex": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
                               "const": "int"
                             },
                             "value": {

@@ -2,8 +2,8 @@
 // on the shape SDF (uniform across shapes, cf. pit_grid) and analytic for the
 // 1-D groove. The branch whose carve wins the height max() supplies the gradient.
 vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa_) {
-  vec2 p = ssCellLocal(ssProjectUV(pos, N));
-  vec2 aa = ssAA();
+  vec2 p = ssCellLocal(patProjectUV(pos, N));
+  vec2 aa = patAA();
 
   float dS = ssShapeSdf(p);
   vec2 cS = ssCarveVS(dS, SS_DEPTH);
@@ -27,19 +27,6 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa_) {
   }
 #endif
 
-#if SS_UV_MODE == 1
-  vec3 gw = depth * (gradUV.x * uvFrameT + gradUV.y * uvFrameB);
-#else
-  vec3 na = abs(N);
-  vec3 gradW;
-  if (na.y >= na.x && na.y >= na.z) {
-    gradW = vec3(gradUV.x, 0., gradUV.y);
-  } else if (na.x >= na.z) {
-    gradW = vec3(0., gradUV.y, gradUV.x);
-  } else {
-    gradW = vec3(gradUV.x, gradUV.y, 0.);
-  }
-  vec3 gw = depth * gradW;
-#endif
+  vec3 gw = depth * patGradToWorld(gradUV, N);
   return normalize(N + (gw - dot(gw, N) * N));
 }

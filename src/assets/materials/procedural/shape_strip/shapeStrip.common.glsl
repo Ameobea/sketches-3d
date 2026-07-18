@@ -3,7 +3,7 @@
 // centered on the row's centerline, with optional thin grooves running the full
 // span along each row's top and bottom edges. Shapes are the pit_grid SDF set
 // (square / diamond / triangle / trapezoid) with the same smoothed-lip carve.
-// UV mode (SS_UV_MODE) reads mesh UVs for rail_sweep-style trim; the default
+// UV mode (PAT_UV_MODE) reads mesh UVs for rail_sweep-style trim; the default
 // SS_ROW_PITCH of 1 tiles seamlessly across the normalized v-wrap. NB: with
 // SS_STAGGER the pattern's v period doubles, so a seamless wrap needs an even
 // number of rows per wrap.
@@ -16,15 +16,6 @@
 #endif
 #ifndef SS_GROOVE
 #define SS_GROOVE 1 // 1 = horizontal groove along each row edge, running the full span
-#endif
-#ifndef SS_UV_MODE
-#define SS_UV_MODE 0 // 0 = world-space dominant-axis projection, 1 = mesh-UV pattern space
-#endif
-#ifndef SS_UV_SCALE
-#define SS_UV_SCALE vec2(1.0) // pattern units per vUv unit (SS_UV_MODE == 1)
-#endif
-#ifndef SS_OFFSET
-#define SS_OFFSET vec2(0.0) // pattern-space shift, for aligning rows to geometry
 #endif
 #ifndef SS_ROW_PITCH
 #define SS_ROW_PITCH 1.0 // row spacing (pattern v period)
@@ -67,30 +58,6 @@
 #endif
 
 const float SS_DUTY_U = min(1., 2. * SS_RADIUS / SS_CELL); // approx shape coverage along a row band
-
-// Pattern-space projection + alignment offset (dual-mode, cf. pool_tiles).
-vec2 ssProjectUV(vec3 pos, vec3 axisNormal) {
-#if SS_UV_MODE == 1
-  return vUv * SS_UV_SCALE - SS_OFFSET;
-#else
-  vec3 a = abs(axisNormal);
-  if (a.y >= a.x && a.y >= a.z) {
-    return pos.xz - SS_OFFSET;
-  } else if (a.x >= a.z) {
-    return vec2(pos.z, pos.y) - SS_OFFSET;
-  }
-  return vec2(pos.x, pos.y) - SS_OFFSET;
-#endif
-}
-
-// Per-axis pixel footprint in pattern units.
-vec2 ssAA() {
-#if SS_UV_MODE == 1
-  return aaUvFootprint * SS_UV_SCALE;
-#else
-  return vec2(aaWorldFootprint);
-#endif
-}
 
 // Row/cell-local coords: x folded to the nearest shape center in the row's run,
 // y signed offset from the row centerline in [-pitch/2, pitch/2].

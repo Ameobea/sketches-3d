@@ -1,0 +1,36 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#8c919a",
+      "roughness": 0.85,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "tier": "grid",
+        "cellPitch": 4,
+        "cellType": "RbCell",
+        "intersect": "safeStep",
+        "minFeatureWidth": 0.05,
+        "depth": 0.05,
+        "steps": 8,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 4,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "commonShader": { "file": "ribbedTiles.common.glsl" },
+      "colorShader": { "file": "ribbedTiles.color.glsl" },
+      "lightAttenuationShader": { "file": "ribbedTiles.attenuation.glsl" },
+      "pomHeightShader": { "file": "ribbedTiles.height.glsl" },
+      "pomNormalShader": { "file": "ribbedTiles.normal.glsl" }
+    }
+  }
+}

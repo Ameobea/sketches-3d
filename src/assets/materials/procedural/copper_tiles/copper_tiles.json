@@ -1,0 +1,42 @@
+{
+  "$schema": "../../../library-material-schema.json",
+  "textures": {
+    "noise": {
+      "url": "https://geotoy.b-cdn.net/textures/21/05d3ad0b-7880-4b94-aacd-5c58bc2cb7ab.avif",
+      "magFilter": "linear",
+      "minFilter": "linearMipLinear"
+    }
+  },
+  "material": {
+    "type": "customShader",
+    "props": {
+      "color": "#9a6b5c",
+      "roughness": 0.5,
+      "metalness": 0
+    },
+    "options": {
+      "useTriplanarMapping": false,
+      "useGeneratedUVs": false,
+      "pom": {
+        "depth": 0.05,
+        "steps": 8,
+        "lodFadeStart": 12,
+        "lodFadeRange": 30,
+        "refinement": "binary",
+        "refinementSteps": 3,
+        "applyReliefNormal": true
+      }
+    },
+    "shaders": {
+      "customUniforms": {
+        "uNoiseTex": { "type": "sampler2D", "value": "noise" }
+      },
+      "commonShader": { "file": "copperTiles.common.glsl" },
+      "colorShader": { "file": "copperTiles.color.glsl" },
+      "roughnessShader": { "file": "copperTiles.roughness.glsl" },
+      "lightAttenuationShader": { "file": "copperTiles.attenuation.glsl" },
+      "pomHeightShader": { "file": "copperTiles.height.glsl" },
+      "pomNormalShader": { "file": "copperTiles.normal.glsl" }
+    }
+  }
+}

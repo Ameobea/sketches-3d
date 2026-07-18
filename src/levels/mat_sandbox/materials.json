@@ -120,11 +120,11 @@
       },
       "shaders": {
         "constants": {
-          "MD_UV_MODE": {
+          "PAT_UV_MODE": {
             "type": "int",
             "value": 1
           },
-          "MD_UV_SCALE": {
+          "PAT_UV_SCALE": {
             "type": "vec2",
             "value": [0.4, 3]
           }
@@ -139,11 +139,11 @@
       },
       "shaders": {
         "constants": {
-          "SS_UV_MODE": {
+          "PAT_UV_MODE": {
             "type": "int",
             "value": 1
           },
-          "SS_UV_SCALE": {
+          "PAT_UV_SCALE": {
             "type": "vec2",
             "value": [0.4, 3]
           },
@@ -254,6 +254,29 @@
       "props": {
         "metalness": 0.9,
         "roughness": 0.2
+      }
+    },
+    "corrugated_metal_rings": {
+      "type": "customShader",
+      "extends": {
+        "type": "library",
+        "path": "procedural/corrugated_metal"
+      },
+      "shaders": {
+        "constants": {
+          "PAT_UV_MODE": {
+            "type": "int",
+            "value": 1
+          },
+          "PAT_AXIS": {
+            "type": "int",
+            "value": 0
+          },
+          "PAT_UV_SCALE": {
+            "type": "vec2",
+            "value": [1, 7.7]
+          }
+        }
       }
     }
   }

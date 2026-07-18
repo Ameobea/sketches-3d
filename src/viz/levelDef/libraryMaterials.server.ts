@@ -51,13 +51,26 @@ const inlineGlsl = (mat: MaterialDefRaw, libFileDir: string): MaterialDefRaw => 
 };
 
 const prefixTextureRefs = (mat: MaterialDefRaw, prefix: string): MaterialDefRaw => {
-  if (mat.type !== 'customShader' || !mat.props) return mat;
-  const props = { ...mat.props };
-  for (const slot of TEXTURE_SLOTS) {
-    const ref = props[slot];
-    if (typeof ref === 'string') props[slot] = `${prefix}/${ref}`;
+  if (mat.type !== 'customShader') return mat;
+  const out = { ...mat };
+  if (mat.props) {
+    const props = { ...mat.props };
+    for (const slot of TEXTURE_SLOTS) {
+      const ref = props[slot];
+      if (typeof ref === 'string') props[slot] = `${prefix}/${ref}`;
+    }
+    out.props = props;
   }
-  return { ...mat, props };
+  if (mat.shaders?.customUniforms) {
+    const customUniforms = Object.fromEntries(
+      Object.entries(mat.shaders.customUniforms).map(([name, def]) => [
+        name,
+        def.type === 'sampler2D' ? { ...def, value: `${prefix}/${def.value}` } : def,
+      ])
+    );
+    out.shaders = { ...mat.shaders, customUniforms };
+  }
+  return out;
 };
 
 const collectLibraryRefs = (value: unknown, out: Set<string>): void => {

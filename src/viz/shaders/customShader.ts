@@ -3,6 +3,7 @@ import { UniformsLib } from 'three';
 
 import commonShaderCode from './common.frag?raw';
 import proceduralMaterialAACode from './proceduralMaterialAA.glsl?raw';
+import proceduralMaterialPatternCode from './proceduralMaterialPattern.glsl?raw';
 import proceduralMaterialGridCode from './proceduralMaterialGrid.glsl?raw';
 import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
 import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
@@ -1930,12 +1931,14 @@ vec2 pomUvWorldScale() {
     : ''
 }
 
-${hasCustomShaderSnippet ? proceduralMaterialAACode : ''}
+${hasCustomShaderSnippet || pomProjected || pomGrid ? proceduralMaterialAACode : ''}
 ${pomProjected || pomGrid ? proceduralMaterialGridCode : ''}
 ${pomGrid ? `#define GRID_PITCH ${cellPitch.toFixed(6)}` : ''}
 ${buildConstantDefines()}
 
 ${buildCustomUniformDecls(false)}
+
+${hasCustomShaderSnippet || pomProjected || pomGrid ? proceduralMaterialPatternCode : ''}
 
 ${commonShader ?? ''}
 

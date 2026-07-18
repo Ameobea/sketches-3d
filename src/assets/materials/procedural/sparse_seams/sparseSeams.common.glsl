@@ -118,11 +118,8 @@ vec2 ssSeamCarveVS(float b) {
 // AA'd seam visibility as (chamfer, gap) coverage for the color + attenuation slots; isolated
 // lines dissolve as they go sub-pixel (keyed to the joint width, not the hair's tiny width).
 vec2 ssSeamVis(float b, float aa) {
-  float mid = SS_HAIR_HW + 0.5 * SS_HAIR_WALL;
-  float w = max(0.5 * SS_HAIR_WALL, aa);
-  float chamfer = 1. - smoothstep(0., SS_SEAM_W, b);
-  float hair = 1. - smoothstep(mid - w, mid + w, b);
-  return vec2(aaThinFeature(chamfer, aa, SS_SEAM_FADE_W), aaThinFeature(hair, aa, SS_SEAM_FADE_W));
+  float chamfer = aaThinFeature(1. - smoothstep(0., SS_SEAM_W, b), aa, SS_SEAM_FADE_W);
+  return vec2(chamfer, aaLine(b, SS_HAIR_HW, SS_HAIR_WALL, SS_SEAM_FADE_W, aa));
 }
 
 // Hull albedo weathering: a smooth anisotropic scratch layer (noise stretched along uv.y) ×

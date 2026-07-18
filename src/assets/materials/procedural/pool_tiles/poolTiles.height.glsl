@@ -4,7 +4,7 @@
 // keep in sync with poolTiles.normal.glsl.
 float getPomHeight(vec3 pos, vec3 normal, float curTimeSeconds) {
   vec2 cl;
-  vec2 bd = ptBoundaryDist(ptProjectUV(pos, normal), cl);
+  vec2 bd = ptBoundaryDist(patProjectUV(pos, normal), cl);
   float b = min(bd.x, bd.y);
   if (b >= PT_EDGE_W) {
     return 0.;

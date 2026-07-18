@@ -41,12 +41,9 @@ vec2 psSeamCarveVS(float b) {
 
 // AA'd seam visibility as (chamfer, gap) profiles, for the color + attenuation slots.
 vec2 psSeamVis(float b, float aa) {
-  float mid = PS_HAIR_HW + 0.5 * PS_HAIR_WALL;
-  float w = max(0.5 * PS_HAIR_WALL, aa);
-  float chamfer = 1. - smoothstep(0., PS_SEAM_W, b);
-  float hair = 1. - smoothstep(mid - w, mid + w, b);
   // Isolated lines at the cell boundary: dissolve as they go sub-pixel. Keyed to
   // the joint width (PS_SEAM_FADE_W), not the hair's own tiny width, so the dark
   // seam line persists as long as the joint is resolvable instead of popping out.
-  return vec2(aaThinFeature(chamfer, aa, PS_SEAM_FADE_W), aaThinFeature(hair, aa, PS_SEAM_FADE_W));
+  float chamfer = aaThinFeature(1. - smoothstep(0., PS_SEAM_W, b), aa, PS_SEAM_FADE_W);
+  return vec2(chamfer, aaLine(b, PS_HAIR_HW, PS_HAIR_WALL, PS_SEAM_FADE_W, aa));
 }

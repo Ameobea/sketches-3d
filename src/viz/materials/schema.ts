@@ -36,12 +36,13 @@ export const ReverseColorRampParamsSchema = z.object({
 });
 
 /**
- * Serializable form of `CustomUniformDef` (see customShader.types). Texture (`sampler2D`)
- * uniforms aren't expressible here — bind those from scene code via the material handle.
+ * Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a
+ * string key into the textures registry (in geotoy-format defs, a direct texture URL).
  * Vector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`).
  */
 export const CustomUniformJsonSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('float'), value: z.number(), vertex: z.boolean().optional() }),
+  z.object({ type: z.literal('sampler2D'), value: z.string(), vertex: z.boolean().optional() }),
   z.object({ type: z.literal('int'), value: z.number().int(), vertex: z.boolean().optional() }),
   z.object({ type: z.literal('vec2'), value: Vec2, vertex: z.boolean().optional() }),
   z.object({ type: z.literal('vec3'), value: Vec3, vertex: z.boolean().optional() }),
