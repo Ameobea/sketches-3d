@@ -214,8 +214,7 @@ impl Sequence for FlattenSeq {
 
 #[derive(Clone, Debug)]
 pub(crate) struct EagerSeq {
-  // TODO: should it be wrapped with `Rc`?
-  pub inner: Vec<Value>,
+  pub inner: Rc<Vec<Value>>,
 }
 
 impl Sequence for EagerSeq {
@@ -223,7 +222,9 @@ impl Sequence for EagerSeq {
     &self,
     _ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
-    Box::new(self.inner.clone().into_iter().map(Ok))
+    // clone elements lazily so short-circuiting consumers don't pay for the whole vec
+    let inner = Rc::clone(&self.inner);
+    Box::new((0..inner.len()).map(move |i| Ok(inner[i].clone())))
   }
 }
 

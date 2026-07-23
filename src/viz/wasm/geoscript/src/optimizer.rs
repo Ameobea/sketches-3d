@@ -10,7 +10,7 @@ use crate::{
     bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
     record_non_const_binding, BinOp, ClosureArg, DestructurePattern, Expr, FunctionCall,
     FunctionCallTarget, MapLiteralEntry, PrefixOp, ScopeTracker, SourceLoc, Statement,
-    TopLevelStatement, TrackedValue, TrackedValueRef,
+    TopLevelStatement, TrackedValue, TrackedValueRef, VarRes,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -302,11 +302,13 @@ fn hash_expr(
       hash_expr(field, hasher, uses, config)
     }
     Expr::Call {
-      call: FunctionCall {
-        target,
-        args,
-        kwargs,
-      },
+      call:
+        FunctionCall {
+          target,
+          args,
+          kwargs,
+          target_res: _,
+        },
       ..
     } => {
       std::mem::discriminant(target).hash(hasher);
@@ -552,6 +554,7 @@ fn hash_call(
   // Hash a marker for function calls
   std::mem::discriminant(&Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Literal(Rc::clone(callable)),
       args: Vec::new(),
       kwargs: FxHashMap::default(),
@@ -1350,11 +1353,13 @@ fn fold_constants<'a>(
       Ok(())
     }
     Expr::Call {
-      call: FunctionCall {
-        target,
-        args,
-        kwargs,
-      },
+      call:
+        FunctionCall {
+          target,
+          args,
+          kwargs,
+          target_res: _,
+        },
       loc,
     } => {
       // if the function call target is a name, resolve the callable referenced to make calling it
@@ -1553,6 +1558,7 @@ fn fold_constants<'a>(
       arg_placeholder_scope,
       return_type_hint,
       loc,
+      resolved: _,
     } => {
       let mut params_inner = (**params).clone();
       for param in &mut params_inner {
@@ -1633,20 +1639,28 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
+      let mut folded_closure = Closure {
+        params: Rc::clone(&params),
+        body: Rc::clone(&body),
+        captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
+        arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
+        return_type_hint: *return_type_hint,
+        resolved: None,
+        captures: Rc::from(Vec::new()),
+      };
+      crate::resolve::resolve_existing_closure(ctx, &mut folded_closure);
       *expr = Expr::Literal {
-        value: Value::Callable(Rc::new(Callable::Closure(Closure {
-          params: Rc::clone(&params),
-          body: Rc::clone(&body),
-          captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-          arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
-          return_type_hint: *return_type_hint,
-        }))),
+        value: Value::Callable(Rc::new(Callable::Closure(folded_closure))),
         loc: *loc,
       };
 
       Ok(())
     }
-    &mut Expr::Ident { name: id, loc } => {
+    &mut Expr::Ident {
+      name: id,
+      loc,
+      res: _,
+    } => {
       if let Some(val) = local_scope.get(id) {
         if let TrackedValueRef::Const(val) = val {
           *expr = val.clone().into_literal_expr(loc);
@@ -1734,7 +1748,9 @@ fn fold_constants<'a>(
           .iter()
           .map(|e| e.as_literal().unwrap().clone())
           .collect::<Vec<_>>();
-        let val = Value::Sequence(Rc::new(EagerSeq { inner: values }));
+        let val = Value::Sequence(Rc::new(EagerSeq {
+          inner: Rc::new(values),
+        }));
         if let Some(lookup) = cache_lookup {
           const_eval_cache_store(ctx, lookup, val.clone());
         }
@@ -2259,7 +2275,13 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
 }
 
 pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
-  default_optimizer_pipeline().run(ctx, ast)
+  // Pre-resolve so closures created while const folding evaluates const subtrees already run
+  // on the frame-based path; re-resolve at the end because folding rewrites closure bodies
+  // (capture inlining, literal-closure folding).
+  crate::resolve::resolve_program(ctx, ast);
+  default_optimizer_pipeline().run(ctx, ast)?;
+  crate::resolve::resolve_program(ctx, ast);
+  Ok(())
 }
 
 #[test]
@@ -2725,11 +2747,13 @@ fn = || {
       ..
     } => match expr {
       Expr::Call {
-        call: FunctionCall {
-          args,
-          kwargs: _,
-          target,
-        },
+        call:
+          FunctionCall {
+            args,
+            kwargs: _,
+            target,
+            target_res: _,
+          },
         ..
       } => {
         let arg0 = &args[0];

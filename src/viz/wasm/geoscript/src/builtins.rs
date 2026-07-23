@@ -1917,10 +1917,12 @@ fn sample_voxels_impl(
         Ok(Value::Mesh(Rc::new(out_meshes.into_iter().next().unwrap())))
       } else {
         let seq: Rc<dyn Sequence> = Rc::new(EagerSeq {
-          inner: out_meshes
-            .into_iter()
-            .map(|m| Value::Mesh(Rc::new(m)))
-            .collect(),
+          inner: Rc::new(
+            out_meshes
+              .into_iter()
+              .map(|m| Value::Mesh(Rc::new(m)))
+              .collect::<Vec<_>>(),
+          ),
         });
         Ok(Value::Sequence(seq))
       }
@@ -5227,7 +5229,10 @@ fn aabb_impl(
       }
       let bbox = mesh.get_or_compute_aabb();
       Ok(Value::Sequence(Rc::new(EagerSeq {
-        inner: vec![Value::Vec3(bbox.mins.coords), Value::Vec3(bbox.maxs.coords)],
+        inner: Rc::new(vec![
+          Value::Vec3(bbox.mins.coords),
+          Value::Vec3(bbox.maxs.coords),
+        ]),
       })))
     }
     _ => unimplemented!(),
@@ -5263,7 +5268,7 @@ fn path_aabb_impl(
         .ok_or_else(|| ErrorStack::new("`path_aabb`: path contains no contributing segments"))?;
 
       Ok(Value::Sequence(Rc::new(EagerSeq {
-        inner: vec![Value::Vec2(mins), Value::Vec2(maxs)],
+        inner: Rc::new(vec![Value::Vec2(mins), Value::Vec2(maxs)]),
       })))
     }
     _ => unimplemented!(),
@@ -5295,7 +5300,13 @@ fn is_self_intersecting_impl(
           map.insert(
             "tri0".to_owned(),
             Value::Sequence(Rc::new(EagerSeq {
-              inner: ixn.positions_a.iter().map(|p| Value::Vec3(*p)).collect(),
+              inner: Rc::new(
+                ixn
+                  .positions_a
+                  .iter()
+                  .map(|p| Value::Vec3(*p))
+                  .collect::<Vec<_>>(),
+              ),
             })),
           );
 
@@ -5303,7 +5314,13 @@ fn is_self_intersecting_impl(
           map.insert(
             "tri1".to_owned(),
             Value::Sequence(Rc::new(EagerSeq {
-              inner: ixn.positions_b.iter().map(|p| Value::Vec3(*p)).collect(),
+              inner: Rc::new(
+                ixn
+                  .positions_b
+                  .iter()
+                  .map(|p| Value::Vec3(*p))
+                  .collect::<Vec<_>>(),
+              ),
             })),
           );
 
@@ -5359,8 +5376,10 @@ fn connected_components_impl(
             material: material.clone(),
           }))
         })
-        .collect();
-      Ok(Value::Sequence(Rc::new(EagerSeq { inner })))
+        .collect::<Vec<_>>();
+      Ok(Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(inner),
+      })))
     }
     _ => unimplemented!(),
   }
@@ -5567,7 +5586,7 @@ fn split_by_plane_impl(
         .map_err(|err| ErrorStack::new(format!("Error in `split_by_plane`: {err}")))?;
 
       Ok(Value::Sequence(Rc::new(EagerSeq {
-        inner: vec![Value::Mesh(Rc::new(a)), Value::Mesh(Rc::new(b))],
+        inner: Rc::new(vec![Value::Mesh(Rc::new(a)), Value::Mesh(Rc::new(b))]),
       })))
     }
     _ => unimplemented!(),
@@ -8362,7 +8381,9 @@ fn path_segments_impl(
   })?;
 
   let dicts = build_segment_dicts(tracer)?;
-  Ok(Value::Sequence(Rc::new(EagerSeq { inner: dicts })))
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(dicts),
+  })))
 }
 
 /// Half-window used by `path_frame`'s central finite difference. Large enough that endpoint
@@ -8886,8 +8907,10 @@ fn partition_faces_impl(
         material: material.clone(),
       }))
     })
-    .collect();
-  Ok(Value::Sequence(Rc::new(EagerSeq { inner })))
+    .collect::<Vec<_>>();
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(inner),
+  })))
 }
 
 fn is_manifold_impl(
@@ -9262,18 +9285,17 @@ fn append_impl(
       let val = arg_refs[0].resolve(args, kwargs);
       let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
 
-      let mut eager_seq = match seq_as_eager(&*seq) {
-        Some(eager) => eager.clone(),
-        None => {
-          let iter = seq.consume(ctx);
-          let collected = iter
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| err.wrap("error produced during `collect`"))?;
-          EagerSeq { inner: collected }
-        }
+      let mut inner = match seq_as_eager(&*seq) {
+        Some(eager) => (*eager.inner).clone(),
+        None => seq
+          .consume(ctx)
+          .collect::<Result<Vec<_>, _>>()
+          .map_err(|err| err.wrap("error produced during `collect`"))?,
       };
-      eager_seq.inner.push(val.clone());
-      Ok(Value::Sequence(Rc::new(eager_seq)))
+      inner.push(val.clone());
+      Ok(Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(inner),
+      })))
     }
     _ => unimplemented!(),
   }
@@ -9291,7 +9313,9 @@ fn reverse_impl(
       let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       let mut vals: Vec<Value> = sequence.consume(ctx).collect::<Result<Vec<_>, _>>()?;
       vals.reverse();
-      Ok(Value::Sequence(Rc::new(EagerSeq { inner: vals })))
+      Ok(Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(vals),
+      })))
     }
     _ => unimplemented!(),
   }
@@ -9315,7 +9339,9 @@ fn collect_impl(
           let collected = iter
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| err.wrap("error produced during `collect`"))?;
-          Ok(Value::Sequence(Rc::new(EagerSeq { inner: collected })))
+          Ok(Value::Sequence(Rc::new(EagerSeq {
+            inner: Rc::new(collected),
+          })))
         }
       }
     }

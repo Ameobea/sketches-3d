@@ -18,7 +18,7 @@ use fxhash::{FxHashMap, FxHashSet};
 use crate::{
   ast::{
     BinOp, ClosureBody, Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, SourceLoc,
-    Statement,
+    Statement, VarRes,
   },
   builtins::{fn_defs::get_builtin_fn_sig_entry_ix, FUNCTION_ALIASES},
   CapturedScope, Closure, EvalCtx, Scope, Sym, Value,
@@ -52,6 +52,7 @@ fn lattice_guard(ctx: &EvalCtx, trig: &str, arg: Expr, loc: SourceLoc) -> Expr {
   };
   Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(ctx.interned_symbols.intern(trig)),
       args: vec![scaled],
       kwargs: FxHashMap::default(),
@@ -301,7 +302,7 @@ impl GuardCtx<'_> {
 /// an array of scalars.  `None` when the closure has no liftable guards (or an early `return`/
 /// `break` makes appending a result expression unsound).
 pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> {
-  let captured = input.captured_scope.upgrade()?;
+  let captured = input.captured_env_scope()?;
   if input
     .body
     .0
@@ -357,6 +358,8 @@ pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> 
     captured_scope: CapturedScope::Strong(captured),
     arg_placeholder_scope: RefCell::new(None),
     return_type_hint: None,
+    resolved: None,
+    captures: Rc::from(Vec::new()),
   })
 }
 

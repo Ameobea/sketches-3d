@@ -255,6 +255,7 @@ impl<'a> AnalysisWalker<'a> {
         name_loc,
         expr,
         type_hint,
+        ..
       } => {
         let inferred = self.walk_binding_value(*name, expr);
         let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
@@ -353,7 +354,7 @@ impl<'a> AnalysisWalker<'a> {
   fn walk_expr(&mut self, expr: &Expr) -> AbstractType {
     match expr {
       Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
-      Expr::Ident { name, loc } => {
+      Expr::Ident { name, loc, .. } => {
         self.reference_symbol(*name, *loc);
         self
           .lookup_type(*name)
@@ -654,7 +655,7 @@ impl<'a> AnalysisWalker<'a> {
 
         AbstractType::Unknown
       }
-      Expr::Ident { name, loc } => {
+      Expr::Ident { name, loc, .. } => {
         self.reference_symbol(*name, *loc);
         // Treat `lhs | name` as `name(lhs)` for builtins, PAFs, or typed closure vars.
         if self.builtin_syms.contains(name) {

@@ -1,4 +1,9 @@
-use std::{borrow::Borrow, ptr::addr_of, rc::Rc, str::FromStr};
+use std::{
+  borrow::Borrow,
+  ptr::{addr_of, addr_of_mut},
+  rc::Rc,
+  str::FromStr,
+};
 
 use fxhash::FxHashMap;
 use pest::iterators::Pair;
@@ -188,6 +193,8 @@ pub enum Statement {
     name_loc: SourceLoc,
     expr: Expr,
     type_hint: Option<ArgType>,
+    /// Frame slot when this assignment sits inside a resolved closure body.
+    slot: Option<u16>,
   },
   DestructureAssignment {
     lhs: DestructurePattern,
@@ -470,10 +477,12 @@ pub enum Expr {
     body: Rc<ClosureBody>,
     arg_placeholder_scope: FxHashMap<Sym, Value>,
     return_type_hint: Option<ArgType>,
+    resolved: Option<Rc<ResolvedBody>>,
     loc: SourceLoc,
   },
   Ident {
     name: Sym,
+    res: VarRes,
     loc: SourceLoc,
   },
   ArrayLiteral {
@@ -618,11 +627,13 @@ impl Expr {
         captures_dyn
       }
       Expr::Call {
-        call: FunctionCall {
-          target,
-          args,
-          kwargs,
-        },
+        call:
+          FunctionCall {
+            target,
+            args,
+            kwargs,
+            target_res: _,
+          },
         ..
       } => {
         let mut captures_dyn = false;
@@ -835,11 +846,13 @@ impl Expr {
         field.inline_const_captures(ctx, local_scope);
       }
       Expr::Call {
-        call: FunctionCall {
-          target,
-          args,
-          kwargs,
-        },
+        call:
+          FunctionCall {
+            target,
+            args,
+            kwargs,
+            target_res: _,
+          },
         ..
       } => {
         for arg in args.iter_mut() {
@@ -875,7 +888,11 @@ impl Expr {
         body_inner.inline_const_captures(ctx, &mut closure_scope);
         *body = Rc::new(body_inner);
       }
-      Expr::Ident { name: id, loc } => match local_scope.vars.get(id) {
+      Expr::Ident {
+        name: id,
+        loc,
+        res: _,
+      } => match local_scope.vars.get(id) {
         Some(TrackedValue::Const(resolved)) => {
           *self = Expr::Literal {
             value: resolved.clone(),
@@ -1146,6 +1163,43 @@ impl Expr {
 #[derive(Clone, Debug)]
 pub struct ClosureBody(pub Vec<Statement>);
 
+/// Static resolution of an identifier inside a resolved closure body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarRes {
+  Unresolved,
+  /// Slot in the invocation frame (params + locals).
+  Local(u16),
+  /// Index into the closure's capture array.
+  Capture(u16),
+  /// The closure itself (recursive reference via its binding name).
+  SelfRef,
+}
+
+/// Where a capture entry's value comes from when the closure is created.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureFrom {
+  /// Enclosing frame slot (creation inside another resolved closure).
+  Local(u16),
+  /// Enclosing closure's capture array.
+  Capture(u16),
+  /// The enclosing closure itself.
+  SelfRef,
+  /// Name lookup in the defining `Scope` chain (+ builtin fallback) at creation time; only
+  /// present on closures created at top level (nested DefScopes are hoisted through parents).
+  DefScope(Sym),
+}
+
+/// Resolver output for one closure definition: frame layout + capture spec. Attached to the
+/// `Expr::Closure` node and copied into `Closure` values created from it.
+#[derive(Debug)]
+pub struct ResolvedBody {
+  pub n_slots: u16,
+  pub captures: Vec<(Sym, CaptureFrom)>,
+  /// (slot, capture ix) pairs copied into the frame at entry: names that are captured but also
+  /// assigned somewhere in the body, so reads+writes go through one function-level slot.
+  pub slot_inits: Vec<(u16, u16)>,
+}
+
 impl ClosureBody {
   /// Returns `true` if any of the statements in this closure body reference a variable not tracked
   /// in `closure_scope`
@@ -1275,6 +1329,8 @@ pub enum FunctionCallTarget {
 #[derive(Clone, Debug)]
 pub struct FunctionCall {
   pub target: FunctionCallTarget,
+  /// Static resolution of a `Name` target inside a resolved closure body.
+  pub target_res: VarRes,
   pub args: Vec<Expr>,
   pub kwargs: FxHashMap<Sym, Expr>,
 }
@@ -1336,6 +1392,12 @@ static mut OP_DEF_SHORTHANDS_INITIALIZED: bool = false;
 static mut BINOP_DEF_IX_TABLE: [(usize, bool); 19] = [(usize::MAX, false); 19];
 static mut UNOP_DEF_IX_TABLE: [usize; 3] = [usize::MAX; 3];
 
+// Per-(op, lhs type bit, rhs type bit) resolved signature index (+1; 0 = no match), so the
+// hot path skips the per-call overload scan. Resolution is purely type-driven, so this is
+// exact, not a heuristic cache.
+static mut BINOP_RESOLVED_DEF_TABLE: [[[u8; 16]; 16]; 19] = [[[0; 16]; 16]; 19];
+static mut UNOP_RESOLVED_DEF_TABLE: [[u8; 16]; 3] = [[0; 16]; 3];
+
 pub(crate) fn maybe_init_op_def_shorthands() {
   unsafe {
     if OP_DEF_SHORTHANDS_INITIALIZED {
@@ -1369,6 +1431,43 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       get_builtin_fn_sig_entry_ix("pos").unwrap(),
       get_builtin_fn_sig_entry_ix("not").unwrap(),
     ];
+
+    let untabled_ops = [
+      BinOp::Range as usize,
+      BinOp::RangeInclusive as usize,
+      BinOp::Nullish as usize,
+    ];
+    for op_ix in 0..19usize {
+      if untabled_ops.contains(&op_ix) {
+        continue;
+      }
+      let (fn_entry_ix, _) = (addr_of!(BINOP_DEF_IX_TABLE) as *const (usize, bool))
+        .add(op_ix)
+        .read();
+      for l in 0..16 {
+        for r in 0..16 {
+          if let Some(def_ix) = crate::resolve_def_ix_for_flag_pair(fn_entry_ix, 1 << l, 1 << r) {
+            debug_assert!(def_ix < 255);
+            (addr_of_mut!(BINOP_RESOLVED_DEF_TABLE) as *mut u8)
+              .add(op_ix * 256 + l * 16 + r)
+              .write(def_ix as u8 + 1);
+          }
+        }
+      }
+    }
+    for op_ix in 0..3usize {
+      let fn_entry_ix = (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
+        .add(op_ix)
+        .read();
+      for f in 0..16 {
+        if let Some(def_ix) = crate::resolve_def_ix_for_flag(fn_entry_ix, 1 << f) {
+          debug_assert!(def_ix < 255);
+          (addr_of_mut!(UNOP_RESOLVED_DEF_TABLE) as *mut u8)
+            .add(op_ix * 16 + f)
+            .write(def_ix as u8 + 1);
+        }
+      }
+    }
   }
 }
 
@@ -1404,7 +1503,14 @@ impl BinOp {
             .add(*self as usize)
             .read();
           let (arg1, arg2) = if args_flipped { (rhs, lhs) } else { (lhs, rhs) };
-          get_binop_def_ix(ctx, fn_sig_entry_ix, arg1, arg2)?
+          let resolved = (addr_of!(BINOP_RESOLVED_DEF_TABLE) as *const u8)
+            .add((*self as usize) * 256 + arg1.type_flag_ix() * 16 + arg2.type_flag_ix())
+            .read();
+          if resolved != 0 {
+            (resolved - 1) as usize
+          } else {
+            get_binop_def_ix(ctx, fn_sig_entry_ix, arg1, arg2)?
+          }
         }
       };
 
@@ -1478,12 +1584,19 @@ impl PrefixOp {
   }
 
   pub fn apply(&self, ctx: &EvalCtx, val: &Value) -> Result<Value, ErrorStack> {
-    let fn_sig_entry_ix = unsafe {
-      (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
-        .add(*self as usize)
-        .read()
+    let def_ix = unsafe {
+      let resolved = (addr_of!(UNOP_RESOLVED_DEF_TABLE) as *const u8)
+        .add((*self as usize) * 16 + val.type_flag_ix())
+        .read();
+      if resolved != 0 {
+        (resolved - 1) as usize
+      } else {
+        let fn_sig_entry_ix = (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
+          .add(*self as usize)
+          .read();
+        get_unop_def_ix(ctx, fn_sig_entry_ix, val)?
+      }
     };
-    let def_ix = get_unop_def_ix(ctx, fn_sig_entry_ix, val)?;
 
     match self {
       PrefixOp::Neg => neg_impl(def_ix, val),
@@ -1539,6 +1652,7 @@ fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStac
 
   Ok(Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(name),
       args,
       kwargs,
@@ -1592,6 +1706,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         })
     }
     Rule::ident => Ok(Expr::Ident {
+      res: VarRes::Unresolved,
       name: ctx.interned_symbols.intern(expr.as_str()),
       loc,
     }),
@@ -1709,6 +1824,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       };
 
       Ok(Expr::Closure {
+        resolved: None,
         arg_placeholder_scope: Closure::build_arg_placeholder_scope(&params),
         params: Rc::new(params),
         body: Rc::new(body),
@@ -2000,12 +2116,14 @@ fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
           .interned_symbols
           .intern(&format!("__geoscript_internal__pb_{line}_{col}_{i}"));
         new_stmts.push(Statement::Assignment {
+          slot: None,
           name: temp_name,
           name_loc: loc,
           expr,
           type_hint: None,
         });
         temp_idents.push(Expr::Ident {
+          res: VarRes::Unresolved,
           name: temp_name,
           loc,
         });
@@ -2020,6 +2138,7 @@ fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
   };
   let flatten_call = Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(ctx.interned_symbols.intern("flatten")),
       args: vec![array_lit],
       kwargs: FxHashMap::default(),
@@ -2314,6 +2433,7 @@ fn parse_assignment(ctx: &EvalCtx, assignment: Pair<Rule>) -> Result<Statement, 
 
   let name_loc = ctx.add_source_loc(line, col);
   Ok(Statement::Assignment {
+    slot: None,
     name,
     name_loc,
     expr,
@@ -2969,6 +3089,7 @@ fn test_inline_const_captures_blocks_side_effectful_alias() {
 
   let expr = Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(sym),
       args: vec![Expr::Literal {
         value: Value::Int(1),
@@ -3000,15 +3121,18 @@ fn test_inline_const_captures_visits_all_conditional_branches() {
 
   let mut expr = Expr::Conditional {
     cond: Box::new(Expr::Ident {
+      res: VarRes::Unresolved,
       name: cond_sym,
       loc: SourceLoc::default(),
     }),
     then: Box::new(Expr::Ident {
+      res: VarRes::Unresolved,
       name: then_sym,
       loc: SourceLoc::default(),
     }),
     else_if_exprs: Vec::new(),
     else_expr: Some(Box::new(Expr::Ident {
+      res: VarRes::Unresolved,
       name: else_sym,
       loc: SourceLoc::default(),
     })),
