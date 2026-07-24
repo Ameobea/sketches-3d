@@ -7,7 +7,7 @@
 //! the emitted body grows linearly with the source regardless of nesting.  A symbolic-zero-aware
 //! [`Tangent`] keeps constant/parameter-independent subterms from emitting dead `0*x` work.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
@@ -24,7 +24,7 @@ use crate::{
   optimizer::optimize_synthesized_closure_body,
   ty::AbstractType,
   type_infer::{infer_expr, TypeEnv},
-  ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Scope, Sym, Value, Vec2,
+  ArgType, Callable, Closure, ErrorStack, EvalCtx, Scope, Sym, Value, Vec2,
 };
 
 /// A symbolic tangent.  `Zero` reifies to a correctly-typed zero literal only when forced, so
@@ -526,12 +526,7 @@ impl<'a> DerivCtx<'a> {
       let pt = self.diff_expr(arg)?;
       bindings.push((*sym, pt));
     }
-    let helper_captures = closure.captured_env_scope().ok_or_else(|| {
-      self.err(
-        "autodiff: the captured scope of an inlined closure has been dropped",
-        loc,
-      )
-    })?;
+    let helper_captures = closure.captured_env_scope();
 
     let saved_env = std::mem::take(&mut self.env);
     let saved_captures = std::mem::replace(&mut self.captures, helper_captures);
@@ -1579,9 +1574,7 @@ pub(crate) fn build_directional_derivative(
       seed.get_type()
     )));
   }
-  let captured = input.captured_env_scope().ok_or_else(|| {
-    ErrorStack::new("autodiff: the differentiated closure's captured scope has been dropped")
-  })?;
+  let captured = input.captured_env_scope();
 
   let mut type_env = TypeEnv::with_default_globals(ctx);
   type_env.push_scope();
@@ -1627,20 +1620,16 @@ pub(crate) fn build_directional_derivative(
   let mut stmts = std::mem::take(&mut dcx.tape);
   stmts.push(Statement::Expr(result_expr));
 
-  let captured_consts = captured.collect_bindings_innermost_first();
+  let captured_consts = captured.own_bindings();
   optimize_synthesized_closure_body(ctx, &input.params, &captured_consts, &mut stmts)?;
 
-  let mut closure = Closure {
-    params: Rc::clone(&input.params),
-    body: Rc::new(ClosureBody(stmts)),
-    captured_scope: CapturedScope::Strong(captured),
-    arg_placeholder_scope: RefCell::new(None),
-    return_type_hint: None,
-    resolved: None,
-    captures: Rc::from(Vec::new()),
-  };
-  crate::resolve::resolve_existing_closure(ctx, &mut closure);
-  Ok(closure)
+  crate::resolve::resolve_new_closure(
+    ctx,
+    &captured,
+    Rc::clone(&input.params),
+    Rc::new(ClosureBody(stmts)),
+    None,
+  )
 }
 
 /// Build the gradient of a scalar-output closure: for a `vecN`-input `f`, a closure returning the
@@ -1714,19 +1703,16 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
   }
   let body = builtin_call(ctx, vec_name, comps, SourceLoc::default());
   let mut stmts = vec![Statement::Expr(body)];
-  let captured_consts = cap.collect_bindings_innermost_first();
+  let captured_consts = cap.own_bindings();
   optimize_synthesized_closure_body(ctx, &input.params, &captured_consts, &mut stmts)?;
 
-  let mut closure = Closure {
-    params: Rc::clone(&input.params),
-    body: Rc::new(ClosureBody(stmts)),
-    captured_scope: CapturedScope::Strong(cap),
-    arg_placeholder_scope: RefCell::new(None),
-    return_type_hint: None,
-    resolved: None,
-    captures: Rc::from(Vec::new()),
-  };
-  crate::resolve::resolve_existing_closure(ctx, &mut closure);
+  let closure = crate::resolve::resolve_new_closure(
+    ctx,
+    &cap,
+    Rc::clone(&input.params),
+    Rc::new(ClosureBody(stmts)),
+    None,
+  )?;
   Ok(Value::Callable(Rc::new(Callable::Closure(closure))))
 }
 

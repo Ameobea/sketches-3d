@@ -15,9 +15,9 @@ use crate::{
     map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
     pos_impl, sub_impl, BoolOp,
   },
-  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable, Closure,
+  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable,
   ErrorStack, EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value, EMPTY_KWARGS,
-  FUNCTION_ALIASES, PRATT_PARSER,
+  PRATT_PARSER,
 };
 
 /// Source location index. Points into a SourceMap to retrieve (line, col).
@@ -28,6 +28,20 @@ pub struct SourceLoc(pub u32);
 #[derive(Debug)]
 pub struct Program {
   pub statements: Vec<TopLevelStatement>,
+  /// Resolver output for the top level, which executes as an implicit zero-param closure:
+  /// slots for top-level bindings plus `DefScope` captures for free names, materialized from
+  /// the base bindings (ambient/globals + builtin fallback) at program start.
+  pub resolution: Option<ProgramResolution>,
+}
+
+#[derive(Debug)]
+pub struct ProgramResolution {
+  pub n_slots: u16,
+  /// All `CaptureFrom::DefScope`.
+  pub captures: Vec<(Sym, CaptureFrom)>,
+  /// Program-level name → slot (a bijection), slot-ordered so boundary flushes see bindings
+  /// in declaration order. Used to read own bindings back out of the frame after eval.
+  pub name_slots: Vec<(Sym, u16)>,
 }
 
 impl FromStr for ArgType {
@@ -137,6 +151,8 @@ impl DestructurePattern {
     }
   }
 
+  /// Invariant: calls `cb` exactly once per pattern ident (missing values become `Nil`), in
+  /// the same order as `visit_idents` — slot resolution indexes off that alignment.
   pub fn visit_assignments(
     &self,
     ctx: &EvalCtx,
@@ -199,6 +215,9 @@ pub enum Statement {
   DestructureAssignment {
     lhs: DestructurePattern,
     rhs: Expr,
+    /// Frame slot per pattern ident (in `visit_idents` order) when this statement sits inside
+    /// a resolved closure body.
+    slots: Option<Rc<[u16]>>,
   },
   Expr(Expr),
   Return {
@@ -220,10 +239,14 @@ pub enum TopLevelStatement {
     name_loc: SourceLoc,
     expr: Expr,
     type_hint: Option<ArgType>,
+    /// Program-level frame slot; filled by the resolver like `Statement::Assignment::slot`.
+    slot: Option<u16>,
   },
   Import {
     bindings: DestructurePattern,
     module_name: String,
+    /// Program-level frame slots for the bound names, in `visit_idents` order.
+    slots: Option<Rc<[u16]>>,
   },
 }
 
@@ -253,94 +276,11 @@ impl TopLevelStatement {
 }
 
 impl Statement {
-  pub(crate) fn analyze_const_captures(
-    &self,
-    ctx: &EvalCtx,
-    closure_scope: &mut ScopeTracker,
-    allow_rng_const_eval: bool,
-    propagate_closure_captures: bool,
-    constify_assignments: bool,
-  ) -> bool {
-    match self {
-      Statement::Assignment { expr, .. } => expr.analyze_const_captures(
-        ctx,
-        closure_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      Statement::DestructureAssignment { lhs: _, rhs } => rhs.analyze_const_captures(
-        ctx,
-        closure_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      Statement::Expr(expr) => expr.analyze_const_captures(
-        ctx,
-        closure_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      Statement::Return { value } => {
-        if let Some(expr) = value {
-          expr.analyze_const_captures(
-            ctx,
-            closure_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          )
-        } else {
-          false
-        }
-      }
-      Statement::Break { value } => {
-        if let Some(expr) = value {
-          expr.analyze_const_captures(
-            ctx,
-            closure_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          )
-        } else {
-          false
-        }
-      }
-    }
-  }
-
-  pub(crate) fn inline_const_captures(&mut self, ctx: &EvalCtx, closure_scope: &mut ScopeTracker) {
-    match self {
-      Statement::Assignment { expr, .. } => {
-        expr.inline_const_captures(ctx, closure_scope);
-      }
-      Statement::DestructureAssignment { lhs: _, rhs } => {
-        rhs.inline_const_captures(ctx, closure_scope);
-      }
-      Statement::Expr(expr) => {
-        expr.inline_const_captures(ctx, closure_scope);
-      }
-      Statement::Return { value } => {
-        if let Some(expr) = value {
-          expr.inline_const_captures(ctx, closure_scope);
-        }
-      }
-      Statement::Break { value } => {
-        if let Some(expr) = value {
-          expr.inline_const_captures(ctx, closure_scope);
-        }
-      }
-    }
-  }
-
   /// Iterates over all expressions directly contained in this statement (not recursively).
   pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
     let (first, second) = match self {
       Statement::Assignment { expr, .. } => (Some(expr), None),
-      Statement::DestructureAssignment { lhs: _, rhs } => (Some(rhs), None),
+      Statement::DestructureAssignment { lhs: _, rhs, .. } => (Some(rhs), None),
       Statement::Expr(expr) => (Some(expr), None),
       Statement::Return { value } => (value.as_ref(), None),
       Statement::Break { value } => (value.as_ref(), None),
@@ -352,7 +292,7 @@ impl Statement {
   pub fn exprs_mut(&mut self) -> impl Iterator<Item = &mut Expr> {
     let (first, second) = match self {
       Statement::Assignment { expr, .. } => (Some(expr), None),
-      Statement::DestructureAssignment { lhs: _, rhs } => (Some(rhs), None),
+      Statement::DestructureAssignment { lhs: _, rhs, .. } => (Some(rhs), None),
       Statement::Expr(expr) => (Some(expr), None),
       Statement::Return { value } => (value.as_mut(), None),
       Statement::Break { value } => (value.as_mut(), None),
@@ -389,43 +329,6 @@ pub enum MapLiteralEntry {
 }
 
 impl MapLiteralEntry {
-  fn analyze_const_captures(
-    &self,
-    ctx: &EvalCtx,
-    local_scope: &mut ScopeTracker<'_>,
-    allow_rng_const_eval: bool,
-    propagate_closure_captures: bool,
-    constify_assignments: bool,
-  ) -> bool {
-    match self {
-      MapLiteralEntry::KeyValue { key: _, value } => value.analyze_const_captures(
-        ctx,
-        local_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      MapLiteralEntry::Splat { expr } => expr.analyze_const_captures(
-        ctx,
-        local_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-    }
-  }
-
-  fn inline_const_captures(&mut self, ctx: &EvalCtx, local_scope: &mut ScopeTracker<'_>) {
-    match self {
-      MapLiteralEntry::KeyValue { key: _, value } => {
-        value.inline_const_captures(ctx, local_scope);
-      }
-      MapLiteralEntry::Splat { expr } => {
-        expr.inline_const_captures(ctx, local_scope);
-      }
-    }
-  }
-
   fn expr(&self) -> &Expr {
     match self {
       MapLiteralEntry::KeyValue { key: _, value } => value,
@@ -475,7 +378,6 @@ pub enum Expr {
   Closure {
     params: Rc<Vec<ClosureArg>>,
     body: Rc<ClosureBody>,
-    arg_placeholder_scope: FxHashMap<Sym, Value>,
     return_type_hint: Option<ArgType>,
     resolved: Option<Rc<ResolvedBody>>,
     loc: SourceLoc,
@@ -531,13 +433,6 @@ impl Expr {
   }
 }
 
-fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: bool) -> bool {
-  if callable.is_side_effectful() {
-    return !(allow_rng_const_eval && callable.is_rng_dependent());
-  }
-  false
-}
-
 impl Expr {
   pub fn as_literal(&self) -> Option<&Value> {
     match self {
@@ -548,410 +443,6 @@ impl Expr {
 
   pub fn is_literal(&self) -> bool {
     matches!(self, Expr::Literal { .. })
-  }
-
-  fn analyze_const_captures(
-    &self,
-    ctx: &EvalCtx,
-    local_scope: &mut ScopeTracker,
-    allow_rng_const_eval: bool,
-    propagate_closure_captures: bool,
-    constify_assignments: bool,
-  ) -> bool {
-    match self {
-      Expr::BinOp { lhs, rhs, .. } => {
-        let mut captures_dyn = lhs.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        captures_dyn |= rhs.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        captures_dyn
-      }
-      Expr::PrefixOp { expr, .. } => expr.analyze_const_captures(
-        ctx,
-        local_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      Expr::Range { start, end, .. } => {
-        let mut captures_dyn = start.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        if let Some(end) = end {
-          captures_dyn |= end.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-        }
-        captures_dyn
-      }
-      Expr::StaticFieldAccess { lhs, .. } => lhs.analyze_const_captures(
-        ctx,
-        local_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ),
-      Expr::FieldAccess { lhs, field, .. } => {
-        let mut captures_dyn = lhs.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        captures_dyn |= field.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        captures_dyn
-      }
-      Expr::Call {
-        call:
-          FunctionCall {
-            target,
-            args,
-            kwargs,
-            target_res: _,
-          },
-        ..
-      } => {
-        let mut captures_dyn = false;
-        for arg in args.iter() {
-          captures_dyn |= arg.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-        }
-        for kwarg in kwargs.values() {
-          captures_dyn |= kwarg.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-        }
-
-        if captures_dyn {
-          return true;
-        }
-
-        let name = match target {
-          FunctionCallTarget::Name(name) => name,
-          FunctionCallTarget::Literal(callable) => {
-            return callable_is_dyn_for_const_eval(callable, allow_rng_const_eval)
-          }
-        };
-
-        if let Some(TrackedValueRef::Const(val)) = local_scope.get(*name) {
-          match val {
-            Value::Callable(callable) => {
-              callable_is_dyn_for_const_eval(callable, allow_rng_const_eval)
-            }
-            _ => false,
-          }
-        } else {
-          ctx.with_resolved_sym(*name, |resolved_name| {
-            if fn_sigs().contains_key(resolved_name) || FUNCTION_ALIASES.contains_key(resolved_name)
-            {
-              let builtin_name = if let Some(alias_target) = FUNCTION_ALIASES.get(resolved_name) {
-                alias_target
-              } else {
-                resolved_name
-              };
-              let fn_entry_ix = get_builtin_fn_sig_entry_ix(builtin_name).unwrap();
-              let callable = Callable::Builtin {
-                fn_entry_ix,
-                fn_impl: |_, _, _, _, _| unreachable!(),
-                pre_resolved_signature: None,
-              };
-              callable_is_dyn_for_const_eval(&callable, allow_rng_const_eval)
-            } else {
-              true
-            }
-          })
-        }
-      }
-      Expr::Closure { params, body, .. } => {
-        let mut captures_dyn = false;
-
-        for param in params.iter() {
-          if let Some(default_val) = &param.default_val {
-            captures_dyn |= default_val.analyze_const_captures(
-              ctx,
-              local_scope,
-              allow_rng_const_eval,
-              propagate_closure_captures,
-              constify_assignments,
-            );
-          }
-        }
-
-        let mut closure_scope = ScopeTracker::wrap(local_scope);
-        bind_closure_params_into_scope(&mut closure_scope, params);
-
-        let body_captures_dyn = body.analyze_const_captures(
-          ctx,
-          &mut closure_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-
-        if propagate_closure_captures {
-          captures_dyn || body_captures_dyn
-        } else {
-          captures_dyn
-        }
-      }
-      Expr::Ident { name: id, .. } => match local_scope.vars.get(id) {
-        Some(TrackedValue::Const(_)) => false,
-        Some(TrackedValue::Arg) => false,
-        Some(TrackedValue::Dyn) => true,
-        None => match local_scope.parent {
-          Some(parent) => match parent.get(*id) {
-            Some(TrackedValueRef::Const(_)) => false,
-            Some(TrackedValueRef::Arg) => true,
-            Some(TrackedValueRef::Dyn) => true,
-            None => true,
-          },
-          None => true,
-        },
-      },
-      Expr::ArrayLiteral {
-        elements: exprs, ..
-      } => exprs.iter().any(|expr| {
-        expr.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        )
-      }),
-      Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| {
-        entry.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        )
-      }),
-      Expr::Literal { .. } => false,
-      Expr::Conditional {
-        cond,
-        then,
-        else_if_exprs,
-        else_expr,
-        ..
-      } => {
-        let mut captures_dyn = cond.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        captures_dyn |= then.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        );
-        for (cond, expr) in else_if_exprs {
-          captures_dyn |= cond.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-          captures_dyn |= expr.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-        }
-        if let Some(else_expr) = else_expr {
-          captures_dyn |= else_expr.analyze_const_captures(
-            ctx,
-            local_scope,
-            allow_rng_const_eval,
-            propagate_closure_captures,
-            constify_assignments,
-          );
-        }
-        captures_dyn
-      }
-      Expr::Block { statements, .. } => statements.iter().any(|stmt| {
-        stmt.analyze_const_captures(
-          ctx,
-          local_scope,
-          allow_rng_const_eval,
-          propagate_closure_captures,
-          constify_assignments,
-        )
-      }),
-    }
-  }
-
-  fn inline_const_captures(&mut self, ctx: &EvalCtx, local_scope: &mut ScopeTracker) {
-    match self {
-      Expr::BinOp { lhs, rhs, .. } => {
-        lhs.inline_const_captures(ctx, local_scope);
-        rhs.inline_const_captures(ctx, local_scope);
-      }
-      Expr::PrefixOp { expr, .. } => {
-        expr.inline_const_captures(ctx, local_scope);
-      }
-      Expr::Range { start, end, .. } => {
-        start.inline_const_captures(ctx, local_scope);
-        if let Some(end) = end {
-          end.inline_const_captures(ctx, local_scope);
-        }
-      }
-      Expr::StaticFieldAccess { lhs, .. } => {
-        lhs.inline_const_captures(ctx, local_scope);
-      }
-      Expr::FieldAccess { lhs, field, .. } => {
-        lhs.inline_const_captures(ctx, local_scope);
-        field.inline_const_captures(ctx, local_scope);
-      }
-      Expr::Call {
-        call:
-          FunctionCall {
-            target,
-            args,
-            kwargs,
-            target_res: _,
-          },
-        ..
-      } => {
-        for arg in args.iter_mut() {
-          arg.inline_const_captures(ctx, local_scope);
-        }
-        for kwarg in kwargs.values_mut() {
-          kwarg.inline_const_captures(ctx, local_scope);
-        }
-
-        let FunctionCallTarget::Name(name) = target else {
-          return;
-        };
-
-        if let Some(TrackedValueRef::Const(val)) = local_scope.get(*name) {
-          if let Value::Callable(callable) = val {
-            *target = FunctionCallTarget::Literal(callable.clone());
-          }
-        }
-      }
-      Expr::Closure { params, body, .. } => {
-        let mut params_inner: Vec<_> = (**params).clone();
-        for param in params_inner.iter_mut() {
-          if let Some(default_val) = &mut param.default_val {
-            default_val.inline_const_captures(ctx, local_scope);
-          }
-        }
-        *params = Rc::new(params_inner);
-
-        let mut closure_scope = ScopeTracker::wrap(local_scope);
-        bind_closure_params_into_scope(&mut closure_scope, params);
-
-        let mut body_inner = (**body).clone();
-        body_inner.inline_const_captures(ctx, &mut closure_scope);
-        *body = Rc::new(body_inner);
-      }
-      Expr::Ident {
-        name: id,
-        loc,
-        res: _,
-      } => match local_scope.vars.get(id) {
-        Some(TrackedValue::Const(resolved)) => {
-          *self = Expr::Literal {
-            value: resolved.clone(),
-            loc: *loc,
-          };
-        }
-        Some(TrackedValue::Arg) => {}
-        Some(TrackedValue::Dyn) => {}
-        None => match local_scope.parent {
-          Some(parent) => match parent.get(*id) {
-            Some(TrackedValueRef::Const(resolved)) => {
-              *self = Expr::Literal {
-                value: resolved.clone(),
-                loc: *loc,
-              };
-            }
-            Some(TrackedValueRef::Arg) => {}
-            Some(TrackedValueRef::Dyn) => {}
-            None => {}
-          },
-          None => {}
-        },
-      },
-      Expr::ArrayLiteral {
-        elements: exprs, ..
-      } => {
-        for expr in exprs.iter_mut() {
-          expr.inline_const_captures(ctx, local_scope);
-        }
-      }
-      Expr::MapLiteral { entries, .. } => {
-        for entry in entries.iter_mut() {
-          entry.inline_const_captures(ctx, local_scope);
-        }
-      }
-      Expr::Literal { .. } => {}
-      Expr::Conditional {
-        cond,
-        then,
-        else_if_exprs,
-        else_expr,
-        ..
-      } => {
-        cond.inline_const_captures(ctx, local_scope);
-        then.inline_const_captures(ctx, local_scope);
-        for (cond, expr) in else_if_exprs {
-          cond.inline_const_captures(ctx, local_scope);
-          expr.inline_const_captures(ctx, local_scope);
-        }
-        if let Some(else_expr) = else_expr {
-          else_expr.inline_const_captures(ctx, local_scope);
-        }
-      }
-      Expr::Block { statements, .. } => {
-        for stmt in statements.iter_mut() {
-          stmt.inline_const_captures(ctx, local_scope);
-        }
-      }
-    }
   }
 
   pub fn traverse(&self, cb: &mut impl FnMut(&Self)) {
@@ -1195,130 +686,14 @@ pub enum CaptureFrom {
 pub struct ResolvedBody {
   pub n_slots: u16,
   pub captures: Vec<(Sym, CaptureFrom)>,
-  /// (slot, capture ix) pairs copied into the frame at entry: names that are captured but also
-  /// assigned somewhere in the body, so reads+writes go through one function-level slot.
-  pub slot_inits: Vec<(u16, u16)>,
+  /// Starting frame slot per param; pattern params occupy a contiguous run of slots in
+  /// `visit_idents` order.
+  pub param_slots: Vec<u16>,
 }
 
-impl ClosureBody {
-  /// Returns `true` if any of the statements in this closure body reference a variable not tracked
-  /// in `closure_scope`
-  pub(crate) fn analyze_const_captures(
-    &self,
-    ctx: &EvalCtx,
-    closure_scope: &mut ScopeTracker,
-    allow_rng_const_eval: bool,
-    propagate_closure_captures: bool,
-    constify_assignments: bool,
-  ) -> bool {
-    let mut references_dyn_captures = false;
-    for stmt in &self.0 {
-      if stmt.analyze_const_captures(
-        ctx,
-        closure_scope,
-        allow_rng_const_eval,
-        propagate_closure_captures,
-        constify_assignments,
-      ) {
-        references_dyn_captures = true;
-      }
-      if let Statement::Assignment {
-        name,
-        expr,
-        type_hint,
-        ..
-      } = stmt
-      {
-        if constify_assignments {
-          closure_scope.set(*name, TrackedValue::Const(Value::Nil));
-          continue;
-        }
-        // if this variable has already been de-constified in the scope, we avoid overwriting it
-        let is_deconstified = match closure_scope.get(*name) {
-          Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
-          Some(TrackedValueRef::Const(_)) => false,
-          None => false,
-        };
 
-        if !is_deconstified {
-          if let Some(literal) = expr.as_literal() {
-            closure_scope.set(*name, TrackedValue::Const(literal.clone()));
-          } else {
-            record_non_const_binding(ctx, closure_scope, *name, expr, *type_hint);
-          }
-        }
-      }
-      // TODO: should de-dupe
-      else if let Statement::DestructureAssignment { lhs, rhs } = stmt {
-        for name in lhs.iter_idents() {
-          if constify_assignments {
-            closure_scope.set(name, TrackedValue::Const(Value::Nil));
-            continue;
-          }
-          let is_deconstified = match closure_scope.get(name) {
-            Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
-            Some(TrackedValueRef::Const(_)) => false,
-            None => false,
-          };
 
-          if !is_deconstified {
-            if let Some(literal) = rhs.as_literal() {
-              closure_scope.set(name, TrackedValue::Const(literal.clone()));
-            } else {
-              record_non_const_binding(ctx, closure_scope, name, rhs, None);
-            }
-          }
-        }
-      }
-    }
 
-    references_dyn_captures
-  }
-
-  pub(crate) fn inline_const_captures(&mut self, ctx: &EvalCtx, closure_scope: &mut ScopeTracker) {
-    for stmt in &mut self.0 {
-      stmt.inline_const_captures(ctx, closure_scope);
-
-      if let Statement::Assignment {
-        name,
-        expr,
-        type_hint,
-        ..
-      } = stmt
-      {
-        let is_deconstified = match closure_scope.get(*name) {
-          Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
-          Some(TrackedValueRef::Const(_)) => false,
-          None => false,
-        };
-
-        if !is_deconstified {
-          if let Some(literal) = expr.as_literal() {
-            closure_scope.set(*name, TrackedValue::Const(literal.clone()));
-          } else {
-            record_non_const_binding(ctx, closure_scope, *name, expr, *type_hint);
-          }
-        }
-      } else if let Statement::DestructureAssignment { lhs, rhs } = stmt {
-        for name in lhs.iter_idents() {
-          let is_deconstified = match closure_scope.get(name) {
-            Some(TrackedValueRef::Arg | TrackedValueRef::Dyn) => true,
-            Some(TrackedValueRef::Const(_)) => false,
-            None => false,
-          };
-
-          if !is_deconstified {
-            if let Some(literal) = rhs.as_literal() {
-              closure_scope.set(name, TrackedValue::Const(literal.clone()));
-            } else {
-              record_non_const_binding(ctx, closure_scope, name, rhs, None);
-            }
-          }
-        }
-      }
-    }
-  }
-}
 
 #[derive(Clone, Debug)]
 pub enum FunctionCallTarget {
@@ -1825,7 +1200,6 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
 
       Ok(Expr::Closure {
         resolved: None,
-        arg_placeholder_scope: Closure::build_arg_placeholder_scope(&params),
         params: Rc::new(params),
         body: Rc::new(body),
         return_type_hint,
@@ -2532,7 +1906,11 @@ fn parse_destructure_assignment(
 
   let rhs = parse_expr(ctx, inner.next().unwrap())?;
 
-  Ok(Statement::DestructureAssignment { lhs, rhs })
+  Ok(Statement::DestructureAssignment {
+    lhs,
+    rhs,
+    slots: None,
+  })
 }
 
 fn parse_return_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
@@ -2605,6 +1983,7 @@ fn parse_export_statement(
     name_loc,
     expr,
     type_hint,
+    slot: None,
   })
 }
 
@@ -2634,6 +2013,7 @@ fn parse_import_statement(
   Ok(TopLevelStatement::Import {
     bindings,
     module_name,
+    slots: None,
   })
 }
 
@@ -2709,14 +2089,6 @@ impl<'a> ScopeTracker<'a> {
       vars: FxHashMap::default(),
       types: FxHashMap::default(),
       parent: Some(parent),
-    }
-  }
-
-  pub fn fork(&self) -> ScopeTracker<'a> {
-    ScopeTracker {
-      vars: self.vars.clone(),
-      types: self.types.clone(),
-      parent: self.parent,
     }
   }
 
@@ -3071,101 +2443,6 @@ pub fn traverse_fn_calls(program: &Program, mut cb: impl FnMut(Sym)) {
 
   for stmt in &program.statements {
     stmt.traverse_exprs(&mut cb);
-  }
-}
-
-#[test]
-fn test_inline_const_captures_blocks_side_effectful_alias() {
-  let ctx = EvalCtx::default();
-  let sym = ctx.interned_symbols.intern("p");
-  let fn_entry_ix = get_builtin_fn_sig_entry_ix("print").unwrap();
-  let callable = Callable::Builtin {
-    fn_entry_ix,
-    fn_impl: crate::resolve_builtin_impl("print"),
-    pre_resolved_signature: None,
-  };
-  let mut scope = ScopeTracker::default();
-  scope.set(sym, TrackedValue::Const(Value::Callable(Rc::new(callable))));
-
-  let expr = Expr::Call {
-    call: FunctionCall {
-      target_res: VarRes::Unresolved,
-      target: FunctionCallTarget::Name(sym),
-      args: vec![Expr::Literal {
-        value: Value::Int(1),
-        loc: SourceLoc::default(),
-      }],
-      kwargs: FxHashMap::default(),
-    },
-    loc: SourceLoc::default(),
-  };
-
-  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
-  assert!(
-    captures_dyn,
-    "Expected side-effectful callable aliases to block const capture"
-  );
-}
-
-#[test]
-fn test_inline_const_captures_visits_all_conditional_branches() {
-  let ctx = EvalCtx::default();
-  let cond_sym = ctx.interned_symbols.intern("cond");
-  let then_sym = ctx.interned_symbols.intern("then_val");
-  let else_sym = ctx.interned_symbols.intern("else_val");
-
-  let mut scope = ScopeTracker::default();
-  scope.set(cond_sym, TrackedValue::Dyn);
-  scope.set(then_sym, TrackedValue::Const(Value::Int(1)));
-  scope.set(else_sym, TrackedValue::Const(Value::Int(2)));
-
-  let mut expr = Expr::Conditional {
-    cond: Box::new(Expr::Ident {
-      res: VarRes::Unresolved,
-      name: cond_sym,
-      loc: SourceLoc::default(),
-    }),
-    then: Box::new(Expr::Ident {
-      res: VarRes::Unresolved,
-      name: then_sym,
-      loc: SourceLoc::default(),
-    }),
-    else_if_exprs: Vec::new(),
-    else_expr: Some(Box::new(Expr::Ident {
-      res: VarRes::Unresolved,
-      name: else_sym,
-      loc: SourceLoc::default(),
-    })),
-    loc: SourceLoc::default(),
-  };
-
-  let captures_dyn = expr.analyze_const_captures(&ctx, &mut scope, true, false, false);
-  assert!(captures_dyn);
-  expr.inline_const_captures(&ctx, &mut scope);
-
-  match expr {
-    Expr::Conditional {
-      then, else_expr, ..
-    } => {
-      assert!(matches!(
-        *then,
-        Expr::Literal {
-          value: Value::Int(1),
-          ..
-        }
-      ));
-      let Some(else_expr) = else_expr else {
-        panic!("Expected else branch to be preserved");
-      };
-      assert!(matches!(
-        *else_expr,
-        Expr::Literal {
-          value: Value::Int(2),
-          ..
-        }
-      ));
-    }
-    _ => panic!("Expected a conditional expression"),
   }
 }
 

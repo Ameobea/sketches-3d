@@ -9,7 +9,7 @@ use std::{
   collections::HashMap,
   collections::VecDeque,
   fmt::{Debug, Display},
-  rc::{self, Rc},
+  rc::Rc,
 };
 
 use arrayvec::ArrayVec;
@@ -41,7 +41,7 @@ use crate::{
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
-    resolve_builtin_impl, FUNCTION_ALIASES,
+    resolve_builtin_impl,
   },
   lights::Light,
   materials::Material,
@@ -264,42 +264,13 @@ impl Debug for PartiallyAppliedFn {
 }
 
 #[derive(Clone)]
-enum CapturedScope {
-  Strong(Rc<Scope>),
-  Weak(rc::Weak<Scope>),
-  /// Resolved closures carry their captures in a flat snapshot array instead.
-  None,
-}
-
-impl CapturedScope {
-  fn upgrade(&self) -> Option<Rc<Scope>> {
-    match self {
-      CapturedScope::Strong(scope) => Some(Rc::clone(scope)),
-      CapturedScope::Weak(weak) => weak.upgrade(),
-      CapturedScope::None => None,
-    }
-  }
-}
-
-#[derive(Clone)]
 pub struct Closure {
   /// Names of parameters for this closure in order
   pub(crate) params: Rc<Vec<ClosureArg>>,
   pub(crate) body: Rc<ClosureBody>,
-  /// Contains variables captured from the environment when the closure was created
-  pub(crate) captured_scope: CapturedScope,
-  /// A scope pre-populated with `nil` placeholders for all arguments.  This is used when invoking
-  /// the closure to help avoid allocations.  This scope should always only contain entries for the
-  /// arguments of the closure, never any other values.
-  ///
-  /// This will be `None` in the case of a recursive call since it's taken by the root call.
-  ///
-  /// Only used on the legacy (unresolved) invocation path.
-  arg_placeholder_scope: RefCell<Option<FxHashMap<Sym, Value>>>,
   return_type_hint: Option<ArgType>,
-  /// Slot layout + capture spec from the resolver; `Some` enables the frame-based invocation
-  /// path, `None` falls back to the scope-chain path.
-  pub(crate) resolved: Option<Rc<ResolvedBody>>,
+  /// Slot layout + capture spec from the resolver.
+  pub(crate) resolved: Rc<ResolvedBody>,
   /// Snapshot of referenced free variables, taken at creation; indexed by `VarRes::Capture`.
   pub(crate) captures: Rc<[Value]>,
 }
@@ -320,30 +291,14 @@ impl Debug for Closure {
 }
 
 impl Closure {
-  /// The closure's captured environment as a `Scope` — the real captured scope for legacy
-  /// closures, or one synthesized from the capture snapshot for resolved ones (used by
-  /// consumers like autodiff/guards that re-derive closures from bodies).
-  pub(crate) fn captured_env_scope(&self) -> Option<Rc<Scope>> {
-    if let Some(scope) = self.captured_scope.upgrade() {
-      return Some(scope);
-    }
-    let meta = self.resolved.as_ref()?;
+  /// The closure's captured environment synthesized as a `Scope` from the capture snapshot
+  /// (used by consumers like autodiff/guards that re-derive closures from bodies).
+  pub(crate) fn captured_env_scope(&self) -> Rc<Scope> {
     let scope = Scope::default();
-    for ((sym, _), val) in meta.captures.iter().zip(self.captures.iter()) {
+    for ((sym, _), val) in self.resolved.captures.iter().zip(self.captures.iter()) {
       scope.insert(*sym, val.clone());
     }
-    Some(Rc::new(scope))
-  }
-
-  fn build_arg_placeholder_scope(params: &[ClosureArg]) -> FxHashMap<Sym, Value> {
-    let mut arg_placeholders = FxHashMap::default();
-    for param in params {
-      param.ident.visit_idents(&mut |ident| {
-        arg_placeholders.insert(ident, Value::Nil);
-      });
-    }
-
-    arg_placeholders
+    Rc::new(scope)
   }
 }
 
@@ -1710,19 +1665,12 @@ pub fn eager_seq_value(values: Vec<Value>) -> Value {
   }))
 }
 
-#[derive(Default, Debug)]
+/// A flat name→value bindings snapshot: the long-lived `globals`, the ambient scope, and
+/// the capture-materialization base for program-level frames. Nothing evaluates *into*
+/// scopes at runtime anymore — frames are the only evaluation environment.
+#[derive(Clone, Default, Debug)]
 pub struct Scope {
   vars: RefCell<FxHashMap<Sym, Value>>,
-  parent: Option<Rc<Scope>>,
-}
-
-impl Clone for Scope {
-  fn clone(&self) -> Self {
-    Scope {
-      vars: RefCell::new(self.vars.borrow().clone()),
-      parent: self.parent.as_ref().map(Rc::clone),
-    }
-  }
 }
 
 pub fn get_default_globals() -> [(&'static str, Value); 2] {
@@ -1748,48 +1696,9 @@ impl Scope {
   }
 
   pub fn get(&self, key: Sym) -> Option<Value> {
-    if let Some(val) = self.vars.borrow().get(&key).cloned() {
-      return Some(val);
-    }
-
-    if let Some(parent) = &self.parent {
-      return parent.get(key);
-    }
-
-    None
+    self.vars.borrow().get(&key).cloned()
   }
 
-  fn wrap(parent: Rc<Scope>) -> Scope {
-    Scope {
-      vars: RefCell::new(Default::default()),
-      parent: Some(parent),
-    }
-  }
-
-  fn has(&self, key: Sym) -> bool {
-    self.vars.borrow().contains_key(&key)
-      || self.parent.as_ref().map(|p| p.has(key)).unwrap_or(false)
-  }
-
-  /// Collects bindings reachable through this scope and its parent chain,
-  /// innermost-first (i.e. shadowing wins). Used by the optimizer to seed
-  /// its scope tracker from the ambient scope.
-  pub fn collect_bindings_innermost_first(&self) -> Vec<(Sym, Value)> {
-    let mut seen: FxHashSet<Sym> = FxHashSet::default();
-    let mut out: Vec<(Sym, Value)> = Vec::new();
-    let mut cur: Option<&Scope> = Some(self);
-    while let Some(s) = cur {
-      for (sym, val) in s.vars.borrow().iter() {
-        if seen.insert(*sym) {
-          out.push((*sym, val.clone()));
-        }
-      }
-      cur = s.parent.as_deref();
-    }
-    out
-  }
-
-  /// This scope's own bindings, excluding the parent chain.
   pub fn own_bindings(&self) -> Vec<(Sym, Value)> {
     self
       .vars
@@ -1797,11 +1706,6 @@ impl Scope {
       .iter()
       .map(|(k, v)| (*k, v.clone()))
       .collect()
-  }
-
-  /// Keys of this scope's own bindings, excluding the parent chain.
-  pub fn own_keys(&self) -> FxHashSet<Sym> {
-    self.vars.borrow().keys().copied().collect()
   }
 }
 
@@ -1813,23 +1717,14 @@ pub(crate) struct FrameEnv<'a> {
   self_ref: &'a Rc<Callable>,
 }
 
-/// Evaluation environment: name-keyed `Scope` chains at top level and for legacy closures,
-/// flat frames inside resolved closure bodies.
-#[derive(Clone, Copy)]
-pub(crate) enum Env<'a> {
-  Scope(&'a Scope),
-  Frame(&'a FrameEnv<'a>),
-}
+/// `eval_statements` policies: which control-flow exits a statement list catches.
+pub(crate) const STMTS_CLOSURE_BODY: u8 = 0;
+pub(crate) const STMTS_BLOCK: u8 = 1;
+pub(crate) const STMTS_TRANSPARENT: u8 = 2;
 
-impl<'a> Env<'a> {
-  /// The `Scope` of a scope-mode env. Frame-mode envs never reach the legacy paths that need
-  /// this (resolver invariant).
-  fn scope(self) -> &'a Scope {
-    match self {
-      Env::Scope(scope) => scope,
-      Env::Frame(_) => unreachable!("legacy eval path reached from a frame env"),
-    }
-  }
+#[cold]
+fn break_outside_block_err() -> ErrorStack {
+  ErrorStack::new("`break` used outside of a block")
 }
 
 /// Handle to an interned symbol.
@@ -2310,12 +2205,16 @@ impl EvalCtx {
     let _ = borrowed.try_push(kwargs);
   }
 
-  fn eval_fn_call(&self, env: Env, call: &FunctionCall) -> Result<ControlFlow<Value>, ErrorStack> {
+  fn eval_fn_call(
+    &self,
+    env: &FrameEnv,
+    call: &FunctionCall,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
     let mut args_opt = None;
     if !call.args.is_empty() {
       let mut args = self.get_args_scratch();
       for arg in &call.args {
-        let val = match self.eval_expr_env(arg, env, None)? {
+        let val = match self.eval_expr_env(arg, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => {
             self.restore_args_scratch(args);
@@ -2331,7 +2230,7 @@ impl EvalCtx {
     if !call.kwargs.is_empty() {
       let mut kwargs = self.get_kwargs_scratch();
       for (k, v) in &call.kwargs {
-        let val = match self.eval_expr_env(v, env, None)? {
+        let val = match self.eval_expr_env(v, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => {
             self.restore_kwargs_scratch(kwargs);
@@ -2366,15 +2265,11 @@ impl EvalCtx {
 
     match &call.target {
       FunctionCallTarget::Name(name) => {
-        let resolved_target = if let Env::Frame(frame) = env {
-          match call.target_res {
-            VarRes::Local(slot) => Some(frame.slots.borrow()[slot as usize].clone()),
-            VarRes::Capture(ix) => Some(frame.captures[ix as usize].clone()),
-            VarRes::SelfRef => Some(Value::Callable(Rc::clone(frame.self_ref))),
-            VarRes::Unresolved => None,
-          }
-        } else {
-          env.scope().get(*name)
+        let resolved_target = match call.target_res {
+          VarRes::Local(slot) => Some(env.slots.borrow()[slot as usize].clone()),
+          VarRes::Capture(ix) => Some(env.captures[ix as usize].clone()),
+          VarRes::SelfRef => Some(Value::Callable(Rc::clone(env.self_ref))),
+          VarRes::Unresolved => None,
         };
         if let Some(global) = resolved_target {
           let Value::Callable(callable) = global else {
@@ -2395,7 +2290,7 @@ impl EvalCtx {
         } else {
           return self.with_resolved_sym(*name, |name| {
             Err(ErrorStack::new(format!(
-              "No variable found with name `{name}`"
+              "Variable `{name}` not found"
             )))
           });
         }
@@ -2404,20 +2299,10 @@ impl EvalCtx {
     }
   }
 
-  pub fn eval_expr(
-    &self,
-    expr: &Expr,
-    scope: &Scope,
-    binding_name: Option<Sym>,
-  ) -> Result<ControlFlow<Value>, ErrorStack> {
-    self.eval_expr_env(expr, Env::Scope(scope), binding_name)
-  }
-
   pub(crate) fn eval_expr_env(
     &self,
     expr: &Expr,
-    env: Env,
-    binding_name: Option<Sym>,
+    env: &FrameEnv,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
     match expr {
       Expr::Call { call, .. } => self
@@ -2430,7 +2315,7 @@ impl EvalCtx {
         pre_resolved_def_ix,
         ..
       } => {
-        let lhs = match self.eval_expr_env(lhs, env, None)? {
+        let lhs = match self.eval_expr_env(lhs, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2440,7 +2325,7 @@ impl EvalCtx {
           if !matches!(lhs, Value::Nil) {
             return Ok(ControlFlow::Continue(lhs));
           }
-          return self.eval_expr_env(rhs, env, None);
+          return self.eval_expr_env(rhs, env);
         }
 
         // special-case short-circuiting for boolean ops
@@ -2472,7 +2357,7 @@ impl EvalCtx {
           }
         }
 
-        let rhs = match self.eval_expr_env(rhs, env, None)? {
+        let rhs = match self.eval_expr_env(rhs, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2488,7 +2373,7 @@ impl EvalCtx {
       Expr::PrefixOp {
         op, expr: inner, ..
       } => {
-        let val = match self.eval_expr_env(inner, env, None)? {
+        let val = match self.eval_expr_env(inner, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2507,7 +2392,7 @@ impl EvalCtx {
         inclusive,
         ..
       } => {
-        let start = match self.eval_expr_env(start, env, None)? {
+        let start = match self.eval_expr_env(start, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2519,7 +2404,7 @@ impl EvalCtx {
         };
         let end = match end {
           Some(end) => {
-            let end = match self.eval_expr_env(end, env, None)? {
+            let end = match self.eval_expr_env(end, env)? {
               ControlFlow::Continue(val) => val,
               early_exit => return Ok(early_exit),
             };
@@ -2545,28 +2430,22 @@ impl EvalCtx {
         }))))
       }
       Expr::Ident { name, res, .. } => {
-        if let Env::Frame(frame) = env {
-          let val = match res {
-            VarRes::Local(slot) => frame.slots.borrow()[*slot as usize].clone(),
-            VarRes::Capture(ix) => frame.captures[*ix as usize].clone(),
-            VarRes::SelfRef => Value::Callable(Rc::clone(frame.self_ref)),
-            VarRes::Unresolved => {
-              return Err(self.locate_err(
-                self.with_resolved_sym(*name, |name| {
-                  ErrorStack::new(format!(
-                    "Internal error: unresolved identifier `{name}` inside resolved closure body"
-                  ))
-                }),
-                expr.loc(),
-              ))
-            }
-          };
-          return Ok(ControlFlow::Continue(val));
-        }
-        self
-          .eval_ident(*name, env.scope())
-          .map(ControlFlow::Continue)
-          .map_err(|err| self.locate_err(err, expr.loc()))
+        let val = match res {
+          VarRes::Local(slot) => env.slots.borrow()[*slot as usize].clone(),
+          VarRes::Capture(ix) => env.captures[*ix as usize].clone(),
+          VarRes::SelfRef => Value::Callable(Rc::clone(env.self_ref)),
+          VarRes::Unresolved => {
+            return Err(self.locate_err(
+              self.with_resolved_sym(*name, |name| {
+                ErrorStack::new(format!(
+                  "Internal error: unresolved identifier `{name}` reached eval"
+                ))
+              }),
+              expr.loc(),
+            ))
+          }
+        };
+        Ok(ControlFlow::Continue(val))
       }
       Expr::Literal { value, .. } => Ok(ControlFlow::Continue(value.clone())),
       Expr::ArrayLiteral {
@@ -2574,7 +2453,7 @@ impl EvalCtx {
       } => {
         let mut evaluated = Vec::with_capacity(elems.len());
         for elem in elems {
-          let val = match self.eval_expr_env(elem, env, None)? {
+          let val = match self.eval_expr_env(elem, env)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -2589,14 +2468,14 @@ impl EvalCtx {
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { key, value } => {
-              let val = match self.eval_expr_env(value, env, None)? {
+              let val = match self.eval_expr_env(value, env)? {
                 ControlFlow::Continue(val) => val,
                 early_exit => return Ok(early_exit),
               };
               evaluated.insert(key.clone(), val);
             }
             MapLiteralEntry::Splat { expr: splat } => {
-              let splat = match self.eval_expr_env(splat, env, None)? {
+              let splat = match self.eval_expr_env(splat, env)? {
                 ControlFlow::Continue(val) => val,
                 early_exit => return Ok(early_exit),
               };
@@ -2620,73 +2499,25 @@ impl EvalCtx {
       Expr::Closure {
         params,
         body,
-        arg_placeholder_scope,
         return_type_hint,
         resolved,
         ..
       } => {
-        if let Some(meta) = resolved {
-          // `None` means a capture couldn't be materialized (free var unbound at creation, or
-          // legacy-invoked enclosing closure); fall through to legacy creation so runtime
-          // behavior is identical to the unresolved path
-          if let Some(val) = self
-            .create_resolved_closure(params, body, *return_type_hint, meta, env)
-            .map_err(|err| self.locate_err(err, expr.loc()))?
-          {
-            return Ok(ControlFlow::Continue(val));
-          }
-          if let Env::Frame(_) = env {
-            return Err(self.locate_err(
-              ErrorStack::new(
-                "Internal error: closure creation fell back to legacy inside a frame",
-              ),
-              expr.loc(),
-            ));
-          }
-        }
-
-        let scope = env.scope();
-        // cloning the scope here makes the closure function like a rust `move` closure
-        // where all the values are cloned before being moved into the closure.
-        let captured_scope = Rc::new(scope.clone());
-
-        if let Some(binding_name) = binding_name {
-          // add the closure itself to the scope to support recursive calls
-          captured_scope.insert(
-            binding_name,
-            Value::Callable(Rc::new(Callable::Closure(Closure {
-              params: Rc::clone(params),
-              body: Rc::clone(body),
-              // writing this as a weak reference prevents a reference cycle:
-              //
-              // closure -> captured_scope -> closure_clone
-              //                   ^---------------------┘
-              //                           ^ this one is weak
-              captured_scope: CapturedScope::Weak(Rc::downgrade(&captured_scope)),
-              arg_placeholder_scope: RefCell::new(None),
-              return_type_hint: *return_type_hint,
-              resolved: None,
-              captures: Rc::from(Vec::new()),
-            }))),
-          );
-        }
-
-        Ok(ControlFlow::Continue(Value::Callable(Rc::new(
-          Callable::Closure(Closure {
-            params: Rc::clone(params),
-            body: Rc::clone(body),
-            captured_scope: CapturedScope::Strong(captured_scope),
-            arg_placeholder_scope: RefCell::new(Some(arg_placeholder_scope.clone())),
-            return_type_hint: *return_type_hint,
-            resolved: None,
-            captures: Rc::from(Vec::new()),
-          }),
-        ))))
+        let Some(meta) = resolved else {
+          return Err(self.locate_err(
+            ErrorStack::new("Internal error: unresolved closure expr reached eval"),
+            expr.loc(),
+          ));
+        };
+        self
+          .create_resolved_closure(params, body, *return_type_hint, meta, env)
+          .map(ControlFlow::Continue)
+          .map_err(|err| self.locate_err(err, expr.loc()))
       }
       Expr::StaticFieldAccess {
         lhs: obj, field, ..
       } => {
-        let lhs = match self.eval_expr_env(obj, env, None)? {
+        let lhs = match self.eval_expr_env(obj, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2696,11 +2527,11 @@ impl EvalCtx {
           .map_err(|err| self.locate_err(err, expr.loc()))
       }
       Expr::FieldAccess { lhs, field, .. } => {
-        let lhs = match self.eval_expr_env(lhs, env, None)? {
+        let lhs = match self.eval_expr_env(lhs, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        let field = match self.eval_expr_env(field, env, None)? {
+        let field = match self.eval_expr_env(field, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2716,7 +2547,7 @@ impl EvalCtx {
         else_expr,
         ..
       } => {
-        let cond = match self.eval_expr_env(cond, env, None)? {
+        let cond = match self.eval_expr_env(cond, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
@@ -2729,10 +2560,10 @@ impl EvalCtx {
           ));
         };
         if cond {
-          return self.eval_expr_env(then, env, None);
+          return self.eval_branch(then, env);
         }
         for (else_if_cond, else_if_body) in else_if_exprs {
-          let else_if_cond = match self.eval_expr_env(else_if_cond, env, None)? {
+          let else_if_cond = match self.eval_expr_env(else_if_cond, env)? {
             ControlFlow::Continue(val) => val,
             early_exit => return Ok(early_exit),
           };
@@ -2745,196 +2576,241 @@ impl EvalCtx {
             ));
           };
           if else_if_cond {
-            return self.eval_expr_env(else_if_body, env, None);
+            return self.eval_branch(else_if_body, env);
           }
         }
         if let Some(else_expr) = else_expr {
-          return self.eval_expr_env(else_expr, env, None);
+          return self.eval_branch(else_expr, env);
         }
 
         Ok(ControlFlow::Continue(Value::Nil))
       }
-      Expr::Block { statements, .. } => {
-        // Frame envs need no block scope: the resolver statically assigned slots to block
-        // locals and routed write-backs to function-level slots.
-        if let Env::Frame(_) = env {
-          let mut last_value = Value::Nil;
-          for statement in statements {
-            last_value = match self.eval_statement_env(statement, env)? {
-              ControlFlow::Continue(val) => val,
-              ControlFlow::Break(val) => {
-                last_value = val;
-                break;
-              }
-              early_exit => return Ok(early_exit),
-            };
-            if let Statement::Assignment { .. } = statement {
-              last_value = Value::Nil;
-            }
-          }
-          return Ok(ControlFlow::Continue(last_value));
-        }
-
-        let scope = env.scope();
-        // TODO: ideally, we'd avoid cloning the scope here and use the scope nesting functionality
-        // like closures.  However, adding in references to scopes creates incredibly lifetime
-        // headaches across the whole codebase very quickly and just isn't worth it rn
-        let block_scope = Scope::wrap(Rc::new(scope.clone()));
-        let mut last_value = Value::Nil;
-
-        for statement in statements {
-          last_value = match self.eval_statement(statement, &block_scope)? {
-            ControlFlow::Continue(val) => val,
-            ControlFlow::Break(val) => {
-              last_value = val;
-              break;
-            }
-            ControlFlow::Return(val) => {
-              for (key, val) in block_scope.vars.into_inner() {
-                let exists = scope.has(key);
-                if exists {
-                  scope.insert(key, val.clone());
-                }
-              }
-
-              return Ok(ControlFlow::Return(val));
-            }
-          };
-          if let Statement::Assignment { .. } = statement {
-            last_value = Value::Nil;
-          }
-        }
-
-        for (key, val) in block_scope.vars.into_inner() {
-          let exists = scope.has(key);
-          if exists {
-            scope.insert(key, val.clone());
-          }
-        }
-
-        Ok(ControlFlow::Continue(last_value))
-      }
+      Expr::Block { statements, .. } => self.eval_statements::<STMTS_BLOCK>(statements, env),
     }
   }
 
-  fn eval_assignment(
-    &self,
-    ident: Sym,
-    value: Value,
-    scope: &Scope,
-    type_hint: Option<ArgType>,
-  ) -> Result<Value, ErrorStack> {
-    if let Some(type_hint) = type_hint {
-      type_hint.validate_val(&value)?;
-    }
-
-    scope.insert(ident, value);
-    Ok(Value::Nil)
-  }
-
-  fn eval_statement(
-    &self,
-    statement: &Statement,
-    scope: &Scope,
-  ) -> Result<ControlFlow<Value>, ErrorStack> {
-    self.eval_statement_env(statement, Env::Scope(scope))
-  }
-
+  #[inline]
   fn eval_statement_env(
     &self,
     statement: &Statement,
-    env: Env,
+    env: &FrameEnv,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
-    match statement {
-      Statement::Expr(expr) => self.eval_expr_env(expr, env, None),
-      Statement::Assignment {
-        name,
-        expr,
-        type_hint,
-        slot,
-        ..
-      } => {
-        let val = match self.eval_expr_env(expr, env, Some(*name))? {
-          ControlFlow::Continue(val) => val,
-          early_exit => return Ok(early_exit),
-        };
-        if let (Some(slot), Env::Frame(frame)) = (slot, env) {
-          if let Some(type_hint) = type_hint {
-            type_hint
-              .validate_val(&val)
-              .map_err(|err| self.locate_err(err, expr.loc()))?;
+    self.eval_statements::<STMTS_TRANSPARENT>(std::slice::from_ref(statement), env)
+  }
+
+  /// Single source of truth for statement-list evaluation; `POLICY` decides which
+  /// control-flow exits are caught here vs. propagated:
+  /// - [`STMTS_CLOSURE_BODY`]: `return` yields the closure result; `break` errors
+  /// - [`STMTS_BLOCK`]: `break` yields the block's value; `return` propagates
+  /// - [`STMTS_TRANSPARENT`] (conditional branches, single statements): both propagate
+  ///
+  /// The list's value is the last statement's; assignments yield Nil. Monomorphized per
+  /// policy so exit handling compiles down to the specialized loop each context needs —
+  /// re-wrapping each statement's result in `ControlFlow` for a generic caller costs ~9%
+  /// on assignment-heavy bodies like autodiff tapes.
+  #[inline(never)]
+  fn eval_statements<const POLICY: u8>(
+    &self,
+    statements: &[Statement],
+    env: &FrameEnv,
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
+    let mut out = Value::Nil;
+    'stmts: for statement in statements {
+      match statement {
+        Statement::Expr(expr) => match self.eval_expr_env(expr, env)? {
+          ControlFlow::Continue(val) => out = val,
+          ControlFlow::Return(val) => {
+            if POLICY == STMTS_CLOSURE_BODY {
+              out = val;
+              break 'stmts;
+            }
+            return Ok(ControlFlow::Return(val));
           }
-          frame.slots.borrow_mut()[*slot as usize] = val;
-          return Ok(ControlFlow::Continue(Value::Nil));
+          ControlFlow::Break(val) => {
+            if POLICY == STMTS_BLOCK {
+              out = val;
+              break 'stmts;
+            }
+            if POLICY == STMTS_TRANSPARENT {
+              return Ok(ControlFlow::Break(val));
+            }
+            return Err(break_outside_block_err());
+          }
+        },
+        Statement::Assignment {
+          expr,
+          type_hint,
+          slot,
+          ..
+        } => {
+          let val = match self.eval_expr_env(expr, env)? {
+            ControlFlow::Continue(val) => val,
+            ControlFlow::Return(val) => {
+              if POLICY == STMTS_CLOSURE_BODY {
+                out = val;
+                break 'stmts;
+              }
+              return Ok(ControlFlow::Return(val));
+            }
+            ControlFlow::Break(val) => {
+              if POLICY == STMTS_BLOCK {
+                out = val;
+                break 'stmts;
+              }
+              if POLICY == STMTS_TRANSPARENT {
+                return Ok(ControlFlow::Break(val));
+              }
+              return Err(break_outside_block_err());
+            }
+          };
+          self.store_frame_assignment(env.slots, *slot, *type_hint, val, expr.loc())?;
+          out = Value::Nil;
         }
-        self
-          .eval_assignment(*name, val, env.scope(), *type_hint)
-          .map(ControlFlow::Continue)
-          .map_err(|err| self.locate_err(err, expr.loc()))
-      }
-      Statement::DestructureAssignment { lhs, rhs } => {
-        let rhs_loc = rhs.loc();
-        let rhs = match self.eval_expr_env(rhs, env, None)? {
-          ControlFlow::Continue(val) => val,
-          early_exit => return Ok(early_exit),
-        };
-        let scope = env.scope();
-        lhs
-          .visit_assignments(self, rhs, &mut |lhs, rhs| {
-            self.eval_assignment(lhs, rhs, scope, None)?;
-            Ok(())
-          })
-          .map_err(|err| {
-            self.locate_err(err.wrap("Error evaluating destructure assignment"), rhs_loc)
-          })?;
-        Ok(ControlFlow::Continue(Value::Nil))
-      }
-      Statement::Return { value } => {
-        let value = if let Some(value) = value {
-          match self.eval_expr_env(value, env, None)? {
+        Statement::DestructureAssignment { lhs, rhs, slots } => {
+          let rhs_loc = rhs.loc();
+          let val = match self.eval_expr_env(rhs, env)? {
             ControlFlow::Continue(val) => val,
-            early_exit => return Ok(early_exit),
+            ControlFlow::Return(val) => {
+              if POLICY == STMTS_CLOSURE_BODY {
+                out = val;
+                break 'stmts;
+              }
+              return Ok(ControlFlow::Return(val));
+            }
+            ControlFlow::Break(val) => {
+              if POLICY == STMTS_BLOCK {
+                out = val;
+                break 'stmts;
+              }
+              if POLICY == STMTS_TRANSPARENT {
+                return Ok(ControlFlow::Break(val));
+              }
+              return Err(break_outside_block_err());
+            }
+          };
+          self.store_destructured_frame_slots(env.slots, slots.as_deref(), lhs, val, rhs_loc)?;
+          out = Value::Nil;
+        }
+        Statement::Return { value } => {
+          let val = if let Some(value) = value {
+            match self.eval_expr_env(value, env)? {
+              ControlFlow::Continue(val) => val,
+              ControlFlow::Return(val) => {
+                if POLICY == STMTS_CLOSURE_BODY {
+                  out = val;
+                  break 'stmts;
+                }
+                return Ok(ControlFlow::Return(val));
+              }
+              ControlFlow::Break(val) => {
+                if POLICY == STMTS_BLOCK {
+                  out = val;
+                  break 'stmts;
+                }
+                if POLICY == STMTS_TRANSPARENT {
+                  return Ok(ControlFlow::Break(val));
+                }
+                return Err(break_outside_block_err());
+              }
+            }
+          } else {
+            Value::Nil
+          };
+          if POLICY == STMTS_CLOSURE_BODY {
+            out = val;
+            break 'stmts;
           }
-        } else {
-          Value::Nil
-        };
-        Ok(ControlFlow::Return(value))
-      }
-      Statement::Break { value } => {
-        let value = if let Some(value) = value {
-          match self.eval_expr_env(value, env, None)? {
-            ControlFlow::Continue(val) => val,
-            early_exit => return Ok(early_exit),
+          return Ok(ControlFlow::Return(val));
+        }
+        Statement::Break { value } => {
+          let val = if let Some(value) = value {
+            match self.eval_expr_env(value, env)? {
+              ControlFlow::Continue(val) => val,
+              ControlFlow::Return(val) => {
+                if POLICY == STMTS_CLOSURE_BODY {
+                  out = val;
+                  break 'stmts;
+                }
+                return Ok(ControlFlow::Return(val));
+              }
+              ControlFlow::Break(val) => {
+                if POLICY == STMTS_BLOCK {
+                  out = val;
+                  break 'stmts;
+                }
+                if POLICY == STMTS_TRANSPARENT {
+                  return Ok(ControlFlow::Break(val));
+                }
+                return Err(break_outside_block_err());
+              }
+            }
+          } else {
+            Value::Nil
+          };
+          if POLICY == STMTS_BLOCK {
+            out = val;
+            break 'stmts;
           }
-        } else {
-          Value::Nil
-        };
-        Ok(ControlFlow::Break(value))
+          if POLICY == STMTS_TRANSPARENT {
+            return Ok(ControlFlow::Break(val));
+          }
+          return Err(break_outside_block_err());
+        }
       }
+    }
+    Ok(ControlFlow::Continue(out))
+  }
+
+  /// Runs a standalone-resolved statement list (the optimizer's speculative block fold) in a
+  /// fresh frame with pre-materialized captures, under the transparent policy so escaping
+  /// exits stay distinguishable from the list's value.
+  pub(crate) fn eval_standalone_stmts(
+    &self,
+    statements: &[Statement],
+    n_slots: u16,
+    captures: &[Value],
+  ) -> Result<ControlFlow<Value>, ErrorStack> {
+    let slots = RefCell::new(vec![Value::Nil; n_slots as usize]);
+    let self_ref = dummy_self_ref();
+    let frame = FrameEnv {
+      slots: &slots,
+      captures,
+      self_ref: &self_ref,
+    };
+    self.eval_statements::<STMTS_TRANSPARENT>(statements, &frame)
+  }
+
+  /// Conditional branch bodies are transparent to control flow: `break`/`return` inside
+  /// them target the nearest enclosing explicit block / closure, not the branch itself.
+  #[inline]
+  fn eval_branch(&self, expr: &Expr, env: &FrameEnv) -> Result<ControlFlow<Value>, ErrorStack> {
+    match expr {
+      Expr::Block { statements, .. } => {
+        self.eval_statements::<STMTS_TRANSPARENT>(statements, env)
+      }
+      _ => self.eval_expr_env(expr, env),
     }
   }
 
   fn eval_top_level_statement(
     &self,
     statement: &TopLevelStatement,
-    scope: &Scope,
+    frame: &FrameEnv,
   ) -> Result<ControlFlow<Value>, ErrorStack> {
     match statement {
-      TopLevelStatement::Statement(stmt) => self.eval_statement(stmt, scope),
+      TopLevelStatement::Statement(stmt) => self.eval_statement_env(stmt, frame),
       TopLevelStatement::Export {
         name,
         expr,
         type_hint,
+        slot,
         ..
       } => {
-        let (line, col) = self.resolve_loc(expr.loc());
-        let val = match self.eval_expr(expr, scope, Some(*name))? {
+        let val = match self.eval_expr_env(expr, frame)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        self
-          .eval_assignment(*name, val.clone(), scope, *type_hint)
-          .map_err(|err| err.with_loc(line, col))?;
+        self.store_frame_assignment(frame.slots, *slot, *type_hint, val.clone(), expr.loc())?;
 
         // Store in module export map if we're inside a module evaluation
         if let Some(map) = self.current_module_exports.borrow_mut().as_mut() {
@@ -2946,15 +2822,17 @@ impl EvalCtx {
       TopLevelStatement::Import {
         bindings,
         module_name,
+        slots,
       } => {
         let exports = self.resolve_module(module_name)?;
-
-        let map_value = Value::Map(exports);
-        bindings
-          .visit_assignments(self, map_value, &mut |sym, val| {
-            self.eval_assignment(sym, val, scope, None)?;
-            Ok(())
-          })
+        self
+          .store_destructured_frame_slots(
+            frame.slots,
+            slots.as_deref(),
+            bindings,
+            Value::Map(exports),
+            SourceLoc::default(),
+          )
           .map_err(|err| err.wrap(&format!("Error importing from module \"{module_name}\"")))?;
 
         Ok(ControlFlow::Continue(Value::Nil))
@@ -3052,330 +2930,27 @@ impl EvalCtx {
     Ok(acc)
   }
 
-  pub(crate) fn eval_ident(&self, name: Sym, scope: &Scope) -> Result<Value, ErrorStack> {
-    if let Some(local) = scope.get(name) {
-      return Ok(local);
-    }
-
-    // look it up as a builtin fn
-    let resolved = self.with_resolved_sym(name, |resolved_name| {
-      get_builtin_fn_sig_entry_ix(resolved_name).map(|ix| (ix, resolve_builtin_impl(resolved_name)))
-    });
-    if let Some((fn_entry_ix, fn_impl)) = resolved {
-      return Ok(Value::Callable(Rc::new(Callable::Builtin {
-        fn_entry_ix,
-        fn_impl,
-        pre_resolved_signature: None,
-      })));
-    }
-
-    self.with_resolved_sym(name, |resolved_name| {
-      Err(ErrorStack::new(format!(
-        "Variable `{resolved_name}` not defined",
-      )))
-    })
-  }
-
-  fn eval_closure_args(
-    &self,
-    closure: &Closure,
-    captured_scope: &Rc<Scope>,
-    args: &[Value],
-    kwargs: &FxHashMap<Sym, Value>,
-    mut insert_arg: impl FnMut(Sym, Value),
-  ) -> Result<(Option<usize>, bool), ErrorStack> {
-    let mut pos_arg_ix = 0usize;
-    let mut any_args_valid = false;
-    let mut invalid_arg_ix = None;
-    for arg in &*closure.params {
-      match &arg.ident {
-        // there's no way currently to assign a name to destructured args, so they can only be used
-        // positionally
-        DestructurePattern::Ident(name) => {
-          if let Some(kwarg) = kwargs.get(name) {
-            if let Some(type_hint) = arg.type_hint {
-              type_hint.validate_val(kwarg).map_err(|err| {
-                self.with_resolved_sym(*name, |name| {
-                  err.wrap(format!("Type error for closure kwarg `{name}`"))
-                })
-              })?;
-            }
-            insert_arg(*name, kwarg.clone());
-            any_args_valid = true;
-            continue;
-          }
-        }
-        DestructurePattern::Array(_) => (),
-        DestructurePattern::Map(_) => (),
-      }
-
-      if pos_arg_ix < args.len() {
-        let pos_arg = &args[pos_arg_ix];
-        if let Some(type_hint) = arg.type_hint {
-          type_hint.validate_val(pos_arg).map_err(|err| {
-            err.wrap(format!(
-              "Type error for positional closure arg `{:?}`",
-              arg.ident.debug(self)
-            ))
-          })?;
-        }
-        arg
-          .ident
-          .visit_assignments(self, pos_arg.clone(), &mut |k, v| {
-            insert_arg(k, v);
-            Ok(())
-          })?;
-        any_args_valid = true;
-        pos_arg_ix += 1;
-      } else {
-        if let Some(default_val) = &arg.default_val {
-          let default_val = self.eval_expr(default_val, &captured_scope, None)?;
-          let default_val = match default_val {
-            ControlFlow::Continue(val) => val,
-            ControlFlow::Return(_) => {
-              return Err(ErrorStack::new(format!(
-                "`return` isn't valid in arg default value expressions; found in default value \
-                 for arg `{:?}`",
-                arg.ident.debug(self)
-              )))
-            }
-            ControlFlow::Break(_) => {
-              return Err(ErrorStack::new(format!(
-                "`break` isn't valid in arg default value expressions; found in default value for \
-                 arg `{:?}`",
-                arg.ident.debug(self)
-              )));
-            }
-          };
-
-          arg
-            .ident
-            .visit_assignments(self, default_val, &mut |k, v| {
-              insert_arg(k, v);
-              Ok(())
-            })?;
-        } else {
-          if invalid_arg_ix.is_none() {
-            invalid_arg_ix = Some(pos_arg_ix);
-          }
-        }
-      }
-    }
-
-    Ok((invalid_arg_ix, any_args_valid))
-  }
-
-  fn invoke_closure(
-    &self,
-    closure: &Closure,
-    args: &[Value],
-    kwargs: &FxHashMap<Sym, Value>,
-  ) -> Result<Value, ErrorStack> {
-    // TODO: should do some basic analysis to see which variables are actually needed and avoid
-    // cloning the rest
-
-    let captured_scope = closure.captured_scope.upgrade().unwrap();
-    let has_arg_placeholders = closure.arg_placeholder_scope.borrow().is_some();
-
-    let (arg_vars, invalid_arg_ix, any_args_valid) = if has_arg_placeholders {
-      let mut arg_vars = closure.arg_placeholder_scope.borrow_mut().take().unwrap();
-      let insert_arg = |name: Sym, val: Value| {
-        let slot = arg_vars.get_mut(&name).unwrap_or_else(|| {
-          panic!("Internal error: closure arg scope missing slot for arg `{name:?}`")
-        });
-        *slot = val;
-      };
-
-      let (invalid_arg_ix, any_args_valid) =
-        self.eval_closure_args(closure, &captured_scope, args, kwargs, insert_arg)?;
-      (arg_vars, invalid_arg_ix, any_args_valid)
-    } else {
-      let mut arg_vars = FxHashMap::default();
-      let insert_arg = |name: Sym, val: Value| {
-        arg_vars.insert(name, val);
-      };
-
-      let (invalid_arg_ix, any_args_valid) =
-        self.eval_closure_args(closure, &captured_scope, args, kwargs, insert_arg)?;
-      (arg_vars, invalid_arg_ix, any_args_valid)
-    };
-
-    if let Some(invalid_arg_ix) = invalid_arg_ix {
-      let invalid_arg = &closure.params[invalid_arg_ix];
-      if any_args_valid {
-        {
-          let mut arg_placeholders = closure.arg_placeholder_scope.borrow_mut();
-          *arg_placeholders = Some(arg_vars);
-        }
-
-        return Ok(Value::Callable(Rc::new(Callable::PartiallyAppliedFn(
-          PartiallyAppliedFn {
-            inner: Rc::new(Callable::Closure(closure.clone())),
-            args: args.to_owned(),
-            kwargs: kwargs.clone(),
-          },
-        ))));
-      } else {
-        return Err(ErrorStack::new(format!(
-          "Missing required argument `{:?}` for closure",
-          invalid_arg.ident.debug(self)
-        )));
-      }
-    }
-
-    let args_scope = Rc::new(Scope {
-      vars: RefCell::new(arg_vars),
-      parent: Some(captured_scope),
-    });
-    let closure_scope = Scope::wrap(args_scope);
-
-    let mut out: Value = Value::Nil;
-    for stmt in &closure.body.0 {
-      match stmt {
-        Statement::Expr(expr) => match self.eval_expr(expr, &closure_scope, None)? {
-          ControlFlow::Continue(val) => out = val,
-          ControlFlow::Return(val) => {
-            out = val;
-            break;
-          }
-          ControlFlow::Break(_) => {
-            return Err(ErrorStack::new(
-              "`break` isn't valid at the top level of a closure",
-            ))
-          }
-        },
-        Statement::Assignment {
-          name,
-          expr,
-          type_hint,
-          ..
-        } => {
-          let val = match self.eval_expr(expr, &closure_scope, Some(*name))? {
-            ControlFlow::Continue(val) => val,
-            ControlFlow::Return(val) => {
-              out = val;
-              break;
-            }
-            ControlFlow::Break(_) => {
-              return Err(ErrorStack::new(
-                "`break` isn't valid at the top level of a closure",
-              ))
-            }
-          };
-          self
-            .eval_assignment(*name, val, &closure_scope, *type_hint)
-            .map_err(|err| self.locate_err(err, expr.loc()))?;
-        }
-        Statement::DestructureAssignment { lhs, rhs } => {
-          let rhs_loc = rhs.loc();
-          let rhs = match self.eval_expr(rhs, &closure_scope, None)? {
-            ControlFlow::Continue(val) => val,
-            ControlFlow::Return(val) => {
-              out = val;
-              break;
-            }
-            ControlFlow::Break(_) => {
-              return Err(ErrorStack::new(
-                "`break` isn't valid at the top level of a closure",
-              ))
-            }
-          };
-          lhs
-            .visit_assignments(self, rhs, &mut |lhs, rhs| {
-              self.eval_assignment(lhs, rhs, &closure_scope, None)?;
-              Ok(())
-            })
-            .map_err(|err| {
-              self.locate_err(err.wrap("Error evaluating destructure assignment"), rhs_loc)
-            })?;
-        }
-        Statement::Return { value } => {
-          out = if let Some(value) = value {
-            match self.eval_expr(value, &closure_scope, None)? {
-              ControlFlow::Continue(val) => val,
-              ControlFlow::Return(val) => {
-                out = val;
-                break;
-              }
-              ControlFlow::Break(_) => {
-                return Err(ErrorStack::new(
-                  "`break` isn't valid at the top level of a closure",
-                ))
-              }
-            }
-          } else {
-            Value::Nil
-          };
-          return Ok(out);
-        }
-        Statement::Break { .. } => {
-          return Err(ErrorStack::new(
-            "`break` isn't valid at the top level of a closure",
-          ));
-        }
-      }
-    }
-
-    if has_arg_placeholders {
-      let Scope { parent, vars } = closure_scope;
-      drop(vars);
-      let args_scope = parent.unwrap();
-
-      match Rc::try_unwrap(args_scope) {
-        Ok(args_scope) => {
-          let vars = args_scope.vars.into_inner();
-          let mut arg_placeholders = closure.arg_placeholder_scope.borrow_mut();
-          *arg_placeholders = Some(vars);
-        }
-        Err(_) => {
-          // it's likely that this closure has returned a new closure that wraps the arg scope.
-          //
-          // So, we can't get those placeholders back and have to give up on the optimization.
-        }
-      }
-    }
-
-    if let Some(return_type_hint) = closure.return_type_hint {
-      return_type_hint.validate_val(&out)?;
-    }
-
-    Ok(out)
-  }
-
   /// Materializes the capture snapshot for a resolved closure and builds the closure value.
-  /// Returns `Ok(None)` when a `DefScope` capture is unbound at creation, in which case the
-  /// caller falls back to legacy creation (preserving call-time-undefined-variable errors).
+  /// `DefScope` captures only appear on program-level / standalone resolutions, which
+  /// materialize their own captures before any frame runs — seeing one here is a bug.
   fn create_resolved_closure(
     &self,
     params: &Rc<Vec<ClosureArg>>,
     body: &Rc<ClosureBody>,
     return_type_hint: Option<ArgType>,
     meta: &Rc<ResolvedBody>,
-    env: Env,
-  ) -> Result<Option<Value>, ErrorStack> {
+    env: &FrameEnv,
+  ) -> Result<Value, ErrorStack> {
     let mut cap_vals: Vec<Value> = Vec::with_capacity(meta.captures.len());
     for (name, from) in &meta.captures {
-      let val = match (from, env) {
-        (CaptureFrom::Local(slot), Env::Frame(frame)) => {
-          frame.slots.borrow()[*slot as usize].clone()
-        }
-        (CaptureFrom::Capture(ix), Env::Frame(frame)) => frame.captures[*ix as usize].clone(),
-        (CaptureFrom::SelfRef, Env::Frame(frame)) => Value::Callable(Rc::clone(frame.self_ref)),
-        (CaptureFrom::DefScope(sym), Env::Scope(scope)) => {
-          match resolve::resolve_capture_by_name(self, scope, *sym) {
-            Some(val) => val,
-            None => return Ok(None),
-          }
-        }
-        // A frame-oriented capture source under a scope env: the enclosing closure is being
-        // invoked via the legacy path (e.g. its resolution was invalidated by an optimizer
-        // rewrite), so create this one via the legacy path too — the scope chain has
-        // everything the frame would have provided.
-        (_, Env::Scope(_)) => return Ok(None),
-        (CaptureFrom::DefScope(_), Env::Frame(_)) => {
+      let val = match from {
+        CaptureFrom::Local(slot) => env.slots.borrow()[*slot as usize].clone(),
+        CaptureFrom::Capture(ix) => env.captures[*ix as usize].clone(),
+        CaptureFrom::SelfRef => Value::Callable(Rc::clone(env.self_ref)),
+        CaptureFrom::DefScope(_) => {
           return Err(self.with_resolved_sym(*name, |name| {
             ErrorStack::new(format!(
-              "Internal error: def-scope capture `{name}` inside a frame env"
+              "Internal error: def-scope capture `{name}` reached closure creation in a frame"
             ))
           }))
         }
@@ -3383,27 +2958,72 @@ impl EvalCtx {
       cap_vals.push(val);
     }
 
-    Ok(Some(Value::Callable(Rc::new(Callable::Closure(Closure {
+    Ok(Value::Callable(Rc::new(Callable::Closure(Closure {
       params: Rc::clone(params),
       body: Rc::clone(body),
-      captured_scope: CapturedScope::None,
-      arg_placeholder_scope: RefCell::new(None),
       return_type_hint,
-      resolved: Some(Rc::clone(meta)),
+      resolved: Rc::clone(meta),
       captures: Rc::from(cap_vals),
-    })))))
+    }))))
   }
 
-  /// Frame-based invocation for resolved closures: params + locals live in a flat pooled
-  /// slot array; no scopes are allocated. Mirrors `invoke_closure`'s semantics exactly.
+  #[inline]
+  fn store_frame_assignment(
+    &self,
+    slots: &RefCell<Vec<Value>>,
+    slot: Option<u16>,
+    type_hint: Option<ArgType>,
+    val: Value,
+    loc: SourceLoc,
+  ) -> Result<(), ErrorStack> {
+    let Some(slot) = slot else {
+      return Err(ErrorStack::new(
+        "Internal error: unslotted assignment in resolved closure body",
+      ));
+    };
+    if let Some(type_hint) = type_hint {
+      type_hint
+        .validate_val(&val)
+        .map_err(|err| self.locate_err(err, loc))?;
+    }
+    slots.borrow_mut()[slot as usize] = val;
+    Ok(())
+  }
+
+  #[inline]
+  fn store_destructured_frame_slots(
+    &self,
+    slots: &RefCell<Vec<Value>>,
+    stmt_slots: Option<&[u16]>,
+    lhs: &DestructurePattern,
+    val: Value,
+    rhs_loc: SourceLoc,
+  ) -> Result<(), ErrorStack> {
+    let Some(stmt_slots) = stmt_slots else {
+      return Err(ErrorStack::new(
+        "Internal error: unslotted destructure assignment in resolved closure body",
+      ));
+    };
+    let mut ix = 0usize;
+    lhs
+      .visit_assignments(self, val, &mut |_name, v| {
+        slots.borrow_mut()[stmt_slots[ix] as usize] = v;
+        ix += 1;
+        Ok(())
+      })
+      .map_err(|err| self.locate_err(err.wrap("Error evaluating destructure assignment"), rhs_loc))
+  }
+
+  /// Closure invocation: params + locals live in a flat pooled slot array; no scopes are
+  /// allocated.
   fn invoke_closure_resolved(
     &self,
     callable: &Rc<Callable>,
     closure: &Closure,
-    meta: &ResolvedBody,
     args: &[Value],
     kwargs: &FxHashMap<Sym, Value>,
   ) -> Result<Value, ErrorStack> {
+    let meta: &ResolvedBody = &closure.resolved;
     let mut slots_vec = self.get_frame_scratch();
     slots_vec.resize(meta.n_slots as usize, Value::Nil);
     let slots = RefCell::new(slots_vec);
@@ -3412,26 +3032,29 @@ impl EvalCtx {
       captures: &closure.captures,
       self_ref: callable,
     };
-    let env = Env::Frame(&frame);
+    let env = &frame;
 
     let mut pos_arg_ix = 0usize;
     let mut any_args_valid = false;
     let mut invalid_arg_ix = None;
     for (param_ix, param) in closure.params.iter().enumerate() {
-      let DestructurePattern::Ident(param_name) = &param.ident else {
-        unreachable!("resolved closures only have simple ident params")
-      };
-      let val = if let Some(kwarg) = kwargs.get(param_name) {
-        if let Some(type_hint) = param.type_hint {
-          type_hint.validate_val(kwarg).map_err(|err| {
-            self.with_resolved_sym(*param_name, |name| {
-              err.wrap(format!("Type error for closure kwarg `{name}`"))
-            })
-          })?;
+      let slot_start = meta.param_slots[param_ix] as usize;
+      // kwargs can only address simple ident params; patterns bind positionally
+      if let DestructurePattern::Ident(param_name) = &param.ident {
+        if let Some(kwarg) = kwargs.get(param_name) {
+          if let Some(type_hint) = param.type_hint {
+            type_hint.validate_val(kwarg).map_err(|err| {
+              self.with_resolved_sym(*param_name, |name| {
+                err.wrap(format!("Type error for closure kwarg `{name}`"))
+              })
+            })?;
+          }
+          any_args_valid = true;
+          slots.borrow_mut()[slot_start] = kwarg.clone();
+          continue;
         }
-        any_args_valid = true;
-        kwarg.clone()
-      } else if pos_arg_ix < args.len() {
+      }
+      let val = if pos_arg_ix < args.len() {
         let pos_arg = &args[pos_arg_ix];
         pos_arg_ix += 1;
         if let Some(type_hint) = param.type_hint {
@@ -3445,7 +3068,7 @@ impl EvalCtx {
         any_args_valid = true;
         pos_arg.clone()
       } else if let Some(default_expr) = &param.default_val {
-        match self.eval_expr_env(default_expr, env, None)? {
+        match self.eval_expr_env(default_expr, env)? {
           ControlFlow::Continue(val) => val,
           ControlFlow::Return(_) => {
             return Err(ErrorStack::new(format!(
@@ -3468,7 +3091,17 @@ impl EvalCtx {
         }
         continue;
       };
-      slots.borrow_mut()[param_ix] = val;
+      match &param.ident {
+        DestructurePattern::Ident(_) => slots.borrow_mut()[slot_start] = val,
+        pattern => {
+          let mut ix = 0usize;
+          pattern.visit_assignments(self, val, &mut |_name, v| {
+            slots.borrow_mut()[slot_start + ix] = v;
+            ix += 1;
+            Ok(())
+          })?;
+        }
+      }
     }
 
     if let Some(invalid_arg_ix) = invalid_arg_ix {
@@ -3489,91 +3122,19 @@ impl EvalCtx {
       }
     }
 
-    {
-      let mut slots_mut = slots.borrow_mut();
-      for (slot, cap_ix) in &meta.slot_inits {
-        slots_mut[*slot as usize] = closure.captures[*cap_ix as usize].clone();
+    // fast path for the dominant single-expression body shape; general bodies go through
+    // the shared statement driver
+    let out = if let [Statement::Expr(expr)] = &closure.body.0[..] {
+      match self.eval_expr_env(expr, env)? {
+        ControlFlow::Continue(val) | ControlFlow::Return(val) => val,
+        ControlFlow::Break(_) => return Err(break_outside_block_err()),
       }
-    }
-
-    let mut out: Value = Value::Nil;
-    for stmt in &closure.body.0 {
-      match stmt {
-        Statement::Expr(expr) => match self.eval_expr_env(expr, env, None)? {
-          ControlFlow::Continue(val) => out = val,
-          ControlFlow::Return(val) => {
-            out = val;
-            break;
-          }
-          ControlFlow::Break(_) => {
-            return Err(ErrorStack::new(
-              "`break` isn't valid at the top level of a closure",
-            ))
-          }
-        },
-        Statement::Assignment {
-          name,
-          expr,
-          type_hint,
-          slot,
-          ..
-        } => {
-          let val = match self.eval_expr_env(expr, env, Some(*name))? {
-            ControlFlow::Continue(val) => val,
-            ControlFlow::Return(val) => {
-              out = val;
-              break;
-            }
-            ControlFlow::Break(_) => {
-              return Err(ErrorStack::new(
-                "`break` isn't valid at the top level of a closure",
-              ))
-            }
-          };
-          if let Some(type_hint) = type_hint {
-            type_hint
-              .validate_val(&val)
-              .map_err(|err| self.locate_err(err, expr.loc()))?;
-          }
-          let Some(slot) = slot else {
-            return Err(ErrorStack::new(
-              "Internal error: unslotted assignment in resolved closure body",
-            ));
-          };
-          slots.borrow_mut()[*slot as usize] = val;
-        }
-        Statement::DestructureAssignment { .. } => {
-          return Err(ErrorStack::new(
-            "Internal error: destructure assignment in resolved closure body",
-          ))
-        }
-        Statement::Return { value } => {
-          out = if let Some(value) = value {
-            match self.eval_expr_env(value, env, None)? {
-              ControlFlow::Continue(val) => val,
-              ControlFlow::Return(val) => {
-                out = val;
-                break;
-              }
-              ControlFlow::Break(_) => {
-                return Err(ErrorStack::new(
-                  "`break` isn't valid at the top level of a closure",
-                ))
-              }
-            }
-          } else {
-            Value::Nil
-          };
-          self.restore_frame_scratch(slots.into_inner());
-          return Ok(out);
-        }
-        Statement::Break { .. } => {
-          return Err(ErrorStack::new(
-            "`break` isn't valid at the top level of a closure",
-          ));
-        }
+    } else {
+      match self.eval_statements::<STMTS_CLOSURE_BODY>(&closure.body.0, env)? {
+        ControlFlow::Continue(val) => val,
+        _ => unreachable!("closure-body policy catches all exits"),
       }
-    }
+    };
 
     if let Some(return_type_hint) = closure.return_type_hint {
       return_type_hint.validate_val(&out)?;
@@ -3639,12 +3200,7 @@ impl EvalCtx {
 
         self.invoke_callable(&paf.inner, &combined_args, &combined_kwargs)
       }
-      Callable::Closure(closure) => match &closure.resolved {
-        Some(meta) => {
-          self.invoke_closure_resolved(callable, closure, &Rc::clone(meta), args, kwargs)
-        }
-        None => self.invoke_closure(closure, args, kwargs),
-      },
+      Callable::Closure(closure) => self.invoke_closure_resolved(callable, closure, args, kwargs),
       Callable::ComposedFn(ComposedFn { inner }) => {
         let acc = args;
         let mut iter = inner.iter();
@@ -3953,18 +3509,7 @@ impl EvalCtx {
     let mut ast = parse_res?;
     optimizer::optimize_ast(self, &mut ast)?;
 
-    for statement in &ast.statements {
-      match self.eval_top_level_statement(statement, &scope)? {
-        ControlFlow::Continue(_) => {}
-        ControlFlow::Break(_) => {
-          return Err(ErrorStack::new("`break` at module top level not allowed"));
-        }
-        ControlFlow::Return(_) => {
-          return Err(ErrorStack::new("`return` at module top level not allowed"));
-        }
-      }
-    }
-
+    eval_program_into_scope(self, &ast, &scope)?;
     Ok(scope)
   }
 
@@ -4161,7 +3706,6 @@ impl EvalCtx {
     let parse_res = parse_program_src(self, source);
     self.source_map.borrow_mut().prelude_line_count = prev_offset;
 
-    let module_scope = self.fresh_module_scope();
     let mut ast =
       parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
     optimizer::optimize_ast(self, &mut ast)
@@ -4176,24 +3720,19 @@ impl EvalCtx {
     #[cfg(target_arch = "wasm32")]
     let async_before = get_async_dep_bits();
 
-    for statement in &ast.statements {
-      match self
-        .eval_top_level_statement(statement, &module_scope)
-        .map_err(|err| err.wrap(&format!("Error evaluating module \"{module_name}\"")))?
-      {
-        ControlFlow::Continue(_) => {}
-        ControlFlow::Break(_) => {
-          return Err(ErrorStack::new(format!(
-            "`break` in module \"{module_name}\" top level"
-          )));
-        }
-        ControlFlow::Return(_) => {
-          return Err(ErrorStack::new(format!(
-            "`return` in module \"{module_name}\" top level"
-          )));
-        }
+    // Module bodies materialize their captures straight from the ambient scope (or the
+    // default globals); their own bindings are discarded — exports were recorded by name.
+    let ambient = self.ambient_scope.borrow().as_ref().map(Rc::clone);
+    let default_base;
+    let base = match &ambient {
+      Some(scope) => &**scope,
+      None => {
+        default_base = Scope::default_globals(&self.interned_symbols);
+        &default_base
       }
-    }
+    };
+    eval_resolved_program(self, &ast, base)
+      .map_err(|err| err.wrap(&format!("Error evaluating module \"{module_name}\"")))?;
 
     let export_map = self
       .current_module_exports
@@ -4396,7 +3935,10 @@ fn finalize_program(
     })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
-  Ok(Program { statements })
+  Ok(Program {
+    statements,
+    resolution: None,
+  })
 }
 
 /// Reject `arr[1,2,3]`: Pest would otherwise backtrack to two adjacent statements
@@ -4506,46 +4048,73 @@ pub fn parse_program_maybe_with_prelude_and_ambient(
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {
-  // When an ambient scope is installed the root program (treated as a module) gets a fresh clone
-  // of it so its vars don't leak into the long-lived `globals`; otherwise it evaluates directly
-  // into `globals` so top-level bindings persist for later `get_global` reads.
-  if ctx.ambient_scope.borrow().is_some() {
-    let scope = ctx.fresh_module_scope();
-    eval_program_into_scope(ctx, ast, &scope).map(|_| ())
-  } else {
-    eval_program_into_scope(ctx, ast, &ctx.globals).map(|_| ())
+  // With an ambient scope installed the root program's bindings are discarded so they don't
+  // leak into the long-lived `globals`; otherwise they flush into `globals` so top-level
+  // bindings persist for later `get_global` reads and follow-up programs on the same ctx.
+  let ambient = ctx.ambient_scope.borrow().as_ref().map(Rc::clone);
+  match ambient {
+    Some(ambient) => eval_resolved_program(ctx, ast, &ambient).map(|_| ()),
+    None => eval_program_into_scope(ctx, ast, &ctx.globals).map(|_| ()),
   }
 }
 
-/// Base scope for the root program: a fresh clone of the ambient scope when installed
-/// (so root vars don't leak into the long-lived globals across calls), else `globals`.
-impl EvalCtx {
-  pub fn root_program_scope(&self) -> Scope {
-    if self.ambient_scope.borrow().is_some() {
-      self.fresh_module_scope()
-    } else {
-      self.globals.clone()
-    }
-  }
+/// Any callable works here: the resolver never emits `SelfRef` without a self-name and
+/// program-level frames have none, so the ref is never read.
+fn dummy_self_ref() -> Rc<Callable> {
+  Rc::new(Callable::Builtin {
+    fn_entry_ix: get_builtin_fn_sig_entry_ix("print").unwrap(),
+    fn_impl: resolve_builtin_impl("print"),
+    pre_resolved_signature: None,
+  })
 }
 
-/// Evaluate `ast`'s top-level statements against `scope`, returning the value of the
-/// last statement. Unlike `eval_program_with_ctx` the caller owns `scope`, so it can be
-/// inspected afterward (used by `geotoy eval` to read exports / eval follow-up exprs).
-pub fn eval_program_into_scope(
+/// Runs a resolved program's top level as an implicit zero-param closure: materializes its
+/// `DefScope` captures from `base` (+ builtin fallback), executes the statements in a fresh
+/// frame, and returns the last statement's value together with the program's own top-level
+/// bindings read back out of the frame in declaration order.
+pub fn eval_resolved_program(
   ctx: &EvalCtx,
   ast: &Program,
-  scope: &Scope,
-) -> Result<Value, ErrorStack> {
+  base: &Scope,
+) -> Result<(Value, Vec<(Sym, Value)>), ErrorStack> {
+  let Some(res) = &ast.resolution else {
+    return Err(ErrorStack::new(
+      "Internal error: unresolved program reached eval",
+    ));
+  };
+
+  let mut cap_vals = Vec::with_capacity(res.captures.len());
+  for (name, from) in &res.captures {
+    let CaptureFrom::DefScope(sym) = from else {
+      return Err(ctx.with_resolved_sym(*name, |name| {
+        ErrorStack::new(format!(
+          "Internal error: non-def-scope capture `{name}` in program resolution"
+        ))
+      }));
+    };
+    match resolve::resolve_capture_by_name(ctx, base, *sym) {
+      Some(val) => cap_vals.push(val),
+      None => {
+        return Err(ctx.with_resolved_sym(*sym, |name| {
+          ErrorStack::new(format!("Variable `{name}` not found"))
+        }))
+      }
+    }
+  }
+
+  let slots = RefCell::new(vec![Value::Nil; res.n_slots as usize]);
+  let self_ref = dummy_self_ref();
+  let frame = FrameEnv {
+    slots: &slots,
+    captures: &cap_vals,
+    self_ref: &self_ref,
+  };
+
   let mut last = Value::Nil;
   for statement in &ast.statements {
-    last = match ctx.eval_top_level_statement(statement, scope)? {
+    last = match ctx.eval_top_level_statement(statement, &frame)? {
       ControlFlow::Continue(val) => val,
-      ControlFlow::Break(_) => {
-        return Err(ErrorStack::new(
-          "`break` outside of a function is not allowed",
-        ))
-      }
+      ControlFlow::Break(_) => return Err(break_outside_block_err()),
       ControlFlow::Return(_) => {
         return Err(ErrorStack::new(
           "`return` outside of a function is not allowed",
@@ -4554,6 +4123,28 @@ pub fn eval_program_into_scope(
     };
   }
 
+  let mut slots = slots.into_inner();
+  let bindings = res
+    .name_slots
+    .iter()
+    .map(|(sym, slot)| (*sym, std::mem::replace(&mut slots[*slot as usize], Value::Nil)))
+    .collect();
+  Ok((last, bindings))
+}
+
+/// Evaluate `ast`'s top-level statements with `scope` as the base bindings, then insert the
+/// program's own top-level bindings back into `scope` so the caller can inspect them (used
+/// by `geotoy eval` to read exports / eval follow-up exprs). Returns the last statement's
+/// value.
+pub fn eval_program_into_scope(
+  ctx: &EvalCtx,
+  ast: &Program,
+  scope: &Scope,
+) -> Result<Value, ErrorStack> {
+  let (last, bindings) = eval_resolved_program(ctx, ast, scope)?;
+  for (sym, val) in bindings {
+    scope.insert(sym, val);
+  }
   Ok(last)
 }
 
@@ -5575,6 +5166,32 @@ inc(1.0)
 }
 
 #[test]
+fn test_explicit_return_validates_return_type_hint() {
+  let src = r#"
+f = |x|: int {
+  if x > 0 {
+    return "s"
+  }
+  x
+}
+res = f(1)
+"#;
+  assert!(parse_and_eval_program(src).is_err());
+
+  let src = r#"
+f = |x|: int {
+  if x > 0 {
+    return x + 1
+  }
+  x
+}
+res = f(1)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 2);
+}
+
+#[test]
 fn test_map_operator() {
   let src = r#"
 a = 0..5 | map(|x| x * 2) | reduce(add)
@@ -5795,6 +5412,78 @@ out = [0, 1, 2] -> fn | reduce(add)
     .as_int()
     .unwrap_or_else(|| panic!("Expected result to be an Int; found: {out:?}"));
   assert_eq!(out, (100 + 1) + (1 + 1) + (2 + 1));
+}
+
+#[test]
+fn test_break_transparent_through_branches() {
+  // conditional branch bodies are transparent to `break`: it exits the nearest enclosing
+  // explicit block, skipping the block's remaining statements
+  let src = r#"
+f = |x| {
+  r = {
+    if x == 0 {
+      break 100
+    }
+    x + 50
+  }
+  r + 1
+}
+a = f(0)
+b = f(3)
+g = |x| {
+  {
+    if x > 0 {
+      if x > 10 {
+        break 1000
+      }
+      break 100
+    }
+    x
+  }
+}
+c = g(20)
+d = g(5)
+e = g(-1)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 101);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 54);
+  assert_eq!(ctx.get_global("c").unwrap().as_int().unwrap(), 1000);
+  assert_eq!(ctx.get_global("d").unwrap().as_int().unwrap(), 100);
+  assert_eq!(ctx.get_global("e").unwrap().as_int().unwrap(), -1);
+
+  // a nested explicit block is its own target; its break doesn't reach the outer block
+  let src = r#"
+r = {
+  inner = {
+    if true {
+      break 7
+    }
+    0
+  }
+  inner + 1
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("r").unwrap().as_int().unwrap(), 8);
+}
+
+#[test]
+fn test_break_outside_block_errors() {
+  // break propagating past a closure body (through branches) is an error, as is break at
+  // the program top level
+  let err = parse_and_eval_program("f = |x| {\n  if x > 0 {\n    break 1\n  }\n  x\n}\nres = f(1)")
+    .unwrap_err();
+  assert!(
+    format!("{err}").contains("`break` used outside of a block"),
+    "unexpected error: {err}"
+  );
+
+  let err = parse_and_eval_program("x = if true { break 1 } else { 2 }").unwrap_err();
+  assert!(
+    format!("{err}").contains("`break` used outside of a block"),
+    "unexpected error: {err}"
+  );
 }
 
 #[test]
@@ -6120,28 +5809,28 @@ b = a -> |v: vec3, norm: vec3|: vec3 vec3(0)
 }
 
 #[test]
-fn test_block_assignment_scoping() {
+fn test_block_assignment_shadows() {
   let src = r#"
 x = 0
-{
+y = {
   x = 1
+  x + 1
 }
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
 
   let x = ctx.get_global("x").unwrap();
-  let x = x.as_int().expect("Expected result to be an Int");
-  assert_eq!(x, 1);
+  assert_eq!(x.as_int().unwrap(), 0);
+  let y = ctx.get_global("y").unwrap();
+  assert_eq!(y.as_int().unwrap(), 2);
 }
 
 #[test]
 fn test_assign_to_arg() {
   let src = r#"
 f = |x: int| {
-  if x < 0 {
-    x = 0
-  }
+  x = if x < 0 { 0 } else { x }
   return x + 1
 }
 
@@ -6165,9 +5854,7 @@ fn test_multi_conditional_const_eval() {
   let src = r#"
 f = |x: int| {
   y = 1
-  if x == 0 {
-    y = 0
-  }
+  y = if x == 0 { 0 } else { y }
   if y == 1 {
     return true
   }
@@ -6431,6 +6118,480 @@ fn test_missing_required_arg_with_default_errors() {
 }
 
 #[test]
+fn test_destructure_assignment_in_closure() {
+  let src = r#"
+f = |i| {
+  [a, b] = [i, i * 2]
+  {x, y: [c, d]} = {x: a + b, y: [b, 4]}
+  a + b + x + c + d
+}
+res = f(1) + f(2)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  let res = ctx.get_global("res").unwrap().as_int().unwrap();
+  assert_eq!(res, (8 + 4) + (16 + 4));
+}
+
+#[test]
+fn test_destructure_assignment_in_closure_block() {
+  let src = r#"
+f = |i| {
+  a = 0
+  [a, b] = if i > 0 { [i, i * 2] } else { [a, 0] }
+  a
+}
+res1 = f(3)
+res2 = f(0)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res1").unwrap().as_int().unwrap(), 3);
+  assert_eq!(ctx.get_global("res2").unwrap().as_int().unwrap(), 0);
+}
+
+#[test]
+fn test_destructured_params() {
+  let src = r#"
+f = |[a, b], {c}| a + b + c
+res = f([1, 2], {c: 3})
+g = |[a, b] = [1, 2]| a + b
+res2 = g()
+res3 = g([10, 20])
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 6);
+  assert_eq!(ctx.get_global("res2").unwrap().as_int().unwrap(), 3);
+  assert_eq!(ctx.get_global("res3").unwrap().as_int().unwrap(), 30);
+}
+
+#[test]
+fn test_pattern_param_partial_application() {
+  let src = r#"
+f = |[a, b], c| a + b + c
+g = f([1, 2])
+res = g(3)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 6);
+}
+
+#[test]
+fn test_block_shadow_of_captured_names() {
+  // assigning a captured name inside a block shadows it; the capture is unchanged at reads
+  // past the block, whichever branch ran
+  let src = r#"
+x = 7
+f = |c| {
+  if c {
+    x = 1
+  }
+  x
+}
+a = f(true)
+b = f(false)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 7);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 7);
+
+  // same for destructure targets: both die at the `}`
+  let src = r#"
+outer = |z| {
+  p = z
+  q = 2
+  f = || {
+    if true {
+      [p, q] = [10, 20]
+    }
+    p + q
+  }
+  f() + p + q
+}
+res = outer(1)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(
+    ctx.get_global("res").unwrap().as_int().unwrap(),
+    (1 + 2) + 1 + 2
+  );
+}
+
+#[test]
+fn test_self_name_block_shadow() {
+  let src = r#"
+f = |i| {
+  if i > 10 {
+    f = i
+  }
+  f
+}
+a = f(20)
+b = f(5)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert!(matches!(ctx.get_global("a").unwrap(), Value::Callable(_)));
+  assert!(matches!(ctx.get_global("b").unwrap(), Value::Callable(_)));
+}
+
+#[test]
+fn test_block_shadow_ordering() {
+  // shadows begin at the assignment statement: earlier reads and closure creations see the
+  // outer binding, later ones see the shadow; nested shadows die at their own `}`
+  let src = r#"
+x = 10
+r = {
+  y = x + 1
+  g = || x
+  x = 5
+  z = x + 100
+  h = || x
+  inner = {
+    x = 7
+    x
+  }
+  [y, z, inner, x, g(), h()]
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("x").unwrap().as_int().unwrap(), 10);
+  let r = ctx.get_global("r").unwrap();
+  let Value::Sequence(r) = r else {
+    panic!("Expected result to be a Seq");
+  };
+  let r = r.consume(&ctx).collect::<Result<Vec<_>, _>>().unwrap();
+  let expected = [11, 105, 7, 5, 10, 5];
+  for (v, exp) in r.iter().zip(expected) {
+    assert_eq!(v.as_int().unwrap(), exp);
+  }
+
+  // uniform at every level: the same closure shape yields the same result whether its
+  // captured name lives at true top level or is a top-level block's local
+  let src = r#"
+y = 2 + randi(0, 0)
+f = || {
+  if true {
+    y = y + 10
+  }
+  y
+}
+a = f()
+b = {
+  y2 = 2 + randi(0, 0)
+  g = || {
+    if true {
+      y2 = y2 + 10
+    }
+    y2
+  }
+  g()
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 2);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 2);
+
+  // same-level rebinding within one block still updates in place; a block whose last
+  // statement is an assignment still yields Nil
+  let src = r#"
+r = {
+  a = 1
+  a = a + 1
+  a + 100
+}
+r2 = {
+  b = 0
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("r").unwrap().as_int().unwrap(), 102);
+  assert!(matches!(ctx.get_global("r2").unwrap(), Value::Nil));
+
+  // type-hinted shadow is its own binding with its own hint
+  let src = r#"
+x: int = 1
+r = {
+  x: vec3 = v3(1, 2, 3)
+  x.y
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("x").unwrap().as_int().unwrap(), 1);
+  assert_eq!(ctx.get_global("r").unwrap().as_float().unwrap(), 2.);
+}
+
+#[test]
+fn test_statement_list_result_rule() {
+  // one rule for blocks and closure bodies alike: the last statement's value is the result,
+  // and assignments (incl. destructures) yield Nil
+  let src = r#"
+f = || {
+  a = 1
+  a + 1
+  b = 2
+}
+r1 = f()
+g = || {
+  a = 1
+  a + 1
+}
+r2 = g()
+h = || {
+  1
+  [a, b] = [2, 3]
+}
+r3 = h()
+r4 = {
+  a = 1
+  a + 1
+  b = 2
+}
+r5 = {
+  a = 1
+  a + 1
+}
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert!(matches!(ctx.get_global("r1").unwrap(), Value::Nil));
+  assert_eq!(ctx.get_global("r2").unwrap().as_int().unwrap(), 2);
+  assert!(matches!(ctx.get_global("r3").unwrap(), Value::Nil));
+  assert!(matches!(ctx.get_global("r4").unwrap(), Value::Nil));
+  assert_eq!(ctx.get_global("r5").unwrap().as_int().unwrap(), 2);
+}
+
+#[test]
+fn test_param_block_shadow() {
+  // reassigning a param inside a block shadows it; the param is unchanged after the block
+  let src = r#"
+f = |v: int| {
+  if v > 8 {
+    v = v - 1
+  }
+  v
+}
+a = f(10)
+b = f(3)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 10);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 3);
+}
+
+#[test]
+fn test_param_default_block_shadow() {
+  // a block shadow inside one param's default is invisible to later defaults
+  let src = r#"
+x = 100
+f = |a = { x = randi(0, 3); x }, b = x| b
+res = f(5)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 100);
+
+  // ...and invisible to the enclosing scope's const tracking (reads after the definition
+  // must not fold to the default block's shadow value)
+  let src = r#"
+x = 1
+f = |a = { x = 5; x }| a
+res = x
+res2 = f()
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 1);
+  assert_eq!(ctx.get_global("res2").unwrap().as_int().unwrap(), 5);
+}
+
+#[test]
+fn test_conditional_position_block_shadow() {
+  // blocks in short-circuit positions can't leak assignments regardless of whether the
+  // branch actually runs
+  let src = r#"
+f = |cond| {
+  myx = 1
+  cond && { myx = 2; true }
+  myx
+}
+a = f(false)
+b = f(true)
+g = |v| {
+  y = 1
+  v ?? { y = 2; 0 }
+  y
+}
+c = g(7)
+d = g(nil)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  for name in ["a", "b", "c", "d"] {
+    assert_eq!(ctx.get_global(name).unwrap().as_int().unwrap(), 1, "{name}");
+  }
+}
+
+#[test]
+fn test_block_const_eval_globals_untouched() {
+  // optimize-time const-eval of a block must not mutate the shared globals scope
+  let src = r#"
+f = || { { pi = 99.0; 0 } }
+res = pi
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  let res = ctx.get_global("res").unwrap().as_float().unwrap();
+  assert!(
+    (res - std::f32::consts::PI).abs() < 1e-5,
+    "pi was clobbered: {res}"
+  );
+}
+
+#[test]
+fn test_block_inline_uses_in_order_state() {
+  // a read must never be folded with a value from a later assignment in the same block
+  let src = r#"
+f = |c| {
+  v = {
+    y = c
+    r = y + 1
+    y = 5
+    r
+  }
+  v
+}
+res = f(10)
+res2 = f(0)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 11);
+  assert_eq!(ctx.get_global("res2").unwrap().as_int().unwrap(), 1);
+}
+
+#[test]
+fn test_block_shadow_of_const_not_inlined() {
+  // a block shadow of a const-tracked name must not be const-inlined with the outer value,
+  // in every position the analysis passes visit
+  let src = r#"
+x = 100
+f = |a| {
+  v = {
+    x = a
+    x + 1
+  }
+  v
+}
+res = f(1)
+g = |a| {
+  x = 1
+  v = {
+    x = a
+    x + 1
+  }
+  v
+}
+res2 = g(10)
+h = |a| {
+  {
+    x = a
+    x + 1
+  }
+}
+res3 = h(10)
+k = |a| {
+  v = {
+    y = x + 1
+    x = a
+    y + x
+  }
+  v
+}
+res4 = k(1)
+m = |a| {
+  v = {
+    [x, y] = [a, 2]
+    x + y
+  }
+  v
+}
+res5 = m(1)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_int().unwrap(), 2);
+  assert_eq!(ctx.get_global("res2").unwrap().as_int().unwrap(), 11);
+  assert_eq!(ctx.get_global("res3").unwrap().as_int().unwrap(), 11);
+  assert_eq!(ctx.get_global("res4").unwrap().as_int().unwrap(), 101 + 1);
+  assert_eq!(ctx.get_global("res5").unwrap().as_int().unwrap(), 3);
+}
+
+#[test]
+fn test_block_const_fold_of_frame_resolved_closure() {
+  // the optimizer's block const-eval runs pre-pipeline metas under a scope env; a nested
+  // closure with frame-oriented captures must fall back to standalone re-resolution rather
+  // than erroring
+  let src = r#"
+add2 = |a, b| a + b
+f = || {
+  y = 2
+  v = {
+    g = |q = add2(1, 2)| q + y
+    42
+  }
+  v
+}
+out = f()
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("out").unwrap().as_int().unwrap(), 42);
+}
+
+#[test]
+fn test_builtin_shadowing_call_targets() {
+  // an Arg- or Dyn-tracked binding shadowing a builtin name must not be analyzed as the
+  // pure builtin
+  let src = r#"
+f = |sin| sin(1.0)
+res = f(|v| v + 2.0)
+tan = |v| v + 1.0
+tan = if randi(0, 0) == 0 { |v: float| v + 2.0 } else { tan }
+g = || tan(1.0)
+res2 = g()
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("res").unwrap().as_float().unwrap(), 3.);
+  assert_eq!(ctx.get_global("res2").unwrap().as_float().unwrap(), 3.);
+}
+
+#[test]
+fn test_unbound_capture_errors_at_creation() {
+  // The optimizer statically rejects unknown names in user programs, so an unbound capture
+  // can only arise for synthesized closures — creation errors immediately, dead branches
+  // included.
+  let ctx = EvalCtx::default();
+  let ast = parse_program_src(&ctx, "f = |i| if i > 0 { i } else { missing_xyz }").unwrap();
+  let TopLevelStatement::Statement(Statement::Assignment { expr, .. }) = &ast.statements[0] else {
+    unreachable!()
+  };
+  let Expr::Closure { params, body, .. } = expr else {
+    unreachable!()
+  };
+  let err = crate::resolve::resolve_new_closure(
+    &ctx,
+    &Scope::default(),
+    Rc::clone(params),
+    Rc::clone(body),
+    None,
+  )
+  .unwrap_err();
+  assert!(
+    format!("{err}").contains("Variable `missing_xyz` not found"),
+    "unexpected error: {err}"
+  );
+}
+
+#[test]
+fn test_destructure_mismatch_error() {
+  let err = parse_and_eval_program("f = |x| {\n  [a, b] = x\n  a\n}\nres = f(5)").unwrap_err();
+  assert!(
+    format!("{err}").contains("Cannot destructure non-sequence value"),
+    "unexpected error: {err}"
+  );
+}
+
+#[test]
 fn test_shadow_global_in_closure_repro_2() {
   let src = r#"
 radius = 10
@@ -6503,64 +6664,6 @@ x = fn(5)
   let x = ctx.get_global("x").unwrap();
   let x = x.as_int().expect("Expected result to be an Int");
   assert_eq!(x, 6);
-}
-
-#[test]
-fn test_closure_scope_reference_counting() {
-  let closure = Expr::Closure {
-    resolved: None,
-    params: Rc::new(vec![]),
-    body: Rc::new(crate::ast::ClosureBody(vec![Statement::Expr(
-      Expr::Literal {
-        value: Value::Int(1),
-        loc: SourceLoc::default(),
-      },
-    )])),
-    arg_placeholder_scope: Closure::build_arg_placeholder_scope(&[]),
-    return_type_hint: None,
-    loc: SourceLoc::default(),
-  };
-  let ctx = EvalCtx::default();
-  let out = ctx
-    .eval_expr(
-      &closure,
-      &ctx.globals,
-      Some(ctx.interned_symbols.intern("name")),
-    )
-    .unwrap();
-  let callable = match out {
-    ControlFlow::Continue(Value::Callable(callable)) => callable,
-    _ => unreachable!(),
-  };
-  let callable = Rc::try_unwrap(callable).unwrap();
-  let Callable::Closure(closure) = callable else {
-    unreachable!();
-  };
-  let CapturedScope::Strong(captured_scope) = closure.captured_scope else {
-    unreachable!();
-  };
-  // this should be the only place it's strongly referenced, so when the closure is dropped the
-  // captured scope (which actually contains it) should also be dropped.
-  assert_eq!(Rc::strong_count(&captured_scope), 1,);
-
-  // the captured scope recursively refers to the closure to support recursive calls
-  let cloned_closure = captured_scope
-    .get(ctx.interned_symbols.intern("name"))
-    .unwrap();
-  let cloned_closure = cloned_closure.as_callable().unwrap();
-  let Callable::Closure(cloned_closure) = &**cloned_closure else {
-    unreachable!();
-  };
-
-  let CapturedScope::Weak(weak_captured_scope) = &cloned_closure.captured_scope else {
-    unreachable!();
-  };
-  assert_eq!(weak_captured_scope.strong_count(), 1);
-
-  // ensure that this weak reference actually points to the same captured scope
-  let _ = Rc::try_unwrap(captured_scope).unwrap();
-
-  assert_eq!(weak_captured_scope.strong_count(), 0);
 }
 
 #[test]
@@ -7784,6 +7887,31 @@ fn test_evaluate_module_to_scope() {
 }
 
 #[test]
+fn test_top_level_break_in_block() {
+  let ctx = parse_and_eval_program("x = { if true { break 5 }\n 10 }").unwrap();
+  assert_eq!(ctx.get_global("x").unwrap().as_int().unwrap(), 5);
+}
+
+#[test]
+fn test_top_level_ambient_shadow_read_order() {
+  // A top-level read before a rebind sees the ambient value; reads after see the new one.
+  let ctx = EvalCtx::default();
+  let ambient = ctx.evaluate_module_to_scope("x = 5").unwrap();
+  ctx.set_ambient_scope(ambient);
+  let scope = ctx.evaluate_module_to_scope("y = x\nx = 1\nz = x").unwrap();
+  let sym = |s: &str| ctx.interned_symbols.intern(s);
+  assert_eq!(scope.get(sym("y")).unwrap().as_int().unwrap(), 5);
+  assert_eq!(scope.get(sym("z")).unwrap().as_int().unwrap(), 1);
+  assert_eq!(scope.get(sym("x")).unwrap().as_int().unwrap(), 1);
+}
+
+#[test]
+fn test_top_level_builtin_as_value() {
+  let ctx = parse_and_eval_program("s = abs\nr = s(-3)").unwrap();
+  assert_eq!(ctx.get_global("r").unwrap().as_int().unwrap(), 3);
+}
+
+#[test]
 fn test_ambient_scope_visible_in_imported_module() {
   let ctx = EvalCtx::default();
 
@@ -7890,9 +8018,7 @@ fn test_neq_in_closure_conditional_branches_per_arg() {
   let src = r#"
 ridge = |r: num = 0| {
   x = 100
-  if r != 0 {
-    x = x + r
-  }
+  x = if r != 0 { x + r } else { x }
   x
 }
 a = ridge(0)

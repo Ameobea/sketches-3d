@@ -96,8 +96,12 @@ struct AnalysisWalker<'a> {
   /// Stack of in-progress closure bodies; populated while walking a closure body and read by
   /// `Statement::Return` to record exit types and validate against a declared return type.
   closure_return_stack: Vec<ClosureReturnContext>,
+  /// Break-exit accumulation for enclosing explicit blocks; `None` entries are closure-body
+  /// barriers (`break` cannot escape a closure).
+  block_break_stack: Vec<Option<Vec<AbstractType>>>,
   /// Set just before walking a `name = |..| { .. }` binding's RHS so the closure can make its
-  /// own name visible inside its body for recursive calls, mirroring `eval_expr`'s `binding_name`.
+  /// own name visible inside its body for recursive calls, mirroring the resolver's self-name
+  /// handling.
   pending_recursive_binding: Option<Sym>,
 }
 
@@ -131,6 +135,7 @@ impl<'a> AnalysisWalker<'a> {
       diagnostics: Vec::new(),
       builtin_syms,
       closure_return_stack: Vec::new(),
+      block_break_stack: Vec::new(),
       pending_recursive_binding: None,
     }
   }
@@ -229,15 +234,13 @@ impl<'a> AnalysisWalker<'a> {
         name_loc,
         expr,
         type_hint,
+        ..
       } => {
         let inferred = self.walk_binding_value(*name, expr);
         let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
         self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
       }
-      TopLevelStatement::Import {
-        bindings,
-        module_name: _,
-      } => {
+      TopLevelStatement::Import { bindings, .. } => {
         self.define_destructure_pattern(
           bindings,
           SourceLoc::default(),
@@ -261,7 +264,7 @@ impl<'a> AnalysisWalker<'a> {
         let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
         self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
       }
-      Statement::DestructureAssignment { lhs, rhs } => {
+      Statement::DestructureAssignment { lhs, rhs, .. } => {
         self.walk_expr(rhs);
         self.define_destructure_pattern(
           lhs,
@@ -291,10 +294,52 @@ impl<'a> AnalysisWalker<'a> {
         }
       }
       Statement::Break { value } => {
-        if let Some(expr) = value {
-          self.walk_expr(expr);
+        let exit_ty = match value {
+          Some(expr) => self.walk_expr(expr),
+          None => AbstractType::Concrete(ArgType::Nil),
+        };
+        if let Some(Some(exits)) = self.block_break_stack.last_mut() {
+          exits.push(exit_ty);
         }
       }
+    }
+  }
+
+  /// Walks a statement list: the trailing-expression type (Nil if none) plus whether the
+  /// fall-through result is unreachable (list ends in `return`/`break`).
+  fn walk_statement_list(&mut self, statements: &[Statement]) -> (AbstractType, bool) {
+    let stmt_count = statements.len();
+    let mut result = AbstractType::Concrete(ArgType::Nil);
+    let mut unreachable = false;
+    for (i, stmt) in statements.iter().enumerate() {
+      if i + 1 == stmt_count {
+        match stmt {
+          Statement::Expr(expr) => {
+            result = self.walk_expr(expr);
+            continue;
+          }
+          Statement::Return { .. } | Statement::Break { .. } => unreachable = true,
+          _ => {}
+        }
+      }
+      self.walk_statement(stmt);
+    }
+    (result, unreachable)
+  }
+
+  /// Mirrors runtime branch transparency: a conditional branch block is NOT a break target,
+  /// so `break` inside it contributes to the nearest enclosing explicit block instead.
+  fn walk_branch_expr(&mut self, expr: &Expr) -> AbstractType {
+    let Expr::Block { statements, .. } = expr else {
+      return self.walk_expr(expr);
+    };
+    self.push_scope();
+    let (result, unreachable) = self.walk_statement_list(statements);
+    self.pop_scope();
+    if unreachable {
+      AbstractType::Unknown
+    } else {
+      result
     }
   }
 
@@ -447,6 +492,7 @@ impl<'a> AnalysisWalker<'a> {
           declared: declared_arg,
           exit_types: Vec::new(),
         });
+        self.block_break_stack.push(None);
 
         // Walk body; if the last statement is `Statement::Expr`, its type is the implicit
         // return.  If it's a `Return`, the implicit tail is unreachable — skip validation.
@@ -482,6 +528,7 @@ impl<'a> AnalysisWalker<'a> {
           }
         }
 
+        self.block_break_stack.pop();
         let closure_ctx = self.closure_return_stack.pop().expect("stack balanced");
         self.pop_scope();
 
@@ -534,14 +581,14 @@ impl<'a> AnalysisWalker<'a> {
         ..
       } => {
         self.walk_expr(cond);
-        let then_ty = self.walk_expr(then);
+        let then_ty = self.walk_branch_expr(then);
         let mut branches: Vec<AbstractType> = vec![then_ty];
         for (c, e) in else_if_exprs {
           self.walk_expr(c);
-          branches.push(self.walk_expr(e));
+          branches.push(self.walk_branch_expr(e));
         }
         if let Some(else_expr) = else_expr {
-          branches.push(self.walk_expr(else_expr));
+          branches.push(self.walk_branch_expr(else_expr));
         } else {
           // An `if` without `else` can fall through with no value.
           branches.push(AbstractType::Concrete(ArgType::Nil));
@@ -553,20 +600,22 @@ impl<'a> AnalysisWalker<'a> {
       }
       Expr::Block { statements, .. } => {
         self.push_scope();
-        let stmt_count = statements.len();
-        let mut result = AbstractType::Concrete(ArgType::Nil);
-        for (i, stmt) in statements.iter().enumerate() {
-          let is_last = i + 1 == stmt_count;
-          if is_last {
-            if let Statement::Expr(expr) = stmt {
-              result = self.walk_expr(expr);
-              continue;
-            }
-          }
-          self.walk_statement(stmt);
-        }
+        self.block_break_stack.push(Some(Vec::new()));
+        let (result, unreachable) = self.walk_statement_list(statements);
+        let break_exits = self.block_break_stack.pop().unwrap().unwrap();
         self.pop_scope();
-        result
+        // Unreachable fall-through: type comes solely from the break exits. A *reachable*
+        // Unknown fall-through must stay Unknown (absorbing), so it can't be the sentinel.
+        let mut exits = break_exits.into_iter();
+        let mut acc = if unreachable {
+          exits.next().unwrap_or(AbstractType::Unknown)
+        } else {
+          result
+        };
+        for t in exits {
+          acc = merge_types(&acc, &t);
+        }
+        acc
       }
     }
   }
