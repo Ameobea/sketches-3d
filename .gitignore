@@ -37,3 +37,4 @@ design
 !src/viz/wasmComp/wasmAssetURLs.ts
 src/viz/wasm/normals_bench
 docs
+src/viz/wasm/interp_bench

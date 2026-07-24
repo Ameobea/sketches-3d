@@ -258,7 +258,9 @@ fn fillet_path_generic<V: FilletVec>(
   let get_radius = build_radius_callback::<V>(ctx, radius_arg, fn_name)?;
   let out = fillet_polyline(&points, resolution, closed, clamp_radius, get_radius)?;
   let values: Vec<Value> = out.into_iter().map(V::into_value).collect();
-  Ok(Value::Sequence(Rc::new(EagerSeq { inner: values })))
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(values),
+  })))
 }
 
 pub fn fillet_path_impl(

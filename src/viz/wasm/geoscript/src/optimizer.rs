@@ -1,4 +1,4 @@
-use std::{cell::RefCell, hash::Hash, ops::ControlFlow, rc::Rc};
+use std::{hash::Hash, ops::ControlFlow, rc::Rc};
 
 use fxhash::FxHashMap;
 use rand::Rng;
@@ -10,7 +10,7 @@ use crate::{
     bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
     record_non_const_binding, BinOp, ClosureArg, DestructurePattern, Expr, FunctionCall,
     FunctionCallTarget, MapLiteralEntry, PrefixOp, ScopeTracker, SourceLoc, Statement,
-    TopLevelStatement, TrackedValue, TrackedValueRef,
+    TopLevelStatement, TrackedValue, TrackedValueRef, VarRes,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -19,8 +19,7 @@ use crate::{
   match_binop_by_arg_types,
   seq::EagerSeq,
   type_infer::infer_expr,
-  ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2,
-  Vec3,
+  ArgType, Callable, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2, Vec3,
 };
 
 /// This is essentially a `-ffast-math` flag for the optimizer's constant folding of associative
@@ -122,11 +121,11 @@ fn const_eval_cache_store(ctx: &EvalCtx, lookup: ConstEvalCacheLookup, value: Va
 }
 
 fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> bool {
+  if callable_is_dyn_for_const_eval(callable, allow_rng_const_eval) {
+    return false;
+  }
   if callable.is_rng_dependent() {
     return allow_rng_const_eval;
-  }
-  if callable.is_side_effectful() {
-    return false;
   }
   if allow_rng_const_eval {
     return true;
@@ -144,6 +143,220 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
       .all(|callable| is_known_rng_free_callable(&*callable)),
     Callable::Closure(_) => false,
     Callable::Dynamic { inner, .. } => !inner.is_side_effectful() && !inner.is_rng_dependent(),
+  }
+}
+
+/// A callable whose fold-time invocation could run an effect the runtime owns.  RNG-dependent
+/// callables are permitted when `allow_rng_const_eval` (draws are state-hashed by the cache).
+/// Closures are judged by their bodies: ambient/prelude closures are runtime-minted with no
+/// purity gate, so the blanket `is_side_effectful(Closure) = false` can't be trusted here.
+fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: bool) -> bool {
+  match callable {
+    Callable::Closure(closure) => {
+      closure.params.iter().any(|p| {
+        p.default_val
+          .as_ref()
+          .is_some_and(|dv| expr_contains_fold_unsafe_effects(dv, allow_rng_const_eval))
+      }) || stmts_contain_fold_unsafe_effects(&closure.body.0, allow_rng_const_eval)
+    }
+    Callable::PartiallyAppliedFn(paf) => {
+      callable_is_dyn_for_const_eval(&paf.inner, allow_rng_const_eval)
+    }
+    Callable::ComposedFn(composed) => composed
+      .inner
+      .iter()
+      .any(|c| callable_is_dyn_for_const_eval(c, allow_rng_const_eval)),
+    _ => {
+      if callable.is_side_effectful() {
+        !(allow_rng_const_eval && callable.is_rng_dependent())
+      } else {
+        false
+      }
+    }
+  }
+}
+
+/// True when fold-time evaluation of these statements could run an effect the runtime owns:
+/// an invocation (call or pipeline application) of an effectful literal callable, or of a
+/// callee the fold walk could not resolve to a literal (unknowable, so assumed effectful).
+/// Purely structural — the fold walk has already rewritten every resolvable callee to a
+/// literal, and reads have no side effects.
+fn stmts_contain_fold_unsafe_effects(stmts: &[Statement], allow_rng_const_eval: bool) -> bool {
+  stmts.iter().any(|stmt| {
+    stmt
+      .exprs()
+      .any(|expr| expr_contains_fold_unsafe_effects(expr, allow_rng_const_eval))
+  })
+}
+
+fn expr_contains_fold_unsafe_effects(expr: &Expr, allow_rng: bool) -> bool {
+  match expr {
+    Expr::Call {
+      call:
+        FunctionCall {
+          target,
+          args,
+          kwargs,
+          target_res: _,
+        },
+      ..
+    } => {
+      let target_unsafe = match target {
+        FunctionCallTarget::Literal(callable) => {
+          callable_is_dyn_for_const_eval(callable, allow_rng)
+        }
+        FunctionCallTarget::Name(_) => true,
+      };
+      target_unsafe
+        || args
+          .iter()
+          .any(|a| expr_contains_fold_unsafe_effects(a, allow_rng))
+        || kwargs
+          .values()
+          .any(|a| expr_contains_fold_unsafe_effects(a, allow_rng))
+    }
+    Expr::BinOp { op, lhs, rhs, .. } => {
+      // pipeline/map may apply their rhs as a callee (a non-callable rhs is a plain value
+      // operand, e.g. mesh | mesh). Two rhs shapes can smuggle an effectful callee past the
+      // recursion: an effectful literal callable, and a bare ident aliasing an arg/capture
+      // (unknowable at fold time). Anything else either isn't a callee or is assembled from
+      // operands this scan already covers.
+      let rhs_callee_unsafe = matches!(op, BinOp::Pipeline | BinOp::Map)
+        && match rhs.as_ref() {
+          Expr::Literal {
+            value: Value::Callable(callable),
+            ..
+          } => callable_is_dyn_for_const_eval(callable, allow_rng),
+          Expr::Ident { .. } => true,
+          _ => false,
+        };
+      rhs_callee_unsafe
+        || expr_contains_fold_unsafe_effects(lhs, allow_rng)
+        || expr_contains_fold_unsafe_effects(rhs, allow_rng)
+    }
+    Expr::PrefixOp { expr, .. } => expr_contains_fold_unsafe_effects(expr, allow_rng),
+    Expr::Range { start, end, .. } => {
+      expr_contains_fold_unsafe_effects(start, allow_rng)
+        || end
+          .as_ref()
+          .is_some_and(|e| expr_contains_fold_unsafe_effects(e, allow_rng))
+    }
+    Expr::StaticFieldAccess { lhs, .. } => expr_contains_fold_unsafe_effects(lhs, allow_rng),
+    Expr::FieldAccess { lhs, field, .. } => {
+      expr_contains_fold_unsafe_effects(lhs, allow_rng)
+        || expr_contains_fold_unsafe_effects(field, allow_rng)
+    }
+    Expr::Closure { params, body, .. } => {
+      params.iter().any(|p| {
+        p.default_val
+          .as_ref()
+          .is_some_and(|dv| expr_contains_fold_unsafe_effects(dv, allow_rng))
+      }) || stmts_contain_fold_unsafe_effects(&body.0, allow_rng)
+    }
+    Expr::Ident { .. } | Expr::Literal { .. } => false,
+    Expr::ArrayLiteral { elements, .. } => elements
+      .iter()
+      .any(|e| expr_contains_fold_unsafe_effects(e, allow_rng)),
+    Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| match entry {
+      MapLiteralEntry::KeyValue { value, .. } => {
+        expr_contains_fold_unsafe_effects(value, allow_rng)
+      }
+      MapLiteralEntry::Splat { expr } => expr_contains_fold_unsafe_effects(expr, allow_rng),
+    }),
+    Expr::Conditional {
+      cond,
+      then,
+      else_if_exprs,
+      else_expr,
+      ..
+    } => {
+      expr_contains_fold_unsafe_effects(cond, allow_rng)
+        || expr_contains_fold_unsafe_effects(then, allow_rng)
+        || else_if_exprs.iter().any(|(c, e)| {
+          expr_contains_fold_unsafe_effects(c, allow_rng)
+            || expr_contains_fold_unsafe_effects(e, allow_rng)
+        })
+        || else_expr
+          .as_ref()
+          .is_some_and(|e| expr_contains_fold_unsafe_effects(e, allow_rng))
+    }
+    Expr::Block { statements, .. } => stmts_contain_fold_unsafe_effects(statements, allow_rng),
+  }
+}
+
+/// Fast reject for the speculative folds, run before paying the statement clone + standalone
+/// resolution: a name read at this nesting level (nested closures excluded — their params
+/// would alias), not bound by the fold subject itself (params / statement-level
+/// assignments), yet bound in the enclosing tracker is certain to resolve as a capture the
+/// shadow guard refuses.  Only ever skips folds the precise path would reject anyway, except
+/// for exotic nested-block shadows of tracker-bound names, which skip conservatively.
+fn reads_tracker_bound_free_name(
+  stmts: &[Statement],
+  params: &[ClosureArg],
+  local_scope: &ScopeTracker,
+) -> bool {
+  let mut bound = fxhash::FxHashSet::default();
+  for param in params {
+    for ident in param.ident.iter_idents() {
+      bound.insert(ident);
+    }
+  }
+  for stmt in stmts {
+    match stmt {
+      Statement::Assignment { name, .. } => {
+        bound.insert(*name);
+      }
+      Statement::DestructureAssignment { lhs, .. } => {
+        for ident in lhs.iter_idents() {
+          bound.insert(ident);
+        }
+      }
+      _ => {}
+    }
+  }
+  stmts
+    .iter()
+    .any(|stmt| stmt.exprs().any(|e| expr_reads_hit(e, &bound, local_scope)))
+}
+
+fn expr_reads_hit(
+  expr: &Expr,
+  bound: &fxhash::FxHashSet<Sym>,
+  local_scope: &ScopeTracker,
+) -> bool {
+  let hit = |e: &Expr| expr_reads_hit(e, bound, local_scope);
+  match expr {
+    Expr::Ident { name, .. } => !bound.contains(name) && local_scope.has(*name),
+    Expr::Closure { .. } | Expr::Literal { .. } => false,
+    Expr::BinOp { lhs, rhs, .. } => hit(lhs) || hit(rhs),
+    Expr::PrefixOp { expr, .. } => hit(expr),
+    Expr::Range { start, end, .. } => hit(start) || end.as_ref().is_some_and(|e| hit(&*e)),
+    Expr::StaticFieldAccess { lhs, .. } => hit(lhs),
+    Expr::FieldAccess { lhs, field, .. } => hit(lhs) || hit(field),
+    Expr::Call {
+      call: FunctionCall { args, kwargs, .. },
+      ..
+    } => args.iter().any(&hit) || kwargs.values().any(&hit),
+    Expr::ArrayLiteral { elements, .. } => elements.iter().any(&hit),
+    Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| match entry {
+      MapLiteralEntry::KeyValue { value, .. } => hit(value),
+      MapLiteralEntry::Splat { expr } => hit(expr),
+    }),
+    Expr::Conditional {
+      cond,
+      then,
+      else_if_exprs,
+      else_expr,
+      ..
+    } => {
+      hit(cond)
+        || hit(then)
+        || else_if_exprs.iter().any(|(c, e)| hit(c) || hit(e))
+        || else_expr.as_ref().is_some_and(|e| hit(&*e))
+    }
+    Expr::Block { statements, .. } => statements
+      .iter()
+      .any(|stmt| stmt.exprs().any(|e| expr_reads_hit(e, bound, local_scope))),
   }
 }
 
@@ -302,11 +515,13 @@ fn hash_expr(
       hash_expr(field, hasher, uses, config)
     }
     Expr::Call {
-      call: FunctionCall {
-        target,
-        args,
-        kwargs,
-      },
+      call:
+        FunctionCall {
+          target,
+          args,
+          kwargs,
+          target_res: _,
+        },
       ..
     } => {
       std::mem::discriminant(target).hash(hasher);
@@ -496,7 +711,7 @@ fn hash_statement(
       }
       hash_expr(expr, hasher, uses, config)
     }
-    Statement::DestructureAssignment { lhs, rhs } => {
+    Statement::DestructureAssignment { lhs, rhs, .. } => {
       hash_destructure_pattern(lhs, hasher)?;
       hash_expr(rhs, hasher, uses, config)
     }
@@ -552,6 +767,7 @@ fn hash_call(
   // Hash a marker for function calls
   std::mem::discriminant(&Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Literal(Rc::clone(callable)),
       args: Vec::new(),
       kwargs: FxHashMap::default(),
@@ -593,14 +809,24 @@ fn hash_callable(
       fn_entry_ix.hash(hasher);
       Some(())
     }
-    Callable::Closure(closure) => hash_closure_parts(
-      &closure.params,
-      &closure.body,
-      &closure.return_type_hint,
-      hasher,
-      uses,
-      config,
-    ),
+    Callable::Closure(closure) => {
+      hash_closure_parts(
+        &closure.params,
+        &closure.body,
+        &closure.return_type_hint,
+        hasher,
+        uses,
+        config,
+      )?;
+      // Two closures can share params+body but hold different capture snapshots
+      // (e.g. minted by the same const-evaled factory with different args); the
+      // captures are as much an input as the args.
+      closure.captures.len().hash(hasher);
+      for cap in closure.captures.iter() {
+        hash_value(cap, hasher, uses)?;
+      }
+      Some(())
+    }
     _ => {
       (Rc::as_ptr(callable) as usize).hash(hasher);
       Some(())
@@ -1350,11 +1576,13 @@ fn fold_constants<'a>(
       Ok(())
     }
     Expr::Call {
-      call: FunctionCall {
-        target,
-        args,
-        kwargs,
-      },
+      call:
+        FunctionCall {
+          target,
+          args,
+          kwargs,
+          target_res: _,
+        },
       loc,
     } => {
       // if the function call target is a name, resolve the callable referenced to make calling it
@@ -1398,7 +1626,7 @@ fn fold_constants<'a>(
                 None => {
                   let (line, col) = ctx.resolve_loc(*loc);
                   Err(
-                    ErrorStack::new(format!("Variable or function not found: {name}"))
+                    ErrorStack::new(format!("Variable `{name}` not found"))
                       .with_loc(line, col),
                   )
                 }
@@ -1550,9 +1778,9 @@ fn fold_constants<'a>(
     Expr::Closure {
       params,
       body,
-      arg_placeholder_scope,
       return_type_hint,
       loc,
+      resolved: _,
     } => {
       let mut params_inner = (**params).clone();
       for param in &mut params_inner {
@@ -1565,36 +1793,19 @@ fn fold_constants<'a>(
       let mut closure_scope = ScopeTracker::wrap(local_scope);
       bind_closure_params_into_scope(&mut closure_scope, &params);
 
-      // We use this scope for const capture checking/inlining to avoid situations where the closure
-      // assigns a local variable with the same name as a non-const captured variable, shadowing it.
-      //
-      // This would hide the capture and cause incorrect behavior.
-      let mut local_scope_with_args = ScopeTracker {
-        vars: closure_scope.vars.clone(),
-        types: closure_scope.types.clone(),
-        parent: Some(local_scope),
-      };
-
       let mut body_inner = (**body).clone();
       for stmt in &mut body_inner.0 {
         optimize_statement(ctx, &mut closure_scope, stmt, false)?;
       }
       *body = Rc::new(body_inner);
 
-      for (name, val) in closure_scope.vars.iter() {
-        match val {
-          TrackedValue::Dyn | TrackedValue::Arg => {
-            let ty = closure_scope
-              .types
-              .get(name)
-              .cloned()
-              .unwrap_or(crate::ty::AbstractType::Unknown);
-            local_scope_with_args.set_with_type(*name, val.clone(), ty);
-          }
-          TrackedValue::Const(_) => (),
-        }
-      }
-
+      // Literal-closure fold. The fold walk above already inlined every const capture and
+      // rewrote every resolvable call target to a literal, so foldability reduces to three
+      // checks: literal param defaults; a body free of fold-unsafe effects; and standalone
+      // resolution succeeding with no free name that's bound in the enclosing tracker
+      // (DefScope materialization falls back to the builtin namespace, which must never
+      // un-shadow a live user binding). Resolution failure is not an error — the closure is
+      // left for the post-pipeline resolver + runtime, which own surfacing real errors.
       for param in params.iter() {
         if let Some(default_val) = &param.default_val {
           if default_val.as_literal().is_none() {
@@ -1602,51 +1813,47 @@ fn fold_constants<'a>(
           }
         }
       }
-
-      let mut body_inner = (**body).clone();
-      let mut analysis_scope = local_scope_with_args.fork();
-      let mut body_captures_dyn = body_inner.analyze_const_captures(
-        ctx,
-        &mut analysis_scope,
-        allow_rng_const_eval,
-        false,
-        false,
-      );
-
-      // Capture analysis that treats locals as const so nested closures don't mask outer captures.
-      let mut capture_scope = ScopeTracker::wrap(local_scope);
-      for name in closure_scope.vars.keys() {
-        capture_scope.set(*name, TrackedValue::Const(Value::Nil));
-      }
-      let mut capture_analysis_scope = capture_scope.fork();
-      body_captures_dyn |= body_inner.analyze_const_captures(
-        ctx,
-        &mut capture_analysis_scope,
-        allow_rng_const_eval,
-        true,
-        true,
-      );
-
-      body_inner.inline_const_captures(ctx, &mut local_scope_with_args);
-      *body = Rc::new(body_inner);
-      if body_captures_dyn {
+      if stmts_contain_fold_unsafe_effects(&body.0, allow_rng_const_eval) {
+        fold_stat("closure-skip-effects");
         return Ok(());
       }
-
+      if reads_tracker_bound_free_name(&body.0, params, local_scope) {
+        fold_stat("closure-skip-prescan");
+        return Ok(());
+      }
+      let Ok(folded_closure) = crate::resolve::resolve_new_closure(
+        ctx,
+        &Scope::default(),
+        Rc::clone(params),
+        Rc::clone(body),
+        *return_type_hint,
+      ) else {
+        fold_stat("closure-skip-resolve");
+        return Ok(());
+      };
+      for (_, from) in folded_closure.resolved.captures.iter() {
+        let crate::ast::CaptureFrom::DefScope(sym) = from else {
+          fold_stat("closure-skip-capkind");
+          return Ok(());
+        };
+        if local_scope.has(*sym) {
+          fold_stat("closure-skip-shadowguard");
+          return Ok(());
+        }
+      }
       *expr = Expr::Literal {
-        value: Value::Callable(Rc::new(Callable::Closure(Closure {
-          params: Rc::clone(&params),
-          body: Rc::clone(&body),
-          captured_scope: CapturedScope::Strong(Rc::new(Scope::default())),
-          arg_placeholder_scope: RefCell::new(Some(std::mem::take(arg_placeholder_scope))),
-          return_type_hint: *return_type_hint,
-        }))),
+        value: Value::Callable(Rc::new(Callable::Closure(folded_closure))),
         loc: *loc,
       };
+      fold_stat("closure");
 
       Ok(())
     }
-    &mut Expr::Ident { name: id, loc } => {
+    &mut Expr::Ident {
+      name: id,
+      loc,
+      res: _,
+    } => {
       if let Some(val) = local_scope.get(id) {
         if let TrackedValueRef::Const(val) = val {
           *expr = val.clone().into_literal_expr(loc);
@@ -1694,7 +1901,7 @@ fn fold_constants<'a>(
         .with_resolved(id, |resolved_name| {
           let (line, col) = ctx.resolve_loc(loc);
           Err(
-            ErrorStack::new(format!("Variable or function not found: {resolved_name}"))
+            ErrorStack::new(format!("Variable `{resolved_name}` not found"))
               .with_loc(line, col),
           )
         })
@@ -1734,7 +1941,9 @@ fn fold_constants<'a>(
           .iter()
           .map(|e| e.as_literal().unwrap().clone())
           .collect::<Vec<_>>();
-        let val = Value::Sequence(Rc::new(EagerSeq { inner: values }));
+        let val = Value::Sequence(Rc::new(EagerSeq {
+          inner: Rc::new(values),
+        }));
         if let Some(lookup) = cache_lookup {
           const_eval_cache_store(ctx, lookup, val.clone());
         }
@@ -1837,102 +2046,106 @@ fn fold_constants<'a>(
     } => {
       // TODO: check if conditions are const and elide the whole conditional if they are
 
-      /// If there's an assignment performed to a variable in the parent scope from within one of
-      /// the conditional blocks, we can no longer depend on knowing the value of that variable
-      /// going forward.
-      fn deconstify_parent_scope<'a>(
-        parent_scope: &mut ScopeTracker,
-        conditional_scope_var_names: impl Iterator<Item = Sym>,
-      ) {
-        for name in conditional_scope_var_names {
-          if let Some(TrackedValueRef::Const(_)) = parent_scope.get(name) {
-            parent_scope.set(name, TrackedValue::Arg);
-          }
-        }
-      }
-
       optimize_expr(ctx, local_scope, cond, allow_rng_const_eval)?;
-      let mut then_scope = ScopeTracker::wrap(local_scope);
-      optimize_expr(ctx, &mut then_scope, then, false)?;
-      let ScopeTracker {
-        vars: then_scope_var_names,
-        ..
-      } = &then_scope;
-      deconstify_parent_scope(local_scope, then_scope_var_names.keys().copied());
+      optimize_expr(ctx, local_scope, then, false)?;
       for (cond, inner) in else_if_exprs {
         optimize_expr(ctx, local_scope, cond, allow_rng_const_eval)?;
-        let mut else_if_scope = ScopeTracker::wrap(local_scope);
-        optimize_expr(ctx, &mut else_if_scope, inner, false)?;
-        let ScopeTracker {
-          vars: else_if_scope_var_names,
-          ..
-        } = &else_if_scope;
-        deconstify_parent_scope(local_scope, else_if_scope_var_names.keys().copied());
+        optimize_expr(ctx, local_scope, inner, false)?;
       }
       if let Some(else_expr) = else_expr {
-        let mut else_scope = ScopeTracker::wrap(local_scope);
-        optimize_expr(ctx, &mut else_scope, else_expr, false)?;
-        let ScopeTracker {
-          vars: else_scope_var_names,
-          ..
-        } = &else_scope;
-        deconstify_parent_scope(local_scope, else_scope_var_names.keys().copied());
+        optimize_expr(ctx, local_scope, else_expr, false)?;
       }
       Ok(())
     }
     Expr::Block { statements, loc } => {
-      // the const-capture analysis was built for closure bodies, so they think everything
-      // is OK if a local at the most inner scope level is declared but not const-available - those
-      // correspond to closure args.
-
-      // For the case of a block inside of a closure, we can get around this by adding one level of
-      // fake nesting to the scope
-
       let mut block_scope = ScopeTracker::wrap(&*local_scope);
 
       for stmt in statements.iter_mut() {
         optimize_statement(ctx, &mut block_scope, stmt, allow_rng_const_eval)?;
       }
+      drop(block_scope);
 
-      // can const-fold the block if all inner statements are const
-      let mut analysis_scope = block_scope.fork();
-      let mut captures_dyn = statements.iter().any(|stmt| {
-        stmt.analyze_const_captures(ctx, &mut analysis_scope, allow_rng_const_eval, true, false)
-      });
-      for stmt in statements.iter_mut() {
-        stmt.inline_const_captures(ctx, &mut block_scope);
+      if stmts_contain_fold_unsafe_effects(statements, allow_rng_const_eval) {
+        fold_stat("block-skip-effects");
+        return Ok(());
       }
-
-      for (key, val) in block_scope.vars {
-        let is_set: bool = local_scope.get(key).is_some();
-        if is_set {
-          local_scope.vars.insert(key, val);
-          captures_dyn = true;
-        }
-      }
-
-      if captures_dyn {
+      if reads_tracker_bound_free_name(statements, &[], local_scope) {
+        fold_stat("block-skip-prescan");
         return Ok(());
       }
 
-      let evaled_expr = Expr::Block {
-        statements: statements.clone(),
-        loc: *loc,
+      // Ambient-state gate: the fold evals directly (no cache), so any rng/settings the
+      // block consumes must be provably in sync with the runtime stream — same policy the
+      // call-arm const-eval enforces via ambient_fold_blocked. A None lookup means an rng
+      // draw under !allow_rng_const_eval; always blocked.
+      let ambient_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+        for stmt in statements.iter() {
+          hash_statement(stmt, hasher, uses, ExprHashConfig::const_eval_value())?;
+        }
+        Some(())
+      });
+      if ambient_lookup.is_none() || ambient_fold_blocked(ctx, &ambient_lookup, allow_rng_const_eval)
+      {
+        fold_stat("block-skip-ambient");
+        return Ok(());
+      }
+
+      // Speculative: clone the statements and re-resolve them standalone (fresh metas, no
+      // enclosing frame), materializing free names from ctx.globals. Any resolution,
+      // materialization, or eval error leaves the block for runtime, which has the real env
+      // (and owns surfacing real errors when execution actually reaches them). Evaluated with
+      // the transparent policy so an escaping break/return is distinguishable from the
+      // block's value: both refold into a block that re-raises the exit, which is correct
+      // whether this block ends up in break-target (expression) or transparent (branch)
+      // position.
+      let mut fold_stmts = statements.clone();
+      let Ok((n_slots, captures)) = crate::resolve::resolve_standalone_stmts(&mut fold_stmts)
+      else {
+        return Ok(());
       };
-      let evaled = ctx.eval_expr(&evaled_expr, &ctx.globals, None)?;
+      let mut cap_vals = Vec::with_capacity(captures.len());
+      for (_name, from) in &captures {
+        let crate::ast::CaptureFrom::DefScope(sym) = from else {
+          return Ok(());
+        };
+        // A free name bound in the enclosing tracker (typically non-const; consts were
+        // inlined by the fold walk) must not materialize from globals/builtins — that
+        // would read through the live binding.
+        if local_scope.has(*sym) {
+          return Ok(());
+        }
+        match crate::resolve::resolve_capture_by_name(ctx, &ctx.globals, *sym) {
+          Some(val) => cap_vals.push(val),
+          None => return Ok(()),
+        }
+      }
+      let Ok(evaled) = ctx.eval_standalone_stmts(&fold_stmts, n_slots, &cap_vals) else {
+        return Ok(());
+      };
       match evaled {
-        crate::ControlFlow::Continue(val) | crate::ControlFlow::Break(val) => {
+        crate::ControlFlow::Continue(val) => {
+          fold_stat("block");
           *expr = Expr::Literal {
             value: val,
             loc: *loc,
           }
         }
         crate::ControlFlow::Return(retval) => {
-          // replace the block with a new one that just includes the return statement
           *expr = Expr::Block {
             statements: vec![Statement::Return {
               value: Some(Expr::Literal {
                 value: retval,
+                loc: *loc,
+              }),
+            }],
+            loc: *loc,
+          };
+        }
+        crate::ControlFlow::Break(val) => {
+          *expr = Expr::Block {
+            statements: vec![Statement::Break {
+              value: Some(Expr::Literal {
+                value: val,
                 loc: *loc,
               }),
             }],
@@ -1978,6 +2191,17 @@ fn optimize_simple_assignment(
   Ok(())
 }
 
+/// Corpus fold-diff instrumentation: `GEOSCRIPT_FOLD_STATS=1` logs each fold success/skip
+/// (with reason) to stderr so sweeps can be compared fold-for-fold.
+fn fold_stat(kind: &str) {
+  #[cfg(not(target_arch = "wasm32"))]
+  if std::env::var_os("GEOSCRIPT_FOLD_STATS").is_some() {
+    eprintln!("FOLD_STAT {kind}");
+  }
+  #[cfg(target_arch = "wasm32")]
+  let _ = kind;
+}
+
 fn optimize_statement<'a>(
   ctx: &EvalCtx,
   local_scope: &'a mut ScopeTracker,
@@ -1999,7 +2223,7 @@ fn optimize_statement<'a>(
       *type_hint,
       allow_rng_const_eval,
     ),
-    Statement::DestructureAssignment { lhs, rhs } => {
+    Statement::DestructureAssignment { lhs, rhs, .. } => {
       // insert a placeholder for assigned variables in the local scope to support recursive calls
       // unless we're assigning to an existing variables
       for name in lhs.iter_idents() {
@@ -2237,7 +2461,7 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
   let mut local_scope = ScopeTracker::default();
   // Seed the tracker with the ambient scope's bindings
   if let Some(ambient) = ctx.ambient_scope.borrow().as_ref() {
-    for (sym, val) in ambient.collect_bindings_innermost_first() {
+    for (sym, val) in ambient.own_bindings() {
       local_scope
         .vars
         .entry(sym)
@@ -2259,7 +2483,12 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
 }
 
 pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
-  default_optimizer_pipeline().run(ctx, ast)
+  // Pre-resolve so closures created while const folding evaluates const subtrees already run
+  // on the frame-based path; re-resolve at the end because folding rewrites closure bodies
+  // (capture inlining, literal-closure folding).
+  crate::resolve::resolve_program(ast)?;
+  default_optimizer_pipeline().run(ctx, ast)?;
+  crate::resolve::resolve_program(ast)
 }
 
 #[test]
@@ -2725,11 +2954,13 @@ fn = || {
       ..
     } => match expr {
       Expr::Call {
-        call: FunctionCall {
-          args,
-          kwargs: _,
-          target,
-        },
+        call:
+          FunctionCall {
+            args,
+            kwargs: _,
+            target,
+            target_res: _,
+          },
         ..
       } => {
         let arg0 = &args[0];
@@ -3361,6 +3592,156 @@ fn test_closure_hash_distinguishes_body() {
   };
 
   assert!(!Rc::ptr_eq(&seq1, &seq2));
+}
+
+#[test]
+fn test_closure_hash_distinguishes_captures() {
+  let code = r#"
+make_scaler = |k| |x| x * k
+s2 = make_scaler(2)
+s3 = make_scaler(3)
+a = [1, 2, 3] | map(s2) | reduce(|acc, x| acc + x)
+b = [1, 2, 3] | map(s3) | reduce(|acc, x| acc + x)
+print(a)
+print(b)
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert!(
+    prints[0].contains("12") && prints[1].contains("18"),
+    "{prints:?}"
+  );
+}
+
+/// A call through an arg-bound target must not be const-evaled: the callee is unknowable at
+/// fold time and may be effectful (hoisting it corrupts effect order).
+#[test]
+fn test_effectful_call_through_arg_target_not_folded() {
+  let code = r#"
+print("first")
+f = |g| g(42)
+f(print)
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert_eq!(prints.len(), 2, "{prints:?}");
+  assert!(prints[0].contains("first"), "{prints:?}");
+  assert!(prints[1].contains("42"), "{prints:?}");
+}
+
+/// An effectful literal callable applied via pipeline inside a closure body must block the
+/// fold the same way a direct call does.
+#[test]
+fn test_effectful_pipeline_literal_not_folded() {
+  let code = r#"
+print("first")
+f = || 5 | print
+f()
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert_eq!(prints.len(), 2, "{prints:?}");
+  assert!(prints[0].contains("first"), "{prints:?}");
+  assert!(prints[1].contains('5'), "{prints:?}");
+}
+
+/// A pipeline whose rhs aliases an arg is an unknowable (possibly effectful) callee.
+#[test]
+fn test_effectful_pipeline_through_arg_alias_not_folded() {
+  let code = r#"
+print("first")
+f = |a| 5 | a
+f(print)
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert_eq!(prints.len(), 2, "{prints:?}");
+  assert!(prints[0].contains("first"), "{prints:?}");
+  assert!(prints[1].contains('5'), "{prints:?}");
+}
+
+/// A transitive capture of a name that shadows a builtin must block the literal-closure fold:
+/// standalone resolution would materialize the builtin, silently un-shadowing the user binding.
+#[test]
+fn test_transitive_capture_of_builtin_shadow_not_folded() {
+  let code = r#"
+sin = if true { 5 } else { 6 }
+f = || || sin
+f() | call | print
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert_eq!(prints.len(), 1, "{prints:?}");
+  assert!(prints[0].contains('5'), "{prints:?}");
+}
+
+/// Ambient (prelude) closures are runtime-minted with no purity gate, so an effectful body
+/// must block fold-time invocation — otherwise its effects run during optimization
+/// (reordered ahead of earlier statements, or swallowed entirely in flows that reset print
+/// state between optimize and eval).
+#[test]
+fn test_effectful_ambient_closure_not_const_evaled() {
+  let ctx = EvalCtx::default();
+  let ambient = ctx
+    .evaluate_module_to_scope("logging_helper = |x| { print(x)\n x }")
+    .unwrap();
+  ctx.set_ambient_scope(ambient);
+  ctx.prints.borrow_mut().clear();
+
+  let mut ast = crate::parse_program_src(&ctx, "print(\"first\")\nlogging_helper(42)").unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+  assert!(
+    ctx.prints.borrow().is_empty(),
+    "effects ran at fold time: {:?}",
+    ctx.prints.borrow()
+  );
+  crate::eval_program_with_ctx(&ctx, &ast).unwrap();
+  let prints = ctx.prints.borrow();
+  assert_eq!(prints.len(), 2, "{prints:?}");
+  assert!(prints[0].contains("first"), "{prints:?}");
+  assert!(prints[1].contains("42"), "{prints:?}");
+}
+
+/// When the fold-time rng stream can't be proven in sync with runtime (seed applied through
+/// an alias → fold_rng_unknown), a block containing rng draws must defer to runtime instead
+/// of baking a draw from the unseeded fold-time stream.
+#[test]
+fn test_block_fold_defers_rng_when_fold_stream_unknown() {
+  let aliased = r#"
+s = set_rng_seed
+s(12345)
+a = { randf() }
+"#;
+  let direct = r#"
+set_rng_seed(12345)
+a = randf()
+"#;
+  let ctx1 = crate::parse_and_eval_program(aliased).unwrap();
+  let ctx2 = crate::parse_and_eval_program(direct).unwrap();
+  let a1 = ctx1.get_global("a").unwrap().as_float().unwrap();
+  let a2 = ctx2.get_global("a").unwrap().as_float().unwrap();
+  assert_eq!(a1.to_bits(), a2.to_bits(), "aliased-seed block draw {a1} != direct-seed draw {a2}");
+}
+
+/// A block whose reachable fall-through type is Unknown (call through an arg) must not be
+/// narrowed to its break-exit type — the optimizer would pre-resolve the wrong binop impl
+/// and the runtime value would hit a mismatched monomorphic apply (panic/wasm trap).
+#[test]
+fn test_break_exit_type_does_not_narrow_reachable_unknown() {
+  let code = r#"
+f = |g, c| {
+  v = {
+    if c { break 1 }
+    g(0)
+  }
+  v + 1
+}
+res = f(|x| vec3(1.0, 2.0, 3.0), false)
+print(res)
+"#;
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  let prints = ctx.prints.borrow();
+  assert!(prints[0].contains("Vec3"), "{prints:?}");
 }
 
 #[test]

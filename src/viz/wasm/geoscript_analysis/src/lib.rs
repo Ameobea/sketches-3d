@@ -522,6 +522,62 @@ y = x
   }
 
   #[test]
+  fn test_block_type_merges_break_exits() {
+    let ctx = AnalysisCtx::new();
+
+    // A break through a transparent branch merges into the enclosing block's type.
+    let hover = ctx
+      .hover("v = {\n  if 1 > 0 { break 1 }\n  2.5\n}", 1, 1, false, "")
+      .unwrap();
+    assert!(
+      hover.content.contains("int") && hover.content.contains("float"),
+      "Expected 'int | float' union in hover, got: {}",
+      hover.content
+    );
+
+    // A tail break IS the block's value — not merged with an unreachable Nil fall-through.
+    let hover = ctx.hover("v = { break box() }", 1, 1, false, "").unwrap();
+    assert!(
+      hover.content.contains("mesh") && !hover.content.contains("nil"),
+      "Expected exactly 'mesh' in hover, got: {}",
+      hover.content
+    );
+
+    // Closure bodies are a break barrier: a break inside one never reaches an outer block.
+    let hover = ctx
+      .hover(
+        "v = {\n  f = |x| { if x { break 1.5 }\n  2 }\n  9\n}",
+        1,
+        1,
+        false,
+        "",
+      )
+      .unwrap();
+    assert!(
+      hover.content.contains("int") && !hover.content.contains("float"),
+      "Expected 'int' only in hover, got: {}",
+      hover.content
+    );
+
+    // A reachable-Unknown fall-through (call through an arg) must NOT be narrowed to the
+    // break-exit type.
+    let hover = ctx
+      .hover(
+        "f = |g, c| {\n  v = {\n    if c { break 1 }\n    g(0)\n  }\n  v\n}",
+        2,
+        3,
+        false,
+        "",
+      )
+      .unwrap();
+    assert!(
+      !hover.content.contains("int"),
+      "Expected no narrowed 'int' in hover, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
   fn test_completions_inside_call_include_kwargs() {
     let ctx = AnalysisCtx::new();
     // cursor inside box() call — should get kwarg suggestions

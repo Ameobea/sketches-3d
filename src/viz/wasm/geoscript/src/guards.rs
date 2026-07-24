@@ -11,17 +11,17 @@
 //! identifiers all resolve there (params, prior top-level assignments, captures, builtins); the
 //! rare block-local shadow slips through as a constant-valued (hence inert) guard.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
   ast::{
     BinOp, ClosureBody, Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, SourceLoc,
-    Statement,
+    Statement, VarRes,
   },
   builtins::{fn_defs::get_builtin_fn_sig_entry_ix, FUNCTION_ALIASES},
-  CapturedScope, Closure, EvalCtx, Scope, Sym, Value,
+  Closure, EvalCtx, Scope, Sym, Value,
 };
 
 pub(crate) const MAX_GUARDS: usize = 16;
@@ -52,6 +52,7 @@ fn lattice_guard(ctx: &EvalCtx, trig: &str, arg: Expr, loc: SourceLoc) -> Expr {
   };
   Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(ctx.interned_symbols.intern(trig)),
       args: vec![scaled],
       kwargs: FxHashMap::default(),
@@ -278,7 +279,7 @@ impl GuardCtx<'_> {
           self.bindable.insert(*name);
         }
       }
-      Statement::DestructureAssignment { lhs, rhs } => {
+      Statement::DestructureAssignment { lhs, rhs, .. } => {
         self.visit_expr(rhs);
         if top_level {
           lhs.visit_idents(&mut |sym| {
@@ -301,7 +302,7 @@ impl GuardCtx<'_> {
 /// an array of scalars.  `None` when the closure has no liftable guards (or an early `return`/
 /// `break` makes appending a result expression unsound).
 pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> {
-  let captured = input.captured_scope.upgrade()?;
+  let captured = input.captured_env_scope();
   if input
     .body
     .0
@@ -340,9 +341,9 @@ pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> 
     loc: SourceLoc::default(),
   }));
 
-  // Resolves builtin call targets (eval-time name lookup is scope-only, so synthesized calls like
-  // the lattice guards' `sin` would otherwise not resolve) and const-folds, same as autodiff.
-  let captured_consts = captured.collect_bindings_innermost_first();
+  // Resolves builtin call targets to literals (synthesized calls like the lattice guards' `sin`
+  // would otherwise not resolve at eval) and const-folds, same as autodiff.
+  let captured_consts = captured.own_bindings();
   crate::optimizer::optimize_synthesized_closure_body(
     ctx,
     &input.params,
@@ -351,13 +352,16 @@ pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> 
   )
   .ok()?;
 
-  Some(Closure {
-    params: Rc::clone(&input.params),
-    body: Rc::new(ClosureBody(stmts)),
-    captured_scope: CapturedScope::Strong(captured),
-    arg_placeholder_scope: RefCell::new(None),
-    return_type_hint: None,
-  })
+  // An unbound capture (e.g. a recursive self-reference, which isn't part of the capture
+  // snapshot) fails resolution — skip guards.
+  crate::resolve::resolve_new_closure(
+    ctx,
+    &captured,
+    Rc::clone(&input.params),
+    Rc::new(ClosureBody(stmts)),
+    None,
+  )
+  .ok()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -404,6 +408,34 @@ f = |p: vec2|: num { t = cos(p.x * scale) * cos(p.y * scale)
         vals[0]
       );
     }
+  }
+
+  #[test]
+  fn recursive_closure_skips_guards_gracefully() {
+    // the self-reference isn't part of the capture snapshot, so when a recursive call survives
+    // into the synthesized body (non-trailing statement) extraction must bail rather than
+    // return a closure that always errors; recursion only in the popped trailing expression is
+    // harmless and extraction proceeds
+    let src = r#"
+f = |p: vec2| {
+  t = if p.x <= 0 { 0.0 } else { f(v2(p.x - 1, p.y)) }
+  abs(t + p.y)
+}
+g = |p: vec2| if p.x <= 0 { abs(p.y) } else { g(v2(p.x - 1, p.y)) }
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let Callable::Closure(c) = &*get_closure(&ctx, "f") else {
+      panic!()
+    };
+    assert!(extract_guards(&ctx, c).is_none());
+
+    let Callable::Closure(c) = &*get_closure(&ctx, "g") else {
+      panic!()
+    };
+    let guards = extract_guards(&ctx, c).expect("trailing-only recursion should still extract");
+    // conditional comparison guard (p.x − 0) + abs guard (p.y)
+    let v = eval_guards_at(&ctx, &guards, &[Value::Vec2(Vec2::new(-1., 0.7))]);
+    assert_eq!(v, vec![-1., 0.7]);
   }
 
   #[test]

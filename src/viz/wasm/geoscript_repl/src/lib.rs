@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use geoscript::{
-  eval_program_into_scope,
+  eval_resolved_program,
   materials::Material,
   optimizer::optimize_ast,
   parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls,
@@ -55,9 +55,9 @@ pub struct GeoscriptReplCtx {
   pub last_program: Result<Program, ErrorStack>,
   pub last_result: Result<(), ErrorStack>,
   pub output_meshes: Vec<OutputMesh>,
-  /// Root program's own top-level scope after the last successful eval, retained so
-  /// `geotoy eval` can read its exports and evaluate follow-up expressions against it.
-  pub last_root_scope: Option<Scope>,
+  /// Root program's own top-level bindings after the last successful eval (declaration
+  /// order), retained so `geotoy eval` can read its exports.
+  pub last_root_bindings: Option<Vec<(Sym, Value)>>,
   /// Value of the last top-level statement of the last successful eval.
   pub last_value: Option<Value>,
 }
@@ -69,7 +69,7 @@ impl Default for GeoscriptReplCtx {
       last_program: Err(ErrorStack::new("No program parsed yet")),
       last_result: Ok(()),
       output_meshes: Vec::new(),
-      last_root_scope: None,
+      last_root_bindings: None,
       last_value: None,
     }
   }
@@ -213,7 +213,7 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     return;
   }
   ctx.geo_ctx.prints.borrow_mut().clear();
-  ctx.last_root_scope = None;
+  ctx.last_root_bindings = None;
   ctx.last_value = None;
   // The entry-point program is `_root`'s emitted source; tag its renders accordingly
   // so JS-side ancestor-transform composition can find the source node.
@@ -222,11 +222,15 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     .current_module
     .borrow_mut()
     .replace("_root".to_owned());
-  let root_scope = ctx.geo_ctx.root_program_scope();
-  ctx.last_result = match eval_program_into_scope(&ctx.geo_ctx, program, &root_scope) {
-    Ok(val) => {
+  let ambient = ctx.geo_ctx.ambient_scope.borrow().as_ref().map(Rc::clone);
+  let base = match &ambient {
+    Some(scope) => &**scope,
+    None => &ctx.geo_ctx.globals,
+  };
+  ctx.last_result = match eval_resolved_program(&ctx.geo_ctx, program, base) {
+    Ok((val, bindings)) => {
       ctx.last_value = Some(val);
-      ctx.last_root_scope = Some(root_scope);
+      ctx.last_root_bindings = Some(bindings);
       Ok(())
     }
     Err(err) => Err(err),
@@ -236,26 +240,22 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
 }
 
 /// Root program's own top-level bindings from the last successful eval, as a JSON object
-/// of tagged values keyed by name. Names shared with the ambient (prelude/globals) scope
-/// are excluded so only the composition's own definitions are returned.
+/// of tagged values keyed by name in declaration order. These are exactly the program's own
+/// definitions — ambient (prelude/globals) bindings are never included.
 #[wasm_bindgen]
 pub fn geoscript_repl_get_exports_json(ctx: *mut GeoscriptReplCtx, sample_count: u32) -> String {
   let ctx = unsafe { &*ctx };
-  let Some(scope) = ctx.last_root_scope.as_ref() else {
+  let Some(root_bindings) = ctx.last_root_bindings.as_ref() else {
     return "{}".to_owned();
   };
-  let ambient_keys = ctx
-    .geo_ctx
-    .ambient_scope
-    .borrow()
-    .as_ref()
-    .map(|s| s.own_keys())
-    .unwrap_or_default();
-  let bindings: Vec<(String, Value)> = scope
-    .own_bindings()
-    .into_iter()
-    .filter(|(sym, _)| !ambient_keys.contains(sym))
-    .map(|(sym, val)| (ctx.geo_ctx.with_resolved_sym(sym, |s| s.to_owned()), val))
+  let bindings: Vec<(String, Value)> = root_bindings
+    .iter()
+    .map(|(sym, val)| {
+      (
+        ctx.geo_ctx.with_resolved_sym(*sym, |s| s.to_owned()),
+        val.clone(),
+      )
+    })
     .collect();
   serialize_bindings_to_json(&ctx.geo_ctx, &bindings, sample_count as usize)
 }
@@ -307,7 +307,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.last_program = Err(ErrorStack::new("No program parsed yet"));
   ctx.last_result = Ok(());
   ctx.output_meshes.clear();
-  ctx.last_root_scope = None;
+  ctx.last_root_bindings = None;
   ctx.last_value = None;
   ctx.geo_ctx.prints.borrow_mut().clear();
 
@@ -959,5 +959,32 @@ mod tests {
     let mut seamed = seam_quad();
     seamed.flags |= mesh_flags::NO_WELD;
     assert_eq!(finalized_vertex_count(seamed), 6);
+  }
+
+  #[test]
+  fn exports_json_is_own_bindings_in_declaration_order() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+
+    geoscript_repl_set_ambient_scope_from_sources(p, vec!["base = 10".to_owned()]).unwrap();
+    geoscript_repl_parse_program(p, "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(), false);
+    geoscript_repl_eval(p);
+    ctx.last_result.as_ref().unwrap();
+
+    // Exactly the program's own bindings, in declaration order. `base` is included even
+    // though the ambient scope also defines it (the program rebinds it); ambient-only
+    // names like `pi` are not.
+    let json = geoscript_repl_get_exports_json(p, 4);
+    let (zi, ai, bi) = (
+      json.find("\"z\"").unwrap(),
+      json.find("\"a\"").unwrap(),
+      json.find("\"base\"").unwrap(),
+    );
+    assert!(zi < ai && ai < bi, "declaration order violated: {json}");
+    assert!(!json.contains("\"pi\""), "ambient binding leaked: {json}");
+    assert!(json[bi..].contains("99"), "rebound value missing: {json}");
+
+    // Last-statement value: a + z = 22 + 11.
+    assert!(geoscript_repl_get_last_value_json(p, 4).contains("33"));
   }
 }

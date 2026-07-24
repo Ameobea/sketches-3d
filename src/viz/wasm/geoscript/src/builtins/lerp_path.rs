@@ -155,5 +155,7 @@ pub fn critical_points_impl(
 
   let points = sampler.critical_t_values();
   let values: Vec<Value> = points.into_iter().map(Value::Float).collect();
-  Ok(Value::Sequence(Rc::new(EagerSeq { inner: values })))
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(values),
+  })))
 }

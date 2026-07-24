@@ -7,7 +7,7 @@
 //! the emitted body grows linearly with the source regardless of nesting.  A symbolic-zero-aware
 //! [`Tangent`] keeps constant/parameter-independent subterms from emitting dead `0*x` work.
 
-use std::{cell::RefCell, rc::Rc};
+use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
@@ -15,7 +15,7 @@ use mesh::linked_mesh::Vec3;
 use crate::{
   ast::{
     BinOp, ClosureBody, DestructurePattern, Expr, FunctionCall, FunctionCallTarget, PrefixOp,
-    SourceLoc, Statement,
+    SourceLoc, Statement, VarRes,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -24,7 +24,7 @@ use crate::{
   optimizer::optimize_synthesized_closure_body,
   ty::AbstractType,
   type_infer::{infer_expr, TypeEnv},
-  ArgType, Callable, CapturedScope, Closure, ErrorStack, EvalCtx, Scope, Sym, Value, Vec2,
+  ArgType, Callable, Closure, ErrorStack, EvalCtx, Scope, Sym, Value, Vec2,
 };
 
 /// A symbolic tangent.  `Zero` reifies to a correctly-typed zero literal only when forced, so
@@ -89,6 +89,7 @@ fn builtin_call(ctx: &EvalCtx, name: &str, args: Vec<Expr>, loc: SourceLoc) -> E
   let name_sym = ctx.interned_symbols.intern(name);
   Expr::Call {
     call: FunctionCall {
+      target_res: VarRes::Unresolved,
       target: FunctionCallTarget::Name(name_sym),
       args,
       kwargs: FxHashMap::default(),
@@ -174,12 +175,17 @@ impl<'a> DerivCtx<'a> {
     let sym = self.fresh("t");
     self.type_env.define(sym, ty);
     self.tape.push(Statement::Assignment {
+      slot: None,
       name: sym,
       name_loc: loc,
       expr,
       type_hint: None,
     });
-    Expr::Ident { name: sym, loc }
+    Expr::Ident {
+      res: VarRes::Unresolved,
+      name: sym,
+      loc,
+    }
   }
 
   /// Bind a compound tangent expression to a fresh temp so it can be referenced multiple times
@@ -191,12 +197,17 @@ impl<'a> DerivCtx<'a> {
       Tangent::Expr(e) => {
         let sym = self.fresh("d");
         self.tape.push(Statement::Assignment {
+          slot: None,
           name: sym,
           name_loc: loc,
           expr: e,
           type_hint: None,
         });
-        Tangent::Expr(Expr::Ident { name: sym, loc })
+        Tangent::Expr(Expr::Ident {
+          res: VarRes::Unresolved,
+          name: sym,
+          loc,
+        })
       }
     }
   }
@@ -277,7 +288,7 @@ impl<'a> DerivCtx<'a> {
   fn diff_expr(&mut self, expr: &Expr) -> Result<(Expr, Tangent), ErrorStack> {
     match expr {
       Expr::Literal { value, loc } => Ok((lit(value.clone(), *loc), Tangent::Zero)),
-      Expr::Ident { name, loc } => {
+      Expr::Ident { name, loc, res: _ } => {
         if let Some(pt) = self.env.get(name).map(|(p, t)| (p.clone(), t.clone())) {
           return Ok(pt);
         }
@@ -371,6 +382,7 @@ impl<'a> DerivCtx<'a> {
           target,
           args,
           kwargs,
+          target_res: _,
         } = call;
         if !kwargs.is_empty() {
           return Err(self.err(
@@ -514,12 +526,7 @@ impl<'a> DerivCtx<'a> {
       let pt = self.diff_expr(arg)?;
       bindings.push((*sym, pt));
     }
-    let helper_captures = closure.captured_scope.upgrade().ok_or_else(|| {
-      self.err(
-        "autodiff: the captured scope of an inlined closure has been dropped",
-        loc,
-      )
-    })?;
+    let helper_captures = closure.captured_env_scope();
 
     let saved_env = std::mem::take(&mut self.env);
     let saved_captures = std::mem::replace(&mut self.captures, helper_captures);
@@ -620,7 +627,7 @@ impl<'a> DerivCtx<'a> {
   fn subst_primal(&mut self, expr: &Expr) -> Result<Expr, ErrorStack> {
     Ok(match expr {
       Expr::Literal { .. } => expr.clone(),
-      Expr::Ident { name, loc } => {
+      Expr::Ident { name, loc, res: _ } => {
         if let Some((p, _)) = self.env.get(name) {
           p.clone()
         } else if let Some(val) = self.captures.get(*name) {
@@ -656,6 +663,7 @@ impl<'a> DerivCtx<'a> {
           target,
           args,
           kwargs,
+          target_res: _,
         } = call;
         let args = args
           .iter()
@@ -667,6 +675,7 @@ impl<'a> DerivCtx<'a> {
           .collect::<Result<FxHashMap<_, _>, ErrorStack>>()?;
         Expr::Call {
           call: FunctionCall {
+            target_res: VarRes::Unresolved,
             target: target.clone(),
             args,
             kwargs,
@@ -1565,9 +1574,7 @@ pub(crate) fn build_directional_derivative(
       seed.get_type()
     )));
   }
-  let captured = input.captured_scope.upgrade().ok_or_else(|| {
-    ErrorStack::new("autodiff: the differentiated closure's captured scope has been dropped")
-  })?;
+  let captured = input.captured_env_scope();
 
   let mut type_env = TypeEnv::with_default_globals(ctx);
   type_env.push_scope();
@@ -1585,6 +1592,7 @@ pub(crate) fn build_directional_derivative(
   // Seed: `d_p = <dir literal>`, baked so it const-folds through the derivative body.
   let seed_sym = dcx.fresh("d");
   dcx.tape.push(Statement::Assignment {
+    slot: None,
     name: seed_sym,
     name_loc: SourceLoc::default(),
     expr: lit(seed.clone(), SourceLoc::default()),
@@ -1594,10 +1602,12 @@ pub(crate) fn build_directional_derivative(
     *param_sym,
     (
       Expr::Ident {
+        res: VarRes::Unresolved,
         name: *param_sym,
         loc: SourceLoc::default(),
       },
       Tangent::Expr(Expr::Ident {
+        res: VarRes::Unresolved,
         name: seed_sym,
         loc: SourceLoc::default(),
       }),
@@ -1610,16 +1620,16 @@ pub(crate) fn build_directional_derivative(
   let mut stmts = std::mem::take(&mut dcx.tape);
   stmts.push(Statement::Expr(result_expr));
 
-  let captured_consts = captured.collect_bindings_innermost_first();
+  let captured_consts = captured.own_bindings();
   optimize_synthesized_closure_body(ctx, &input.params, &captured_consts, &mut stmts)?;
 
-  Ok(Closure {
-    params: Rc::clone(&input.params),
-    body: Rc::new(ClosureBody(stmts)),
-    captured_scope: CapturedScope::Strong(captured),
-    arg_placeholder_scope: RefCell::new(None),
-    return_type_hint: None,
-  })
+  crate::resolve::resolve_new_closure(
+    ctx,
+    &captured,
+    Rc::clone(&input.params),
+    Rc::new(ClosureBody(stmts)),
+    None,
+  )
 }
 
 /// Build the gradient of a scalar-output closure: for a `vecN`-input `f`, a closure returning the
@@ -1679,8 +1689,10 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
     cap.insert(sym, Value::Callable(Rc::new(Callable::Closure(partial))));
     comps.push(Expr::Call {
       call: FunctionCall {
+        target_res: VarRes::Unresolved,
         target: FunctionCallTarget::Name(sym),
         args: vec![Expr::Ident {
+          res: VarRes::Unresolved,
           name: *param_sym,
           loc: SourceLoc::default(),
         }],
@@ -1691,16 +1703,17 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
   }
   let body = builtin_call(ctx, vec_name, comps, SourceLoc::default());
   let mut stmts = vec![Statement::Expr(body)];
-  let captured_consts = cap.collect_bindings_innermost_first();
+  let captured_consts = cap.own_bindings();
   optimize_synthesized_closure_body(ctx, &input.params, &captured_consts, &mut stmts)?;
 
-  Ok(Value::Callable(Rc::new(Callable::Closure(Closure {
-    params: Rc::clone(&input.params),
-    body: Rc::new(ClosureBody(stmts)),
-    captured_scope: CapturedScope::Strong(cap),
-    arg_placeholder_scope: RefCell::new(None),
-    return_type_hint: None,
-  }))))
+  let closure = crate::resolve::resolve_new_closure(
+    ctx,
+    &cap,
+    Rc::clone(&input.params),
+    Rc::new(ClosureBody(stmts)),
+    None,
+  )?;
+  Ok(Value::Callable(Rc::new(Callable::Closure(closure))))
 }
 
 #[cfg(test)]
