@@ -1,5 +1,6 @@
 <script lang="ts">
   import { login, register } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
 
   export let mode: 'login' | 'register';
   export let returnTo: string | null = null;
@@ -59,8 +60,10 @@
           }
         } catch (error) {
           loginError = error instanceof Error ? error.message : `unknown error: ${error}`;
+          logGeotoyEvent('auth', mode, { success: false });
           return;
         }
+        logGeotoyEvent('auth', mode, { success: true });
         redirectAfterAuth();
       }}
     >

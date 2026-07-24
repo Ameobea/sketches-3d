@@ -3,6 +3,7 @@
   import { createMaterial } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDef } from 'src/geoscript/materials';
   import TagsInput from '../TagsInput.svelte';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     material,
@@ -26,6 +27,7 @@
     error = null;
     try {
       await createMaterial({ ...material, name }, isShared, { description, tags });
+      logGeotoyEvent('materials', 'material_saved', { name, is_shared: isShared });
       onsave();
     } catch (e: any) {
       error = e.message;

@@ -88,6 +88,7 @@
   import { applyGeoscriptSceneEnvironment } from './sceneEnvironment';
   import { useRecording } from './recording';
   import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     viz,
@@ -284,7 +285,12 @@
   // Continuous inputs (sliders) fire rapidly; coalesce into a trailing re-run once edits settle.
   let controlRunTimer = 0;
   let controlRunPending = false;
+  let loggedControlUse = false;
   const scheduleControlRun = () => {
+    if (!loggedControlUse) {
+      loggedControlUse = true;
+      logGeotoyEvent('editor', 'controls_used');
+    }
     controlRunPending = true;
     clearTimeout(controlRunTimer);
     controlRunTimer = window.setTimeout(fireControlRun, 120);
@@ -914,6 +920,7 @@
     );
 
   let lastSwappedSelection: string | null = null;
+  let loggedCodeEdit = false;
 
   const setupEditor = () => {
     if (!codemirrorContainer) {
@@ -937,7 +944,7 @@
           if (!editorView) {
             return true;
           }
-          run();
+          runManual();
           return true;
         },
       },
@@ -972,6 +979,10 @@
       onDocChange: () => {
         if (editorView) {
           writeActiveSource(editorView.state.doc.toString());
+          if (!loggedCodeEdit && editorView.hasFocus) {
+            loggedCodeEdit = true;
+            logGeotoyEvent('editor', 'code_edited');
+          }
         }
         // Recompute (not just `= true`) so CM undo back to the saved baseline clears dirty.
         isDirty = treeState.isDirty();
@@ -1106,6 +1117,15 @@
 
   let materialEditorOpen = $state(false);
   let environmentSettingsOpen = $state(false);
+
+  const toggleMaterialEditorOpen = () => {
+    materialEditorOpen = !materialEditorOpen;
+    if (materialEditorOpen) logGeotoyEvent('materials', 'editor_open');
+  };
+  const toggleEnvironmentSettingsOpen = () => {
+    environmentSettingsOpen = !environmentSettingsOpen;
+    if (environmentSettingsOpen) logGeotoyEvent('environment', 'settings_open');
+  };
   let cameraProjection = $state<'perspective' | 'orthographic'>('perspective');
   let materialDefinitions = $state<MaterialDefinitions>(untrack(() => initialMatDefs));
   let preludeEjected = $state(untrack(() => initialPreludeEjected));
@@ -1345,6 +1365,17 @@
   const runOrFast = () => {
     if (tryTransformOnlyFastPath()) return;
     run();
+  };
+
+  const runManual = async () => {
+    await run();
+    if (!userData?.renderMode) {
+      logGeotoyEvent('editor', 'run', {
+        success: !err,
+        num_nodes: Object.keys(treeState.state.tree.nodes).length,
+        comp_id: userData?.initialComposition?.comp.id ?? null,
+      });
+    }
   };
 
   const run = async () => {
@@ -1659,6 +1690,7 @@
       }
     }
     preludeEjected = !preludeEjected;
+    logGeotoyEvent('editor', 'prelude_toggle', { ejected: preludeEjected });
 
     run();
   };
@@ -1696,6 +1728,7 @@
 
   const handleToggleProjection = () => {
     cameraProjection = toggleProjection(viz);
+    logGeotoyEvent('view', 'projection_toggle', { projection: cameraProjection });
     isDirty = true;
     saveState(
       {
@@ -1714,6 +1747,7 @@
       return;
     }
 
+    logGeotoyEvent('editor', 'clear_local_changes');
     clearSavedState(userData);
 
     const serverState = getServerState(userData);
@@ -1774,6 +1808,20 @@
 
     setTimeout(() => setView(initialView));
 
+    if (!userData?.renderMode) {
+      let loggedVizEngaged = false;
+      (async () => {
+        while (!viz.orbitControls) {
+          await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        viz.orbitControls.addEventListener('start', () => {
+          if (loggedVizEngaged) return;
+          loggedVizEngaged = true;
+          logGeotoyEvent('view', 'viz_engaged');
+        });
+      })();
+    }
+
     setReplCtx({
       centerView: () => {
         const ns = resolveSelectedNode();
@@ -1790,7 +1838,7 @@
       toggleAxesHelper: wrappedToggleAxesHelpers,
       getLastRunOutcome: () => lastRunOutcome,
       getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
-      run,
+      run: runManual,
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
       toggleProjection: handleToggleProjection,
@@ -1833,6 +1881,7 @@
         if (!ns || !treeState.canDelete(ns.sel)) return;
         treeState.deleteNode(ns.sel);
         isDirty = true;
+        logGeotoyEvent('editor', 'node_delete');
       },
       startRenameSelected: () => {
         const ns = resolveSelectedNode();
@@ -1925,7 +1974,7 @@
     <ReplControls
       {isRunning}
       {isEditorCollapsed}
-      {run}
+      run={runManual}
       {cancel}
       {toggleEditorCollapsed}
       {goHome}
@@ -1944,8 +1993,8 @@
       {isDirty}
       {preludeEjected}
       {togglePreludeEjected}
-      toggleMaterialEditorOpen={() => (materialEditorOpen = true)}
-      toggleEnvironmentSettingsOpen={() => (environmentSettingsOpen = true)}
+      {toggleMaterialEditorOpen}
+      {toggleEnvironmentSettingsOpen}
       {toggleLayoutOrientation}
     />
   </div>
@@ -1981,10 +2030,12 @@
               const newId = treeState.createNode({ parentId: parentId ?? undefined });
               treeState.setSelected(newId);
               isDirty = true;
+              logGeotoyEvent('editor', 'node_add');
             }}
             ondelete={id => {
               treeState.deleteNode(id);
               isDirty = true;
+              logGeotoyEvent('editor', 'node_delete');
             }}
             onrename={(id, newName) => {
               try {
@@ -2025,6 +2076,7 @@
                   const newId = treeState.createNode({ name: 'node_2' });
                   treeState.setSelected(newId);
                   isDirty = true;
+                  logGeotoyEvent('editor', 'node_add');
                 }}
               >
                 + node
@@ -2057,7 +2109,7 @@
           <ReplControls
             {isRunning}
             {isEditorCollapsed}
-            {run}
+            run={runManual}
             {cancel}
             {toggleEditorCollapsed}
             {goHome}
@@ -2076,12 +2128,8 @@
             {isDirty}
             {preludeEjected}
             {togglePreludeEjected}
-            toggleMaterialEditorOpen={() => {
-              materialEditorOpen = !materialEditorOpen;
-            }}
-            toggleEnvironmentSettingsOpen={() => {
-              environmentSettingsOpen = !environmentSettingsOpen;
-            }}
+            {toggleMaterialEditorOpen}
+            {toggleEnvironmentSettingsOpen}
             {toggleLayoutOrientation}
           />
           <ReplOutput err={err ?? materialErr} {runStats} />

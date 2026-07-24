@@ -16,6 +16,7 @@
   import { untrack } from 'svelte';
   import ForkCompositionButton from './ForkCompositionButton.svelte';
   import TagsInput from './TagsInput.svelte';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     viz,
@@ -106,6 +107,13 @@
         return { type: 'ok', msg: 'Successfully saved new composition' };
       }
     })();
+
+    logGeotoyEvent('composition', 'save', {
+      new: !comp,
+      success: res.type === 'ok',
+      is_shared: isShared,
+      comp_id: comp?.id ?? null,
+    });
 
     if (res.type === 'error') {
       status = { type: 'error', msg: res.msg };

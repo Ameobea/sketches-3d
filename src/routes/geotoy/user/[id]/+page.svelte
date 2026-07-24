@@ -2,6 +2,7 @@
   import { resolve } from '$app/paths';
 
   import { deleteComposition } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
   import { showToast } from 'src/viz/util/GlobalToastState.svelte';
   import GeotoyHeader from '../../GeotoyHeader.svelte';
   import type { PageData } from './$types';
@@ -18,6 +19,7 @@
     try {
       await deleteComposition(compositionID);
 
+      logGeotoyEvent('composition', 'delete', { comp_id: compositionID });
       compositions = compositions.filter(c => c.comp.id !== compositionID);
       showToast({ status: 'success', message: 'Composition deleted' });
     } catch (err) {
@@ -40,7 +42,13 @@
     <ul class="composition-list">
       {#each compositions as { comp, latest } (comp.id)}
         <li class="composition-item">
-          <a href={resolve(`/geotoy/edit/${comp.id}`)} tabindex="-1" class="thumbnail-link">
+          <a
+            href={resolve(`/geotoy/edit/${comp.id}`)}
+            tabindex="-1"
+            class="thumbnail-link"
+            onclick={() =>
+              logGeotoyEvent('browse', 'composition_open', { comp_id: comp.id, source: 'user_page' })}
+          >
             {#if latest.thumbnail_url}
               <img
                 src={latest.thumbnail_url}
@@ -57,7 +65,14 @@
           </a>
 
           <div class="info">
-            <a href={resolve(`/geotoy/edit/${comp.id}`)} class="title-text">{comp.title}</a>
+            <a
+              href={resolve(`/geotoy/edit/${comp.id}`)}
+              class="title-text"
+              onclick={() =>
+                logGeotoyEvent('browse', 'composition_open', { comp_id: comp.id, source: 'user_page' })}
+            >
+              {comp.title}
+            </a>
             <div class="meta">
               <span class="date">last updated {new Date(comp.updated_at).toLocaleDateString()}</span>
               <span class="status" style={`color: ${comp.is_shared ? '#12cc12' : 'red'}`}>

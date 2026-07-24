@@ -13,6 +13,7 @@ import TimeDisplay from './TimeDisplay.svelte';
 import type { ScoreThresholds } from './timeDisplayTypes';
 import type { SceneConfig } from '../scenes';
 import { MetricsAPI } from 'src/api/client';
+import { logDreamEvent } from 'src/analytics';
 import type { PlayResponse } from 'src/api/models/PlayResponse';
 import { mergeDeep, type DeepPartial } from '../util/util';
 import { rwritable, type TransparentWritable } from '../util/TransparentWritable';
@@ -213,6 +214,10 @@ export class ParkourManager {
     this.runtime.reset();
 
     if (!wasWin && wasStarted) {
+      logDreamEvent('parkour', 'level_restart', {
+        level: this.mapID,
+        time_seconds: Math.round(elapsedTimeSeconds),
+      });
       MetricsAPI.recordRestart(this.mapID, elapsedTimeSeconds);
     }
   };
@@ -273,6 +278,7 @@ export class ParkourManager {
         })
         .catch(() => {});
 
+      logDreamEvent('parkour', 'level_complete', { level: this.mapID, time_seconds: Math.round(time) });
       MetricsAPI.recordPlayCompletion(this.mapID, true, time);
     }
 

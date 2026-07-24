@@ -10,6 +10,7 @@
   import TagsInput from '../TagsInput.svelte';
   import { Textures } from './state.svelte';
   import { untrack } from 'svelte';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     texture,
@@ -64,6 +65,9 @@
         updated = await createTextureFromURL({ name, description, isShared, tags }, urlInput);
       }
       Textures.textures[updated.id] = updated;
+      if (!isEdit) {
+        logGeotoyEvent('materials', 'texture_upload', { method: uploadMethod });
+      }
       onupload(updated);
     });
 

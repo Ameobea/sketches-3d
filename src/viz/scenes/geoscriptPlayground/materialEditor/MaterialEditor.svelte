@@ -21,6 +21,7 @@
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
   import type { User } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     isOpen = $bindable(),
@@ -70,6 +71,7 @@
     const id = uuidv4();
     materials.materials[id] = buildDefaultMaterial(newName);
     selectedMaterialID = id;
+    logGeotoyEvent('materials', 'material_add');
   };
 
   let dragCbs: {
@@ -188,6 +190,7 @@
             materials.materials[id] = { ...material.materialDefinition, name: newName };
             selectedMaterialID = id;
             view = { type: 'properties' };
+            logGeotoyEvent('materials', 'library_pick', { name: material.name });
           }}
         />
       {:else if view.type === 'save_material'}

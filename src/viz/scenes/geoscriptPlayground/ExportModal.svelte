@@ -2,6 +2,7 @@
   import type * as THREE from 'three';
 
   import { exportGLTF, exportOBJ } from './export';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     dialog = $bindable(),
@@ -19,8 +20,10 @@
   const exportScene = () => {
     if (exportType.type === 'gltf') {
       exportGLTF(renderedObjects, exportType.binary);
+      logGeotoyEvent('composition', 'export', { format: exportType.binary ? 'glb' : 'gltf' });
     } else if (exportType.type === 'obj') {
       exportOBJ(renderedObjects);
+      logGeotoyEvent('composition', 'export', { format: 'obj' });
     } else {
       exportType satisfies never;
     }

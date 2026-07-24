@@ -3,6 +3,7 @@ import { get, writable, type Readable } from 'svelte/store';
 import type { Viz } from 'src/viz';
 import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import { logGeotoyEvent } from 'src/analytics';
 
 const canvasRecordModule = import.meta.env.SSR ? null : new AsyncOnce(() => import('canvas-record'));
 const mediaCodecsModule = import.meta.env.SSR ? null : new AsyncOnce(() => import('media-codecs'));
@@ -128,6 +129,7 @@ export const useRecording = (
     await newRecorder.start({ filename });
     recorder = newRecorder;
     recordingState.set('recording');
+    logGeotoyEvent('composition', 'record_start', { comp_id: compositionId });
 
     let lastFrameTime = 0;
     afterRenderCb = (curTimeSeconds: number) => {

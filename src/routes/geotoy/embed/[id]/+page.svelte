@@ -3,8 +3,12 @@
   import type { EditorView } from 'codemirror';
   import { buildEditor } from 'src/geoscript/editor';
   import { getRootNodeSource } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let { data } = $props();
+
+  const logOpen = () =>
+    logGeotoyEvent('browse', 'composition_open', { comp_id: data.composition.id, source: 'embed' });
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
@@ -33,7 +37,7 @@
   {#if data.showTitle || data.showAuthor || data.showDescription}
     <div class="metadata">
       {#if data.showTitle}
-        <a href={resolve(editUrl)} class="title">{data.composition.title}</a>
+        <a href={resolve(editUrl)} class="title" onclick={logOpen}>{data.composition.title}</a>
       {/if}
       {#if data.showAuthor}
         <span class="author">by {data.composition.author_username}</span>
@@ -49,7 +53,7 @@
       <div class="codemirror-container" bind:this={codemirrorContainer}></div>
     </div>
     <div class="thumbnail-panel">
-      <a href={resolve(editUrl)}>
+      <a href={resolve(editUrl)} onclick={logOpen}>
         {#if data.version.thumbnail_url}
           <img src={data.version.thumbnail_url} alt={data.composition.title} crossorigin="anonymous" />
         {:else}

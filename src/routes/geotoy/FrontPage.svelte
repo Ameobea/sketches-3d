@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
   import GeotoyHeader from './GeotoyHeader.svelte';
 
   let {
@@ -24,6 +25,9 @@
   );
 
   let nextPageUrl = $derived(hasMore ? (`/geotoy?page=${currentPage + 1}` as const) : null);
+
+  const logOpen = (compID: number) =>
+    logGeotoyEvent('browse', 'composition_open', { comp_id: compID, source: 'front_page' });
 </script>
 
 <div class="root">
@@ -33,10 +37,18 @@
     {#each featuredCompositions as composition (composition.comp.id)}
       <div class="composition-tile">
         <div class="composition-title">
-          <a href={resolve(`/geotoy/edit/${composition.comp.id}`)}>{composition.comp.title}</a>
+          <a
+            href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+            onclick={() => logOpen(composition.comp.id)}
+          >
+            {composition.comp.title}
+          </a>
         </div>
         {#if composition.latest.thumbnail_url}
-          <a href={resolve(`/geotoy/edit/${composition.comp.id}`)}>
+          <a
+            href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+            onclick={() => logOpen(composition.comp.id)}
+          >
             <img
               src={composition.latest.thumbnail_url}
               alt={composition.comp.description}
@@ -52,7 +64,12 @@
           >
             <div>Thumbnail generating or not available</div>
             <div style="font-size: 16px; margin-top: 4px;">
-              <a href={resolve(`/geotoy/edit/${composition.comp.id}`)}>Open</a>
+              <a
+                href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+                onclick={() => logOpen(composition.comp.id)}
+              >
+                Open
+              </a>
             </div>
             <div style="color: #bbb; font-size: 14px; margin-top: 4px; font-style: italic;">
               {composition.comp.description}
@@ -79,13 +96,27 @@
   {#if currentPage > 1 || hasMore}
     <div class="pagination">
       {#if prevPageUrl}
-        <a href={resolve(prevPageUrl)} class="pagination-button" aria-label="Previous page">← Previous</a>
+        <a
+          href={resolve(prevPageUrl)}
+          class="pagination-button"
+          aria-label="Previous page"
+          onclick={() => logGeotoyEvent('browse', 'page_nav', { page: currentPage - 1 })}
+        >
+          ← Previous
+        </a>
       {:else}
         <span class="pagination-button disabled" aria-label="Previous page (disabled)">← Previous</span>
       {/if}
       <span class="page-indicator">Page {currentPage}</span>
       {#if nextPageUrl}
-        <a href={resolve(nextPageUrl)} class="pagination-button" aria-label="Next page">Next →</a>
+        <a
+          href={resolve(nextPageUrl)}
+          class="pagination-button"
+          aria-label="Next page"
+          onclick={() => logGeotoyEvent('browse', 'page_nav', { page: currentPage + 1 })}
+        >
+          Next →
+        </a>
       {:else}
         <span class="pagination-button disabled" aria-label="Next page (disabled)">Next →</span>
       {/if}

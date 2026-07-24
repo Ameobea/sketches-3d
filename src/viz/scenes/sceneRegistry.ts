@@ -37,6 +37,7 @@ const ParticleConduit: SceneRegistryEntry = {
       ],
     },
   },
+  audio: false,
 };
 
 export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
@@ -198,6 +199,7 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     extension: 'glb',
     metadata: { title: 'Geodesic Mesh Mapping Demo' },
     legacyLights: true,
+    audio: false,
   },
   construction: {
     modulePath: 'src/viz/scenes/construction/construction',
@@ -354,6 +356,7 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     gltfName: null,
     metadata: { title: 'factory shader demo' },
     legacyLights: false,
+    audio: false,
   },
   city: {
     modulePath: 'src/viz/scenes/city/city',

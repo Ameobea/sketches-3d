@@ -2,6 +2,7 @@
   import fuzzysort from 'fuzzysort';
 
   import type { PageData } from './$types';
+  import { logGeotoyEvent } from 'src/analytics';
   import FnDoc from './FnDoc.svelte';
   import './docs.css';
   import type { BuiltinFnDef } from './types';
@@ -115,6 +116,7 @@
               href="#{result.obj.name}"
               class="search-result-item"
               onclick={() => {
+                logGeotoyEvent('docs', 'search_result_click', { fn: result.obj.name });
                 searchQuery = '';
               }}
             >

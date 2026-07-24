@@ -1,6 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import { logout, type User } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let { me, showTitleLink = false }: { me: User | null; showTitleLink?: boolean } = $props();
 
@@ -10,7 +11,13 @@
     isMenuOpen = !isMenuOpen;
   };
 
-  const handleLogout = () => logout().then(() => window.location.reload());
+  const handleLogout = () => {
+    logGeotoyEvent('auth', 'logout');
+    return logout().then(() => window.location.reload());
+  };
+
+  const logNewClick = () => logGeotoyEvent('browse', 'new_composition');
+  const logDocsClick = () => logGeotoyEvent('browse', 'docs_open');
 </script>
 
 <header class="header">
@@ -21,8 +28,8 @@
   {/if}
 
   <div class="desktop-nav">
-    <a href={resolve('/geotoy/edit')}>new</a>
-    <a href={resolve('/geotoy/docs')}>docs</a>
+    <a href={resolve('/geotoy/edit')} onclick={logNewClick}>new</a>
+    <a href={resolve('/geotoy/docs')} onclick={logDocsClick}>docs</a>
     {#if me}
       <span class="logged-in-info">
         logged in as <a href={resolve(`/geotoy/user/${me.id}`)}>{me.username}</a>
@@ -55,8 +62,8 @@
       {:else}
         <a href={resolve('/geotoy/login')}>login/register</a>
       {/if}
-      <a href={resolve('/geotoy/edit')}>new</a>
-      <a href={resolve('/geotoy/docs')}>docs</a>
+      <a href={resolve('/geotoy/edit')} onclick={logNewClick}>new</a>
+      <a href={resolve('/geotoy/docs')} onclick={logDocsClick}>docs</a>
     </div>
   {/if}
 </header>

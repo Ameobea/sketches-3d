@@ -3,10 +3,16 @@
   import type { PopulatedFnExample } from './types';
   import { buildEditor } from 'src/geoscript/editor';
   import { getRootNodeSource } from 'src/geoscript/geotoyAPIClient';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let { example }: { example: PopulatedFnExample } = $props();
 
   let open = $state(false);
+  $effect(() => {
+    if (open) {
+      logGeotoyEvent('docs', 'example_open', { comp_id: example.composition.id });
+    }
+  });
 
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
@@ -41,7 +47,14 @@
     <summary>Example</summary>
     <div class="details-content">
       <div class="thumbnail-container">
-        <a href={`/geotoy/edit/${example.composition.id}`}>
+        <a
+          href={`/geotoy/edit/${example.composition.id}`}
+          onclick={() =>
+            logGeotoyEvent('browse', 'composition_open', {
+              comp_id: example.composition.id,
+              source: 'docs_example',
+            })}
+        >
           <img
             src={example.version.thumbnail_url}
             alt={example.composition.description}
@@ -59,7 +72,18 @@
       </div>
     </div>
     <div class="edit-link-wrapper">
-      <p class="edit-link"><a href={`/geotoy/edit/${example.composition.id}`}>Open in editor</a></p>
+      <p class="edit-link">
+        <a
+          href={`/geotoy/edit/${example.composition.id}`}
+          onclick={() =>
+            logGeotoyEvent('browse', 'composition_open', {
+              comp_id: example.composition.id,
+              source: 'docs_example',
+            })}
+        >
+          Open in editor
+        </a>
+      </p>
     </div>
   </details>
 </div>

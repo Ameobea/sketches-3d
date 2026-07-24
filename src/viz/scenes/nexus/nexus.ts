@@ -21,6 +21,7 @@ import type { CheckpointMaterialOptions } from 'src/viz/materials/Checkpoint/Che
 import { buildGrayStoneBricksFloorMaterial } from 'src/viz/materials/GrayStoneBricksFloor/GrayStoneBricksFloorMaterial';
 import { getAmmoJS } from 'src/viz/collision';
 import { MetricsAPI } from 'src/api/client';
+import { logDreamEvent } from 'src/analytics';
 import PlatformColorShader from './shaders/platform/color.frag?raw';
 import PlatformRoughnessShader from './shaders/platform/roughness.frag?raw';
 import { resolve } from '$app/paths';
@@ -391,6 +392,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
       if (def) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
+          logDreamEvent('game', 'portal_travel', { to: def.scene.slice(1) });
           MetricsAPI.recordPortalTravel(def.scene.slice(1));
           goto(resolve(def.scene), { keepFocus: true });
         });

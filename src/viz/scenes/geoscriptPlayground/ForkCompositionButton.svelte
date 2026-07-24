@@ -3,6 +3,7 @@
   import { resolve } from '$app/paths';
   import { forkComposition, type Composition, type CompositionVersion } from 'src/geoscript/geotoyAPIClient';
   import { showToast } from 'src/viz/util/GlobalToastState.svelte';
+  import { logGeotoyEvent } from 'src/analytics';
 
   let {
     comp,
@@ -21,6 +22,7 @@
     isForking = true;
     forkComposition(comp.id)
       .then(({ composition: newComp, version: newVersion }) => {
+        logGeotoyEvent('composition', 'fork', { comp_id: comp.id });
         showToast({ status: 'success', message: 'Successfully forked composition' });
         goto(resolve(`/geotoy/edit/${newComp.id}`), {
           noScroll: true,

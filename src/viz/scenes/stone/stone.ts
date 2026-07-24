@@ -2,7 +2,7 @@ import { goto } from '$app/navigation';
 import { EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
-import { getSentry } from 'src/sentry';
+import { logDreamEvent } from 'src/analytics';
 import type { Viz } from 'src/viz';
 import { configureShadowMap } from 'src/viz/helpers/lights';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
@@ -515,7 +515,8 @@ export const processLoadedScene = async (
       },
       () => {
         const curTimeSeconds = viz.clock.getElapsedTime();
-        getSentry()?.captureMessage('Stone level completed', { extra: { levelPlayTime: curTimeSeconds } });
+        logDreamEvent('stone', 'level_complete', { play_time_seconds: Math.round(curTimeSeconds) });
+        logDreamEvent('game', 'portal_travel', { to: 'construction' });
         MetricsAPI.recordPortalTravel('construction');
         goto(resolve(nextLevelURL), { keepFocus: true });
       }
@@ -533,7 +534,7 @@ export const processLoadedScene = async (
 
     monolithLightBeams[4].visible = true;
 
-    getSentry()?.captureMessage('Stone level all totems collected');
+    logDreamEvent('stone', 'all_totems_collected');
   };
 
   const baseMoveSpeed = 12.8;
@@ -553,7 +554,7 @@ export const processLoadedScene = async (
     doorLights[i].material = doorLightOnMat;
 
     if (i === 2) {
-      getSentry()?.captureMessage('Stone level jump puzzle totem collected');
+      logDreamEvent('stone', 'jump_puzzle_totem_collected');
       viz.sceneConf.player!.moveSpeed = { inAir: baseMoveSpeed * 1.3, onGround: baseMoveSpeed * 1.3 };
       // animate FOV increase
       const fovChangeDurationSeconds = 0.3;
