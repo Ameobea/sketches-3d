@@ -8,6 +8,23 @@ pub enum SymbolKind {
   Import,
 }
 
+/// Source extent of a block or closure, in user-source coordinates.
+#[derive(Clone, Copy, Debug)]
+pub struct SourceRange {
+  pub start_line: u32,
+  pub start_col: u32,
+  pub end_line: u32,
+  pub end_col: u32,
+}
+
+impl SourceRange {
+  /// Half-open at the end: `end_line`/`end_col` point just past the closing brace, so a cursor
+  /// sitting there has already left the scope.
+  pub fn contains(&self, line: u32, col: u32) -> bool {
+    (line, col) >= (self.start_line, self.start_col) && (line, col) < (self.end_line, self.end_col)
+  }
+}
+
 /// A symbol definition found during analysis.
 #[derive(Clone, Debug)]
 pub struct SymbolDef {
@@ -16,6 +33,9 @@ pub struct SymbolDef {
   pub kind: SymbolKind,
   /// Scope depth where this was defined (0 = top-level).
   pub scope_depth: u32,
+  /// Extent of the block/closure this was defined in; `None` at the top level, and for scopes
+  /// whose bounds couldn't be resolved (e.g. anything inside the prelude).
+  pub scope_range: Option<SourceRange>,
 }
 
 /// A symbol reference (usage) found during analysis.

@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+
 use fxhash::{FxHashMap, FxHashSet};
 use geoscript::{
   ast::{
@@ -14,11 +16,11 @@ use geoscript::{
     classify_pipe_rhs_call, infer_bitor_op_result_type, infer_map_op_result_type,
     infer_reduce_fold_result, resolve_builtin_call, resolve_paf_call, CallResolution, PipeRhsKind,
   },
-  ArgType, EvalCtx, Program, Sym,
+  ArgType, Callable, EvalCtx, Program, Sym,
 };
 
 use crate::{
-  scope::{FunctionCallInfo, SymbolDef, SymbolKind, SymbolRef},
+  scope::{FunctionCallInfo, SourceRange, SymbolDef, SymbolKind, SymbolRef},
   AnalysisDiagnostic, DiagnosticSeverity,
 };
 
@@ -56,10 +58,47 @@ impl Analysis {
     &self.refs
   }
 
-  /// Return definitions that are visible at a given source position.
-  pub fn definitions_visible_at(&self, _target_line: u32, _target_col: u32) -> Vec<&SymbolDef> {
-    // TODO: track scope ranges for proper visibility filtering
-    self.defs.iter().collect()
+  /// Definitions in scope at a given source position: those whose enclosing block/closure
+  /// contains the position, and which were declared before it (bindings are sequential).
+  ///
+  /// Shadowed names collapse to the innermost definition.
+  pub fn definitions_visible_at(
+    &self,
+    ctx: &EvalCtx,
+    target_line: u32,
+    target_col: u32,
+  ) -> Vec<&SymbolDef> {
+    let mut by_name: FxHashMap<Sym, &SymbolDef> = FxHashMap::default();
+    for def in &self.defs {
+      // Top-level bindings (including the prelude's and the ambient block's) are always in
+      // scope.  Anything nested needs a resolved range around the cursor — an unresolved one
+      // means the scope lives in the prelude, where the cursor can't be.
+      if def.scope_depth > 0
+        && !def
+          .scope_range
+          .is_some_and(|r| r.contains(target_line, target_col))
+      {
+        continue;
+      }
+      // A location of (0, 0) means "no position" (imports, prelude) — always in scope.
+      let (line, col) = ctx.resolve_loc(def.loc);
+      if (line, col) != (0, 0) && (line, col) > (target_line, target_col) {
+        continue;
+      }
+      // An assignment's own def is pushed after its RHS is walked, so walk order alone would let
+      // an outer binding overwrite the inner one shadowing it; depth breaks the tie.
+      match by_name.entry(def.name) {
+        Entry::Occupied(mut e) => {
+          if def.scope_depth >= e.get().scope_depth {
+            e.insert(def);
+          }
+        }
+        Entry::Vacant(e) => {
+          e.insert(def);
+        }
+      }
+    }
+    by_name.into_values().collect()
   }
 
   pub fn build(ctx: &EvalCtx, program: &Program) -> Self {
@@ -81,6 +120,8 @@ struct ScopeFrame {
   /// Symbols defined in this frame and their inferred types.
   types: FxHashMap<Sym, AbstractType>,
   depth: u32,
+  /// Source extent of the block/closure that opened this frame; `None` for the top level.
+  range: Option<SourceRange>,
 }
 
 struct AnalysisWalker<'a> {
@@ -126,6 +167,7 @@ impl<'a> AnalysisWalker<'a> {
       scope_stack: vec![ScopeFrame {
         types: initial_types,
         depth: 0,
+        range: None,
       }],
       defs: Vec::new(),
       refs: Vec::new(),
@@ -144,12 +186,30 @@ impl<'a> AnalysisWalker<'a> {
     self.scope_stack.last().map(|f| f.depth).unwrap_or(0)
   }
 
-  fn push_scope(&mut self) {
+  fn push_scope(&mut self, start: SourceLoc, end: SourceLoc) {
     let depth = self.current_depth() + 1;
     self.scope_stack.push(ScopeFrame {
       types: FxHashMap::default(),
       depth,
+      range: self.resolve_range(start, end),
     });
+  }
+
+  /// Resolve a scope's bounds to user-source coordinates.  `None` when either end is unknown —
+  /// synthesized nodes and anything in the prelude/ambient region, none of which a cursor in the
+  /// user's source can sit inside.
+  fn resolve_range(&self, start: SourceLoc, end: SourceLoc) -> Option<SourceRange> {
+    let (start_line, start_col) = self.ctx.resolve_loc(start);
+    let (end_line, end_col) = self.ctx.resolve_loc(end);
+    if (start_line, start_col) == (0, 0) || (end_line, end_col) == (0, 0) {
+      return None;
+    }
+    Some(SourceRange {
+      start_line,
+      start_col,
+      end_line,
+      end_col,
+    })
   }
 
   fn pop_scope(&mut self) {
@@ -160,11 +220,17 @@ impl<'a> AnalysisWalker<'a> {
     if let Some(frame) = self.scope_stack.last_mut() {
       frame.types.insert(name, ty.clone());
     }
+    // Desugaring temporaries are bound in scope so references to them resolve, but they were
+    // never written by the user and must not surface as definitions.
+    if self.ctx.interned_symbols.is_synthetic(name) {
+      return;
+    }
     self.defs.push(SymbolDef {
       name,
       loc,
       kind,
       scope_depth: self.current_depth(),
+      scope_range: self.scope_stack.last().and_then(|f| f.range),
     });
     if loc != SourceLoc::default() {
       self.def_types.insert(loc, ty);
@@ -330,10 +396,15 @@ impl<'a> AnalysisWalker<'a> {
   /// Mirrors runtime branch transparency: a conditional branch block is NOT a break target,
   /// so `break` inside it contributes to the nearest enclosing explicit block instead.
   fn walk_branch_expr(&mut self, expr: &Expr) -> AbstractType {
-    let Expr::Block { statements, .. } = expr else {
+    let Expr::Block {
+      statements,
+      loc,
+      end_loc,
+    } = expr
+    else {
       return self.walk_expr(expr);
     };
-    self.push_scope();
+    self.push_scope(*loc, *end_loc);
     let (result, unreachable) = self.walk_statement_list(statements);
     self.pop_scope();
     if unreachable {
@@ -456,10 +527,11 @@ impl<'a> AnalysisWalker<'a> {
         body,
         return_type_hint,
         loc,
+        end_loc,
         ..
       } => {
         let recursive_binding = self.pending_recursive_binding.take();
-        self.push_scope();
+        self.push_scope(*loc, *end_loc);
         let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
         for param in params.iter() {
           let ty = match &param.type_hint {
@@ -598,8 +670,12 @@ impl<'a> AnalysisWalker<'a> {
           .reduce(|a, b| merge_types(&a, &b))
           .unwrap_or(AbstractType::Unknown)
       }
-      Expr::Block { statements, .. } => {
-        self.push_scope();
+      Expr::Block {
+        statements,
+        loc,
+        end_loc,
+      } => {
+        self.push_scope(*loc, *end_loc);
         self.block_break_stack.push(Some(Vec::new()));
         let (result, unreachable) = self.walk_statement_list(statements);
         let break_exits = self.block_break_stack.pop().unwrap().unwrap();
@@ -877,7 +953,18 @@ impl<'a> AnalysisWalker<'a> {
 
         return_ty
       }
-      FunctionCallTarget::Literal(_) => AbstractType::Unknown,
+      // Builtins the desugar/optimizer already resolved to a literal callable still deserve a
+      // real overload match — `get_return_type_hint` can't give one, since it has no arg types.
+      FunctionCallTarget::Literal(callable) => match &**callable {
+        Callable::Builtin { fn_entry_ix, .. } => {
+          let name = self
+            .ctx
+            .interned_symbols
+            .intern(fn_sigs().entries[*fn_entry_ix].0);
+          resolve_builtin_call(self.ctx, name, &arg_types, &kwarg_types).into_abstract_type()
+        }
+        _ => AbstractType::Unknown,
+      },
     }
   }
 

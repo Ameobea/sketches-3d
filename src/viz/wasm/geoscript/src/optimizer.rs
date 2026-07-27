@@ -136,7 +136,14 @@ fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> b
 fn is_known_rng_free_callable(callable: &Callable) -> bool {
   match callable {
     Callable::Builtin { .. } => !callable.is_side_effectful() && !callable.is_rng_dependent(),
-    Callable::PartiallyAppliedFn(paf) => is_known_rng_free_callable(&paf.inner),
+    Callable::PartiallyAppliedFn(paf) => {
+      is_known_rng_free_callable(&paf.inner)
+        && paf
+          .args
+          .iter()
+          .chain(paf.kwargs.values())
+          .all(|v| !matches!(v, Value::Callable(c) if !is_known_rng_free_callable(c)))
+    }
     Callable::ComposedFn(composed) => composed
       .inner
       .iter()
@@ -144,6 +151,12 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
     Callable::Closure(_) => false,
     Callable::Dynamic { inner, .. } => !inner.is_side_effectful() && !inner.is_rng_dependent(),
   }
+}
+
+/// Whatever receives a callable argument invokes it, and argument callables aren't folded into
+/// the const-eval cache key the way the callee is — so an effectful one has to block the fold.
+fn arg_blocks_const_eval(value: &Value, allow_rng_const_eval: bool) -> bool {
+  matches!(value, Value::Callable(c) if callable_is_dyn_for_const_eval(c, allow_rng_const_eval))
 }
 
 /// A callable whose fold-time invocation could run an effect the runtime owns.  RNG-dependent
@@ -161,6 +174,11 @@ fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: boo
     }
     Callable::PartiallyAppliedFn(paf) => {
       callable_is_dyn_for_const_eval(&paf.inner, allow_rng_const_eval)
+        || paf
+          .args
+          .iter()
+          .chain(paf.kwargs.values())
+          .any(|v| arg_blocks_const_eval(v, allow_rng_const_eval))
     }
     Callable::ComposedFn(composed) => composed
       .inner
@@ -253,7 +271,11 @@ fn expr_contains_fold_unsafe_effects(expr: &Expr, allow_rng: bool) -> bool {
           .is_some_and(|dv| expr_contains_fold_unsafe_effects(dv, allow_rng))
       }) || stmts_contain_fold_unsafe_effects(&body.0, allow_rng)
     }
-    Expr::Ident { .. } | Expr::Literal { .. } => false,
+    // A higher-order callee is pure itself but runs whatever callable it's handed, and an
+    // argument callable isn't part of the fold's cache key — so an effectful one anywhere in
+    // the expression has to block the fold outright.
+    Expr::Literal { value, .. } => arg_blocks_const_eval(value, allow_rng),
+    Expr::Ident { .. } => false,
     Expr::ArrayLiteral { elements, .. } => elements
       .iter()
       .any(|e| expr_contains_fold_unsafe_effects(e, allow_rng)),
@@ -319,11 +341,7 @@ fn reads_tracker_bound_free_name(
     .any(|stmt| stmt.exprs().any(|e| expr_reads_hit(e, &bound, local_scope)))
 }
 
-fn expr_reads_hit(
-  expr: &Expr,
-  bound: &fxhash::FxHashSet<Sym>,
-  local_scope: &ScopeTracker,
-) -> bool {
+fn expr_reads_hit(expr: &Expr, bound: &fxhash::FxHashSet<Sym>, local_scope: &ScopeTracker) -> bool {
   let hit = |e: &Expr| expr_reads_hit(e, bound, local_scope);
   match expr {
     Expr::Ident { name, .. } => !bound.contains(name) && local_scope.has(*name),
@@ -844,6 +862,13 @@ fn const_eval_call_value(
   allow_rng_const_eval: bool,
 ) -> Result<Option<Value>, ErrorStack> {
   if !can_const_eval_callable(callable, allow_rng_const_eval) {
+    return Ok(None);
+  }
+  if arg_vals
+    .iter()
+    .chain(kwarg_vals.values())
+    .any(|v| arg_blocks_const_eval(v, allow_rng_const_eval))
+  {
     return Ok(None);
   }
 
@@ -1625,10 +1650,7 @@ fn fold_constants<'a>(
                 )),
                 None => {
                   let (line, col) = ctx.resolve_loc(*loc);
-                  Err(
-                    ErrorStack::new(format!("Variable `{name}` not found"))
-                      .with_loc(line, col),
-                  )
+                  Err(ErrorStack::new(format!("Variable `{name}` not found")).with_loc(line, col))
                 }
               },
             })?;
@@ -1780,7 +1802,7 @@ fn fold_constants<'a>(
       body,
       return_type_hint,
       loc,
-      resolved: _,
+      ..
     } => {
       let mut params_inner = (**params).clone();
       for param in &mut params_inner {
@@ -1900,10 +1922,7 @@ fn fold_constants<'a>(
         .interned_symbols
         .with_resolved(id, |resolved_name| {
           let (line, col) = ctx.resolve_loc(loc);
-          Err(
-            ErrorStack::new(format!("Variable `{resolved_name}` not found"))
-              .with_loc(line, col),
-          )
+          Err(ErrorStack::new(format!("Variable `{resolved_name}` not found")).with_loc(line, col))
         })
         .unwrap()
     }
@@ -2057,7 +2076,11 @@ fn fold_constants<'a>(
       }
       Ok(())
     }
-    Expr::Block { statements, loc } => {
+    Expr::Block {
+      statements,
+      loc,
+      end_loc,
+    } => {
       let mut block_scope = ScopeTracker::wrap(&*local_scope);
 
       for stmt in statements.iter_mut() {
@@ -2078,13 +2101,15 @@ fn fold_constants<'a>(
       // block consumes must be provably in sync with the runtime stream — same policy the
       // call-arm const-eval enforces via ambient_fold_blocked. A None lookup means an rng
       // draw under !allow_rng_const_eval; always blocked.
-      let ambient_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
-        for stmt in statements.iter() {
-          hash_statement(stmt, hasher, uses, ExprHashConfig::const_eval_value())?;
-        }
-        Some(())
-      });
-      if ambient_lookup.is_none() || ambient_fold_blocked(ctx, &ambient_lookup, allow_rng_const_eval)
+      let ambient_lookup =
+        const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
+          for stmt in statements.iter() {
+            hash_statement(stmt, hasher, uses, ExprHashConfig::const_eval_value())?;
+          }
+          Some(())
+        });
+      if ambient_lookup.is_none()
+        || ambient_fold_blocked(ctx, &ambient_lookup, allow_rng_const_eval)
       {
         fold_stat("block-skip-ambient");
         return Ok(());
@@ -2139,6 +2164,7 @@ fn fold_constants<'a>(
               }),
             }],
             loc: *loc,
+            end_loc: *end_loc,
           };
         }
         crate::ControlFlow::Break(val) => {
@@ -2150,6 +2176,7 @@ fn fold_constants<'a>(
               }),
             }],
             loc: *loc,
+            end_loc: *end_loc,
           };
         }
       }
@@ -2573,6 +2600,32 @@ fn test_threshold_setters_not_const_folded() {
       matches!(expr, Expr::Call { .. }),
       "`{code}` must not be const-folded, got: {expr:?}"
     );
+  }
+}
+
+/// Higher-order builtins are pure themselves but become side-effectful when handed a
+/// side-effectful callback.  Const-folding those calls bakes the effect into the const-eval
+/// cache, so it fires on the first run and silently vanishes on every subsequent one.
+#[test]
+fn test_side_effectful_callback_arg_not_const_folded() {
+  let ctx = EvalCtx::default();
+  for code in [
+    "for_each(render, 0..2 -> |i| box(10))",
+    "0..2 -> |i| { box(10) } | for_each(render)",
+    "0..2 -> |i| { box(10) } | for_each(|m| render(m))",
+    "0..2 -> |i| { render(box(10)); i } | collect",
+  ] {
+    for run in 0..2 {
+      ctx.rendered_meshes.inner.borrow_mut().clear();
+      let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+      optimize_ast(&ctx, &mut ast).unwrap();
+      crate::eval_program_with_ctx(&ctx, &ast).unwrap();
+      assert_eq!(
+        ctx.rendered_meshes.len(),
+        2,
+        "`{code}` rendered the wrong number of meshes on run {run}"
+      );
+    }
   }
 }
 
@@ -3465,6 +3518,82 @@ out = path_sampler(0.5)
 }
 
 #[cfg(test)]
+fn path_block_sample(code: &str) -> crate::Vec2 {
+  let ctx = crate::parse_and_eval_program(code).unwrap();
+  *ctx.get_global("out").unwrap().as_vec2().unwrap()
+}
+
+/// The `path { ... }` expansion is hygienic: bindings inside the block neither break it nor get
+/// hijacked by draw-command rewriting.
+#[test]
+fn test_path_block_hygiene() {
+  // the expansion calls `flatten`/`filter` internally; locals of those names must not shadow them
+  assert_eq!(
+    path_block_sample(
+      r#"
+s = build_path(path {
+  flatten = 5
+  filter = 6
+  move(0, 0)
+  line(10, 0)
+})
+out = s(0.5)
+"#
+    ),
+    crate::Vec2::new(5., 0.)
+  );
+
+  // a local that collides with a draw-command name wins over the rewrite
+  assert_eq!(
+    path_block_sample(
+      r#"
+s = build_path(path {
+  rect = |a| a * 2
+  move(0, 0)
+  line(rect(5), 0)
+})
+out = s(0.5)
+"#
+    ),
+    crate::Vec2::new(5., 0.)
+  );
+}
+
+/// A draw command guarded by a condition that didn't fire evaluates to nil; those drop out of the
+/// command list rather than reaching `build_path`.
+#[test]
+fn test_path_block_drops_undrawn_commands() {
+  assert_eq!(
+    path_block_sample(
+      r#"
+closed = false
+s = build_path(path {
+  move(0, 0)
+  line(10, 0)
+  if closed { close() }
+})
+out = s(0.5)
+"#
+    ),
+    crate::Vec2::new(5., 0.)
+  );
+
+  // ...including nils nested inside a mapped subsequence, which `flatten` hoists to the top level
+  assert_eq!(
+    path_block_sample(
+      r#"
+s = build_path(path {
+  move(0, 0)
+  0..3 -> |i| if i == 1 { line(10, 0) }
+})
+out = s(0.5)
+"#
+    ),
+    crate::Vec2::new(5., 0.)
+  );
+}
+
+#[cfg(test)]
 fn optimize_and_get_mesh(ctx: &EvalCtx, code: &str, stmt_index: usize) -> Rc<crate::MeshHandle> {
   let mut ast = crate::parse_program_src(ctx, code).unwrap();
   optimize_ast(ctx, &mut ast).unwrap();
@@ -3720,7 +3849,11 @@ a = randf()
   let ctx2 = crate::parse_and_eval_program(direct).unwrap();
   let a1 = ctx1.get_global("a").unwrap().as_float().unwrap();
   let a2 = ctx2.get_global("a").unwrap().as_float().unwrap();
-  assert_eq!(a1.to_bits(), a2.to_bits(), "aliased-seed block draw {a1} != direct-seed draw {a2}");
+  assert_eq!(
+    a1.to_bits(),
+    a2.to_bits(),
+    "aliased-seed block draw {a1} != direct-seed draw {a2}"
+  );
 }
 
 /// A block whose reachable fall-through type is Unknown (call through an arg) must not be

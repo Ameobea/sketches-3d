@@ -3,7 +3,7 @@ use geoscript::{parse_program_maybe_with_prelude_and_ambient, ty::AbstractType, 
 use crate::{
   analysis::Analysis,
   format::{format_builtin_hover, format_builtin_hover_with_sig, format_partial_application},
-  source_scan, AnalysisCtx, HoverInfo, SymbolKind,
+  resolve_draw_command, source_scan, AnalysisCtx, HoverInfo, SymbolKind,
 };
 
 pub(crate) fn hover(
@@ -33,6 +33,8 @@ pub(crate) fn hover(
       .eval_ctx
       .interned_symbols
       .with_resolved(def.name, |s| s.to_string())?;
+    // Not `ident_end_col`: a def's name always matches the source, and destructured bindings
+    // record the RHS position, where probing would stretch the range over the whole RHS.
     let end_col = col + name.len() as u32;
 
     if line == target_line && target_col >= col && target_col < end_col {
@@ -77,9 +79,12 @@ pub(crate) fn hover(
       .eval_ctx
       .interned_symbols
       .with_resolved(call_info.name, |s| s.to_string())?;
-    let end_col = col + name.len() as u32;
+    if line != target_line || target_col < col {
+      continue;
+    }
+    let end_col = source_scan::ident_end_col(src, line, col, name.len() as u32);
 
-    if line == target_line && target_col >= col && target_col < end_col {
+    if target_col < end_col {
       if !call_info.is_shadowed {
         if let Some((real_name, fn_def)) = ctx.lookup_builtin(&name) {
           let content = match call_info.matched_sig_ix {
@@ -114,9 +119,12 @@ pub(crate) fn hover(
       .eval_ctx
       .interned_symbols
       .with_resolved(sym_ref.name, |s| s.to_string())?;
-    let end_col = col + name.len() as u32;
+    if line != target_line || target_col < col {
+      continue;
+    }
+    let end_col = source_scan::ident_end_col(src, line, col, name.len() as u32);
 
-    if line == target_line && target_col >= col && target_col < end_col {
+    if target_col < end_col {
       // Check if it's a builtin (referenced as a value, not called)
       if let Some((real_name, fn_def)) = ctx.lookup_builtin(&name) {
         let content = format_builtin_hover(real_name, fn_def);
@@ -170,7 +178,9 @@ fn hover_kwarg(
   let call_info = source_scan::find_enclosing_call(src, offset)?;
   let kwarg_name = call_info.kwarg_name.as_deref()?;
 
-  let (_canonical, fn_def) = ctx.lookup_builtin(&call_info.fn_name)?;
+  let in_path_block = source_scan::in_path_block(src, offset);
+  let (_canonical, fn_def) =
+    ctx.lookup_builtin(resolve_draw_command(&call_info.fn_name, in_path_block))?;
 
   // Find the matching ArgDef across all signatures
   for sig in fn_def.signatures {

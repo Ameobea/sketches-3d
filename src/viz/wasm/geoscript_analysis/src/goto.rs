@@ -1,6 +1,6 @@
 use geoscript::parse_program_maybe_with_prelude_and_ambient;
 
-use crate::{analysis::Analysis, AnalysisCtx, DefinitionLocation};
+use crate::{analysis::Analysis, source_scan, AnalysisCtx, DefinitionLocation};
 
 pub(crate) fn goto_definition(
   ctx: &AnalysisCtx,
@@ -26,9 +26,12 @@ pub(crate) fn goto_definition(
       .eval_ctx
       .interned_symbols
       .with_resolved(sym_ref.name, |s| s.to_string())?;
-    let end_col = col + name.len() as u32;
+    if line != target_line || target_col < col {
+      continue;
+    }
+    let end_col = source_scan::ident_end_col(src, line, col, name.len() as u32);
 
-    if line == target_line && target_col >= col && target_col < end_col {
+    if target_col < end_col {
       if let Some(def_loc) = sym_ref.resolved_def {
         let (def_line, def_col) = ctx.eval_ctx.resolve_loc(def_loc);
         return Some(DefinitionLocation {

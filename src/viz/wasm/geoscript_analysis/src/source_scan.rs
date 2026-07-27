@@ -51,6 +51,27 @@ fn is_ident_byte(b: u8) -> bool {
   b.is_ascii_alphanumeric() || b == b'_'
 }
 
+/// End column of the identifier written at `(line, col)`, falling back to `col + fallback_len`
+/// when no identifier starts there.
+///
+/// The interned name of a symbol isn't always the text at its location — the `path { ... }`
+/// desugar rewrites draw commands (`bezier` → `path_cubic_bezier`), so using the name's length
+/// would stretch hover and goto ranges over the following source.
+pub fn ident_end_col(src: &str, line: u32, col: u32, fallback_len: u32) -> u32 {
+  let Some(offset) = line_col_to_offset(src, line, col) else {
+    return col + fallback_len;
+  };
+  let bytes = src.as_bytes();
+  let mut end = offset;
+  while end < bytes.len() && is_ident_byte(bytes[end]) {
+    end += 1;
+  }
+  if end == offset {
+    return col + fallback_len;
+  }
+  col + (end - offset) as u32
+}
+
 /// If the cursor is on a kwarg name (identifier followed by `=` but not `==`), return
 /// the kwarg name and its byte range.
 pub fn detect_kwarg_at(src: &str, offset: usize) -> Option<String> {
@@ -86,6 +107,47 @@ pub fn detect_kwarg_at(src: &str, offset: usize) -> Option<String> {
   }
 
   Some(src[word_start..word_end].to_string())
+}
+
+/// Whether `offset` sits inside a `path { ... }` block.  Draw-command rewriting applies to
+/// nested blocks and closure bodies too, so any enclosing `path {` counts.
+///
+/// Scans forward so string literals and `//` comments can be skipped — a brace inside either
+/// would otherwise shift the nesting count and flip the answer.
+pub fn in_path_block(src: &str, offset: usize) -> bool {
+  let bytes = src.as_bytes();
+  let end = offset.min(bytes.len());
+  let mut open: Vec<usize> = Vec::new();
+  let mut i = 0;
+  while i < end {
+    match bytes[i] {
+      quote @ (b'"' | b'\'') => {
+        i += 1;
+        while i < end && bytes[i] != quote {
+          i += if bytes[i] == b'\\' { 2 } else { 1 };
+        }
+      }
+      b'/' if bytes.get(i + 1) == Some(&b'/') => {
+        while i < end && bytes[i] != b'\n' {
+          i += 1;
+        }
+        continue;
+      }
+      b'{' => open.push(i),
+      b'}' => {
+        open.pop();
+      }
+      _ => {}
+    }
+    i += 1;
+  }
+  open.iter().rev().any(|&brace| {
+    let mut before = brace;
+    while before > 0 && bytes[before - 1].is_ascii_whitespace() {
+      before -= 1;
+    }
+    extract_ident_before(src, before).as_deref() == Some("path")
+  })
 }
 
 /// Scan backwards from `offset` to find the enclosing function call.

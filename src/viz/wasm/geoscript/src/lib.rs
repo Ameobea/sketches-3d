@@ -404,6 +404,13 @@ impl Debug for Callable {
   }
 }
 
+/// Higher-order fns invoke the callables handed to them, so a side-effectful callable passed as an
+/// argument makes the enclosing call side-effectful too.  Unlike call targets, argument callables
+/// don't get folded into const-eval cache keys, so they have to block const eval outright.
+pub(crate) fn arg_is_side_effectful(value: &Value) -> bool {
+  matches!(value, Value::Callable(callable) if callable.is_side_effectful())
+}
+
 impl Callable {
   pub fn is_side_effectful(&self) -> bool {
     match self {
@@ -436,7 +443,14 @@ impl Callable {
             | "input_spline"
         )
       }
-      Callable::PartiallyAppliedFn(paf) => paf.inner.is_side_effectful(),
+      Callable::PartiallyAppliedFn(paf) => {
+        paf.inner.is_side_effectful()
+          || paf
+            .args
+            .iter()
+            .chain(paf.kwargs.values())
+            .any(arg_is_side_effectful)
+      }
       Callable::Closure(_) => false,
       Callable::ComposedFn(composed) => composed.inner.iter().any(|c| c.is_side_effectful()),
       Callable::Dynamic { inner, .. } => inner.is_side_effectful(),
@@ -505,6 +519,8 @@ impl Callable {
             return None;
           }
         }
+        // No resolved signature means the arg types didn't match one — which is exactly the
+        // partial-application case, so the overloads' return types say nothing about this value.
         None => {
           return None;
         }
@@ -1738,6 +1754,9 @@ pub struct SymbolInterner {
   pub symbols: RefCell<FxHashMap<String, Sym>>,
   pub reverse_symbols: RefCell<FxHashMap<Sym, String>>,
   pub next_sym: Cell<usize>,
+  /// Symbols minted by desugaring rather than written by the user (`path { ... }` temporaries).
+  /// Editor tooling keys off this to keep them out of completions, hovers, and goto-definition.
+  synthetic_syms: RefCell<FxHashSet<Sym>>,
 }
 
 impl SymbolInterner {
@@ -1754,6 +1773,16 @@ impl SymbolInterner {
       .borrow_mut()
       .insert(sym, name.to_owned());
     sym
+  }
+
+  pub fn intern_synthetic(&self, name: &str) -> Sym {
+    let sym = self.intern(name);
+    self.synthetic_syms.borrow_mut().insert(sym);
+    sym
+  }
+
+  pub fn is_synthetic(&self, sym: Sym) -> bool {
+    self.synthetic_syms.borrow().contains(&sym)
   }
 
   pub fn with_resolved<F, R>(&self, sym: Sym, f: F) -> Option<R>
@@ -1778,6 +1807,7 @@ fn build_default_symbol_interner() -> SymbolInterner {
     symbols: RefCell::new(FxHashMap::default()),
     reverse_symbols: RefCell::new(FxHashMap::default()),
     next_sym: Cell::new(0),
+    synthetic_syms: RefCell::new(FxHashSet::default()),
   };
 
   for (name, _val) in get_default_globals() {
@@ -2289,9 +2319,7 @@ impl EvalCtx {
           do_call(&callable, args_opt, kwargs_opt)
         } else {
           return self.with_resolved_sym(*name, |name| {
-            Err(ErrorStack::new(format!(
-              "Variable `{name}` not found"
-            )))
+            Err(ErrorStack::new(format!("Variable `{name}` not found")))
           });
         }
       }
@@ -2785,9 +2813,7 @@ impl EvalCtx {
   #[inline]
   fn eval_branch(&self, expr: &Expr, env: &FrameEnv) -> Result<ControlFlow<Value>, ErrorStack> {
     match expr {
-      Expr::Block { statements, .. } => {
-        self.eval_statements::<STMTS_TRANSPARENT>(statements, env)
-      }
+      Expr::Block { statements, .. } => self.eval_statements::<STMTS_TRANSPARENT>(statements, env),
       _ => self.eval_expr_env(expr, env),
     }
   }
@@ -4127,7 +4153,12 @@ pub fn eval_resolved_program(
   let bindings = res
     .name_slots
     .iter()
-    .map(|(sym, slot)| (*sym, std::mem::replace(&mut slots[*slot as usize], Value::Nil)))
+    .map(|(sym, slot)| {
+      (
+        *sym,
+        std::mem::replace(&mut slots[*slot as usize], Value::Nil),
+      )
+    })
     .collect();
   Ok((last, bindings))
 }

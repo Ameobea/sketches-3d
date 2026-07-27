@@ -1,5 +1,6 @@
 use fxhash::FxHashSet;
 use geoscript::{
+  ast::PATH_BLOCK_REWRITE_MAP,
   builtins::{
     fn_defs::{fn_sigs, FnDef},
     FUNCTION_ALIASES,
@@ -76,6 +77,19 @@ pub struct DefinitionLocation {
 #[derive(Clone, Debug, SerJson)]
 pub struct AnalysisResult {
   pub diagnostics: Vec<AnalysisDiagnostic>,
+}
+
+/// Maps a draw-command name to the builtin it expands to when the cursor is inside a
+/// `path { ... }` block; otherwise passes the name through.
+pub(crate) fn resolve_draw_command(name: &str, in_path_block: bool) -> &str {
+  if !in_path_block {
+    return name;
+  }
+  PATH_BLOCK_REWRITE_MAP
+    .iter()
+    .find(|(from, _)| *from == name)
+    .map(|(_, builtin)| *builtin)
+    .unwrap_or(name)
 }
 
 /// The main analysis context.  Created once per editor session and reused across analysis
@@ -1203,5 +1217,195 @@ my_fn = |x: int|: int {
       "expected `int` type for -x, got: {}",
       hover.content
     );
+  }
+
+  const PATH_BLOCK_SRC: &str = "p = path {\n  move(0, 0)\n  bezier(1, 1, 2, 2, 3, 3)\n}\n";
+
+  #[test]
+  fn test_path_block_internals_are_not_user_visible() {
+    let ctx = AnalysisCtx::new();
+
+    let leaked: Vec<String> = ctx
+      .completions(PATH_BLOCK_SRC, 4, 1, false, "")
+      .into_iter()
+      .map(|c| c.label)
+      .filter(|l| l.contains("__geoscript_internal__"))
+      .collect();
+    assert!(
+      leaked.is_empty(),
+      "internal names in completions: {leaked:?}"
+    );
+
+    // the `path` keyword carries the expansion's loc; nothing should hover there
+    assert!(
+      ctx.hover(PATH_BLOCK_SRC, 1, 5, false, "").is_none(),
+      "expected no hover on the `path` keyword"
+    );
+
+    // the block still infers as a sequence
+    let hover = ctx
+      .hover(PATH_BLOCK_SRC, 1, 1, false, "")
+      .expect("hover for `p`");
+    assert!(hover.content.contains("seq"), "got: {}", hover.content);
+  }
+
+  #[test]
+  fn test_hover_range_inside_path_block_matches_written_name() {
+    let ctx = AnalysisCtx::new();
+
+    // `bezier` is rewritten to `path_cubic_bezier`; the range must still cover only what
+    // was written, and the args must not resolve to the draw command.
+    let hover = ctx
+      .hover(PATH_BLOCK_SRC, 3, 3, false, "")
+      .expect("hover for `bezier`");
+    assert!(
+      hover.content.contains("path_cubic_bezier"),
+      "got: {}",
+      hover.content
+    );
+    assert_eq!((hover.start_col, hover.end_col), (3, 9), "got: {hover:?}");
+    assert!(
+      ctx.hover(PATH_BLOCK_SRC, 3, 10, false, "").is_none(),
+      "expected no hover inside the arg list"
+    );
+  }
+
+  #[test]
+  fn test_draw_commands_complete_only_inside_path_blocks() {
+    let ctx = AnalysisCtx::new();
+    let src = "p = path {\n  move(0, 0)\n}\nq = 1\n";
+    let labels = |line, col| -> Vec<String> {
+      ctx
+        .completions(src, line, col, false, "")
+        .into_iter()
+        .map(|c| c.label)
+        .collect()
+    };
+
+    let inside = labels(2, 3);
+    for name in ["move", "line", "bezier", "arc", "close", "rect"] {
+      assert!(
+        inside.contains(&name.to_string()),
+        "`{name}` missing inside a path block"
+      );
+    }
+    // `reverse` means `path_reverse` here, so the seq builtin mustn't also be offered
+    assert_eq!(inside.iter().filter(|l| *l == "reverse").count(), 1);
+
+    let outside = labels(4, 1);
+    assert!(!outside.contains(&"move".to_string()));
+    assert!(outside.contains(&"reverse".to_string()));
+  }
+
+  #[test]
+  fn test_kwarg_help_resolves_draw_commands() {
+    let ctx = AnalysisCtx::new();
+    // `rx` is a kwarg of `path_arc`, reachable only by resolving `arc` through the rewrite
+    let src = "p = path {\n  arc(rx=1, ry=2, to=vec2(1, 1))\n}\n";
+    let hover = ctx.hover(src, 2, 7, false, "").expect("hover for `rx`");
+    assert!(hover.content.contains("rx"), "got: {}", hover.content);
+    assert!(ctx
+      .completions(src, 2, 7, false, "")
+      .iter()
+      .any(|c| c.label == "sweep_flag="));
+  }
+
+  #[test]
+  fn test_completions_respect_lexical_scope() {
+    let ctx = AnalysisCtx::new();
+    let src =
+      "top = 1\nf = |arg| {\n  inner = arg + 1\n  inner\n}\ng = |other| other * 2\nlater = 5\n";
+    let vars = |line, col| -> Vec<String> {
+      let mut names: Vec<String> = ctx
+        .completions(src, line, col, false, "")
+        .into_iter()
+        .filter(|i| i.kind == "variable")
+        .map(|i| i.label)
+        .collect();
+      names.sort();
+      names
+    };
+
+    // `f`'s own name is visible for recursion; `g`/`later` aren't declared yet
+    assert_eq!(vars(4, 3), ["arg", "f", "inner", "top"]);
+    // locals and params of both closures stay out of the top level
+    assert_eq!(vars(7, 12), ["f", "g", "later", "top"]);
+    // one closure can't see another's param
+    assert_eq!(vars(6, 14), ["f", "g", "other", "top"]);
+  }
+
+  #[test]
+  fn test_ambient_globals_complete_without_leaking_their_internals() {
+    let ctx = AnalysisCtx::new();
+    let mut names: Vec<String> = ctx
+      .completions(
+        "x = 1\n",
+        1,
+        6,
+        false,
+        "helper = |a| { t = a * 2  t }\nk = 3",
+      )
+      .into_iter()
+      .filter(|i| i.kind == "variable")
+      .map(|i| i.label)
+      .collect();
+    names.sort();
+    assert_eq!(names, ["helper", "k", "x"]);
+  }
+
+  #[test]
+  fn test_path_block_detection_ignores_comments_and_strings() {
+    let ctx = AnalysisCtx::new();
+
+    // a `}` inside a comment must not close the block early
+    let commented = "p = path {\n  // close it }\n  arc(rx=1, ry=2, to=vec2(1,1))\n}\n";
+    let hover = ctx
+      .hover(commented, 3, 7, false, "")
+      .expect("kwarg hover inside a path block containing a commented brace");
+    assert!(hover.content.contains("rx"), "got: {}", hover.content);
+
+    // ...and a `path {` inside a string must not open one
+    let in_string = "msg = \"path {\"\nq = 1\n";
+    let labels: Vec<String> = ctx
+      .completions(in_string, 2, 5, false, "")
+      .into_iter()
+      .map(|c| c.label)
+      .collect();
+    assert!(!labels.contains(&"move".to_string()));
+    assert!(labels.contains(&"reverse".to_string()));
+  }
+
+  #[test]
+  fn test_destructure_def_hover_does_not_swallow_rhs() {
+    let ctx = AnalysisCtx::new();
+    // destructured bindings record the RHS position, so their range must stay name-width
+    let src = "some_long_binding_name = [1, 2]\n[a, b] = some_long_binding_name\n";
+    let hover = ctx
+      .hover(src, 2, 20, false, "")
+      .expect("hover for the RHS identifier");
+    assert!(
+      hover.content.contains("some_long_binding_name"),
+      "the destructured def masked the real hover, got: {}",
+      hover.content
+    );
+  }
+
+  #[test]
+  fn test_scope_ends_at_closing_brace() {
+    let ctx = AnalysisCtx::new();
+    let src = "f = |a| {\n  inner = 1\n  inner\n}\ng = 2\n";
+    let vars = |line, col| -> Vec<String> {
+      let mut names: Vec<String> = ctx
+        .completions(src, line, col, false, "")
+        .into_iter()
+        .filter(|i| i.kind == "variable")
+        .map(|i| i.label)
+        .collect();
+      names.sort();
+      names
+    };
+    // the cursor sits here right after typing `}` — the closure's scope is already closed
+    assert_eq!(vars(4, 2), ["f"]);
+    assert_eq!(vars(3, 3), ["a", "f", "inner"]);
   }
 }

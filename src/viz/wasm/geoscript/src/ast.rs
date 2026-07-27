@@ -5,7 +5,7 @@ use std::{
   str::FromStr,
 };
 
-use fxhash::FxHashMap;
+use fxhash::{FxHashMap, FxHashSet};
 use pest::iterators::Pair;
 
 use crate::{
@@ -15,9 +15,8 @@ use crate::{
     map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
     pos_impl, sub_impl, BoolOp,
   },
-  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable,
-  ErrorStack, EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value, EMPTY_KWARGS,
-  PRATT_PARSER,
+  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable, ErrorStack,
+  EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value, EMPTY_KWARGS, PRATT_PARSER,
 };
 
 /// Source location index. Points into a SourceMap to retrieve (line, col).
@@ -381,6 +380,8 @@ pub enum Expr {
     return_type_hint: Option<ArgType>,
     resolved: Option<Rc<ResolvedBody>>,
     loc: SourceLoc,
+    /// Position just past the closure's last token; with `loc` this bounds the scope it opens.
+    end_loc: SourceLoc,
   },
   Ident {
     name: Sym,
@@ -410,6 +411,8 @@ pub enum Expr {
   Block {
     statements: Vec<Statement>,
     loc: SourceLoc,
+    /// Position just past the block's closing brace; with `loc` this bounds the scope it opens.
+    end_loc: SourceLoc,
   },
 }
 
@@ -690,10 +693,6 @@ pub struct ResolvedBody {
   /// `visit_idents` order.
   pub param_slots: Vec<u16>,
 }
-
-
-
-
 
 #[derive(Clone, Debug)]
 pub enum FunctionCallTarget {
@@ -1036,6 +1035,12 @@ fn parse_fn_call(ctx: &EvalCtx, func_call: Pair<Rule>) -> Result<Expr, ErrorStac
   })
 }
 
+/// Location just past a rule's last token, used to bound the scope a block or closure opens.
+fn end_source_loc(ctx: &EvalCtx, pair: &Pair<Rule>) -> SourceLoc {
+  let (line, col) = pair.as_span().end_pos().line_col();
+  ctx.add_source_loc(line, col)
+}
+
 fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   let (line, col) = expr.line_col();
   let loc = ctx.add_source_loc(line, col);
@@ -1121,6 +1126,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
       })
     }
     Rule::closure => {
+      let end_loc = end_source_loc(ctx, &expr);
       let mut inner = expr.into_inner();
       let args_list = inner.next().unwrap();
       let params = args_list
@@ -1204,6 +1210,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         body: Rc::new(body),
         return_type_hint,
         loc,
+        end_loc,
       })
     }
     Rule::array_literal => {
@@ -1362,7 +1369,9 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   }
 }
 
-const PATH_BLOCK_REWRITE_MAP: &[(&str, &str)] = &[
+/// Draw-command names that `path { ... }` rewrites to their `path_*` builtins, as
+/// `(name written in the block, builtin)`.
+pub const PATH_BLOCK_REWRITE_MAP: &[(&str, &str)] = &[
   ("move", "path_move"),
   ("line", "path_line"),
   ("quad_bezier", "path_quadratic_bezier"),
@@ -1380,10 +1389,37 @@ const PATH_BLOCK_REWRITE_MAP: &[(&str, &str)] = &[
   ("reverse", "path_reverse"),
 ];
 
-fn build_path_block_rewrite_map(ctx: &EvalCtx) -> FxHashMap<Sym, Sym> {
+/// Names bound by the block's own top-level statements, so a local like `rect = |x| ...` isn't
+/// hijacked into a call to `path_rect`.
+///
+/// Deliberately not recursive: the rewrite map is block-wide, so collecting a nested closure
+/// param or block local would disable that draw command for the whole block — including calls
+/// nowhere near the binding.  The nested case would need a name bound in an inner scope *and*
+/// called as a function there, which the unconditional rewrite has always mishandled.
+fn collect_bound_names(statements: &[Statement], out: &mut FxHashSet<Sym>) {
+  for stmt in statements {
+    match stmt {
+      Statement::Assignment { name, .. } => {
+        out.insert(*name);
+      }
+      Statement::DestructureAssignment { lhs, .. } => lhs.visit_idents(&mut |sym| {
+        out.insert(sym);
+      }),
+      _ => {}
+    }
+  }
+}
+
+fn build_path_block_rewrite_map(ctx: &EvalCtx, statements: &[Statement]) -> FxHashMap<Sym, Sym> {
+  let mut bound = FxHashSet::default();
+  collect_bound_names(statements, &mut bound);
+
   let mut map = FxHashMap::default();
   for (from, to) in PATH_BLOCK_REWRITE_MAP {
     let from_sym = ctx.interned_symbols.intern(from);
+    if bound.contains(&from_sym) {
+      continue;
+    }
     let to_sym = ctx.interned_symbols.intern(to);
     map.insert(from_sym, to_sym);
   }
@@ -1429,9 +1465,53 @@ fn rewrite_path_block_calls(replacements: &FxHashMap<Sym, Sym>, statements: &mut
   }
 }
 
+/// Calls a builtin through a literal callable rather than by name, so a binding of that name
+/// inside the block can't break the expansion.
+fn builtin_call_target(name: &str) -> FunctionCallTarget {
+  FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
+    fn_entry_ix: get_builtin_fn_sig_entry_ix(name).unwrap(),
+    fn_impl: crate::resolve_builtin_impl(name),
+    pre_resolved_signature: None,
+  }))
+}
+
+/// `|item| item != nil`
+fn non_nil_predicate(ctx: &EvalCtx, line: usize, col: usize) -> Expr {
+  let param = ctx
+    .interned_symbols
+    .intern_synthetic(&format!("__geoscript_internal__pb_{line}_{col}_item"));
+  let params = vec![ClosureArg {
+    ident: DestructurePattern::Ident(param),
+    type_hint: None,
+    default_val: None,
+  }];
+  Expr::Closure {
+    resolved: None,
+    params: Rc::new(params),
+    body: Rc::new(ClosureBody(vec![Statement::Expr(Expr::BinOp {
+      op: BinOp::Neq,
+      lhs: Box::new(Expr::Ident {
+        name: param,
+        res: VarRes::Unresolved,
+        loc: SourceLoc::default(),
+      }),
+      rhs: Box::new(Expr::Literal {
+        value: Value::Nil,
+        loc: SourceLoc::default(),
+      }),
+      pre_resolved_def_ix: None,
+      loc: SourceLoc::default(),
+    })])),
+    return_type_hint: Some(ArgType::Bool),
+    loc: SourceLoc::default(),
+    end_loc: SourceLoc::default(),
+  }
+}
+
 fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   let (line, col) = expr.line_col();
   let loc = ctx.add_source_loc(line, col);
+  let end_loc = end_source_loc(ctx, &expr);
 
   if expr.as_rule() != Rule::path_block {
     return Err(
@@ -1477,29 +1557,33 @@ fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
     }
   }
 
-  let replacements = build_path_block_rewrite_map(ctx);
+  let replacements = build_path_block_rewrite_map(ctx, &statements);
   rewrite_path_block_calls(&replacements, &mut statements);
 
   let mut new_stmts: Vec<Statement> = Vec::with_capacity(statements.len() + 1);
   let mut temp_idents: Vec<Expr> = Vec::new();
 
+  // Temp bindings sequence the draw commands so statements between them still observe the
+  // block's evaluation order.  They're synthetic: no source location, and interned as such so
+  // editor tooling doesn't surface them.  The line/col in the name keeps a nested `path { ... }`
+  // from clobbering an enclosing one when its block scope merges back on exit.
   for (i, stmt) in statements.into_iter().enumerate() {
     match stmt {
       Statement::Expr(expr) => {
         let temp_name = ctx
           .interned_symbols
-          .intern(&format!("__geoscript_internal__pb_{line}_{col}_{i}"));
+          .intern_synthetic(&format!("__geoscript_internal__pb_{line}_{col}_{i}"));
         new_stmts.push(Statement::Assignment {
           slot: None,
           name: temp_name,
-          name_loc: loc,
+          name_loc: SourceLoc::default(),
           expr,
           type_hint: None,
         });
         temp_idents.push(Expr::Ident {
           res: VarRes::Unresolved,
           name: temp_name,
-          loc,
+          loc: SourceLoc::default(),
         });
       }
       other => new_stmts.push(other),
@@ -1513,17 +1597,30 @@ fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
   let flatten_call = Expr::Call {
     call: FunctionCall {
       target_res: VarRes::Unresolved,
-      target: FunctionCallTarget::Name(ctx.interned_symbols.intern("flatten")),
+      target: builtin_call_target("flatten"),
       args: vec![array_lit],
       kwargs: FxHashMap::default(),
     },
     loc,
   };
-  new_stmts.push(Statement::Expr(flatten_call));
+  // A command that didn't get drawn — `if closed { close() }` with a false condition, or the same
+  // inside a mapped subsequence — evaluates to nil.  Dropping those here is what makes
+  // conditional draw commands work; otherwise they reach `build_path` as bogus commands.
+  let filter_call = Expr::Call {
+    call: FunctionCall {
+      target_res: VarRes::Unresolved,
+      target: builtin_call_target("filter"),
+      args: vec![non_nil_predicate(ctx, line, col), flatten_call],
+      kwargs: FxHashMap::default(),
+    },
+    loc,
+  };
+  new_stmts.push(Statement::Expr(filter_call));
 
   Ok(Expr::Block {
     statements: new_stmts,
     loc,
+    end_loc,
   })
 }
 
@@ -1606,6 +1703,7 @@ fn parse_single_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
 fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
   let (line, col) = expr.line_col();
   let loc = ctx.add_source_loc(line, col);
+  let end_loc = end_source_loc(ctx, &expr);
 
   if expr.as_rule() != Rule::block_expr {
     return Err(
@@ -1627,7 +1725,11 @@ fn parse_block_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
     })
     .collect::<Result<Vec<_>, ErrorStack>>()?;
 
-  Ok(Expr::Block { statements, loc })
+  Ok(Expr::Block {
+    statements,
+    loc,
+    end_loc,
+  })
 }
 
 pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
