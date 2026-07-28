@@ -109,8 +109,7 @@
           rows="3"
           maxlength="2000"
           placeholder="what it looks like; credit / attribution / license"
-          bind:value={description}
-        ></textarea>
+          bind:value={description}></textarea>
 
         <label for="tags-input">tags</label>
         <TagsInput id="tags-input" bind:tags />

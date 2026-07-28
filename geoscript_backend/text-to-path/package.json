@@ -7,9 +7,14 @@
     "@types/bun": "latest"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "svg-text-to-path": "^2.1.0"
+  },
+  "overrides": {
+    "form-data": "^4.0.6",
+    "ws": "^8.20.1",
+    "@tootallnate/once": "^2.0.1"
   }
 }

@@ -8,8 +8,8 @@ edition = "2021"
 pest = "2.8"
 pest_derive = "2.8"
 fxhash = "0.2"
-phf = { version = "0.13.1", features = ["macros"] }
-phf_shared = { version = "0.13.1" }
+phf = { version = "0.14", features = ["macros"] }
+phf_shared = { version = "0.14" }
 wasm-bindgen = "=0.2.92"
 nalgebra = "0.34"
 log = "0.4"
