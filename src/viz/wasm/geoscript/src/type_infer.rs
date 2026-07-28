@@ -1045,7 +1045,10 @@ mod tests {
   #[test]
   fn block_types_merge_break_exits() {
     // Break through a transparent branch merges with the fall-through type.
-    let ty = format!("{:?}", infer_first_rhs("v = {\n  if 1 > 0 { break 1 }\n  2.5\n}"));
+    let ty = format!(
+      "{:?}",
+      infer_first_rhs("v = {\n  if 1 > 0 { break 1 }\n  2.5\n}")
+    );
     assert!(ty.contains("Int") && ty.contains("Float"), "got {ty}");
 
     // Tail break IS the block's value.

@@ -38,4 +38,4 @@ lyon_extra = "1.0"
 [dev-dependencies]
 # Native constrained-Delaunay triangulator, used only in tests to exercise the
 # refined embed_path tessellation path (whose production backend is CGAL/wasm).
-spade = "2"
+spade = { version = "2", default-features = false }

@@ -14,7 +14,7 @@ use mesh::{
   slotmap_utils::{vkey, vkey_ix},
   LinkedMesh, OwnedIndexedMesh,
 };
-use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, UnitQuaternion};
+use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, Unit, UnitQuaternion};
 use parry3d::bounding_volume::Aabb;
 use parry3d::math::{Isometry, Point};
 use parry3d::query::Ray;
@@ -81,7 +81,8 @@ pub(crate) mod trace_path;
 pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
   "trans_global" => "translate_global",
-  "rot_local" => "rotate_around_center",
+  "rot_local" => "rot_around_center",
+  "rot_2d" => "rot2",
   "v2" => "vec2",
   "v3" => "vec3",
   "subdivide" => "tessellate",
@@ -436,6 +437,18 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let a = lhs.as_float().unwrap();
       let b = rhs.as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(a * b.x, a * b.y, a * b.z)))
+    }
+    // mat4 * mat4: compose (rhs applied to a point first)
+    11 => {
+      let a = lhs.as_mat4().unwrap();
+      let b = rhs.as_mat4().unwrap();
+      Ok(Value::Mat4(Rc::new(a * b)))
+    }
+    // mat4 * vec3: transform as a position (w = 1)
+    12 => {
+      let m = lhs.as_mat4().unwrap();
+      let p = rhs.as_vec3().unwrap();
+      Ok(Value::Vec3((m * p.push(1.)).xyz()))
     }
     _ => unimplemented!(),
   }
@@ -832,48 +845,57 @@ pub(crate) fn not_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> 
   }
 }
 
+fn map_obj_transform(obj: &Value, f: impl Fn(&Matrix4<f32>) -> Matrix4<f32>) -> Value {
+  match obj {
+    Value::Mesh(mesh) => {
+      let mut mesh = (**mesh).clone(true, false, false);
+      mesh.transform = f(&mesh.transform);
+      Value::Mesh(Rc::new(mesh))
+    }
+    Value::Light(light) => {
+      let mut light = (**light).clone();
+      let transform = light.transform_mut();
+      *transform = f(transform);
+      Value::Light(Box::new(light))
+    }
+    Value::Mat4(m) => Value::Mat4(Rc::new(f(m))),
+    // A bare point carries no frame, so `f` is evaluated against identity and applied directly.
+    // Local vs global therefore coincide for points.
+    Value::Vec3(p) => Value::Vec3((f(&Matrix4::identity()) * p.push(1.)).xyz()),
+    _ => unreachable!(),
+  }
+}
+
+/// Signature order that `fn_defs.rs` must uphold for every builtin using this: even def_ixs take a
+/// Vec3, odd ones take x/y/z components.
+fn resolve_vec3_and_subject<'a>(
+  def_ix: usize,
+  arg_refs: &'a [ArgRef],
+  args: &'a [Value],
+  kwargs: &'a FxHashMap<Sym, Value>,
+) -> (Vec3, &'a Value) {
+  if def_ix % 2 == 0 {
+    let v = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+    (v, arg_refs[1].resolve(args, kwargs))
+  } else {
+    let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+    let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+    let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+    (Vec3::new(x, y, z), arg_refs[3].resolve(args, kwargs))
+  }
+}
+
 pub(crate) fn translate_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  // 0/2: Vec3 form, 1/3: x,y,z form (mesh vs light).
-  let (translation, obj) = match def_ix {
-    0 | 2 => {
-      let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      let obj = arg_refs[1].resolve(args, kwargs);
-      (*translation, obj)
-    }
-    1 | 3 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let translation = Vec3::new(x, y, z);
-      let obj = arg_refs[3].resolve(args, kwargs);
-      (translation, obj)
-    }
-    _ => unimplemented!(),
-  };
+  let (translation, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Right-multiply: M * T (translate in local space)
   let t = Matrix4::new_translation(&translation);
-
-  match obj {
-    Value::Mesh(mesh) => {
-      let mut mesh = (**mesh).clone(true, false, false);
-      mesh.transform = mesh.transform * t;
-
-      Ok(Value::Mesh(Rc::new(mesh)))
-    }
-    Value::Light(light) => {
-      let mut light = (**light).clone();
-      let transform = light.transform_mut();
-      *transform = *transform * t;
-      Ok(Value::Light(Box::new(light)))
-    }
-    _ => unreachable!(),
-  }
+  Ok(map_obj_transform(obj, |m| m * t))
 }
 
 fn translate_global_impl(
@@ -882,42 +904,11 @@ fn translate_global_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  // 0/2: Vec3 form, 1/3: x,y,z form (mesh vs light).
-  let (translation, obj) = match def_ix {
-    0 | 2 => {
-      let translation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      let obj = arg_refs[1].resolve(args, kwargs);
-      (*translation, obj)
-    }
-    1 | 3 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let translation = Vec3::new(x, y, z);
-      let obj = arg_refs[3].resolve(args, kwargs);
-      (translation, obj)
-    }
-    _ => unimplemented!(),
-  };
+  let (translation, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Left-multiply: T * M (translate in world space)
   let t = Matrix4::new_translation(&translation);
-
-  match obj {
-    Value::Mesh(mesh) => {
-      let mut mesh = (**mesh).clone(true, false, false);
-      mesh.transform = t * mesh.transform;
-
-      Ok(Value::Mesh(Rc::new(mesh)))
-    }
-    Value::Light(light) => {
-      let mut light = (**light).clone();
-      let transform = light.transform_mut();
-      *transform = t * *transform;
-      Ok(Value::Light(Box::new(light)))
-    }
-    _ => unreachable!(),
-  }
+  Ok(map_obj_transform(obj, |m| t * m))
 }
 
 pub(crate) fn scale_impl(
@@ -926,14 +917,15 @@ pub(crate) fn scale_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (scale, mesh) = match def_ix {
-    0 => {
+  // 0/2: x,y,z form, 1/3: single scale form (mesh vs mat4).
+  let (scale, obj) = match def_ix {
+    0 | 2 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       (Vec3::new(x, y, z), arg_refs[3].resolve(args, kwargs))
     }
-    1 => {
+    1 | 3 => {
       let val = arg_refs[0].resolve(args, kwargs);
       let scale = match val {
         Value::Vec3(scale) => *scale,
@@ -949,19 +941,166 @@ pub(crate) fn scale_impl(
         }
       };
 
-      let mesh = arg_refs[1].resolve(args, kwargs);
-      (scale, mesh)
+      (scale, arg_refs[1].resolve(args, kwargs))
     }
     _ => unimplemented!(),
   };
 
-  let mut mesh = mesh.as_mesh().unwrap().clone(true, false, false);
-
   // Right-multiply: M * S (scale in local space)
   let s = Matrix4::new_nonuniform_scaling(&scale);
-  mesh.transform = mesh.transform * s;
+  Ok(map_obj_transform(obj, |m| m * s))
+}
 
-  Ok(Value::Mesh(mesh.into()))
+fn mat4_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  if def_ix == 1 {
+    // Overload resolution ignores leftover positional args, so the zero-arg signature also matches
+    // any call that failed to fit the 16-element form.  Without this check `mat4(1, 2, 3)` would
+    // silently evaluate to the identity.
+    if !args.is_empty() {
+      return Err(ErrorStack::new(
+        "`mat4` takes either no args (identity) or exactly 16 numeric elements in row-major order",
+      ));
+    }
+    return Ok(Value::Mat4(Rc::new(Matrix4::identity())));
+  }
+
+  let mut elems = [0f32; 16];
+  for (elem, arg_ref) in elems.iter_mut().zip(arg_refs) {
+    *elem = arg_ref.resolve(args, kwargs).as_float().unwrap();
+  }
+  // `from_iterator` fills column-major; args are row-major, so transpose.
+  Ok(Value::Mat4(Rc::new(
+    Matrix4::from_iterator(elems.iter().copied()).transpose(),
+  )))
+}
+
+/// `AXIS` is 0/1/2 for x/y/z.  Uses the same Tait-Bryan convention as `rot`, so
+/// `rot_y(a, obj)` is exactly `rot(v3(0, a, 0), obj)`.
+fn rot_axis_aligned_impl<const AXIS: u8>(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  let obj = arg_refs[1].resolve(args, kwargs);
+  let (x, y, z) = match AXIS {
+    0 => (angle, 0., 0.),
+    1 => (0., angle, 0.),
+    _ => (0., 0., angle),
+  };
+  let r = UnitQuaternion::from_euler_angles(x, y, z).to_homogeneous();
+  Ok(map_obj_transform(obj, |m| m * r))
+}
+
+fn rot_axis_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let axis = *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+  let angle = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+  let obj = arg_refs[2].resolve(args, kwargs);
+  let axis = Unit::try_new(axis, 1e-9)
+    .ok_or_else(|| ErrorStack::new("`rot_axis`: `axis` must be a non-zero vector"))?;
+  let r = UnitQuaternion::from_axis_angle(&axis, angle).to_homogeneous();
+  Ok(map_obj_transform(obj, |m| m * r))
+}
+
+fn rot2_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+  let p = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
+  let (sin, cos) = angle.sin_cos();
+  Ok(Value::Vec2(Vec2::new(
+    p.x * cos - p.y * sin,
+    p.x * sin + p.y * cos,
+  )))
+}
+
+fn transform_point_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+  let p = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+  Ok(Value::Vec3((m * p.push(1.)).xyz()))
+}
+
+fn transform_dir_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+  let v = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+  Ok(Value::Vec3((m * v.push(0.)).xyz()))
+}
+
+fn transform_normal_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+  let n = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+  let inv = m.try_inverse().ok_or_else(|| {
+    ErrorStack::new("`transform_normal`: transform matrix is singular and can't be inverted")
+  })?;
+  let out = (inv.transpose() * n.push(0.)).xyz();
+  let out = out.try_normalize(1e-12).ok_or_else(|| {
+    ErrorStack::new("`transform_normal`: `normal` is degenerate (zero-length after transform)")
+  })?;
+  Ok(Value::Vec3(out))
+}
+
+fn compose_transforms_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  ctx: &EvalCtx,
+) -> Result<Value, ErrorStack> {
+  let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+  let mut acc = Matrix4::identity();
+  for val in seq.consume(ctx) {
+    let val = val?;
+    let m = val.as_mat4().ok_or_else(|| {
+      ErrorStack::new(format!(
+        "`compose_transforms`: expected a sequence of mat4, found: {val:?}"
+      ))
+    })?;
+    acc *= m;
+  }
+  Ok(Value::Mat4(Rc::new(acc)))
+}
+
+fn inverse_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+  let inv = m
+    .try_inverse()
+    .ok_or_else(|| ErrorStack::new("`inverse`: transform matrix is singular"))?;
+  Ok(Value::Mat4(Rc::new(inv)))
+}
+
+fn transpose_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
+  Ok(Value::Mat4(Rc::new(m.transpose())))
 }
 
 fn apply_mat4_impl(
@@ -6841,6 +6980,10 @@ fn sin_impl(
         value.z.sin(),
       )))
     }
+    2 => {
+      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      Ok(Value::Vec2(Vec2::new(value.x.sin(), value.y.sin())))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7284,64 +7427,11 @@ fn rot_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  enum ObjType {
-    Mesh,
-    Light,
-  }
-
-  let (rotation, obj_arg, obj_type) = match def_ix {
-    0 | 2 => {
-      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
-        &arg_refs[1],
-        if def_ix == 0 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    1 | 3 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(x, y, z),
-        &arg_refs[3],
-        if def_ix == 1 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    _ => unimplemented!(),
-  };
-  let obj_arg = obj_arg.resolve(args, kwargs);
+  let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Right-multiply: M * R (rotate in local space)
-  let r = rotation.to_homogeneous();
-
-  match obj_type {
-    ObjType::Mesh => {
-      let mesh = obj_arg.as_mesh().unwrap();
-
-      let mut rotated_mesh = mesh.clone(true, false, false);
-      rotated_mesh.transform = rotated_mesh.transform * r;
-
-      Ok(Value::Mesh(Rc::new(rotated_mesh)))
-    }
-    ObjType::Light => {
-      let light = obj_arg.as_light().unwrap();
-
-      let mut rotated_light = (*light).clone();
-      let transform = rotated_light.transform_mut();
-      *transform = *transform * r;
-
-      Ok(Value::Light(Box::new(rotated_light)))
-    }
-  }
+  let r = UnitQuaternion::from_euler_angles(angles.x, angles.y, angles.z).to_homogeneous();
+  Ok(map_obj_transform(obj, |m| m * r))
 }
 
 fn rot_global_impl(
@@ -7350,64 +7440,11 @@ fn rot_global_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  enum ObjType {
-    Mesh,
-    Light,
-  }
-
-  let (rotation, obj_arg, obj_type) = match def_ix {
-    0 | 2 => {
-      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
-        &arg_refs[1],
-        if def_ix == 0 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    1 | 3 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(x, y, z),
-        &arg_refs[3],
-        if def_ix == 1 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    _ => unimplemented!(),
-  };
-  let obj_arg = obj_arg.resolve(args, kwargs);
+  let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Left-multiply: R * M (rotate in world space, around world origin)
-  let r = rotation.to_homogeneous();
-
-  match obj_type {
-    ObjType::Mesh => {
-      let mesh = obj_arg.as_mesh().unwrap();
-
-      let mut rotated_mesh = mesh.clone(true, false, false);
-      rotated_mesh.transform = r * rotated_mesh.transform;
-
-      Ok(Value::Mesh(Rc::new(rotated_mesh)))
-    }
-    ObjType::Light => {
-      let light = obj_arg.as_light().unwrap();
-
-      let mut rotated_light = (*light).clone();
-      let transform = rotated_light.transform_mut();
-      *transform = r * *transform;
-
-      Ok(Value::Light(Box::new(rotated_light)))
-    }
-  }
+  let r = UnitQuaternion::from_euler_angles(angles.x, angles.y, angles.z).to_homogeneous();
+  Ok(map_obj_transform(obj, |m| r * m))
 }
 
 /// Rotates a mesh around its current position (the translation component of its
@@ -7419,68 +7456,15 @@ fn rot_around_center_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  enum ObjType {
-    Mesh,
-    Light,
-  }
+  let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
+  let rotation = UnitQuaternion::from_euler_angles(angles.x, angles.y, angles.z);
 
-  let (rotation, obj_arg, obj_type) = match def_ix {
-    0 | 2 => {
-      let rotation = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(rotation.x, rotation.y, rotation.z),
-        &arg_refs[1],
-        if def_ix == 0 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    1 | 3 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      (
-        UnitQuaternion::from_euler_angles(x, y, z),
-        &arg_refs[3],
-        if def_ix == 1 {
-          ObjType::Mesh
-        } else {
-          ObjType::Light
-        },
-      )
-    }
-    _ => unimplemented!(),
-  };
-  let obj_arg = obj_arg.resolve(args, kwargs);
-
-  let apply_rotation = |transform: &Matrix4<f32>| {
+  Ok(map_obj_transform(obj, |transform| {
     let pos = transform.column(3).xyz();
     let back = Matrix4::new_translation(&pos);
     let to_origin = Matrix4::new_translation(&-pos);
-    back * rotation.to_homogeneous() * to_origin * *transform
-  };
-
-  match obj_type {
-    ObjType::Mesh => {
-      let mesh = obj_arg.as_mesh().unwrap();
-
-      let mut rotated_mesh = mesh.clone(true, false, false);
-      rotated_mesh.transform = apply_rotation(&rotated_mesh.transform);
-
-      Ok(Value::Mesh(Rc::new(rotated_mesh)))
-    }
-    ObjType::Light => {
-      let light = obj_arg.as_light().unwrap();
-
-      let mut rotated_light = (*light).clone();
-      let transform = rotated_light.transform_mut();
-      *transform = apply_rotation(transform);
-
-      Ok(Value::Light(Box::new(rotated_light)))
-    }
-  }
+    back * rotation.to_homogeneous() * to_origin * transform
+  }))
 }
 
 /// Right-handed orientation whose local -Z (forward) points along `dir`, with local +Y aligned
@@ -7532,32 +7516,17 @@ fn look_at_impl(
       let (x, y, z) = Rotation3::from_matrix_unchecked(r).euler_angles();
       Ok(Value::Vec3(Vec3::new(x, y, z)))
     }
-    // 1: mesh, 2: light — orient so local -Z faces the target, replacing rotation while
+    // 1: mesh, 2: light, 3: mat4 — orient so local -Z faces the target, replacing rotation while
     // preserving translation and per-axis scale.
-    1 | 2 => {
+    1 | 2 | 3 => {
       let obj = arg_refs[0].resolve(args, kwargs);
       let target = *arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       let up = *arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
 
-      let reorient = |transform: &Matrix4<f32>| -> Matrix4<f32> {
+      Ok(map_obj_transform(obj, |transform| {
         let pos = transform.column(3).xyz();
         replace_orientation(transform, &look_at_rotation(target - pos, up))
-      };
-
-      match obj {
-        Value::Mesh(mesh) => {
-          let mut mesh = (**mesh).clone(true, false, false);
-          mesh.transform = reorient(&mesh.transform);
-          Ok(Value::Mesh(Rc::new(mesh)))
-        }
-        Value::Light(light) => {
-          let mut light = (**light).clone();
-          let transform = light.transform_mut();
-          *transform = reorient(transform);
-          Ok(Value::Light(Box::new(light)))
-        }
-        _ => unreachable!(),
-      }
+      }))
     }
     _ => unimplemented!(),
   }
@@ -7609,20 +7578,9 @@ fn align_impl(
     }
   };
 
-  match obj {
-    Value::Mesh(mesh) => {
-      let mut mesh = (**mesh).clone(true, false, false);
-      mesh.transform = replace_orientation(&mesh.transform, &rot);
-      Ok(Value::Mesh(Rc::new(mesh)))
-    }
-    Value::Light(light) => {
-      let mut light = (**light).clone();
-      let transform = light.transform_mut();
-      *transform = replace_orientation(transform, &rot);
-      Ok(Value::Light(Box::new(light)))
-    }
-    _ => unreachable!(),
-  }
+  Ok(map_obj_transform(obj, |transform| {
+    replace_orientation(transform, &rot)
+  }))
 }
 
 fn origin_to_geometry_impl(
@@ -9902,6 +9860,42 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "apply_mat4" => builtin_fn!(apply_mat4, |def_ix, arg_refs, args, kwargs, _ctx| {
     apply_mat4_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "mat4" => builtin_fn!(mat4, |def_ix, arg_refs, args, kwargs, _ctx| {
+    mat4_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rot_x" => builtin_fn!(rot_x, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_axis_aligned_impl::<0>(arg_refs, args, kwargs)
+  }),
+  "rot_y" => builtin_fn!(rot_y, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_axis_aligned_impl::<1>(arg_refs, args, kwargs)
+  }),
+  "rot_z" => builtin_fn!(rot_z, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_axis_aligned_impl::<2>(arg_refs, args, kwargs)
+  }),
+  "rot_axis" => builtin_fn!(rot_axis, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    rot_axis_impl(arg_refs, args, kwargs)
+  }),
+  "rot2" => builtin_fn!(rot2, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    rot2_impl(arg_refs, args, kwargs)
+  }),
+  "transform_point" => builtin_fn!(transform_point, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    transform_point_impl(arg_refs, args, kwargs)
+  }),
+  "transform_dir" => builtin_fn!(transform_dir, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    transform_dir_impl(arg_refs, args, kwargs)
+  }),
+  "transform_normal" => builtin_fn!(transform_normal, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    transform_normal_impl(arg_refs, args, kwargs)
+  }),
+  "compose_transforms" => builtin_fn!(compose_transforms, |_def_ix, arg_refs, args, kwargs, ctx| {
+    compose_transforms_impl(arg_refs, args, kwargs, ctx)
+  }),
+  "inverse" => builtin_fn!(inverse, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    inverse_impl(arg_refs, args, kwargs)
+  }),
+  "transpose" => builtin_fn!(transpose, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    transpose_impl(arg_refs, args, kwargs)
+  }),
   "flip_normals" => builtin_fn!(flip_normals, |def_ix, arg_refs, args, kwargs, _ctx| {
     flip_normals_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -11598,6 +11592,306 @@ mesh = embed_path(
         .any(|msg| msg.contains("refinement stopped before reaching tolerance")),
       "expected an under-refinement warning, prints: {:?}",
       ctx.prints.borrow()
+    );
+  }
+}
+
+#[cfg(test)]
+mod mat4_tests {
+  use crate::{parse_and_eval_program, EvalCtx, Vec3};
+
+  fn vec3_global(ctx: &EvalCtx, name: &str) -> Vec3 {
+    *ctx
+      .get_global(name)
+      .unwrap_or_else(|| panic!("no global `{name}`"))
+      .as_vec3()
+      .unwrap_or_else(|| panic!("global `{name}` is not a vec3"))
+  }
+
+  fn assert_vec3(ctx: &EvalCtx, name: &str, expected: [f32; 3]) {
+    let actual = vec3_global(ctx, name);
+    let expected = Vec3::new(expected[0], expected[1], expected[2]);
+    assert!(
+      (actual - expected).norm() < 1e-4,
+      "`{name}`: expected {expected:?}, got {actual:?}"
+    );
+  }
+
+  #[test]
+  fn test_mat4_compose_and_transform_point() {
+    // `t` moves +10 along x; `r` is a quarter turn about y, which maps (1,0,0) -> (0,0,-1).
+    let src = r#"
+t = mat4() | trans(v3(10, 0, 0))
+r = mat4() | rot(v3(0, pi/2, 0))
+
+// `a * b` applies `b` first, so `t * r` rotates then translates.
+rotate_then_move = (t * r) * v3(1, 0, 0)
+move_then_rotate = (r * t) * v3(1, 0, 0)
+composed = compose_transforms([t, r]) * v3(1, 0, 0)
+empty_compose = compose_transforms([]) * v3(3, 4, 5)
+
+identity = mat4() * v3(3, 4, 5)
+point = transform_point(t, v3(1, 0, 0))
+dir = transform_dir(t, v3(1, 0, 0))
+roundtrip = inverse(t) * (t * v3(2, 3, 4))
+
+explicit = mat4(1, 0, 0, 7, 0, 1, 0, 8, 0, 0, 1, 9, 0, 0, 0, 1) * v3(0, 0, 0)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    assert_vec3(&ctx, "rotate_then_move", [10., 0., -1.]);
+    assert_vec3(&ctx, "move_then_rotate", [0., 0., -11.]);
+    assert_vec3(&ctx, "composed", [10., 0., -1.]);
+    assert_vec3(&ctx, "empty_compose", [3., 4., 5.]);
+    assert_vec3(&ctx, "identity", [3., 4., 5.]);
+    assert_vec3(&ctx, "point", [11., 0., 0.]);
+    // `transform_dir` uses w=0, so the translation drops out.
+    assert_vec3(&ctx, "dir", [1., 0., 0.]);
+    assert_vec3(&ctx, "roundtrip", [2., 3., 4.]);
+    // Row-major, so the translation column is the 4th element of each of the first three rows.
+    assert_vec3(&ctx, "explicit", [7., 8., 9.]);
+  }
+
+  /// `*` is not uniformly associative once mat4 is involved: `mat4 * vec3` is an affine point
+  /// transform, so `(M * v) * 2` != `M * (v * 2)` whenever `M` translates.  The optimizer's
+  /// associative-literal-chain fold hoists literals across a non-literal operand and would happily
+  /// make that rewrite without a type check on the operand it reassociates across.
+  #[test]
+  fn test_assoc_fold_does_not_reassociate_across_mat4() {
+    let src = r#"
+scale_after = |m: mat4| (m * v3(1, 0, 0)) * 2
+scale_before = |m: mat4| m * (v3(1, 0, 0) * 2)
+// Same thing with no type annotation, so inference reports the operand as unknown rather than mat4.
+scale_after_untyped = |m| (m * v3(1, 0, 0)) * 2
+
+t = mat4() | trans(v3(10, 0, 0))
+after = scale_after(t)
+before = scale_before(t)
+after_untyped = scale_after_untyped(t)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    // (10+1, 0, 0) * 2
+    assert_vec3(&ctx, "after", [22., 0., 0.]);
+    // 10 + (1*2)
+    assert_vec3(&ctx, "before", [12., 0., 0.]);
+    assert_vec3(&ctx, "after_untyped", [22., 0., 0.]);
+  }
+
+  #[test]
+  fn test_transform_normal_under_nonuniform_scale() {
+    // Inverse-transpose of diag(2,1,1) is diag(0.5,1,1), so the normal tilts toward +y.
+    let src = r#"
+s = mat4() | scale(v3(2, 1, 1))
+n = transform_normal(s, normalize(v3(1, 1, 0)))
+// A plain direction transform would tilt it the other way.
+d = normalize(transform_dir(s, normalize(v3(1, 1, 0))))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    assert_vec3(&ctx, "n", [0.44721, 0.89443, 0.]);
+    assert_vec3(&ctx, "d", [0.89443, 0.44721, 0.]);
+  }
+
+  /// Builds a torus by revolving a translated circle with transform matrices, and checks it against
+  /// the closed-form parameterization.  Note the negated `sin(theta)` on z: `rot` uses nalgebra's
+  /// Tait-Bryan convention, where a +y rotation maps (1,0,0) to (cos, 0, -sin).
+  #[test]
+  fn test_torus_via_transforms_matches_closed_form() {
+    let src = r#"
+major_r = 2
+minor_r = 0.5
+
+theta = 0.7
+phi = 1.3
+
+ring_pt = v3(cos(phi) * minor_r, sin(phi) * minor_r, 0)
+via_transform = (mat4() | trans(v3(major_r, 0, 0)) | rot_global(v3(0, theta, 0))) * ring_pt
+
+r = major_r + minor_r * cos(phi)
+closed_form = v3(r * cos(theta), minor_r * sin(phi), -r * sin(theta))
+
+torus = parametric_surface(
+  u_res=24, v_res=12, u_closed=true, v_closed=true, flip_normals=true,
+  generator=|u, v| {
+    ring = v3(cos(v * tau) * minor_r, sin(v * tau) * minor_r, 0)
+    (mat4() | trans(v3(major_r, 0, 0)) | rot_global(v3(0, u * tau, 0))) * ring
+  }
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    let via_transform = vec3_global(&ctx, "via_transform");
+    let closed_form = vec3_global(&ctx, "closed_form");
+    assert!(
+      (via_transform - closed_form).norm() < 1e-5,
+      "transform torus {via_transform:?} != closed form {closed_form:?}"
+    );
+
+    let torus = ctx.get_global("torus").unwrap();
+    let torus = torus.as_mesh().unwrap();
+    torus
+      .mesh
+      .check_is_manifold::<true>()
+      .expect("torus is not a valid 2-manifold");
+
+    let (mut r_max, mut y_max) = (0f32, 0f32);
+    for v in torus.mesh.vertices.values() {
+      let p = v.position;
+      r_max = r_max.max((p.x * p.x + p.z * p.z).sqrt());
+      y_max = y_max.max(p.y.abs());
+    }
+    assert!(
+      (r_max - 2.5).abs() < 1e-3,
+      "expected outer radius 2.5, got {r_max}"
+    );
+    assert!(
+      (y_max - 0.5).abs() < 1e-3,
+      "expected half-height 0.5, got {y_max}"
+    );
+  }
+
+  #[test]
+  fn test_axis_rotation_helpers() {
+    let src = r#"
+// A quarter turn about +y maps (1,0,0) -> (0,0,-1) under nalgebra's Tait-Bryan convention.
+py = rot_y(pi/2, v3(1, 0, 0))
+px = rot_x(pi/2, v3(0, 1, 0))
+pz = rot_z(pi/2, v3(1, 0, 0))
+
+// `rot_axis` about +y must agree with `rot_y`, and stays correct for an unnormalized axis.
+axis_y = rot_axis(v3(0, 5, 0), pi/2, v3(1, 0, 0))
+// Rotating about the axis you're already on is a no-op.
+axis_self = rot_axis(v3(1, 1, 1), 1.234, normalize(v3(1, 1, 1)))
+
+// Point and mat4 forms must agree.
+via_mat = (mat4() | rot_y(pi/2)) * v3(1, 0, 0)
+// ...and so must the `rot` equivalent.
+via_rot = (mat4() | rot(v3(0, pi/2, 0))) * v3(1, 0, 0)
+
+// `rot2` is CCW in its own plane, the opposite winding from `rot_y`.
+p2 = rot2(pi/2, v2(1, 0))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    assert_vec3(&ctx, "py", [0., 0., -1.]);
+    assert_vec3(&ctx, "px", [0., 0., 1.]);
+    assert_vec3(&ctx, "pz", [0., 1., 0.]);
+    assert_vec3(&ctx, "axis_y", [0., 0., -1.]);
+    let axis_self = vec3_global(&ctx, "axis_self");
+    let expected = Vec3::new(1., 1., 1.).normalize();
+    assert!(
+      (axis_self - expected).norm() < 1e-5,
+      "rotating about its own axis moved the point: {axis_self:?}"
+    );
+    assert_vec3(&ctx, "via_mat", [0., 0., -1.]);
+    assert_vec3(&ctx, "via_rot", [0., 0., -1.]);
+
+    let p2 = ctx.get_global("p2").unwrap();
+    let p2 = p2.as_vec2().unwrap();
+    assert!(
+      (p2.x).abs() < 1e-5 && (p2.y - 1.).abs() < 1e-5,
+      "rot2 should map (1,0) to (0,1), got {p2:?}"
+    );
+  }
+
+  #[test]
+  fn test_rot_local_alias_and_sin_vec2() {
+    let src = r#"
+spun = box(1, 1, 1) | trans(v3(0, 0, -2)) | rot_local(v3(pi/2, 0, 0))
+s = sin(v2(0, pi/2))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    // `rot_around_center` keeps the world-space position.
+    let spun = ctx.get_global("spun").unwrap();
+    let pos = spun.as_mesh().unwrap().transform.column(3).xyz();
+    assert!(
+      (pos - Vec3::new(0., 0., -2.)).norm() < 1e-5,
+      "rot_local should spin in place, got position {pos:?}"
+    );
+
+    let s = ctx.get_global("s").unwrap();
+    let s = s.as_vec2().unwrap();
+    assert!(
+      s.x.abs() < 1e-6 && (s.y - 1.).abs() < 1e-6,
+      "sin(vec2): {s:?}"
+    );
+  }
+
+  #[test]
+  fn test_mat4_rejects_malformed_arg_counts() {
+    // Overload resolution ignores leftover positional args, so the zero-arg identity signature
+    // matches anything that failed the 16-element form.  These must error rather than silently
+    // returning the identity.
+    for src in [
+      "out = mat4(1, 2, 3)",
+      "out = mat4(1)",
+      "out = mat4(1, 0, 0, 7, 0, 1, 0, 8, 0, 0, 1, 9, 0, 0, 0)",
+    ] {
+      let err = parse_and_eval_program(src).unwrap_err();
+      let msg = format!("{err}");
+      assert!(
+        msg.contains("exactly 16"),
+        "`{src}` should have been rejected, got: {msg}"
+      );
+    }
+
+    // The valid forms still resolve.
+    let ctx = parse_and_eval_program(
+      "ident = mat4() * v3(3, 4, 5)\nfull = mat4(1, 0, 0, 7, 0, 1, 0, 8, 0, 0, 1, 9, 0, 0, 0, 1) \
+       * v3(0, 0, 0)",
+    )
+    .unwrap();
+    assert_vec3(&ctx, "ident", [3., 4., 5.]);
+    assert_vec3(&ctx, "full", [7., 8., 9.]);
+  }
+
+  #[test]
+  fn test_rot_accepts_bare_points() {
+    let src = r#"
+euler = rot(v3(0, pi/2, 0), v3(1, 0, 0))
+comps = rot(0, pi/2, 0, v3(1, 0, 0))
+// A bare point has no frame of its own, so the global variant matches.
+global = rot_global(v3(0, pi/2, 0), v3(1, 0, 0))
+// ...and must agree with the axis shorthand.
+shorthand = rot_y(pi/2, v3(1, 0, 0))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    for name in ["euler", "comps", "global", "shorthand"] {
+      assert_vec3(&ctx, name, [0., 0., -1.]);
+    }
+  }
+
+  #[test]
+  fn test_transform_normal_rejects_degenerate_normal() {
+    let err = parse_and_eval_program("out = transform_normal(mat4(), v3(0, 0, 0))").unwrap_err();
+    assert!(
+      format!("{err}").contains("degenerate"),
+      "expected a degenerate-normal error, got: {err}"
+    );
+  }
+
+  #[test]
+  fn test_transform_builtins_agree_between_mesh_and_mat4() {
+    // The same chain applied to a mesh and to a bare mat4 must produce the same matrix.
+    let src = r#"
+// `look_at` and `align` take their subject first, so they're called positionally rather than piped.
+chain = |x| align(v3(0, 1, 0), look_at(x | trans(v3(1, 2, 3)) | rot(v3(0.3, 0.4, 0.5)) | scale(v3(2, 1, 0.5)) | trans_global(v3(-1, 0, 4)) | rot_around_center(v3(0, 0.2, 0)), v3(5, 5, 5)))
+
+m = chain(mat4())
+mesh = chain(box(1, 1, 1))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    let m = ctx.get_global("m").unwrap();
+    let m = m.as_mat4().unwrap();
+    let mesh = ctx.get_global("mesh").unwrap();
+    let mesh_transform = mesh.as_mesh().unwrap().transform;
+    assert!(
+      (m - mesh_transform).norm() < 1e-5,
+      "mat4 chain {m:?} != mesh transform {mesh_transform:?}"
     );
   }
 }

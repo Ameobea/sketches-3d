@@ -1,4 +1,4 @@
-use std::{hash::Hash, ops::ControlFlow, rc::Rc};
+use std::{cell::RefCell, hash::Hash, ops::ControlFlow, rc::Rc};
 
 use fxhash::FxHashMap;
 use rand::Rng;
@@ -8,9 +8,9 @@ use siphasher::sip128::{Hasher128, SipHasher};
 use crate::{
   ast::{
     bind_closure_params_into_scope, eval_range, maybe_pre_resolve_builtin_call_signature,
-    record_non_const_binding, BinOp, ClosureArg, DestructurePattern, Expr, FunctionCall,
-    FunctionCallTarget, MapLiteralEntry, PrefixOp, ScopeTracker, SourceLoc, Statement,
-    TopLevelStatement, TrackedValue, TrackedValueRef, VarRes,
+    record_non_const_binding, BinOp, ClosureArg, ClosureBody, DestructurePattern, Expr,
+    FunctionCall, FunctionCallTarget, MapLiteralEntry, PrefixOp, ScopeTracker, SourceLoc,
+    Statement, TopLevelStatement, TrackedValue, TrackedValueRef, VarRes,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
@@ -19,7 +19,7 @@ use crate::{
   match_binop_by_arg_types,
   seq::EagerSeq,
   type_infer::infer_expr,
-  ArgType, Callable, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2, Vec3,
+  ArgType, Callable, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2, Vec3,
 };
 
 /// This is essentially a `-ffast-math` flag for the optimizer's constant folding of associative
@@ -159,19 +159,34 @@ fn arg_blocks_const_eval(value: &Value, allow_rng_const_eval: bool) -> bool {
   matches!(value, Value::Callable(c) if callable_is_dyn_for_const_eval(c, allow_rng_const_eval))
 }
 
+thread_local! {
+  static CLOSURE_EFFECT_MEMO: RefCell<FxHashMap<(usize, bool), (Rc<ClosureBody>, bool)>> =
+    RefCell::new(FxHashMap::default());
+}
+
+fn closure_body_memo(closure: &Closure, allow_rng: bool, compute: impl FnOnce() -> bool) -> bool {
+  let key = (Rc::as_ptr(&closure.body) as usize, allow_rng);
+  if let Some(hit) = CLOSURE_EFFECT_MEMO.with(|m| m.borrow().get(&key).map(|(_, v)| *v)) {
+    return hit;
+  }
+  let val = compute();
+  CLOSURE_EFFECT_MEMO.with(|m| m.borrow_mut().insert(key, (Rc::clone(&closure.body), val)));
+  val
+}
+
 /// A callable whose fold-time invocation could run an effect the runtime owns.  RNG-dependent
 /// callables are permitted when `allow_rng_const_eval` (draws are state-hashed by the cache).
 /// Closures are judged by their bodies: ambient/prelude closures are runtime-minted with no
 /// purity gate, so the blanket `is_side_effectful(Closure) = false` can't be trusted here.
 fn callable_is_dyn_for_const_eval(callable: &Callable, allow_rng_const_eval: bool) -> bool {
   match callable {
-    Callable::Closure(closure) => {
+    Callable::Closure(closure) => closure_body_memo(closure, allow_rng_const_eval, || {
       closure.params.iter().any(|p| {
         p.default_val
           .as_ref()
           .is_some_and(|dv| expr_contains_fold_unsafe_effects(dv, allow_rng_const_eval))
       }) || stmts_contain_fold_unsafe_effects(&closure.body.0, allow_rng_const_eval)
-    }
+    }),
     Callable::PartiallyAppliedFn(paf) => {
       callable_is_dyn_for_const_eval(&paf.inner, allow_rng_const_eval)
         || paf
@@ -432,10 +447,39 @@ impl AmbientSetter {
   }
 }
 
+/// Whether invoking this callable during a fold could consume the RNG stream, forcing the stream
+/// state into the cache key.  Precise for builtins and the partial/composed wrappers over them;
+/// conservative for closures (whose bodies are tracked separately by the hash walk) and dynamic
+/// callables (which may wrap arbitrary user code).
+///
+/// Precision matters beyond key size: a `true` here suppresses the cache lookup entirely inside
+/// nested scopes, where `allow_rng_const_eval` is false.
 fn callable_requires_rng_state(callable: &Callable) -> bool {
   match callable {
     Callable::Builtin { .. } => callable.is_rng_dependent(),
-    _ => true, // TODO: is this really the best we can do?
+    Callable::PartiallyAppliedFn(paf) => {
+      callable_requires_rng_state(&paf.inner)
+        || paf
+          .args
+          .iter()
+          .chain(paf.kwargs.values())
+          .any(value_requires_rng_state)
+    }
+    Callable::ComposedFn(composed) => composed
+      .inner
+      .iter()
+      .any(|c| callable_requires_rng_state(c)),
+    Callable::Closure(_) | Callable::Dynamic { .. } => true,
+  }
+}
+
+fn value_requires_rng_state(value: &Value) -> bool {
+  match value {
+    Value::Callable(c) => callable_requires_rng_state(c),
+    // opaque: may wrap closures that draw when consumed
+    Value::Sequence(_) => true,
+    Value::Map(m) => m.values().any(value_requires_rng_state),
+    _ => false,
   }
 }
 
@@ -449,16 +493,16 @@ fn hash_rng_state(hasher: &mut SipHasher, rng_state: &Pcg32) {
 
 #[derive(Clone, Copy)]
 struct ExprHashConfig {
-  /// Whether to track RNG usage (for const eval caching).
-  /// When true, sets `Uses::rng` when encountering RNG-dependent callables.
+  // Whether to track RNG usage (for const eval caching).
+  // When true, sets `Uses::rng` when encountering RNG-dependent callables.
   track_rng: bool,
-  /// Whether to allow dynamic expressions (Ident, Conditional, Block, etc.).
-  /// When false, returns None for expressions that cannot be const-evaluated.
+  // Whether to allow dynamic expressions (Ident, Conditional, Block, etc.).
+  // When false, returns None for expressions that cannot be const-evaluated.
   allow_dynamic: bool,
 }
 
 impl ExprHashConfig {
-  /// Config for const eval caching: tracks RNG, rejects dynamic expressions.
+  // Config for const eval caching: tracks RNG, rejects dynamic expressions.
   const fn const_eval() -> Self {
     Self {
       track_rng: true,
@@ -466,9 +510,9 @@ impl ExprHashConfig {
     }
   }
 
-  /// Structural traversal that still tracks ambient-state usage — for hashing callable *values*
-  /// (closure args etc.) whose bodies contain dynamic exprs but whose rng/settings reads must
-  /// influence the enclosing fold's cache key and gating.
+  // Structural traversal that still tracks ambient-state usage — for hashing callable *values*
+  // (closure args etc.) whose bodies contain dynamic exprs but whose rng/settings reads must
+  // influence the enclosing fold's cache key and gating.
   const fn const_eval_value() -> Self {
     Self {
       track_rng: true,
@@ -945,7 +989,11 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
       (Rc::as_ptr(map) as *const () as usize).hash(hasher);
     }
     Value::Mat4(mat) => {
-      (Rc::as_ptr(mat) as *const () as usize).hash(hasher);
+      // Hashed by contents rather than `Rc` address: mat4s are cheap to hash and are produced by
+      // folded builtin calls, so a fresh pointer every run would grow the cache without bound.
+      for elem in mat.as_slice() {
+        elem.to_bits().hash(hasher);
+      }
     }
     Value::Material(material) => {
       (Rc::as_ptr(material) as usize).hash(hasher);
@@ -978,6 +1026,28 @@ fn expr_requires_float_assoc(ctx: &EvalCtx, local_scope: &ScopeTracker, expr: &E
   }
 }
 
+fn is_vec_literal(val: &Value) -> bool {
+  matches!(val, Value::Vec2(_) | Value::Vec3(_))
+}
+
+/// Mesh is included because `mesh * vec` / `mesh * num` are scales and `mesh + vec` is a
+/// translation, which compose multiplicatively and additively — so those chains reassociate
+/// soundly.  Mat4 and un-inferable types do not.
+fn expr_is_assoc_safe(ctx: &EvalCtx, local_scope: &ScopeTracker, expr: &Expr) -> bool {
+  let mut env = local_scope.build_type_env(ctx);
+  matches!(
+    infer_expr(ctx, &mut env, expr).as_single_arg_type(),
+    Some(
+      ArgType::Int
+        | ArgType::Float
+        | ArgType::Numeric
+        | ArgType::Vec2
+        | ArgType::Vec3
+        | ArgType::Mesh
+    )
+  )
+}
+
 fn can_fold_assoc_literals(
   ctx: &EvalCtx,
   local_scope: &ScopeTracker,
@@ -986,6 +1056,16 @@ fn can_fold_assoc_literals(
   other_expr: &Expr,
 ) -> bool {
   if !is_assoc_foldable_literal(lhs_val) || !is_assoc_foldable_literal(rhs_val) {
+    return false;
+  }
+  // `*` is only uniformly associative while every operand is a scalar or vector.  `mat4 * vec3` is
+  // an affine point transform, so `(M * v) * 2` != `M * (v * 2)`.  A mat4 can only enter such a
+  // chain through a vector-typed intermediate (there is no `mat4 * num` overload), so a vector
+  // literal is the trigger to type-check the operand being reassociated across.  Scalar-only chains
+  // can't reach a mat4 overload and keep folding unconditionally.
+  if (is_vec_literal(lhs_val) || is_vec_literal(rhs_val))
+    && !expr_is_assoc_safe(ctx, local_scope, other_expr)
+  {
     return false;
   }
   if !FLOAT_ASSOC_FOLDING_ENABLED {
@@ -2483,6 +2563,7 @@ fn fold_exec_ambient_setter_stmt(
 }
 
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
+  CLOSURE_EFFECT_MEMO.with(|m| m.borrow_mut().clear());
   prescan_ambient_state(ctx, ast);
 
   let mut local_scope = ScopeTracker::default();
@@ -3107,6 +3188,47 @@ fn = |x| 1 + (1 + (1 + x))
     }
     _ => panic!("Expected an add expression, found: {expr:?}"),
   };
+}
+
+/// `mesh * vec` and `mesh * num` are both scales, which compose, so the mat4 associativity gate
+/// must not block them.
+#[test]
+fn test_assoc_constant_folding_folds_mesh_scale_chain() {
+  // The mesh has to come from a param; a literal `box(...)` const-folds whole and never reaches
+  // the associative pass.
+  let ctx = EvalCtx::default();
+  let mut ast = crate::parse_program_src(&ctx, "fn = |m: mesh| m * v3(2, 3, 4) * 2").unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  let closure_body = match &ast.statements[0] {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
+      Expr::Literal {
+        value: Value::Callable(callable),
+        ..
+      } => match &**callable {
+        Callable::Closure(closure) => closure.body.clone(),
+        _ => unreachable!(),
+      },
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  let expr = match &closure_body.0[0] {
+    Statement::Expr(expr) => expr,
+    Statement::Return { value: Some(expr) } => expr,
+    _ => unreachable!(),
+  };
+  match expr {
+    Expr::BinOp {
+      op: BinOp::Mul,
+      rhs,
+      ..
+    } => assert!(
+      matches!(rhs.as_literal(), Some(Value::Vec3(v)) if *v == crate::Vec3::new(4., 6., 8.)),
+      "expected the two scale literals to fold into v3(4, 6, 8), found rhs: {rhs:?}"
+    ),
+    _ => panic!("expected a mul expression, found: {expr:?}"),
+  }
 }
 
 #[test]
@@ -3915,7 +4037,7 @@ mesh = embed_path(
 )
 "#;
 
-  /// Mimics `geoscript_repl_reset`'s per-run ambient state restoration.
+  // Mimics `geoscript_repl_reset`'s per-run ambient state restoration.
   fn repl_reset(ctx: &EvalCtx) {
     *ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
     *ctx.default_curve_angle_degrees.borrow_mut() = 1.0;
@@ -3953,9 +4075,9 @@ mesh = embed_path(
       .unwrap()
   }
 
-  /// A const-arg threshold setter executes at fold time: the downstream reader still const-folds
-  /// AND the folded result reflects the runtime setting (179° suppresses the cap/wall creases the
-  /// default threshold produces).
+  // A const-arg threshold setter executes at fold time: the downstream reader still const-folds
+  // AND the folded result reflects the runtime setting (179° suppresses the cap/wall creases the
+  // default threshold produces).
   #[test]
   fn threshold_setter_folds_and_is_honored() {
     let ctx = EvalCtx::default();
@@ -3974,8 +4096,8 @@ mesh = embed_path(
     );
   }
 
-  /// The batch case: one persistent ctx running programs with different thresholds must not serve
-  /// cache entries across settings (keys include the live threshold values).
+  // The batch case: one persistent ctx running programs with different thresholds must not serve
+  // cache entries across settings (keys include the live threshold values).
   #[test]
   fn threshold_cache_isolated_across_batch_runs() {
     let ctx = EvalCtx::default();
@@ -3992,8 +4114,8 @@ mesh = embed_path(
     assert_eq!(smooth_a, smooth_b);
   }
 
-  /// Threshold setters outside top-level statement position are compile errors pointing at the
-  /// alternatives; `set_rng_seed` stays legal anywhere.
+  // Threshold setters outside top-level statement position are compile errors pointing at the
+  // alternatives; `set_rng_seed` stays legal anywhere.
   #[test]
   fn threshold_setter_rejected_off_top_level() {
     for src in [
@@ -4008,8 +4130,8 @@ mesh = embed_path(
     parse_and_eval_program("f = || set_rng_seed(5)\nf()").unwrap();
   }
 
-  /// A setter whose argument is only known at runtime still takes effect: the reader stops
-  /// folding and evaluates after the setter runs.
+  // A setter whose argument is only known at runtime still takes effect: the reader stops
+  // folding and evaluates after the setter runs.
   #[test]
   fn threshold_setter_dynamic_arg_honored_at_runtime() {
     let ctx = EvalCtx::default();
@@ -4021,8 +4143,8 @@ mesh = embed_path(
     assert!(smooth < creased, "{smooth} !< {creased}");
   }
 
-  /// `set_rng_seed` executes at fold time: a downstream const-arg rng call folds, reproduces
-  /// across reruns of a shared ctx, and differs across seeds.
+  // `set_rng_seed` executes at fold time: a downstream const-arg rng call folds, reproduces
+  // across reruns of a shared ctx, and differs across seeds.
   #[test]
   fn rng_seed_folds_deterministically() {
     let ctx = EvalCtx::default();
@@ -4037,8 +4159,8 @@ mesh = embed_path(
     ));
   }
 
-  /// The seed anchors downstream fold cache keys: rng draws added/removed *before* the seed don't
-  /// change what a seeded computation produces (composition 077's memoization contract).
+  // The seed anchors downstream fold cache keys: rng draws added/removed *before* the seed don't
+  // change what a seeded computation produces (composition 077's memoization contract).
   #[test]
   fn rng_seed_anchors_downstream_cache() {
     let ctx = EvalCtx::default();
@@ -4047,9 +4169,9 @@ mesh = embed_path(
     assert_eq!(plain, shifted);
   }
 
-  /// A seed the optimizer can't order-track (inside control flow / a closure) poisons rng folding
-  /// from that point, so downstream draws happen at runtime after the seed has taken effect —
-  /// producing the same value as the analyzable top-level form.
+  // A seed the optimizer can't order-track (inside control flow / a closure) poisons rng folding
+  // from that point, so downstream draws happen at runtime after the seed has taken effect —
+  // producing the same value as the analyzable top-level form.
   #[test]
   fn rng_seed_legal_anywhere_scoped_correctly() {
     let ctx = EvalCtx::default();
@@ -4060,8 +4182,8 @@ mesh = embed_path(
     assert_eq!(baseline, via_closure);
   }
 
-  /// Settings readers inside closure bodies can't fold at definition position when the program
-  /// mutates thresholds — the closure may run after the setter.
+  // Settings readers inside closure bodies can't fold at definition position when the program
+  // mutates thresholds — the closure may run after the setter.
   #[test]
   fn closure_interior_reader_defers_when_settings_mutated() {
     let ctx = EvalCtx::default();
@@ -4085,5 +4207,36 @@ mesh = f()
 "#,
     );
     assert_eq!(direct, via_closure);
+  }
+}
+
+/// The const-eval cache is preserved across runs, so every heap value embedded as a folded literal
+/// must be pointer-stable: heap literals hash by `Rc` identity, so an *uncached* inner fold hands
+/// each run a fresh pointer, which changes the enclosing expression's key and inserts a new entry
+/// every run, forever.  Cache growth is the observable symptom of that invariant breaking.
+#[test]
+fn test_const_eval_cache_size_stable_across_runs() {
+  for code in [
+    "f = || { icosphere(1, 3) | translate(1, 0, 0) }\nout = f()",
+    "f = || { 0..500 -> |i| i * i | collect }\nout = f()",
+    "out = icosphere(1, 3) | translate(1, 0, 0)",
+    "g = |x| x + 1\nf = || { g(1) }\nout = f()",
+    "shift = translate(1, 0, 0)\nout = 0..4 -> |i| { icosphere(1, 3) | shift }",
+    // mat4s are hashed by contents, not `Rc` address: a fresh pointer per run would change the
+    // enclosing expression's key and insert a new entry every run.
+    "f = || { compose_transforms([mat4() | trans(v3(1,0,0)), mat4() | rot(v3(0,0.5,0))]) }\nout = \
+     f()",
+  ] {
+    let ctx = EvalCtx::default();
+    let mut sizes = Vec::new();
+    for _ in 0..4 {
+      let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+      optimize_ast(&ctx, &mut ast).unwrap();
+      sizes.push(ctx.const_eval_cache.borrow().entries.len());
+    }
+    assert!(
+      sizes.windows(2).all(|w| w[0] == w[1]),
+      "`{code}` grows the const-eval cache across runs: {sizes:?}"
+    );
   }
 }

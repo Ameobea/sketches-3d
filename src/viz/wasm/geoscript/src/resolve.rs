@@ -13,8 +13,8 @@
 //! historical name-keyed scope chains:
 //! - captures snapshot referenced free vars at closure creation; mutations of enclosing scopes made
 //!   *after* creation through shared parent links are no longer observed
-//! - a free var unbound at creation errors at creation (the optimizer statically rejects
-//!   unknown names in user programs first, so this only surfaces on synthesized closures)
+//! - a free var unbound at creation errors at creation (the optimizer statically rejects unknown
+//!   names in user programs first, so this only surfaces on synthesized closures)
 
 use std::rc::Rc;
 
@@ -148,7 +148,9 @@ impl Resolver {
         self.walk_expr(expr, Some(*name));
         *slot = Some(self.resolve_assign(*name));
       }
-      TopLevelStatement::Import { bindings, slots, .. } => {
+      TopLevelStatement::Import {
+        bindings, slots, ..
+      } => {
         let mut slot_vec: Vec<u16> = Vec::new();
         bindings.visit_idents(&mut |s| slot_vec.push(self.resolve_assign(s)));
         *slots = Some(Rc::from(slot_vec));

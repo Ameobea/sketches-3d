@@ -294,6 +294,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Translates a light in local space (right-multiply: M = M * T). Alias: `trans`.",
         return_type: &[ArgType::Light],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "translation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a translation onto a transform matrix in local space (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a translation onto a transform matrix in local space (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Mat4],
+      },
     ],
   },
   "translate_global" => FnDef {
@@ -407,6 +461,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Translates a light in world space (left-multiply: M = T * M). Alias: `trans_global`.",
         return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "translation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a translation onto a transform matrix in world space (left-multiply: M = T * M). Alias: `trans_global`.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a translation onto a transform matrix in world space (left-multiply: M = T * M). Alias: `trans_global`.",
+        return_type: &[ArgType::Mat4],
       },
     ],
   },
@@ -522,6 +630,78 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a light in local space using individual Euler angle components in radians (right-multiply: M = M * R).",
         return_type: &[ArgType::Light],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a rotation onto a transform matrix in local space using a Vec3 of Euler angles in radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a rotation onto a transform matrix in local space using individual Euler angle components in radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "rotation", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Euler angles in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the origin by a Vec3 of Euler angles in radians.",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "x", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "y", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "z", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the origin by individual Euler angle components in radians.",
+        return_type: &[ArgType::Vec3],
+      },
     ],
   },
   "rot_global" => FnDef {
@@ -635,6 +815,78 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Rotates a light in world space around the world origin using individual Euler angle components in radians (left-multiply: M = R * M).",
         return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a rotation onto a transform matrix in world space around the world origin using a Vec3 of Euler angles in radians (left-multiply: M = R * M).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a rotation onto a transform matrix in world space around the world origin using individual Euler angle components in radians (left-multiply: M = R * M).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "rotation", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Euler angles in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the origin by a Vec3 of Euler angles in radians.  A bare point has no frame of its own, so this matches `rot`.",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "x", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "y", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "z", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the origin by individual Euler angle components in radians.  A bare point has no frame of its own, so this matches `rot`.",
+        return_type: &[ArgType::Vec3],
       },
     ],
   },
@@ -750,6 +1002,230 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a light around its current position using individual Euler angle components in radians.",
         return_type: &[ArgType::Light],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rotates a transform matrix around the position it encodes (the translation component), using a Vec3 of Euler angles in radians.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rotates a transform matrix around the position it encodes (the translation component), using individual Euler angle components in radians.",
+        return_type: &[ArgType::Mat4],
+      },
+    ],
+  },
+  "rot_x" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a mesh around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a light around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a transform matrix around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the x axis by `angle` radians.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "rot_y" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a mesh around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a light around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a transform matrix around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the y axis by `angle` radians.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "rot_z" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a mesh around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a light around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a transform matrix around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around the z axis by `angle` radians.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "rot_axis" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "axis", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Axis to rotate around (auto-normalized; must be non-zero)." },
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a mesh around an arbitrary local axis by `angle` radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "axis", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Axis to rotate around (auto-normalized; must be non-zero)." },
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a light around an arbitrary local axis by `angle` radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "axis", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Axis to rotate around (auto-normalized; must be non-zero)." },
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a transform matrix around an arbitrary local axis by `angle` radians (right-multiply: M = M * R).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "axis", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "Axis to rotate around (auto-normalized; must be non-zero)." },
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 3D point around an arbitrary axis through the origin by `angle` radians.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "rot2" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 2D point counter-clockwise around the origin by `angle` radians.  Matches the convention used by `path_rot` and by `v2(cos(a), sin(a))`.  Note this is the opposite winding from `rot_y`, since a `vec2` path's second component maps to world Z.",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "look_at" => FnDef {
@@ -836,6 +1312,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Orients a light so its local -Z (emission direction) points at `target`, with `up` controlling roll. Replaces the current rotation while preserving position.",
         return_type: &[ArgType::Light],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "target",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Target position to look at"
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+            description: "Up hint used to control roll"
+          },
+        ],
+        description: "Orients a transform matrix so its local -Z points at `target`, with `up` controlling roll. Replaces the current rotation while preserving position and scale.",
+        return_type: &[ArgType::Mat4],
       }
     ],
   },
@@ -925,6 +1428,47 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a light so its local `from` axis points along world-space direction `to`. Without `up_from`/`up_to` this is the minimal rotation (no roll control); supplying them additionally rolls about `to` so `up_from` points toward `up_to`. Replaces the current rotation while preserving position.",
         return_type: &[ArgType::Light],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "World-space direction to point the `from` axis along (auto-normalized)"
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 0., -1.))),
+            description: "Local-space axis to align (auto-normalized); defaults to -Z"
+          },
+          ArgDef {
+            name: "up_from",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional secondary local axis for roll control, rolled toward `up_to` (best-effort, projected perpendicular to `from`). Must be paired with `up_to`."
+          },
+          ArgDef {
+            name: "up_to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "World-space target for `up_from`. Must be paired with `up_from`."
+          },
+        ],
+        description: "Rotates a transform matrix so its local `from` axis points along world-space direction `to`. Without `up_from`/`up_to` this is the minimal rotation (no roll control); supplying them additionally rolls about `to` so `up_from` points toward `up_to`. Replaces the current rotation while preserving position and scale.",
+        return_type: &[ArgType::Mat4],
+      },
     ],
   },
   "scale" => FnDef {
@@ -985,6 +1529,60 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Scales a mesh in local space (right-multiply: M = M * S). Accepts a Vec3 for non-uniform scaling or a number for uniform scaling.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a non-uniform scale onto a transform matrix in local space (right-multiply: M = M * S).",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes a scale onto a transform matrix in local space (right-multiply: M = M * S). Accepts a Vec3 for non-uniform scaling or a number for uniform scaling.",
+        return_type: &[ArgType::Mat4],
       },
     ],
   },
@@ -1099,6 +1697,122 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Sets the transform of a mesh to the given `mat4`",
         return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "mat4" => FnDef {
+    module: "math",
+    examples: &[],
+    // The zero-arg identity signature must stay LAST: `get_args` ignores extra positional args, so
+    // a leading empty signature would match every call and shadow the explicit form.
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "m00", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m01", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m02", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m03", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m10", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m11", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m12", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m13", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m20", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m21", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m22", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m23", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m30", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m31", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m32", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "m33", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Builds a transform matrix from 16 explicit elements in row-major order.  Transforms are treated as affine throughout: applying one to a point does not divide by `w`, so projective/perspective matrices are not supported.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[],
+        description: "Returns the identity transform matrix.  Use it as the seed for a transform chain: `mat4() | trans(v3(2, 0, 0)) | rot(v3(0, pi/2, 0))`.",
+        return_type: &[ArgType::Mat4],
+      },
+    ],
+  },
+  "transform_point" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Transforms a 3D point by a transform matrix, treating it as a position (`w = 1`) so translation applies.  Equivalent to `transform * point`.  Assumes an affine matrix; there is no perspective divide.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "transform_dir" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "dir", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Transforms a 3D direction by a transform matrix, treating it as a vector (`w = 0`) so translation is ignored.  Rotation and scale still apply, so the result is not normalized.  For normals under non-uniform scale use `transform_normal`.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "transform_normal" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+          ArgDef { name: "normal", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Transforms a surface normal by a transform matrix using the inverse transpose, so normals stay perpendicular to the surface under non-uniform scale.  The result is normalized.  Errors if the matrix is singular or the normal is degenerate.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "compose_transforms" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transforms", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Sequence), default_value: DefaultValue::Required, description: "Sequence of `mat4`s to multiply together, left to right." },
+        ],
+        description: "Multiplies a sequence of transform matrices together: `compose_transforms([a, b, c])` is `a * b * c`.  Matrix multiplication is not commutative — the LAST transform in the sequence is applied to a point FIRST.  An empty sequence returns the identity.",
+        return_type: &[ArgType::Mat4],
+      },
+    ],
+  },
+  "inverse" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Returns the inverse of a transform matrix, which undoes it.  Errors if the matrix is singular (e.g. it has a zero scale on some axis).",
+        return_type: &[ArgType::Mat4],
+      },
+    ],
+  },
+  "transpose" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Returns the transpose of a transform matrix (rows and columns swapped).",
+        return_type: &[ArgType::Mat4],
       },
     ],
   },
@@ -2760,6 +3474,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Multiplied each element of a Vec3 by a scalar",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Composes two transform matrices.  Matrix multiplication is not commutative: in `a * b`, `b` is applied to a point first and `a` second.  See `compose_transforms` for the named equivalent.",
+        return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Transforms a 3D point by a transform matrix, treating it as a position (`w = 1`), so translation applies.  Same as `transform_point`.  Use `transform_dir` for directions, which ignores translation.  Assumes an affine matrix; there is no perspective divide.",
+        return_type: &[ArgType::Vec3],
+      },
     ],
   },
   "div" => FnDef {
@@ -4115,6 +4869,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns the sine of each component of a Vec3",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec2 with the sine of each component",
+        return_type: &[ArgType::Vec2],
       },
     ],
   },
