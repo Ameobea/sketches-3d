@@ -3,6 +3,8 @@ export const DEP_BIT_CGAL = 1 << 1;
 export const DEP_BIT_CLIPPER2 = 1 << 2;
 export const DEP_BIT_TEXT2PATH = 1 << 3;
 export const DEP_BIT_UV_UNWRAP = 1 << 4;
+export const DEP_BIT_UV_SOLVERS = 1 << 5;
+export const DEP_BIT_MODEL_DATA = 1 << 6;
 
 export const bitmaskToAsyncDepNames = (bitmask: number): string[] => {
   const deps: string[] = [];
@@ -20,6 +22,12 @@ export const bitmaskToAsyncDepNames = (bitmask: number): string[] => {
   }
   if (bitmask & DEP_BIT_UV_UNWRAP) {
     deps.push('uv_unwrap');
+  }
+  if (bitmask & DEP_BIT_UV_SOLVERS) {
+    deps.push('uv_solvers');
+  }
+  if (bitmask & DEP_BIT_MODEL_DATA) {
+    deps.push('model_data');
   }
   return deps;
 };

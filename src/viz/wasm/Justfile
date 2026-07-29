@@ -16,6 +16,7 @@ bindgen:
   wasm-bindgen ./target/wasm32-unknown-unknown/release/csg_sandbox.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
   wasm-bindgen ./target/wasm32-unknown-unknown/release/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/uv_solvers.wasm --target web --remove-producers-section --out-dir ./build
 
   cp ./target/wasm32-unknown-unknown/release/normal_map_gen.wasm ./build2
   cp ./target/wasm32-unknown-unknown/release/texture_crossfade.wasm ./build2
@@ -39,6 +40,7 @@ opt:
   ./optimize-wasm.sh ./build/csg_sandbox_bg.wasm
   ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
   ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
+  ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
   ./optimize-wasm.sh ./build2/flight_recorder.wasm
   ./optimize-wasm.sh ./build2/sound_engine.wasm
 
@@ -132,7 +134,7 @@ build-geoscript-analysis-release:
 build-geoscript:
   #!/bin/bash
   set -e
-  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl --package geoscript_analysis_wasm
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl --package geoscript_analysis_wasm --package uv_solvers
   export WASM_OPT_LEVEL=O2
   (
     wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
@@ -144,7 +146,24 @@ build-geoscript:
     ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
     cp ./build/geoscript_analysis_wasm* ../wasmComp
   ) & analysis=$!
-  wait $repl && wait $analysis
+  (
+    wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/uv_solvers.wasm --target web --remove-producers-section --out-dir ./build
+    ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
+    cp ./build/uv_solvers* ../wasmComp
+  ) & uv=$!
+  wait $repl && wait $analysis && wait $uv
+
+build-uv-solvers:
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --profile dev-opt --target wasm32-unknown-unknown --package uv_solvers
+  wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/uv_solvers.wasm --target web --remove-producers-section --out-dir ./build
+  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
+  cp ./build/uv_solvers* ../wasmComp
+
+build-uv-solvers-release:
+  RUSTFLAGS="-C target-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package uv_solvers
+  wasm-bindgen ./target/wasm32-unknown-unknown/release/uv_solvers.wasm --target web --remove-producers-section --out-dir ./build
+  ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
+  cp ./build/uv_solvers* ../wasmComp
 
 build-flight-recorder:
   RUSTFLAGS="-Ctarget-feature=+simd128" cargo build --release --target wasm32-unknown-unknown --package flight_recorder

@@ -26,14 +26,17 @@ arrayvec = "0.7"
 bitvec = "1"
 siphasher = "1"
 
-faer = { version = "0.24", default-features = false, features = ["std"] }
-
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }
 tessellation = { path = "../tessellation" }
 svgtypes = "0.16.1"
 lyon_tessellation = "1.0"
 lyon_extra = "1.0"
+
+# Native builds call the UV solvers directly; on wasm they live in a separate
+# lazily-loaded module reached via FFI, keeping faer/gemm out of this blob.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+uv_solvers = { path = "../uv_solvers" }
 
 [dev-dependencies]
 # Native constrained-Delaunay triangulator, used only in tests to exercise the

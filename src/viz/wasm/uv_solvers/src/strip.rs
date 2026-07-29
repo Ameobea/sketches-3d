@@ -6,19 +6,16 @@
 //! transverse hinge and get an integer number of U repeats so tiling textures stay seamless.
 //! Non-strip patches fall back to per-patch planar islands.
 
-use std::{cell::RefCell, rc::Rc};
-
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{mesh_flags, EdgeKey, FaceKey, Vec3, VertexKey},
+  linked_mesh::{EdgeKey, FaceKey, Vec3, VertexKey},
   LinkedMesh,
 };
 
-use super::compute_uvs::{new_tangent_channel, new_uv_channel, orthonormal_basis};
-use crate::{ErrorStack, ManifoldHandle, MeshHandle, Value};
+use crate::{orthonormal_basis, FlatUvMesh};
 
 #[derive(Clone, Copy, PartialEq)]
-enum Layout {
+pub enum Layout {
   /// Islands stacked in V, each starting at an integer V so tiling textures row-align.
   Stack,
   /// All islands share the V band starting at 0 (sample the same texture rows).
@@ -28,7 +25,7 @@ enum Layout {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum UMode {
+pub enum UMode {
   /// Both rails share U (mean arc length): quads map to true rectangles.  A ring band's inner
   /// rail stretches rather than shearing the texture around the ring.
   Uniform,
@@ -37,74 +34,31 @@ enum UMode {
   Rail,
 }
 
-struct StripOptions {
-  strip_angle_rad: Option<f32>,
-  layout: Layout,
-  u_mode: UMode,
-  planar_fallback: bool,
+pub struct StripOptions {
+  pub strip_angle_rad: Option<f32>,
+  pub layout: Layout,
+  pub u_mode: UMode,
+  pub planar_fallback: bool,
 }
 
-fn parse_strip_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<StripOptions, ErrorStack> {
-  let mut out = StripOptions {
-    strip_angle_rad: None,
-    layout: Layout::Stack,
-    u_mode: UMode::Uniform,
-    planar_fallback: true,
-  };
-  let Some(map) = options else { return Ok(out) };
-  for (key, val) in map {
-    match key.as_str() {
-      "strip_angle" => {
-        let deg = val.as_float().ok_or_else(|| {
-          ErrorStack::new("`compute_uvs` option `strip_angle` must be a number (degrees)")
-        })?;
-        out.strip_angle_rad = Some(deg.to_radians());
-      }
-      "layout" => {
-        out.layout = match val.as_str() {
-          Some("stack") => Layout::Stack,
-          Some("overlap") => Layout::Overlap,
-          Some("fill") => Layout::Fill,
-          _ => {
-            return Err(ErrorStack::new(
-              "`compute_uvs` option `layout` must be 'stack', 'overlap', or 'fill'",
-            ))
-          }
-        };
-      }
-      "u_mode" => {
-        out.u_mode = match val.as_str() {
-          Some("uniform") => UMode::Uniform,
-          Some("rail") => UMode::Rail,
-          _ => {
-            return Err(ErrorStack::new(
-              "`compute_uvs` option `u_mode` must be 'uniform' or 'rail'",
-            ))
-          }
-        };
-      }
-      "fallback" => {
-        out.planar_fallback = match val.as_str() {
-          Some("planar") => true,
-          Some("error") => false,
-          _ => {
-            return Err(ErrorStack::new(
-              "`compute_uvs` option `fallback` must be 'planar' or 'error'",
-            ))
-          }
-        };
-      }
-      _ => {
-        return Err(ErrorStack::new(format!(
-          "Unknown option {key:?} for `compute_uvs(type='strip')`; supported options: \
-           `strip_angle`, `layout`, `u_mode`, `fallback`"
-        )))
-      }
+impl Layout {
+  pub fn from_u8(v: u8) -> Self {
+    match v {
+      0 => Layout::Stack,
+      1 => Layout::Overlap,
+      _ => Layout::Fill,
     }
   }
-  Ok(out)
+}
+
+impl UMode {
+  pub fn from_u8(v: u8) -> Self {
+    if v == 0 {
+      UMode::Uniform
+    } else {
+      UMode::Rail
+    }
+  }
 }
 
 fn vp(m: &LinkedMesh<()>, v: VertexKey) -> Vec3 {
@@ -507,18 +461,14 @@ fn planar_island(m: &LinkedMesh<()>, faces: &[FaceKey], scale: f32, layout: Layo
   }
 }
 
-pub(crate) fn strip_uvs(
-  mesh: &MeshHandle,
+pub fn strip_uvs(
+  mut m: LinkedMesh<()>,
   scale: f32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<MeshHandle, ErrorStack> {
-  let opts = parse_strip_options(options)?;
-  let mut m = (*mesh.mesh).clone();
+  opts: &StripOptions,
+) -> Result<FlatUvMesh, String> {
   if m.faces.is_empty() {
-    return Err(ErrorStack::new(
-      "`compute_uvs(type='strip')`: mesh has no faces",
-    ));
+    return Err("`compute_uvs(type='strip')`: mesh has no faces".to_owned());
   }
 
   // Sharp-split first: afterwards faces across sharp edges share no vertices, so smooth patches
@@ -555,12 +505,12 @@ pub(crate) fn strip_uvs(
       Some(island) => islands.push(island),
       None if opts.planar_fallback => islands.push(planar_island(&m, faces, scale, opts.layout)),
       None => {
-        return Err(ErrorStack::new(format!(
+        return Err(format!(
           "`compute_uvs(type='strip')`: a {}-face patch is not a quad/tri strip (dual graph is \
            not a path or ring).  Use options={{ fallback: 'planar' }} to map such patches as \
            planar islands, or adjust `strip_angle` so patch boundaries land on strip seams",
           faces.len()
-        )))
+        ))
       }
     }
   }
@@ -597,236 +547,31 @@ pub(crate) fn strip_uvs(
     }
   }
 
-  let mut uv_ch = new_uv_channel();
-  let mut tan_ch = new_tangent_channel();
-  for (&v, &uv) in &final_uv {
-    uv_ch.set(v, [uv[0], uv[1], 0., 0.]);
+  let keys: Vec<VertexKey> = m.vertices.iter().map(|(k, _)| k).collect();
+  let k2i: FxHashMap<VertexKey, u32> = keys.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
+  let mut verts = Vec::with_capacity(keys.len() * 3);
+  let mut uvs = Vec::with_capacity(keys.len() * 2);
+  let mut tangents = Vec::with_capacity(keys.len() * 4);
+  for &k in &keys {
+    let p = m.vertices[k].position;
+    verts.extend_from_slice(&[p.x, p.y, p.z]);
+    uvs.extend_from_slice(&final_uv.get(&k).copied().unwrap_or([0., 0.]));
     let t = tan_acc
-      .get(&v)
+      .get(&k)
       .and_then(|t| t.try_normalize(1e-6))
       .unwrap_or_else(Vec3::x);
-    tan_ch.set(v, [t.x, t.y, t.z, 1.]);
+    tangents.extend_from_slice(&[t.x, t.y, t.z, 1.]);
   }
-  m.vertex_channels.insert("uv".to_owned(), uv_ch);
-  m.vertex_channels.insert("tangent".to_owned(), tan_ch);
-  m.flags |= mesh_flags::NO_WELD;
+  let indices: Vec<u32> = m
+    .faces
+    .iter()
+    .flat_map(|(_, f)| f.vertices.iter().map(|v| k2i[v]))
+    .collect();
 
-  Ok(MeshHandle {
-    mesh: Rc::new(m),
-    transform: mesh.transform,
-    manifold_handle: Rc::new(ManifoldHandle::new(0)),
-    aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
-    material: mesh.material.clone(),
+  Ok(FlatUvMesh {
+    verts,
+    indices,
+    uvs,
+    tangents,
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use mesh::linked_mesh::{mesh_flags, ChannelStore};
-  use std::rc::Rc;
-
-  fn rendered_mesh(src: &str) -> Rc<mesh::LinkedMesh<()>> {
-    let ctx = crate::parse_and_eval_program(src).unwrap();
-    Rc::clone(&ctx.rendered_meshes.into_inner()[0].mesh.mesh)
-  }
-
-  fn uvs(mesh: &mesh::LinkedMesh<()>) -> Vec<[f32; 2]> {
-    let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
-      panic!("uv channel should be Vec2");
-    };
-    uv.values().copied().collect()
-  }
-
-  const SQUARE_PIPE: &str =
-    "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0), adaptive_path_sampling=false)";
-
-  #[test]
-  fn strip_on_square_pipe() {
-    let mesh = rendered_mesh(&format!(
-      "{SQUARE_PIPE} | compute_uvs(type='strip') | render"
-    ));
-    assert!(mesh.has_flag(mesh_flags::NO_WELD));
-    assert!(mesh.vertex_channels.contains_key("tangent"));
-
-    let all = uvs(&mesh);
-    for uv in &all {
-      assert!(
-        uv[0].is_finite() && uv[1].is_finite(),
-        "non-finite UV {uv:?}"
-      );
-    }
-    // strips mapped STRAIGHT: every vertex sits on a rail, so V takes at most 2 distinct values
-    // per island (6 islands: 4 sides + 2 caps).  A curved/conformal unwrap would produce a
-    // near-continuous V distribution.
-    let mut distinct_v: Vec<f32> = Vec::new();
-    for uv in &all {
-      if !distinct_v.iter().any(|&v| (v - uv[1]).abs() < 1e-3) {
-        distinct_v.push(uv[1]);
-      }
-    }
-    assert!(
-      distinct_v.len() <= 12,
-      "expected <=2 V values per island, got {distinct_v:?}"
-    );
-    // U runs the full length of the pipe in world units (path length > 55)
-    let max_u = all.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
-    assert!(
-      max_u > 50.,
-      "U should span the strip arc length, got max {max_u}"
-    );
-
-    // near-isometry: a mis-paired rail reading passes the V check but shears U, stretching every
-    // rung ~15%+; the true reading is within ~1%
-    let uv_ch = &mesh.vertex_channels["uv"];
-    let (mut num, mut den) = (0f32, 0f32);
-    for (_, e) in mesh.edges.iter() {
-      if e.faces.is_empty() {
-        continue;
-      }
-      let [a, b] = e.vertices;
-      let l3 = (mesh.vertices[a].position - mesh.vertices[b].position).norm();
-      let (ua, ub) = (uv_ch.get(a).unwrap(), uv_ch.get(b).unwrap());
-      num += ((ua[0] - ub[0]).hypot(ua[1] - ub[1]) - l3).abs();
-      den += l3;
-    }
-    let distortion = num / den;
-    assert!(
-      distortion < 0.05,
-      "strip map should be near-isometric, got distortion {distortion}"
-    );
-  }
-
-  #[test]
-  fn strip_closed_ring_integer_wrap() {
-    let src = "extrude_pipe(2, 4, 0..32 -> |i| { a = i / 32 * pi * 2\n v3(cos(a)*8, sin(a)*8, 0) \
-               }, connect_ends=true, close_ends=false, adaptive_path_sampling=false) | \
-               compute_uvs(type='strip') | render";
-    let mesh = rendered_mesh(src);
-    let all = uvs(&mesh);
-    for uv in &all {
-      assert!(
-        uv[0].is_finite() && uv[1].is_finite(),
-        "non-finite UV {uv:?}"
-      );
-    }
-    // each of the 4 ring strips is cut + rounded to an integer repeat count: every rail's max U
-    // is a whole number, and no face straddles the cut with a huge U span
-    let max_u = all.iter().map(|uv| uv[0]).fold(f32::MIN, f32::max);
-    assert!(
-      max_u > 10.,
-      "ring circumference ~50, expected large U extent, got {max_u}"
-    );
-    assert!(
-      (max_u - max_u.round()).abs() < 1e-3,
-      "closed strip U should be integer, got {max_u}"
-    );
-    let uv_ch = &mesh.vertex_channels["uv"];
-    let mut worst = 0f32;
-    for (_, face) in mesh.iter_faces() {
-      let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-      for &v in &face.vertices {
-        let u = uv_ch.get(v).unwrap()[0];
-        lo = lo.min(u);
-        hi = hi.max(u);
-      }
-      worst = worst.max(hi - lo);
-    }
-    assert!(worst < 5., "face straddles the ring cut: U span {worst}");
-  }
-
-  #[test]
-  fn strip_classifies_square_caps() {
-    // 2-triangle square caps have an exact rung-score tie (diagonal walk direction); the
-    // candidate-retry must classify them regardless of how trig ulps break the tie, so
-    // fallback:'error' succeeds on a capped pipe.
-    for src in [
-      format!(
-        "{SQUARE_PIPE} | compute_uvs(type='strip', options={{ fallback: 'error' }}) | render"
-      ),
-      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, 0, 0)) | compute_uvs(type='strip', options={ \
-       fallback: 'error' }) | render"
-        .to_owned(),
-    ] {
-      crate::parse_and_eval_program(src).unwrap();
-    }
-  }
-
-  #[test]
-  fn strip_fallback_planar_and_error() {
-    // smooth cylinder wall: one big dual-cyclic patch, not a strip
-    let src = "cylinder(1, 4, 24) | compute_uvs(type='strip') | render";
-    let mesh = rendered_mesh(src);
-    for uv in uvs(&mesh) {
-      assert!(
-        uv[0].is_finite() && uv[1].is_finite(),
-        "non-finite UV {uv:?}"
-      );
-    }
-
-    let err = crate::parse_and_eval_program(
-      "cylinder(1, 4, 24) | compute_uvs(type='strip', options={ fallback: 'error' }) | render",
-    )
-    .unwrap_err();
-    assert!(
-      format!("{err}").contains("not a quad/tri strip"),
-      "got: {err}"
-    );
-  }
-
-  /// UV inspection utility: evals `GEO_STRIP_DEBUG_SRC` (default: the verbatim square pipe) and
-  /// writes every rendered mesh to `GEO_STRIP_DEBUG_DUMP` as an OBJ with `vt` UVs, openable in
-  /// Blender or analyzable directly.
-  /// `GEO_STRIP_DEBUG_DUMP=/tmp/strips.obj cargo test strip_debug_dump -- --nocapture`
-  #[test]
-  fn strip_debug_dump() {
-    let Ok(out_path) = std::env::var("GEO_STRIP_DEBUG_DUMP") else {
-      return;
-    };
-    let src = std::env::var("GEO_STRIP_DEBUG_SRC").unwrap_or_else(|_| {
-      "extrude_pipe(5, 4, 0..20 -> |i| v3(i*3, sin(i * 0.1) * 10, 0)) | compute_uvs(type='strip') \
-       | render"
-        .to_owned()
-    });
-    let ctx = crate::EvalCtx::default();
-    let include_prelude = std::env::var("GEO_STRIP_DEBUG_PRELUDE").is_ok();
-    crate::parse_and_eval_program_with_ctx(src, &ctx, include_prelude).unwrap();
-    let mut out = String::new();
-    let mut base = 1usize;
-    for (mi, rm) in ctx.rendered_meshes.into_inner().iter().enumerate() {
-      let m = &rm.mesh.mesh;
-      let uv_ch = m.vertex_channels.get("uv");
-      out.push_str(&format!("o mesh{mi}\n"));
-      let mut idx = fxhash::FxHashMap::default();
-      for (k, v) in m.iter_vertices() {
-        idx.insert(k, base + idx.len());
-        let p = v.position;
-        out.push_str(&format!("v {} {} {}\n", p.x, p.y, p.z));
-        let uv = uv_ch
-          .and_then(|c| c.get(k))
-          .map(|v| [v[0], v[1]])
-          .unwrap_or([0., 0.]);
-        out.push_str(&format!("vt {} {}\n", uv[0], uv[1]));
-      }
-      for (_, f) in m.iter_faces() {
-        let [a, b, c] = f.vertices;
-        out.push_str(&format!(
-          "f {}/{} {}/{} {}/{}\n",
-          idx[&a], idx[&a], idx[&b], idx[&b], idx[&c], idx[&c]
-        ));
-      }
-      base += idx.len();
-    }
-    std::fs::write(&out_path, out).unwrap();
-    println!("wrote {out_path}");
-  }
-
-  #[test]
-  fn strip_unknown_option_errors() {
-    let err = crate::parse_and_eval_program(
-      "box(1, 1, 1) | compute_uvs(type='strip', options={ bogus: 1 }) | render",
-    )
-    .unwrap_err();
-    assert!(format!("{err}").contains("Unknown option"), "got: {err}");
-  }
 }

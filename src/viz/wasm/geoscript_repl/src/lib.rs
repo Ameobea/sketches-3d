@@ -153,6 +153,8 @@ pub struct GeoscriptAsyncDependencies {
   pub cgal: bool,
   pub clipper2: bool,
   pub uv_unwrap: bool,
+  pub uv_solvers: bool,
+  pub model_data: bool,
 }
 
 #[wasm_bindgen]
@@ -170,7 +172,15 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
       } else if name == "offset_path" {
         deps.clipper2 = true;
       } else if name == "compute_uvs" {
+        // `type` decides BFF vs the tube/strip solver module; preload both.
         deps.uv_unwrap = true;
+        deps.uv_solvers = true;
+      } else if name == "utah_teapot"
+        || name == "teapot"
+        || name == "stanford_bunny"
+        || name == "bunny"
+      {
+        deps.model_data = true;
       } else if name == "alpha_wrap"
         || name == "smooth"
         || name == "remesh_planar_patches"

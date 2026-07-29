@@ -29,7 +29,7 @@ use crate::materials::Material;
 use crate::mesh_ops::compute_uvs::{compute_uvs, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
-  alpha_wrap_mesh, alpha_wrap_points, delaunay_remesh, get_cached_svg_path_str,
+  alpha_wrap_mesh, alpha_wrap_points, baked_model_mesh, delaunay_remesh, get_cached_svg_path_str,
   get_geodesics_loaded, isotropic_remesh, remesh_planar_patches, smooth_mesh,
   tessellate_svg_path_with_lyon, SmoothType,
 };
@@ -7385,7 +7385,7 @@ fn grid_impl(
 fn utah_teapot_impl(def_ix: usize) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
-      LinkedMesh::new_utah_teapot(),
+      baked_model_mesh("utah_teapot")?,
     ))))),
     _ => unimplemented!(),
   }
@@ -7394,7 +7394,7 @@ fn utah_teapot_impl(def_ix: usize) -> Result<Value, ErrorStack> {
 fn stanford_bunny_impl(def_ix: usize) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => Ok(Value::Mesh(Rc::new(MeshHandle::new(Rc::new(
-      LinkedMesh::new_stanford_bunny(),
+      baked_model_mesh("stanford_bunny")?,
     ))))),
     _ => unimplemented!(),
   }

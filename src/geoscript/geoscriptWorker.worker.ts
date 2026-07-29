@@ -35,6 +35,8 @@ import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
 import { initUVUnwrap, setUVUnwrapWasmURL } from './uvUnwrap';
+import { initUVSolvers, setUVSolversWasmURL } from './uvSolvers';
+import { initModelData, setModelDataURLs } from './modelData';
 import { textToSvg } from './text_to_path';
 import type { GeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
@@ -91,6 +93,8 @@ export interface GeoscriptAsyncDeps {
   text_to_path?: boolean;
   clipper2?: boolean;
   uv_unwrap?: boolean;
+  uv_solvers?: boolean;
+  model_data?: boolean;
 }
 
 const initAsyncDeps = (
@@ -115,6 +119,12 @@ const initAsyncDeps = (
   }
   if (deps.uv_unwrap) {
     promises.push(initUVUnwrap());
+  }
+  if (deps.uv_solvers) {
+    promises.push(initUVSolvers());
+  }
+  if (deps.model_data) {
+    promises.push(initModelData(argsByKey.model_data));
   }
   if (deps.text_to_path) {
     const args = argsByKey.text_to_path;
@@ -151,7 +161,13 @@ const initAsyncDeps = (
 const methods = {
   init: async (
     urls: GeoscriptWorkerWasmURLs,
-    eagerDeps?: { cgal?: boolean; clipper2?: boolean; geodesics?: boolean; uv_unwrap?: boolean }
+    eagerDeps?: {
+      cgal?: boolean;
+      clipper2?: boolean;
+      geodesics?: boolean;
+      uv_unwrap?: boolean;
+      uv_solvers?: boolean;
+    }
   ) => {
     geoscriptReplWasmURL = urls.geoscriptRepl;
     setManifoldWasmURL(urls.manifold);
@@ -159,6 +175,8 @@ const methods = {
     setClipper2WasmURL(urls.clipper2);
     setGeodesicsWasmURL(urls.geodesics);
     setUVUnwrapWasmURL(urls.uvUnwrap);
+    setUVSolversWasmURL(urls.uvSolvers);
+    setModelDataURLs(urls.modelData);
 
     const eagerInits: Promise<unknown>[] = [];
     if (eagerDeps?.cgal) {
@@ -178,6 +196,9 @@ const methods = {
     }
     if (eagerDeps?.uv_unwrap) {
       eagerInits.push(initUVUnwrap());
+    }
+    if (eagerDeps?.uv_solvers) {
+      eagerInits.push(initUVSolvers());
     }
 
     const [_manifold, repl] = await Promise.all([initManifoldWasm(), initGeoscript(), ...eagerInits]);

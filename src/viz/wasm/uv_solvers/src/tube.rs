@@ -5,7 +5,7 @@
 //! (crease-bounded transverse terminal patches) become separate planar islands at body texel
 //! density.
 
-use std::{cell::RefCell, cmp::Reverse, collections::BinaryHeap, rc::Rc};
+use std::{cmp::Reverse, collections::BinaryHeap};
 
 use faer::linalg::solvers::Solve;
 use faer::sparse::linalg::solvers::{Llt, SymbolicLlt};
@@ -13,103 +13,29 @@ use faer::sparse::{SparseColMat, Triplet};
 use faer::{Mat, Side};
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{mesh_flags, EdgeKey, FaceKey, Vec3, VertexKey},
-  slotmap_utils::vkey,
+  linked_mesh::{EdgeKey, FaceKey, Vec3, VertexKey},
   LinkedMesh,
 };
 use nalgebra::Vector3;
 
-use super::compute_uvs::{new_tangent_channel, new_uv_channel, orthonormal_basis};
-use crate::{ErrorStack, ManifoldHandle, MeshHandle, Value};
+use crate::{orthonormal_basis, FlatUvMesh};
 
 type V3 = Vector3<f64>;
 
-pub(crate) struct TubeOptions {
-  caps: bool,
+pub struct TubeOptions {
+  pub caps: bool,
   /// Crease angle bounding cap growth; defaults to the ctx sharp-edge threshold.
-  cap_angle_rad: Option<f32>,
+  pub cap_angle_rad: Option<f32>,
   /// Max fraction of total spine arc length a cap patch may span.
-  cap_max_span: f64,
+  pub cap_max_span: f64,
   /// Min |cap normal . local end tangent| for a patch to count as transverse.
-  cap_alignment: f64,
+  pub cap_alignment: f64,
   /// V spans 0..1 over the tube length instead of isotropic (arc/perimeter) scaling.
-  normalize_v: bool,
+  pub normalize_v: bool,
   /// Penalty weight steering the seam cut longitudinally (0 = pure shortest path).
-  seam_straightness: f64,
+  pub seam_straightness: f64,
   /// Cancel rotational drift of U along the spine (RMF-referenced phase correction).
-  detwist: bool,
-}
-
-fn parse_tube_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<TubeOptions, ErrorStack> {
-  let mut out = TubeOptions {
-    caps: true,
-    cap_angle_rad: None,
-    cap_max_span: 0.15,
-    cap_alignment: 0.6,
-    normalize_v: false,
-    seam_straightness: 8.,
-    detwist: true,
-  };
-  let Some(map) = options else { return Ok(out) };
-  for (key, val) in map {
-    match key.as_str() {
-      "caps" => {
-        out.caps = match (val.as_str(), val.as_bool()) {
-          (Some("auto"), _) => true,
-          (Some("none"), _) => false,
-          (None, Some(b)) => b,
-          _ => {
-            return Err(ErrorStack::new(
-              "`compute_uvs` option `caps` must be 'auto', 'none', or a boolean",
-            ))
-          }
-        }
-      }
-      "cap_angle" => {
-        let deg = val.as_float().ok_or_else(|| {
-          ErrorStack::new("`compute_uvs` option `cap_angle` must be a number (degrees)")
-        })?;
-        out.cap_angle_rad = Some(deg.to_radians());
-      }
-      "cap_max_span" => {
-        out.cap_max_span = val
-          .as_float()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `cap_max_span` must be a number"))?
-          as f64;
-      }
-      "cap_alignment" => {
-        out.cap_alignment = val
-          .as_float()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `cap_alignment` must be a number"))?
-          as f64;
-      }
-      "normalize_v" => {
-        out.normalize_v = val
-          .as_bool()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `normalize_v` must be a boolean"))?;
-      }
-      "seam_straightness" => {
-        out.seam_straightness = val.as_float().ok_or_else(|| {
-          ErrorStack::new("`compute_uvs` option `seam_straightness` must be a number")
-        })? as f64;
-      }
-      "detwist" => {
-        out.detwist = val
-          .as_bool()
-          .ok_or_else(|| ErrorStack::new("`compute_uvs` option `detwist` must be a boolean"))?;
-      }
-      _ => {
-        return Err(ErrorStack::new(format!(
-          "Unknown option {key:?} for `compute_uvs(type='tube')`; supported options: `caps`, \
-           `cap_angle`, `cap_max_span`, `cap_alignment`, `normalize_v`, `seam_straightness`, \
-           `detwist`"
-        )))
-      }
-    }
-  }
-  Ok(out)
+  pub detwist: bool,
 }
 
 /// Symmetric cotan-Laplacian triplets (both off-diag orientations + diagonal).  Cot weights are
@@ -129,25 +55,13 @@ fn cotan_triplets(pos: &[V3], tris: &[[usize; 3]]) -> Vec<(usize, usize, f64)> {
   trips
 }
 
-fn sparse_llt(
-  n: usize,
-  lower: &[Triplet<usize, usize, f64>],
-) -> Result<Llt<usize, f64>, ErrorStack> {
-  let a = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, lower).map_err(|e| {
-    ErrorStack::new(format!(
-      "`compute_uvs`: failed to assemble Laplacian: {e:?}"
-    ))
-  })?;
-  let sym = SymbolicLlt::try_new(a.symbolic(), Side::Lower).map_err(|e| {
-    ErrorStack::new(format!(
-      "`compute_uvs`: symbolic factorization failed: {e:?}"
-    ))
-  })?;
-  Llt::try_new_with_symbolic(sym, a.as_ref(), Side::Lower).map_err(|e| {
-    ErrorStack::new(format!(
-      "`compute_uvs`: Cholesky factorization failed (degenerate mesh?): {e:?}"
-    ))
-  })
+fn sparse_llt(n: usize, lower: &[Triplet<usize, usize, f64>]) -> Result<Llt<usize, f64>, String> {
+  let a = SparseColMat::<usize, f64>::try_new_from_triplets(n, n, lower)
+    .map_err(|e| format!("`compute_uvs`: failed to assemble Laplacian: {e:?}"))?;
+  let sym = SymbolicLlt::try_new(a.symbolic(), Side::Lower)
+    .map_err(|e| format!("`compute_uvs`: symbolic factorization failed: {e:?}"))?;
+  Llt::try_new_with_symbolic(sym, a.as_ref(), Side::Lower)
+    .map_err(|e| format!("`compute_uvs`: Cholesky factorization failed (degenerate mesh?): {e:?}"))
 }
 
 /// Harmonic interpolation: solve L u = 0 with `pins` as Dirichlet boundary values.  Pinned DOFs are
@@ -156,7 +70,7 @@ fn harmonic_interp(
   n: usize,
   l_full: &[(usize, usize, f64)],
   pins: &[(usize, f64)],
-) -> Result<Vec<f64>, ErrorStack> {
+) -> Result<Vec<f64>, String> {
   let mut pinned = vec![f64::NAN; n];
   for &(v, val) in pins {
     pinned[v] = val;
@@ -207,7 +121,7 @@ fn fiedler_ends(
   n: usize,
   l_full: &[(usize, usize, f64)],
   pos: &[V3],
-) -> Result<(usize, usize), ErrorStack> {
+) -> Result<(usize, usize), String> {
   let mut diag_mean = 0f64;
   for &(r, c, v) in l_full {
     if r == c {
@@ -254,9 +168,7 @@ fn fiedler_ends(
     }
   }
   if lo == hi {
-    return Err(ErrorStack::new(
-      "`compute_uvs(type='tube')`: end detection failed (degenerate mesh?)",
-    ));
+    return Err("`compute_uvs(type='tube')`: end detection failed (degenerate mesh?)".to_owned());
   }
   Ok((lo, hi))
 }
@@ -399,26 +311,21 @@ fn fan_arc(
   arc
 }
 
-pub(crate) fn tube_uvs(
-  mesh: &MeshHandle,
+pub fn tube_uvs(
+  mut m: LinkedMesh<()>,
   scale: f32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<MeshHandle, ErrorStack> {
-  let opts = parse_tube_options(options)?;
-  let mut m = (*mesh.mesh).clone();
-
+  opts: &TubeOptions,
+) -> Result<FlatUvMesh, String> {
   if m.vertices.len() < 4 {
-    return Err(ErrorStack::new(
-      "`compute_uvs(type='tube')`: mesh has too few vertices",
-    ));
+    return Err("`compute_uvs(type='tube')`: mesh has too few vertices".to_owned());
   }
   let euler = m.vertices.len() as i64 - m.edges.len() as i64 + m.faces.len() as i64;
   if euler != 2 {
-    return Err(ErrorStack::new(format!(
+    return Err(format!(
       "`compute_uvs(type='tube')` requires a closed genus-0 mesh (capped tube); got Euler \
        characteristic {euler} (2 = closed genus-0, 0 = open tube or torus)"
-    )));
+    ));
   }
 
   let keys: Vec<VertexKey> = m.vertices.iter().map(|(k, _)| k).collect();
@@ -472,9 +379,10 @@ pub(crate) fn tube_uvs(
     len * (1. + lambda * (1. - align))
   });
   if cutpath.len() < 2 || cutpath[0] != ak {
-    return Err(ErrorStack::new(
-      "`compute_uvs(type='tube')`: mesh is not connected (no path between detected ends)",
-    ));
+    return Err(
+      "`compute_uvs(type='tube')`: mesh is not connected (no path between detected ends)"
+        .to_owned(),
+    );
   }
   let mut moved: Vec<(VertexKey, Vec<FaceKey>)> = Vec::new();
   for w in cutpath.windows(3) {
@@ -493,9 +401,10 @@ pub(crate) fn tube_uvs(
     banks.push((c, clone));
   }
   if banks.is_empty() {
-    return Err(ErrorStack::new(
-      "`compute_uvs(type='tube')`: cut path too short to slit (mesh too coarse along the tube)",
-    ));
+    return Err(
+      "`compute_uvs(type='tube')`: cut path too short to slit (mesh too coarse along the tube)"
+        .to_owned(),
+    );
   }
 
   // Split each tip vertex in two.  The seam terminates at the tips, so a single tip vertex carries
@@ -662,7 +571,7 @@ pub(crate) fn tube_uvs(
     }
   }
 
-  #[cfg(test)]
+  #[cfg(not(target_arch = "wasm32"))]
   if let Ok(path) = std::env::var("GEO_TUBE_DEBUG_DUMP") {
     use std::io::Write;
     let mut f = std::fs::File::create(&path).unwrap();
@@ -931,176 +840,14 @@ pub(crate) fn tube_uvs(
     }
   }
 
-  let mut out = LinkedMesh::from_raw_indexed(&verts, &indices, None, None);
-  let mut uv_ch = new_uv_channel();
-  let mut tan_ch = new_tangent_channel();
+  let mut uvs = Vec::with_capacity((verts.len() / 3) * 2);
   for i in 0..(verts.len() / 3) {
-    let key = vkey(i as u32 + 1, 1);
-    uv_ch.set(key, [us[i] * scale, vs[i] * scale, 0., 0.]);
-    tan_ch.set(key, tangents[i]);
+    uvs.extend_from_slice(&[us[i] * scale, vs[i] * scale]);
   }
-  out.vertex_channels.insert("uv".to_owned(), uv_ch);
-  out.vertex_channels.insert("tangent".to_owned(), tan_ch);
-  out.mark_edge_sharpness(sharp_threshold_rad);
-  out.separate_vertices_and_compute_normals();
-  out.flags |= mesh_flags::NO_WELD;
-
-  Ok(MeshHandle {
-    mesh: Rc::new(out),
-    transform: mesh.transform,
-    manifold_handle: Rc::new(ManifoldHandle::new(0)),
-    aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
-    material: mesh.material.clone(),
+  Ok(FlatUvMesh {
+    verts,
+    indices,
+    uvs,
+    tangents: tangents.into_iter().flatten().collect(),
   })
-}
-
-#[cfg(test)]
-mod tests {
-  use mesh::linked_mesh::{mesh_flags, ChannelStore};
-
-  fn rendered_mesh(src: &str) -> Rc<mesh::LinkedMesh<()>> {
-    let ctx = crate::parse_and_eval_program(src).unwrap();
-    Rc::clone(&ctx.rendered_meshes.into_inner()[0].mesh.mesh)
-  }
-
-  use std::rc::Rc;
-
-  fn uvs(mesh: &mesh::LinkedMesh<()>) -> Vec<[f32; 2]> {
-    let ChannelStore::Vec2(uv) = &mesh.vertex_channels["uv"].store else {
-      panic!("uv channel should be Vec2");
-    };
-    uv.values().copied().collect()
-  }
-
-  /// No face may bridge the U = 0/1 seam; that's what makes a tiling texture seamless.
-  fn max_face_u_span(mesh: &mesh::LinkedMesh<()>) -> f32 {
-    let uv = &mesh.vertex_channels["uv"];
-    let mut worst = 0f32;
-    for (_, face) in mesh.iter_faces() {
-      let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-      for &v in &face.vertices {
-        let u = uv.get(v).unwrap()[0];
-        lo = lo.min(u);
-        hi = hi.max(u);
-      }
-      worst = worst.max(hi - lo);
-    }
-    worst
-  }
-
-  #[test]
-  fn tube_on_straight_cylinder() {
-    let mesh = rendered_mesh("cylinder(1, 4, 24) | compute_uvs(type='tube') | render");
-    assert!(mesh.has_flag(mesh_flags::NO_WELD));
-    assert!(mesh.vertex_channels.contains_key("tangent"));
-    assert!(
-      max_face_u_span(&mesh) < 0.5,
-      "face bridges U seam: {}",
-      max_face_u_span(&mesh)
-    );
-    for uv in uvs(&mesh) {
-      assert!(
-        uv[0].is_finite() && uv[1].is_finite(),
-        "non-finite UV {uv:?}"
-      );
-    }
-    // height 4 / circumference 2pi -> isotropic V spans ~0.64; caps' islands stay near origin
-    let max_v = uvs(&mesh).iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(
-      max_v > 0.3 && max_v < 2.,
-      "isotropic V should be arc/perimeter-scaled, got {max_v}"
-    );
-  }
-
-  #[test]
-  fn tube_on_bent_pipe() {
-    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n \
-               v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube') | render";
-    let mesh = rendered_mesh(src);
-    assert!(
-      max_face_u_span(&mesh) < 0.5,
-      "face bridges U seam: {}",
-      max_face_u_span(&mesh)
-    );
-    let all = uvs(&mesh);
-    for uv in &all {
-      assert!(
-        uv[0].is_finite() && uv[1].is_finite(),
-        "non-finite UV {uv:?}"
-      );
-    }
-    // long thin tube: isotropic V must span multiple wraps (spine_len >> cross-section perimeter)
-    let max_v = all.iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(
-      max_v > 1.5,
-      "expected multiple V wraps on a long tube, got max_v {max_v}"
-    );
-  }
-
-  #[test]
-  fn tube_normalize_v() {
-    let src = "extrude_pipe(radius=0.4, resolution=8, path=0..16 -> |i| { t = i / 15\n \
-               v3(sin(t*pi)*2.5, t*5, 0) }) | compute_uvs(type='tube', options={ normalize_v: \
-               true }) | render";
-    let mesh = rendered_mesh(src);
-    let max_v = uvs(&mesh).iter().map(|uv| uv[1]).fold(f32::MIN, f32::max);
-    assert!(
-      max_v > 0.9 && max_v < 1.6,
-      "normalize_v should make V span ~0..1, got max_v {max_v}"
-    );
-  }
-
-  #[test]
-  fn tube_debug_dump_c_ring() {
-    if std::env::var("GEO_TUBE_DEBUG_DUMP").is_err() {
-      return;
-    }
-    // C-shaped arc tube (mesh CSG is wasm-only, so build the ring class via extrude_pipe)
-    let src = "extrude_pipe(radius=0.7, resolution=8, path=0..49 -> |i| {\nt = 0.05 + 0.9 * (i / \
-               48)\na = t * pi * 2\nv3(cos(a) * 4, 0, sin(a) * 4)\n}) | compute_uvs(type='tube') \
-               | render";
-    crate::parse_and_eval_program(src).unwrap();
-  }
-
-  #[test]
-  fn tube_rejects_genus_1() {
-    // hand-built torus: mesh CSG is wasm-only in tests (native eval_mesh_boolean returns an
-    // empty mesh), so construct genus-1 directly
-    let (nu, nv) = (12usize, 8usize);
-    let mut verts = Vec::new();
-    for i in 0..nu {
-      let a = i as f32 / nu as f32 * std::f32::consts::TAU;
-      for j in 0..nv {
-        let b = j as f32 / nv as f32 * std::f32::consts::TAU;
-        let r = 3. + b.cos();
-        verts.push(mesh::linked_mesh::Vec3::new(
-          a.cos() * r,
-          b.sin(),
-          a.sin() * r,
-        ));
-      }
-    }
-    let mut idx: Vec<u32> = Vec::new();
-    for i in 0..nu {
-      for j in 0..nv {
-        let (i1, j1) = ((i + 1) % nu, (j + 1) % nv);
-        let [a, b, c, d] = [i * nv + j, i1 * nv + j, i1 * nv + j1, i * nv + j1].map(|x| x as u32);
-        idx.extend_from_slice(&[a, b, c, a, c, d]);
-      }
-    }
-    let lm = mesh::LinkedMesh::from_indexed_vertices(&verts, &idx, None, None);
-    let handle = crate::MeshHandle::new(Rc::new(lm));
-    let err = super::tube_uvs(&handle, 1., 0.8, None).unwrap_err();
-    assert!(format!("{err}").contains("Euler"), "got: {err}");
-  }
-
-  #[test]
-  fn tube_unknown_option_errors() {
-    let err = crate::parse_and_eval_program(
-      "cylinder(1, 4, 24) | compute_uvs(type='tube', options={ bogus: 1 }) | render",
-    )
-    .unwrap_err();
-    assert!(format!("{err}").contains("Unknown option"), "got: {err}");
-  }
 }

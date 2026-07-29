@@ -15,6 +15,7 @@ members = [
   "csg_sandbox",
   "geoscript",
   "geoscript_repl",
+  "uv_solvers",
   "geoscript_analysis",
   "geoscript_analysis_wasm",
   "flight_recorder",

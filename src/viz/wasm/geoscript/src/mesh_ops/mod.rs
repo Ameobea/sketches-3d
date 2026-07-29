@@ -11,7 +11,5 @@ pub mod mesh_ops;
 pub mod parametric_surface;
 pub mod rail_sweep;
 pub mod stitch_contours;
-pub mod strip_uvs;
 pub mod tessellate_polygon;
-pub mod tube_uvs;
 pub mod voxels;

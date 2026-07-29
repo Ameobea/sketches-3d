@@ -52,6 +52,39 @@ pub(crate) fn read_cgal_output_mesh(
 }
 
 #[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(module = "src/geoscript/modelData")]
+extern "C" {
+  fn model_data_is_loaded(name: &str) -> bool;
+  fn model_data_get_verts(name: &str) -> Vec<f32>;
+  fn model_data_get_indices(name: &str) -> Vec<u32>;
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn baked_model_mesh(name: &str) -> Result<LinkedMesh<()>, ErrorStack> {
+  crate::or_async_dep_bit(crate::DEP_BIT_MODEL_DATA);
+  if !model_data_is_loaded(name) {
+    return Err(ErrorStack::new_uninitialized_module_with_args(
+      "model_data",
+      std::iter::once(name.to_owned()),
+    ));
+  }
+  Ok(LinkedMesh::from_raw_indexed(
+    &model_data_get_verts(name),
+    &model_data_get_indices(name),
+    None,
+    None,
+  ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn baked_model_mesh(name: &str) -> Result<LinkedMesh<()>, ErrorStack> {
+  Ok(match name {
+    "utah_teapot" => LinkedMesh::new_utah_teapot(),
+    _ => LinkedMesh::new_stanford_bunny(),
+  })
+}
+
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "src/geoscript/manifold")]
 extern "C" {
   pub fn simplify(handle: usize, tolerance: f32) -> Vec<u8>;

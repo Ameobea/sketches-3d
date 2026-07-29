@@ -1,0 +1,19 @@
+[package]
+name = "uv_solvers"
+version = "0.1.0"
+authors = ["Casey Primozic <casey@cprimozic.net>"]
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+fxhash = "0.2"
+nalgebra = "0.34"
+smallvec = "1.15"
+faer = { version = "0.24", default-features = false, features = ["std"] }
+
+mesh = { path = "../mesh" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.92"

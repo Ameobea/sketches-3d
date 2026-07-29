@@ -6,6 +6,9 @@ import flightRecorderWasmURL from 'src/viz/wasmComp/flight_recorder.wasm?url';
 import geoscriptReplWasmURL from 'src/viz/wasmComp/geoscript_repl_bg.wasm?url';
 import manifoldWasmURL from 'manifold-3d/manifold.wasm?url';
 import uvUnwrapWasmURL from 'src/viz/wasm/uv_unwrap/uv-unwrap.wasm?url';
+import uvSolversWasmURL from 'src/viz/wasmComp/uv_solvers_bg.wasm?url';
+import stanfordBunnyModelURL from 'src/geoscript/models/stanford_bunny.bin?url';
+import utahTeapotModelURL from 'src/geoscript/models/utah_teapot.bin?url';
 
 /**
  * Centralised registry of hashed wasm asset URLs, resolved by Vite from `?url`
@@ -25,7 +28,14 @@ export const WASM_ASSET_URLS = {
   geoscriptRepl: geoscriptReplWasmURL,
   manifold: manifoldWasmURL,
   uvUnwrap: uvUnwrapWasmURL,
+  uvSolvers: uvSolversWasmURL,
 } as const;
+
+/** Baked-model binaries fetched lazily via the `model_data` async dep. */
+export const MODEL_DATA_URLS: Record<string, string> = {
+  stanford_bunny: stanfordBunnyModelURL,
+  utah_teapot: utahTeapotModelURL,
+};
 
 /** Subset of URLs the geoscript worker needs in its `init()` call. */
 export interface GeoscriptWorkerWasmURLs {
@@ -35,6 +45,8 @@ export interface GeoscriptWorkerWasmURLs {
   clipper2: string;
   geodesics: string;
   uvUnwrap: string;
+  uvSolvers: string;
+  modelData: Record<string, string>;
 }
 
 export const getGeoscriptWorkerWasmURLs = (): GeoscriptWorkerWasmURLs => ({
@@ -44,4 +56,6 @@ export const getGeoscriptWorkerWasmURLs = (): GeoscriptWorkerWasmURLs => ({
   clipper2: WASM_ASSET_URLS.clipper2,
   geodesics: WASM_ASSET_URLS.geodesics,
   uvUnwrap: WASM_ASSET_URLS.uvUnwrap,
+  uvSolvers: WASM_ASSET_URLS.uvSolvers,
+  modelData: MODEL_DATA_URLS,
 });

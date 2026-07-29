@@ -12,11 +12,12 @@ use parry3d::{
 use slotmap::{new_key_type, Key, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::models::{
+  stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
+  utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
+};
 use crate::{
-  models::{
-    stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
-    utah_teapot::{UTAH_TEAPOT_INDICES, UTAH_TEAPOT_VERTICES},
-  },
   slotmap_utils::{
     build_slotmap_from_iter, build_slotmap_from_iter_with_key, ekey_ix, fkey_ix,
     slotmap_insert_dense, slotmap_insert_dense_with_key, vkey, vkey_ix, vkey_ix_mut, vkey_version,
@@ -3956,6 +3957,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     LinkedMesh::from_indexed_vertices(&vertices, &indices, None, None)
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
   pub fn new_utah_teapot() -> Self {
     let verts = unsafe {
       std::slice::from_raw_parts(
@@ -3969,6 +3971,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     Self::from_indexed_vertices(verts, &indices, None, None)
   }
 
+  #[cfg(not(target_arch = "wasm32"))]
   pub fn new_stanford_bunny() -> Self {
     let verts = unsafe {
       std::slice::from_raw_parts(

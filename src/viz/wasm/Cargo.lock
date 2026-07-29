@@ -529,7 +529,6 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "bitvec",
- "faer",
  "fxhash",
  "lazy_static",
  "log",
@@ -554,6 +553,7 @@ dependencies = [
  "strum",
  "svgtypes",
  "tessellation",
+ "uv_solvers",
  "wasm-bindgen",
 ]
 
@@ -1864,6 +1864,18 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "uv_solvers"
+version = "0.1.0"
+dependencies = [
+ "faer",
+ "fxhash",
+ "mesh",
+ "nalgebra",
+ "smallvec",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "version_check"

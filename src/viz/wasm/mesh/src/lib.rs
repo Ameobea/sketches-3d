@@ -9,6 +9,8 @@ pub use linked_mesh::LinkedMesh;
 pub mod slotmap_utils;
 
 pub mod csg;
+// Baked model data stays native-only; wasm fetches it lazily via the `model_data` async dep.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod models;
 pub mod triangle_intersection;
 
