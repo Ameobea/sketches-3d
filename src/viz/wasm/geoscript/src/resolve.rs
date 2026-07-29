@@ -25,8 +25,8 @@ use crate::{
     CaptureFrom, ClosureArg, ClosureBody, Expr, FunctionCallTarget, MapLiteralEntry,
     ProgramResolution, ResolvedBody, Statement, TopLevelStatement, VarRes,
   },
-  builtins::{fn_defs::get_builtin_fn_sig_entry_ix, resolve_builtin_impl},
-  ArgType, Callable, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
+  builtins::{fn_defs::get_builtin_fn_sig_entry_ix, resolve_builtin_impl, FUNCTION_ALIASES},
+  get_default_globals, ArgType, Callable, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value,
 };
 
 #[derive(Default)]
@@ -338,19 +338,34 @@ pub(crate) fn resolve_standalone_stmts(
   Ok((cctx.next_slot as u16, cctx.captures))
 }
 
-/// Looks up a free name in `scope` at capture materialization, falling back to builtins.
-pub(crate) fn resolve_capture_by_name(ctx: &EvalCtx, scope: &Scope, name: Sym) -> Option<Value> {
-  if let Some(v) = scope.get(name) {
-    return Some(v);
+/// Resolves a name against the static tables `@`-prefixed identifiers can see: default
+/// globals, then builtin fns + aliases. Never reads user-reachable scopes.
+pub(crate) fn resolve_global(name: &str) -> Option<Value> {
+  if let Some((_, val)) = get_default_globals().into_iter().find(|(n, _)| *n == name) {
+    return Some(val);
   }
-  ctx.with_resolved_sym(name, |name_str| {
-    let fn_entry_ix = get_builtin_fn_sig_entry_ix(name_str)?;
-    Some(Value::Callable(Rc::new(Callable::Builtin {
-      fn_entry_ix,
-      fn_impl: resolve_builtin_impl(name_str),
-      pre_resolved_signature: None,
-    })))
-  })
+  let canonical = if get_builtin_fn_sig_entry_ix(name).is_some() {
+    name
+  } else {
+    FUNCTION_ALIASES.get(name).copied()?
+  };
+  let fn_entry_ix = get_builtin_fn_sig_entry_ix(canonical)?;
+  Some(Value::Callable(Rc::new(Callable::Builtin {
+    fn_entry_ix,
+    fn_impl: resolve_builtin_impl(canonical),
+    pre_resolved_signature: None,
+  })))
+}
+
+/// Looks up a free name in `scope` at capture materialization, falling back to builtins.
+/// `@`-prefixed names skip the scope entirely.
+pub(crate) fn resolve_capture_by_name(ctx: &EvalCtx, scope: &Scope, name: Sym) -> Option<Value> {
+  if let Some(res) = ctx.with_resolved_sym(name, |s| s.strip_prefix('@').map(resolve_global)) {
+    return res;
+  }
+  scope
+    .get(name)
+    .or_else(|| ctx.with_resolved_sym(name, resolve_global))
 }
 
 /// Builds a resolved `Closure` value from a standalone body (optimizer-folded literal or

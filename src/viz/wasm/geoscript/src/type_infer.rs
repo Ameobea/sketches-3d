@@ -17,6 +17,7 @@ use crate::{
     FUNCTION_ALIASES,
   },
   match_binop_by_arg_types, match_signature_by_arg_types, match_unop_by_arg_types,
+  resolve::resolve_global,
   ty::{merge_types, AbstractType, CallableParam, CallableType, PartialApplication},
   ArgType, EvalCtx, Sym,
 };
@@ -144,7 +145,10 @@ pub fn resolve_builtin_call(
   arg_types: &[AbstractType],
   kwarg_types: &[(Sym, AbstractType)],
 ) -> CallResolution {
-  let Some(name_str) = ctx.interned_symbols.with_resolved(name, |s| s.to_string()) else {
+  let Some(name_str) = ctx
+    .interned_symbols
+    .with_resolved(name, |s| s.strip_prefix('@').unwrap_or(s).to_owned())
+  else {
     return CallResolution::NotBuiltin;
   };
   let (canonical_name, sigs) = if let Some(def) = fn_sigs().get(&name_str) {
@@ -469,7 +473,15 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
   match expr {
     Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
 
-    Expr::Ident { name, .. } => env.lookup(*name).cloned().unwrap_or(AbstractType::Unknown),
+    Expr::Ident { name, .. } => match env.lookup(*name) {
+      Some(ty) => ty.clone(),
+      None => ctx
+        .interned_symbols
+        .with_resolved(*name, |s| s.strip_prefix('@').and_then(resolve_global))
+        .flatten()
+        .map(|v| AbstractType::Concrete(v.get_type()))
+        .unwrap_or(AbstractType::Unknown),
+    },
 
     Expr::Call { call, .. } => infer_call_expr(ctx, env, call),
 
@@ -768,7 +780,7 @@ pub fn infer_reduce_fold_result(
   }
   let name_str = ctx
     .interned_symbols
-    .with_resolved(*name, |s| s.to_string())?;
+    .with_resolved(*name, |s| s.strip_prefix('@').unwrap_or(s).to_owned())?;
   let canonical = FUNCTION_ALIASES
     .get(name_str.as_str())
     .copied()
@@ -788,7 +800,7 @@ pub fn infer_reduce_fold_result(
       name: reducer_name, ..
     } if !is_local(*reducer_name) => ctx
       .interned_symbols
-      .with_resolved(*reducer_name, |s| s.to_string()),
+      .with_resolved(*reducer_name, |s| s.strip_prefix('@').unwrap_or(s).to_owned()),
     _ => None,
   };
   match reducer_result_type(reducer_ty, bare_builtin_name.as_deref()) {

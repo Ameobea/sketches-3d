@@ -124,14 +124,17 @@ impl AnalysisCtx {
     }
   }
 
-  /// Returns true if `name` is a builtin function (or alias).
+  /// Returns true if `name` is a builtin function (or alias). Tolerates the `@` global sigil.
   pub fn is_builtin(&self, name: &str) -> bool {
-    self.builtin_names.contains(name)
+    self
+      .builtin_names
+      .contains(name.strip_prefix('@').unwrap_or(name))
   }
 
-  /// Look up the `FnDef` for a builtin function name, resolving aliases.
-  /// Returns (canonical_name, def).
+  /// Look up the `FnDef` for a builtin function name, resolving aliases and stripping the
+  /// `@` global sigil. Returns (canonical_name, def).
   pub fn lookup_builtin<'a>(&self, name: &'a str) -> Option<(&'a str, &'static FnDef)> {
+    let name = name.strip_prefix('@').unwrap_or(name);
     // First try direct lookup
     if let Some(def) = fn_sigs().get(name) {
       return Some((name, def));
@@ -262,6 +265,26 @@ mod tests {
         .iter()
         .any(|d| d.message.contains("Undefined variable `x`")),
       "Expected undefined variable diagnostic for `x`, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
+  fn test_global_sigil_refs_resolve() {
+    let result = analyze("sin = 1\na = @sin(1.0) + @pi\nb = @v3(1.0, 2.0, 3.0).y");
+    assert!(
+      result.diagnostics.is_empty(),
+      "Expected no diagnostics, got: {:?}",
+      result.diagnostics
+    );
+
+    let result = analyze("a = @garbage");
+    assert!(
+      result
+        .diagnostics
+        .iter()
+        .any(|d| d.message.contains("Undefined variable `@garbage`")),
+      "Expected undefined variable diagnostic for `@garbage`, got: {:?}",
       result.diagnostics
     );
   }

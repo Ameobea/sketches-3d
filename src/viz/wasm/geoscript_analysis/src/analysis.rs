@@ -148,18 +148,25 @@ struct AnalysisWalker<'a> {
 
 impl<'a> AnalysisWalker<'a> {
   fn new(ctx: &'a EvalCtx) -> Self {
+    // `@`-prefixed variants are interned alongside the plain names: the `@` global sigil
+    // is kept in the symbol, so refs like `@sin` must match here to avoid undefined-var
+    // false positives.
     let mut builtin_syms = FxHashSet::default();
     for (name, _) in fn_sigs().entries() {
       builtin_syms.insert(ctx.interned_symbols.intern(name));
+      builtin_syms.insert(ctx.interned_symbols.intern(&format!("@{name}")));
     }
     for (alias, _) in FUNCTION_ALIASES.entries() {
       builtin_syms.insert(ctx.interned_symbols.intern(alias));
+      builtin_syms.insert(ctx.interned_symbols.intern(&format!("@{alias}")));
     }
 
     let mut initial_types = FxHashMap::default();
     for (name, val) in geoscript::get_default_globals() {
-      let sym = ctx.interned_symbols.intern(name);
-      initial_types.insert(sym, AbstractType::Concrete(val.get_type()));
+      let ty = AbstractType::Concrete(val.get_type());
+      for name in [name.to_owned(), format!("@{name}")] {
+        initial_types.insert(ctx.interned_symbols.intern(&name), ty.clone());
+      }
     }
 
     AnalysisWalker {

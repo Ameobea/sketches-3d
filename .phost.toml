@@ -5,6 +5,9 @@ name = "dream"
 commands = ["just build", "just docker-build"]
 image = "dream:latest"
 
+[deploy]
+health = { url = "http://localhost:5814/" }
+
 [deploy.run]
 net = "host"
 env = { PORT = "5814" }

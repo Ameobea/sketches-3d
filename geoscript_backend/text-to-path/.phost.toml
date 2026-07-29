@@ -1,0 +1,11 @@
+[app]
+name = "text-to-path-server"
+
+[build]
+commands = ["just docker-build"]
+image = "ameo/text-to-path:latest"
+
+[deploy.run]
+ports = ["5805:5805"]
+env = { PORT = "5805", GOOGLE_CACHE_MS = "86400000" }
+env_file = ".env"

@@ -1,0 +1,9 @@
+[app]
+name = "geoscript-thumbnail-renderer"
+
+[build]
+commands = ["just docker-build"]
+image = "geoscript-thumbnail-renderer:latest"
+
+[deploy.run]
+net = "host"

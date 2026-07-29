@@ -1,0 +1,18 @@
+[app]
+name = "geoscript-backend"
+
+[build]
+commands = ["just docker-build"]
+image = "ameo/geoscript-backend:latest"
+
+[deploy]
+health = { url = "http://localhost:5811/health" }
+
+[deploy.run]
+net = "host"
+env = { RUST_LOG = "info" }
+volumes = [
+  "/opt/conf/dream/geoscript-backend.yml:/opt/conf.yml",
+  "/opt/dream/db:/data",
+]
+cmd = ["/usr/local/bin/geoscript_backend", "--config", "/opt/conf.yml"]

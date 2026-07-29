@@ -95,6 +95,13 @@ const CASES: Case[] = [
   { src: 'align(from=1, to=2)', expected: { ok: 1 } },
   { src: 'from = 5', expected: { ok: 1 } },
   { src: 'import { a, b } from "mod"', expected: { ok: 1 } },
+  // `@` global-resolve sigil
+  { src: '@sin(1.0)', expected: { ok: 1 } },
+  { src: 'a = @pi', expected: { ok: 1 } },
+  { src: 'x | @print', expected: { ok: 1 } },
+  { src: 'f(x=@pi)', expected: { ok: 1 } },
+  { src: '@ sin(1.0)', expected: { err: true } },
+  { src: '@x = 1', expected: { err: true } },
 ];
 
 interface LezerResult {

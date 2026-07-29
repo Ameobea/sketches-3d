@@ -52,16 +52,16 @@ TypeHint { ":" Identifier }
 UnaryOp { "+" | "-" | "!" }
 
 ParenthesizedExpr { "(" Expr ")" }
-// `TightLParen` mirrors the Pest runtime's `func_call_start = @{ ident ~ "(" }` — a
+// `TightLParen` mirrors the Pest runtime's `func_call_start = @{ "@"? ~ ident ~ "(" }` — a
 // space before `(` means a separate `ParenthesizedExpr`, not a call.
-CallExpr { Identifier !call TightLParen commaSep<FunctionArg> ")" }
+CallExpr { (Identifier | GlobalIdentifier) !call TightLParen commaSep<FunctionArg> ")" }
 IfExpr { If !cond Expr BlockExpr ElseIfExpr* ElseExpr? }
 PathBlock { Path "{" statement* "}" }
 
 Path { @extend<Identifier, "path"> }
 From { @extend<Identifier, "from"> }
 
-FnArgDefaultValue { Identifier | literal | ArrayExpr | MapExpr | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
+FnArgDefaultValue { Identifier | GlobalIdentifier | literal | ArrayExpr | MapExpr | ParenthesizedExpr | CallExpr | BlockExpr | IfExpr }
 
 ClosureParamList {
   Pipe commaSep<Parameter { (Identifier | ArrayDestructure | MapDestructure) TypeHint? ("=" FnArgDefaultValue)? }> Pipe
@@ -79,6 +79,7 @@ Expr {
   CallExpr |
   literal |
   Identifier |
+  GlobalIdentifier |
   ArrayExpr |
   MapExpr |
   ClosureExpr { (LogicalOrOp TypeHint? Expr) | (ClosureParamList TypeHint? Expr) } |
@@ -164,6 +165,7 @@ MapEntry { MapKV | MapSplat }
   @precedence { LineComment, "/" }
 
   Identifier { $[a-zA-Z_] $[a-zA-Z0-9_]* }
+  GlobalIdentifier { "@" $[a-zA-Z_] $[a-zA-Z0-9_]* }
 
   If { "if" }
   ElseIf { "else if" }

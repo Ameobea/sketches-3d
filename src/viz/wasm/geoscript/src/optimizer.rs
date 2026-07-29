@@ -22,6 +22,7 @@ use crate::{
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
   match_binop_by_arg_types,
+  resolve::resolve_global,
   seq::EagerSeq,
   type_infer::infer_expr,
   ArgType, Callable, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2, Vec3,
@@ -1751,23 +1752,29 @@ fn fold_constants<'a>(
           }
         } else {
           // try to resolve it as a builtin
-          let (fn_entry_ix, fn_impl) =
-            ctx.with_resolved_sym(*name, |name| match fn_sigs().get(name) {
+          let (fn_entry_ix, fn_impl) = ctx.with_resolved_sym(*name, |name| {
+            let lookup = name.strip_prefix('@').unwrap_or(name);
+            match fn_sigs().get(lookup) {
               Some(_) => Ok((
-                get_builtin_fn_sig_entry_ix(name).unwrap(),
-                resolve_builtin_impl(name),
+                get_builtin_fn_sig_entry_ix(lookup).unwrap(),
+                resolve_builtin_impl(lookup),
               )),
-              None => match FUNCTION_ALIASES.get(name) {
+              None => match FUNCTION_ALIASES.get(lookup) {
                 Some(alias) => Ok((
                   get_builtin_fn_sig_entry_ix(alias).unwrap(),
                   resolve_builtin_impl(alias),
                 )),
                 None => {
                   let (line, col) = ctx.resolve_loc(*loc);
-                  Err(ErrorStack::new(format!("Variable `{name}` not found")).with_loc(line, col))
+                  Err(if lookup.len() < name.len() {
+                    ErrorStack::new(format!("No builtin named `{lookup}`")).with_loc(line, col)
+                  } else {
+                    ErrorStack::new(format!("Variable `{name}` not found")).with_loc(line, col)
+                  })
                 }
               },
-            })?;
+            }
+          })?;
 
           *target = FunctionCallTarget::Literal(Rc::new(Callable::Builtin {
             fn_entry_ix,
@@ -1990,6 +1997,23 @@ fn fold_constants<'a>(
       loc,
       res: _,
     } => {
+      let global = ctx.with_resolved_sym(id, |s| {
+        s.strip_prefix('@')
+          .map(|base| (resolve_global(base), base.to_owned()))
+      });
+      if let Some((val, base)) = global {
+        return match val {
+          Some(val) => {
+            *expr = val.into_literal_expr(loc);
+            Ok(())
+          }
+          None => {
+            let (line, col) = ctx.resolve_loc(loc);
+            Err(ErrorStack::new(format!("No builtin named `{base}`")).with_loc(line, col))
+          }
+        };
+      }
+
       if let Some(val) = local_scope.get(id) {
         if let TrackedValueRef::Const(val) = val {
           *expr = val.clone().into_literal_expr(loc);

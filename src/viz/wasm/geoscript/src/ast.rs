@@ -1085,7 +1085,7 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           ErrorStack::new(format!("Invalid float: {float_str}")).with_loc(line as u32, col as u32)
         })
     }
-    Rule::ident => Ok(Expr::Ident {
+    Rule::ident | Rule::global_ident => Ok(Expr::Ident {
       res: VarRes::Unresolved,
       name: ctx.interned_symbols.intern(expr.as_str()),
       loc,

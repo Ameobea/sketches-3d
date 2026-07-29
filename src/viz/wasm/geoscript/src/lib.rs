@@ -4338,6 +4338,58 @@ fn test_set_default_material_survives_rerun() {
   }
 }
 
+#[test]
+fn test_global_ident_bypasses_shadowing() {
+  let src = r#"
+sqrt = |x| x + 100.0
+a = @sqrt(4.0)
+b = sqrt(4.0)
+f = @sqrt
+c = f(9.0)
+pi = 3.0
+d = @pi
+e = pi
+g = @v3(1.0, 2.0, 3.0).y
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  let getf = |name: &str| match ctx.globals.get(ctx.interned_symbols.intern(name)) {
+    Some(Value::Float(f)) => f,
+    other => panic!("`{name}` = {other:?}"),
+  };
+  assert_eq!(getf("a"), 2.0);
+  assert_eq!(getf("b"), 104.0);
+  assert_eq!(getf("c"), 3.0);
+  assert!((getf("d") - std::f32::consts::PI).abs() < 1e-6);
+  assert_eq!(getf("e"), 3.0);
+  assert_eq!(getf("g"), 2.0);
+}
+
+#[test]
+fn test_global_ident_in_closure() {
+  let src = r#"
+sqrt = |x| x
+f = |x| @sqrt(x) + sqrt(x)
+a = f(4.0)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  let a = ctx.globals.get(ctx.interned_symbols.intern("a")).unwrap();
+  match a {
+    Value::Float(f) => assert_eq!(f, 6.0),
+    other => panic!("`a` = {other:?}"),
+  }
+}
+
+#[test]
+fn test_global_ident_unknown_builtin() {
+  for src in ["a = @garbage", "a = @garbage(1)"] {
+    let err = parse_and_eval_program(src).unwrap_err();
+    assert!(
+      format!("{err}").contains("No builtin named `garbage`"),
+      "unexpected error for {src:?}: {err}"
+    );
+  }
+}
+
 /// Pest/Lezer parser parity cases. Mirror in `src/geoscript/parser/parser.test.ts`;
 /// keep the two in sync by hand. `Ok(n)` = `n` statements; `Err(needle)` = error
 /// message contains `needle`.
@@ -4397,6 +4449,13 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   // `from` is contextual: a valid identifier/kwarg name except inside an import.
   ("align(from=1, to=2)", ParseOutcome::Ok(1)),
   ("from = 5", ParseOutcome::Ok(1)),
+  // `@` global-resolve sigil
+  ("@sin(1.0)", ParseOutcome::Ok(1)),
+  ("a = @pi", ParseOutcome::Ok(1)),
+  ("x | @print", ParseOutcome::Ok(1)),
+  ("f(x=@pi)", ParseOutcome::Ok(1)),
+  ("@ sin(1.0)", ParseOutcome::Err("")),
+  ("@x = 1", ParseOutcome::Err("")),
 ];
 
 #[cfg(test)]
