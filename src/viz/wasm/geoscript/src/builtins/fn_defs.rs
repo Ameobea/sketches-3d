@@ -702,6 +702,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a 3D point around the origin by individual Euler angle components in radians.",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "rot_global" => FnDef {
@@ -888,6 +896,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a 3D point around the origin by individual Euler angle components in radians.  A bare point has no frame of its own, so this matches `rot`.",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
+          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
+        ],
+        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.  A bare point has no frame of its own, so this matches `rot`.",
+        return_type: &[ArgType::Vec2],
+      },
     ],
   },
   "rot_around_center" => FnDef {
@@ -1058,120 +1074,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  "rot_x" => FnDef {
-    module: "mesh",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a mesh around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
-        return_type: &[ArgType::Mesh],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a light around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
-        return_type: &[ArgType::Light],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a transform matrix around its local x axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the x component set.",
-        return_type: &[ArgType::Mat4],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a 3D point around the x axis by `angle` radians.",
-        return_type: &[ArgType::Vec3],
-      },
-    ],
-  },
-  "rot_y" => FnDef {
-    module: "mesh",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a mesh around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
-        return_type: &[ArgType::Mesh],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a light around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
-        return_type: &[ArgType::Light],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a transform matrix around its local y axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the y component set.",
-        return_type: &[ArgType::Mat4],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a 3D point around the y axis by `angle` radians.",
-        return_type: &[ArgType::Vec3],
-      },
-    ],
-  },
-  "rot_z" => FnDef {
-    module: "mesh",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "mesh", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mesh), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a mesh around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
-        return_type: &[ArgType::Mesh],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "light", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Light), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a light around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
-        return_type: &[ArgType::Light],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "transform", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Mat4), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a transform matrix around its local z axis by `angle` radians (right-multiply: M = M * R).  Same as `rot` with only the z component set.",
-        return_type: &[ArgType::Mat4],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec3), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a 3D point around the z axis by `angle` radians.",
-        return_type: &[ArgType::Vec3],
-      },
-    ],
-  },
   "rot_axis" => FnDef {
     module: "mesh",
     examples: &[],
@@ -1211,20 +1113,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Rotates a 3D point around an arbitrary axis through the origin by `angle` radians.",
         return_type: &[ArgType::Vec3],
-      },
-    ],
-  },
-  "rot2" => FnDef {
-    module: "math",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
-          ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
-        ],
-        description: "Rotates a 2D point counter-clockwise around the origin by `angle` radians.  Matches the convention used by `path_rot` and by `v2(cos(a), sin(a))`.  Note this is the opposite winding from `rot_y`, since a `vec2` path's second component maps to world Z.",
-        return_type: &[ArgType::Vec2],
       },
     ],
   },

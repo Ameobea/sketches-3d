@@ -82,7 +82,6 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "trans" => "translate",
   "trans_global" => "translate_global",
   "rot_local" => "rot_around_center",
-  "rot_2d" => "rot2",
   "v2" => "vec2",
   "v3" => "vec3",
   "subdivide" => "tessellate",
@@ -979,24 +978,6 @@ fn mat4_impl(
   )))
 }
 
-/// `AXIS` is 0/1/2 for x/y/z.  Uses the same Tait-Bryan convention as `rot`, so
-/// `rot_y(a, obj)` is exactly `rot(v3(0, a, 0), obj)`.
-fn rot_axis_aligned_impl<const AXIS: u8>(
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-  let obj = arg_refs[1].resolve(args, kwargs);
-  let (x, y, z) = match AXIS {
-    0 => (angle, 0., 0.),
-    1 => (0., angle, 0.),
-    _ => (0., 0., angle),
-  };
-  let r = UnitQuaternion::from_euler_angles(x, y, z).to_homogeneous();
-  Ok(map_obj_transform(obj, |m| m * r))
-}
-
 fn rot_axis_impl(
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -1011,18 +992,16 @@ fn rot_axis_impl(
   Ok(map_obj_transform(obj, |m| m * r))
 }
 
-fn rot2_impl(
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
+/// Trailing signature of `rot`/`rot_global`, handled before `resolve_vec3_and_subject` since it
+/// breaks that helper's even/odd arg-shape convention.
+const ROT_VEC2_DEF_IX: usize = 8;
+
+/// Counter-clockwise, matching `path_rot` — the opposite winding from the 3D Tait-Bryan `rot`.
+fn rot_vec2(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>) -> Value {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
   let p = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
   let (sin, cos) = angle.sin_cos();
-  Ok(Value::Vec2(Vec2::new(
-    p.x * cos - p.y * sin,
-    p.x * sin + p.y * cos,
-  )))
+  Value::Vec2(Vec2::new(p.x * cos - p.y * sin, p.x * sin + p.y * cos))
 }
 
 fn transform_point_impl(
@@ -7427,6 +7406,9 @@ fn rot_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix == ROT_VEC2_DEF_IX {
+    return Ok(rot_vec2(arg_refs, args, kwargs));
+  }
   let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Right-multiply: M * R (rotate in local space)
@@ -7440,6 +7422,9 @@ fn rot_global_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix == ROT_VEC2_DEF_IX {
+    return Ok(rot_vec2(arg_refs, args, kwargs));
+  }
   let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Left-multiply: R * M (rotate in world space, around world origin)
@@ -9863,20 +9848,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "mat4" => builtin_fn!(mat4, |def_ix, arg_refs, args, kwargs, _ctx| {
     mat4_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "rot_x" => builtin_fn!(rot_x, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    rot_axis_aligned_impl::<0>(arg_refs, args, kwargs)
-  }),
-  "rot_y" => builtin_fn!(rot_y, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    rot_axis_aligned_impl::<1>(arg_refs, args, kwargs)
-  }),
-  "rot_z" => builtin_fn!(rot_z, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    rot_axis_aligned_impl::<2>(arg_refs, args, kwargs)
-  }),
   "rot_axis" => builtin_fn!(rot_axis, |_def_ix, arg_refs, args, kwargs, _ctx| {
     rot_axis_impl(arg_refs, args, kwargs)
-  }),
-  "rot2" => builtin_fn!(rot2, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    rot2_impl(arg_refs, args, kwargs)
   }),
   "transform_point" => builtin_fn!(transform_point, |_def_ix, arg_refs, args, kwargs, _ctx| {
     transform_point_impl(arg_refs, args, kwargs)
@@ -11752,47 +11725,65 @@ torus = parametric_surface(
   }
 
   #[test]
-  fn test_axis_rotation_helpers() {
+  fn test_rot_axis() {
     let src = r#"
-// A quarter turn about +y maps (1,0,0) -> (0,0,-1) under nalgebra's Tait-Bryan convention.
-py = rot_y(pi/2, v3(1, 0, 0))
-px = rot_x(pi/2, v3(0, 1, 0))
-pz = rot_z(pi/2, v3(1, 0, 0))
-
-// `rot_axis` about +y must agree with `rot_y`, and stays correct for an unnormalized axis.
+// A quarter turn about +y maps (1,0,0) -> (0,0,-1) under nalgebra's Tait-Bryan convention, so
+// `rot_axis` about +y must agree with `rot`.  The axis is auto-normalized.
 axis_y = rot_axis(v3(0, 5, 0), pi/2, v3(1, 0, 0))
+via_rot = rot(v3(0, pi/2, 0), v3(1, 0, 0))
+via_mat = (mat4() | rot_axis(v3(0, 1, 0), pi/2)) * v3(1, 0, 0)
+
 // Rotating about the axis you're already on is a no-op.
 axis_self = rot_axis(v3(1, 1, 1), 1.234, normalize(v3(1, 1, 1)))
-
-// Point and mat4 forms must agree.
-via_mat = (mat4() | rot_y(pi/2)) * v3(1, 0, 0)
-// ...and so must the `rot` equivalent.
-via_rot = (mat4() | rot(v3(0, pi/2, 0))) * v3(1, 0, 0)
-
-// `rot2` is CCW in its own plane, the opposite winding from `rot_y`.
-p2 = rot2(pi/2, v2(1, 0))
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
 
-    assert_vec3(&ctx, "py", [0., 0., -1.]);
-    assert_vec3(&ctx, "px", [0., 0., 1.]);
-    assert_vec3(&ctx, "pz", [0., 1., 0.]);
     assert_vec3(&ctx, "axis_y", [0., 0., -1.]);
+    assert_vec3(&ctx, "via_rot", [0., 0., -1.]);
+    assert_vec3(&ctx, "via_mat", [0., 0., -1.]);
+
     let axis_self = vec3_global(&ctx, "axis_self");
     let expected = Vec3::new(1., 1., 1.).normalize();
     assert!(
       (axis_self - expected).norm() < 1e-5,
       "rotating about its own axis moved the point: {axis_self:?}"
     );
-    assert_vec3(&ctx, "via_mat", [0., 0., -1.]);
-    assert_vec3(&ctx, "via_rot", [0., 0., -1.]);
 
-    let p2 = ctx.get_global("p2").unwrap();
-    let p2 = p2.as_vec2().unwrap();
+    let err = parse_and_eval_program("out = rot_axis(v3(0, 0, 0), 1, v3(1, 0, 0))").unwrap_err();
     assert!(
-      (p2.x).abs() < 1e-5 && (p2.y - 1.).abs() < 1e-5,
-      "rot2 should map (1,0) to (0,1), got {p2:?}"
+      format!("{err}").contains("non-zero"),
+      "expected a zero-axis error, got: {err}"
     );
+  }
+
+  #[test]
+  fn test_rot_on_2d_points() {
+    let src = r#"
+// One rotation axis in 2D, so a single angle in radians.  CCW, matching `path_rot`.
+quarter = rot(pi/2, v2(1, 0))
+// A bare point has no frame, so the global variant agrees.
+global = rot_global(pi/2, v2(1, 0))
+half = rot(pi, v2(1, 0))
+// Matches the `v2(cos a, sin a)` angle convention.
+from_angle = rot(0.7, v2(1, 0))
+expected = v2(cos(0.7), sin(0.7))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    let vec2_global = |name: &str| *ctx.get_global(name).unwrap().as_vec2().unwrap();
+    for name in ["quarter", "global"] {
+      let p = vec2_global(name);
+      assert!(
+        p.x.abs() < 1e-5 && (p.y - 1.).abs() < 1e-5,
+        "`{name}` should map (1,0) to (0,1), got {p:?}"
+      );
+    }
+    let half = vec2_global("half");
+    assert!(
+      (half.x + 1.).abs() < 1e-5 && half.y.abs() < 1e-5,
+      "half turn should map (1,0) to (-1,0), got {half:?}"
+    );
+    assert!((vec2_global("from_angle") - vec2_global("expected")).norm() < 1e-6);
   }
 
   #[test]
@@ -11854,12 +11845,10 @@ euler = rot(v3(0, pi/2, 0), v3(1, 0, 0))
 comps = rot(0, pi/2, 0, v3(1, 0, 0))
 // A bare point has no frame of its own, so the global variant matches.
 global = rot_global(v3(0, pi/2, 0), v3(1, 0, 0))
-// ...and must agree with the axis shorthand.
-shorthand = rot_y(pi/2, v3(1, 0, 0))
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
 
-    for name in ["euler", "comps", "global", "shorthand"] {
+    for name in ["euler", "comps", "global"] {
       assert_vec3(&ctx, name, [0., 0., -1.]);
     }
   }

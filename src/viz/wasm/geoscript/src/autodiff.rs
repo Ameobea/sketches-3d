@@ -1525,10 +1525,6 @@ static DERIV_RULES: phf::Map<&'static str, DerivRule> = phf::phf_map! {
   "vec3" => d_vec3,
 };
 
-// ---------------------------------------------------------------------------
-// Top-level entry point
-// ---------------------------------------------------------------------------
-
 fn seed_matches_param(seed: &Value, param_ty: ArgType) -> bool {
   matches!(
     (param_ty, seed),

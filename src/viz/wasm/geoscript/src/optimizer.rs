@@ -1,4 +1,9 @@
-use std::{cell::RefCell, hash::Hash, ops::ControlFlow, rc::Rc};
+use std::{
+  cell::{Cell, RefCell},
+  hash::Hash,
+  ops::ControlFlow,
+  rc::Rc,
+};
 
 use fxhash::FxHashMap;
 use rand::Rng;
@@ -162,6 +167,34 @@ fn arg_blocks_const_eval(value: &Value, allow_rng_const_eval: bool) -> bool {
 thread_local! {
   static CLOSURE_EFFECT_MEMO: RefCell<FxHashMap<(usize, bool), (Rc<ClosureBody>, bool)>> =
     RefCell::new(FxHashMap::default());
+  static CLOSURE_EFFECT_MEMO_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Bounds the lifetime of `CLOSURE_EFFECT_MEMO` to the outermost active optimization.  Entries pin
+/// an `Rc<ClosureBody>`, and the eval-time entry points (`grad`/`deriv`, SDF guards) run once per
+/// call rather than once per program, so without this the memo grows for the life of the thread.
+/// Nesting is real — a folded `grad(...)` optimizes a synthesized body from inside a fold pass — so
+/// only the outermost scope may clear.
+struct ClosureEffectMemoScope;
+
+impl ClosureEffectMemoScope {
+  fn enter() -> Self {
+    CLOSURE_EFFECT_MEMO_DEPTH.with(|d| d.set(d.get() + 1));
+    Self
+  }
+}
+
+impl Drop for ClosureEffectMemoScope {
+  fn drop(&mut self) {
+    let remaining = CLOSURE_EFFECT_MEMO_DEPTH.with(|d| {
+      let next = d.get() - 1;
+      d.set(next);
+      next
+    });
+    if remaining == 0 {
+      CLOSURE_EFFECT_MEMO.with(|m| m.borrow_mut().clear());
+    }
+  }
 }
 
 fn closure_body_memo(closure: &Closure, allow_rng: bool, compute: impl FnOnce() -> bool) -> bool {
@@ -1330,6 +1363,7 @@ pub(crate) fn optimize_synthesized_closure_body(
   captured_consts: &[(Sym, Value)],
   stmts: &mut [Statement],
 ) -> Result<(), ErrorStack> {
+  let _memo_scope = ClosureEffectMemoScope::enter();
   let mut scope = ScopeTracker::default();
   for (sym, val) in captured_consts {
     scope
@@ -2563,7 +2597,7 @@ fn fold_exec_ambient_setter_stmt(
 }
 
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
-  CLOSURE_EFFECT_MEMO.with(|m| m.borrow_mut().clear());
+  let _memo_scope = ClosureEffectMemoScope::enter();
   prescan_ambient_state(ctx, ast);
 
   let mut local_scope = ScopeTracker::default();
