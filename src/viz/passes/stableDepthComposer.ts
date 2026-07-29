@@ -1,173 +1,53 @@
 /**
- * StableDepthEffectComposer — a drop-in subclass of EffectComposer that keeps the depth
- * texture on a separate, immutable render target that is never part of the ping-pong rotation.
+ * StableDepthEffectComposer — EffectComposer subclass that fixes the stable-depth texture
+ * aliasing bug in postprocessing >= 6.39 and exposes the stable depth target.
  *
- * Problem this solves:
- *   EffectComposer attaches the depth texture to `inputBuffer`. After any pass with
- *   `needsSwap = true` runs (e.g. N8AOPostPass), inputBuffer and outputBuffer swap. The depth
- *   texture ends up on what is now `outputBuffer`. Any subsequent pass that both reads from
- *   that depth texture AND renders into `outputBuffer` creates a WebGL feedback loop, causing
- *   artifacts or missing output.
- *
- * Solution:
- *   Override render() to inject a single blitFramebuffer call immediately before the first
- *   swap fires each frame. At that point inputBuffer still holds the scene's fresh depth (the
- *   render passes run before any swap). The blit copies depth into a dedicated `stableDepthTarget`
- *   that is never used as a render output. All passes receive `stableDepthTarget.depthTexture` via
- *   `setDepthTexture`, so they always read from a texture that cannot be simultaneously bound as a
- *   framebuffer attachment — no feedback loop possible.
+ * postprocessing 6.39 moved stable-depth handling upstream: a dedicated `depthRenderTarget`
+ * that is never rendered into, populated via blitFramebuffer after every RenderPass, whose
+ * depthTexture is what all passes sample (preventing depth-read-while-attached feedback
+ * loops after ping-pong swaps). But its `createDepthTexture` builds the output/stable depth
+ * textures with `DepthTexture.clone()`. Cloned textures share their `Source`, and three
+ * allocates GL textures per (source, cacheKey), so all three "separate" depth textures
+ * alias one GL image. The per-frame depth blit then has the same image bound to READ and
+ * DRAW — GL_INVALID_OPERATION on ANGLE — and the feedback-loop protection is silently
+ * defeated. Shadowing `createDepthTexture` with independently-constructed textures restores
+ * the intended separation.
  */
 
-import { ClearMaskPass, EffectComposer, MaskPass, RenderPass, type Pass } from 'postprocessing';
+import { EffectComposer } from 'postprocessing';
 import * as THREE from 'three';
 
-class DepthCopyToStable {
-  readonly stableDepthTarget: THREE.WebGLRenderTarget;
-
-  constructor(width: number, height: number) {
-    const dt = new THREE.DepthTexture(width, height);
-    // Match EffectComposer.createDepthTexture() which uses UnsignedIntType (= DEPTH_COMPONENT24).
-    // If you construct EffectComposer with { stencilBuffer: true }, change to UnsignedInt248Type.
-    dt.type = THREE.UnsignedIntType;
-    this.stableDepthTarget = new THREE.WebGLRenderTarget(width, height, {
-      depthBuffer: true,
-      depthTexture: dt,
-    });
+export class StableDepthEffectComposer extends EffectComposer {
+  get stableDepthTarget(): THREE.WebGLRenderTarget | null {
+    return (this as any).depthRenderTarget ?? null;
   }
 
-  blit(renderer: THREE.WebGLRenderer, inputBuffer: THREE.WebGLRenderTarget): void {
-    const gl = renderer.getContext() as WebGL2RenderingContext;
-    const props = (renderer as any).properties;
-
-    // setRenderTarget lazily creates the FBO for stableDepthTarget (first call and after resize).
-    renderer.setRenderTarget(this.stableDepthTarget);
-
-    const srcFBO: WebGLFramebuffer = props.get(inputBuffer).__webglFramebuffer;
-    const dstFBO: WebGLFramebuffer = props.get(this.stableDepthTarget).__webglFramebuffer;
+  /** Shadows EffectComposer's private method of the same name (called from `addPass`). */
+  protected createDepthTexture(): void {
+    const inputBuffer = (this as any).inputBuffer as THREE.WebGLRenderTarget;
+    const outputBuffer = (this as any).outputBuffer as THREE.WebGLRenderTarget;
     const { width, height } = inputBuffer;
 
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, srcFBO);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dstFBO);
-    gl.blitFramebuffer(0, 0, width, height, 0, 0, width, height, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
-
-    // Restore GL state so three.js's internal tracking stays consistent.
-    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
-    renderer.setRenderTarget(null);
-  }
-
-  setSize(width: number, height: number): void {
-    this.stableDepthTarget.setSize(width, height);
-  }
-
-  dispose(): void {
-    this.stableDepthTarget.dispose();
-  }
-}
-
-export class StableDepthEffectComposer extends EffectComposer {
-  private stableDepth: DepthCopyToStable | null = null;
-
-  get stableDepthTarget(): THREE.WebGLRenderTarget | null {
-    return this.stableDepth?.stableDepthTarget ?? null;
-  }
-
-  override addPass(pass: Pass, index?: number): void {
-    const hadDepth = !!(this as any).depthTexture;
-    super.addPass(pass, index);
-    const hasDepth = !!(this as any).depthTexture;
-
-    if (!hadDepth && hasDepth) {
-      // Depth texture was just created for the first time. Create the stable target.
-      const { width, height } = (this as any).inputBuffer as THREE.WebGLRenderTarget;
-      this.stableDepth = new DepthCopyToStable(width, height);
-
-      // Redirect every existing pass to use the stable depth texture instead of the
-      // ping-pong buffer's depth texture.
-      const stableDT = this.stableDepth.stableDepthTarget.depthTexture!;
-      for (const p of (this as any).passes as Pass[]) {
-        p.setDepthTexture(stableDT);
+    const mkDepthTexture = (name: string) => {
+      const dt = new THREE.DepthTexture(width, height);
+      if (inputBuffer.stencilBuffer) {
+        dt.format = THREE.DepthStencilFormat;
+        dt.type = THREE.UnsignedInt248Type;
+      } else {
+        dt.type = THREE.FloatType;
       }
-    } else if (this.stableDepth) {
-      // Stable depth already established — give it to this newly-added pass.
-      pass.setDepthTexture(this.stableDepth.stableDepthTarget.depthTexture!);
-    }
-  }
+      dt.name = name;
+      return dt;
+    };
 
-  override render(deltaTime?: number): void {
-    const renderer = this.getRenderer();
-    const stableDepth = this.stableDepth;
-
-    if (!renderer || !stableDepth) {
-      super.render(deltaTime);
-      return;
-    }
-
-    // Replicate EffectComposer's render loop with one addition: blit depth to the stable
-    // target immediately before the first pass that swaps buffers. At that moment inputBuffer
-    // still contains the scene's current-frame depth written by the render passes above.
-    if (deltaTime === undefined) {
-      (this as any).timer.update();
-      deltaTime = (this as any).timer.getDelta();
-    }
-
-    const passes = (this as any).passes as Pass[];
-    let inputBuffer = (this as any).inputBuffer as THREE.WebGLRenderTarget;
-    let outputBuffer = (this as any).outputBuffer as THREE.WebGLRenderTarget;
-    const copyPass = (this as any).copyPass as Pass;
-
-    let depthBlitted = false;
-    let stencilTest = false;
-
-    for (const pass of passes) {
-      if (!pass.enabled) continue;
-
-      // Blit depth as soon as the `RenderPass` stage is over
-      if (!depthBlitted && inputBuffer.depthTexture && (!(pass instanceof RenderPass) || pass.needsSwap)) {
-        stableDepth.blit(renderer, inputBuffer);
-        depthBlitted = true;
-      }
-
-      pass.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-
-      if (pass.needsSwap) {
-        if (stencilTest) {
-          const prevRTS = copyPass.renderToScreen;
-          copyPass.renderToScreen = pass.renderToScreen;
-          const gl = renderer.getContext();
-          const stencilBuf = (renderer as any).state.buffers.stencil;
-          stencilBuf.setFunc(gl.NOTEQUAL, 1, 0xffffffff);
-          copyPass.render(renderer, inputBuffer, outputBuffer, deltaTime, stencilTest);
-          stencilBuf.setFunc(gl.EQUAL, 1, 0xffffffff);
-          copyPass.renderToScreen = prevRTS;
-        }
-        const buf = inputBuffer;
-        inputBuffer = outputBuffer;
-        outputBuffer = buf;
-      }
-
-      if (pass instanceof MaskPass) {
-        stencilTest = true;
-      } else if (pass instanceof ClearMaskPass) {
-        stencilTest = false;
-      }
-    }
-  }
-
-  override setSize(width: number, height: number, updateStyle?: boolean): void {
-    // postprocessing's types omit `updateStyle` even though the runtime supports it.
-    (super.setSize as (w: number, h: number, updateStyle?: boolean) => void)(width, height, updateStyle);
-    if (this.stableDepth) {
-      const renderer = this.getRenderer();
-      if (renderer) {
-        const drawingBufferSize = renderer.getDrawingBufferSize(new THREE.Vector2());
-        this.stableDepth.setSize(drawingBufferSize.x, drawingBufferSize.y);
-      }
-    }
-  }
-
-  override dispose(): void {
-    this.stableDepth?.dispose();
-    super.dispose();
+    inputBuffer.depthTexture = mkDepthTexture('EffectComposer.InputDepth');
+    outputBuffer.depthTexture = mkDepthTexture('EffectComposer.OutputDepth');
+    inputBuffer.dispose();
+    outputBuffer.dispose();
+    (this as any).depthRenderTarget = new THREE.WebGLRenderTarget(width, height, {
+      depthBuffer: true,
+      stencilBuffer: inputBuffer.stencilBuffer,
+      depthTexture: mkDepthTexture('EffectComposer.StableDepth'),
+    });
   }
 }
