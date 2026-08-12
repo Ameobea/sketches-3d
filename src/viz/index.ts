@@ -1095,8 +1095,10 @@ export const initViz = (
   }: InitVizArgs
 ) => {
   // start loading some critical async deps as early as possible
-  preFetchFlightRecorderWasm();
-  getAmmoJS();
+  if (sceneDef.physics !== false) {
+    preFetchFlightRecorderWasm();
+    getAmmoJS();
+  }
 
   initSentry();
 

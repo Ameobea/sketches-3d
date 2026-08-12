@@ -12,6 +12,8 @@ export interface SceneRegistryEntry {
   useSceneDef?: boolean;
   /** When false, the audio engine is not initialized for this scene. */
   audio?: boolean;
+  /** When false, the Ammo + flight-recorder wasm prefetches are skipped (orbit scenes only). */
+  physics?: boolean;
   metadata: SceneMetadata;
 }
 
@@ -317,6 +319,7 @@ export const SCENE_REGISTRY: Record<string, SceneRegistryEntry> = {
     legacyLights: false,
     metadata: { title: 'geoscript ' },
     audio: false,
+    physics: false,
   },
   scene_def_test: {
     modulePath: 'src/viz/scenes/scene_def_test/scene_def_test',

@@ -9,7 +9,7 @@ import {
   type PostprocessingPipelineController,
 } from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
-import ReplUi from './ReplUI.svelte';
+import GeotoyApp from 'src/geotoy/GeotoyApp.svelte';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
 import type { MaterialOverrideMode, ReplCtx } from './types';
 import { buildGeotoyKeymap } from './keymap';
@@ -31,7 +31,7 @@ const initRepl = async (
   onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void,
   pipelineController: PostprocessingPipelineController | null
 ) => {
-  mount(ReplUi, {
+  mount(GeotoyApp, {
     target: document.getElementById('viz-container')!,
     props: {
       viz,

@@ -325,4 +325,10 @@ export interface SceneDef {
    * playground) that have no sfx or spatial audio.  Default: true.
    */
   audio?: boolean;
+  /**
+   * When false, the Ammo + flight-recorder wasm prefetches are skipped.  Only valid
+   * for orbit-view scenes; a non-orbit scene with `physics: false` still works but
+   * cold-loads Ammo at spawn.  Default: true.
+   */
+  physics?: boolean;
 }
