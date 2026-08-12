@@ -76,6 +76,7 @@ pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
+pub(crate) mod texture;
 pub(crate) mod trace_path;
 
 pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
@@ -9715,6 +9716,7 @@ fn str_impl(
         Value::String(s) => s.clone(),
         Value::Material(material) => format!("{material:?}"),
         Value::Mat4(m) => format!("{m:?}"),
+        Value::Texture(tex) => format!("{tex:?}"),
         Value::Nil => String::from("nil"),
       };
       Ok(Value::String(s))
@@ -10190,6 +10192,18 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "print" => builtin_fn!(print, |_def_ix, _arg_refs, args, kwargs, ctx| {
     print_impl(ctx, args, kwargs)
+  }),
+  "texture" => builtin_fn!(texture, |_def_ix, arg_refs, args, kwargs, ctx| {
+    texture::texture_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "blur" => builtin_fn!(blur, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::blur_impl(arg_refs, args, kwargs)
+  }),
+  "height_to_normal" => builtin_fn!(height_to_normal, |def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::height_to_normal_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "render_texture" => builtin_fn!(render_texture, |_def_ix, arg_refs, args, kwargs, ctx| {
+    texture::render_texture_impl(ctx, arg_refs, args, kwargs)
   }),
   "render" => builtin_fn!(render, |def_ix, arg_refs, args, kwargs, ctx| {
     render_impl(ctx, def_ix, arg_refs, args, kwargs)

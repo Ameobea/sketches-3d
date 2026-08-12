@@ -58,14 +58,18 @@ export type EnvironmentConfig =
       setBackground?: boolean;
     };
 
+export interface ViewState {
+  cameraPosition: [number, number, number];
+  target: [number, number, number];
+  fov?: number; // for `PerspectiveCamera`
+  zoom?: number; // for `OrthographicCamera`
+  projection?: 'perspective' | 'orthographic'; // defaults to perspective when absent
+}
+
 export interface CompositionVersionMetadata {
-  view: {
-    cameraPosition: [number, number, number];
-    target: [number, number, number];
-    fov?: number; // for `PerspectiveCamera`
-    zoom?: number; // for `OrthographicCamera`
-    projection?: 'perspective' | 'orthographic'; // defaults to perspective when absent
-  };
+  /** Per-tree view state keyed by tree id. */
+  views?: Record<string, ViewState>;
+  activeTreeId?: string;
   materials?: MaterialDefinitions;
   preludeEjected?: boolean;
   environment?: EnvironmentConfig;
@@ -122,13 +126,56 @@ export const isTreeDefV1 = (raw: unknown): raw is TreeDef => {
   return !!t && t.version === 1 && typeof t.rootId === 'string' && !!t.nodes && typeof t.nodes === 'object';
 };
 
+export type TreeKind = 'mesh' | 'texture';
+
+export interface TreeEntry {
+  id: string;
+  kind: TreeKind;
+  name: string;
+  tree: TreeDef;
+}
+
+/** v2 container: a composition version holds 1+ typed trees, each core an intact v1 `TreeDef`. */
+export interface CompositionDoc {
+  version: 2;
+  trees: TreeEntry[];
+}
+
+export const isCompositionDocV2 = (raw: unknown): raw is CompositionDoc => {
+  const d = raw as CompositionDoc | null;
+  return (
+    !!d &&
+    d.version === 2 &&
+    Array.isArray(d.trees) &&
+    d.trees.length > 0 &&
+    d.trees.every(t => !!t && typeof t.id === 'string' && typeof t.name === 'string' && isTreeDefV1(t.tree))
+  );
+};
+
+/** The entry a consumer binds to when it doesn't name one: first tree of `kind`, else first tree. */
+export const defaultTreeEntry = (doc: CompositionDoc, kind: TreeKind = 'mesh'): TreeEntry =>
+  doc.trees.find(t => t.kind === kind) ?? doc.trees[0];
+
+export const defaultTree = (doc: CompositionDoc, kind: TreeKind = 'mesh'): TreeDef =>
+  defaultTreeEntry(doc, kind).tree;
+
+export const wrapTree = (tree: TreeDef): CompositionDoc => ({
+  version: 2,
+  trees: [{ id: 'main', kind: 'mesh', name: 'main', tree }],
+});
+
+export const withTree = (doc: CompositionDoc, treeId: string, tree: TreeDef): CompositionDoc => ({
+  ...doc,
+  trees: doc.trees.map(t => (t.id === treeId ? { ...t, tree } : t)),
+});
+
 /** The reserved name of the always-present root compositor node. */
 export const ROOT_NODE_NAME = '_root';
 
 export interface CompositionVersion {
   id: number;
   composition_id: number;
-  tree: TreeDef;
+  tree: CompositionDoc;
   created_at: string;
   metadata: CompositionVersionMetadata;
   thumbnail_url?: string | null;
@@ -137,14 +184,14 @@ export interface CompositionVersion {
 export interface CreateComposition {
   title: string;
   description: string;
-  tree: TreeDef;
+  tree: CompositionDoc;
   is_shared: boolean;
   metadata: CompositionVersionMetadata;
   tags?: string[];
 }
 
 export interface CreateCompositionVersion {
-  tree: TreeDef;
+  tree: CompositionDoc;
   metadata: CompositionVersionMetadata;
 }
 
@@ -206,7 +253,15 @@ export const buildLegacyRootTree = (source: string): TreeDef => {
 
 export const buildEmptyTree = (): TreeDef => buildLegacyRootTree('');
 
-export const getRootNodeSource = (tree: TreeDef): string => tree.nodes[tree.rootId]?.source ?? '';
+export const buildDefaultDoc = (source: string): CompositionDoc => wrapTree(buildLegacyRootTree(source));
+
+export const buildEmptyDoc = (): CompositionDoc => wrapTree(buildEmptyTree());
+
+/** Root-node source of the container's default tree. */
+export const getRootNodeSource = (doc: CompositionDoc): string => {
+  const tree = defaultTree(doc);
+  return tree.nodes[tree.rootId]?.source ?? '';
+};
 
 export class APIError extends Error {
   public status: number;

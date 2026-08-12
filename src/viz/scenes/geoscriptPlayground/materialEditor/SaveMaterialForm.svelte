@@ -56,7 +56,8 @@
         rows="3"
         maxlength="2000"
         placeholder="what it looks like; credit / attribution / license"
-        bind:value={description}></textarea>
+        bind:value={description}
+      ></textarea>
     </div>
     <div class="form-group">
       <label for="material-tags">tags</label>

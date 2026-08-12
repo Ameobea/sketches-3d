@@ -28,13 +28,15 @@
   import { Textures } from './materialEditor/state.svelte';
   import {
     cloneTransform3,
+    withTree,
     type Composition,
+    type CompositionDoc,
     type CompositionVersion,
-    type CompositionVersionMetadata,
     type EnvironmentConfig,
     type GizmoValue,
     type Transform3,
     type TreeDef,
+    type ViewState,
   } from 'src/geoscript/geotoyAPIClient';
   import {
     clearSavedState,
@@ -135,7 +137,9 @@
   let repl = $derived(workerManager.getWorker());
 
   const {
+    doc: initialDoc,
     tree: initialTree,
+    activeTreeId: initialActiveTreeId,
     materials: initialMatDefs,
     lastRunWasSuccessful,
     view: initialView,
@@ -143,9 +147,19 @@
     environment: initialEnvironment,
   } = $derived(loadState(userData));
 
+  // Container the active tree lives in; tree edits flow through `treeState`, container-level
+  // structure is immutable in the editor for now, so this only changes on fork/clear.
+  let doc = $state<CompositionDoc>(untrack(() => initialDoc));
+  let activeTreeId = $state(untrack(() => initialActiveTreeId));
+  const currentDoc = (): CompositionDoc => withTree(doc, activeTreeId, treeState.serialize());
+
+  const serverDoc = untrack(() => userData?.initialComposition?.version.tree);
   const treeState = new TreeState({
     initial: untrack(() => initialTree),
-    savedBaseline: untrack(() => userData?.initialComposition?.version.tree) ?? untrack(() => initialTree),
+    savedBaseline: serverDoc
+      ? (serverDoc.trees.find(t => t.id === untrack(() => initialActiveTreeId))?.tree ??
+        untrack(() => initialTree))
+      : untrack(() => initialTree),
   });
   treeState.setSelected(untrack(() => initialTree).rootId);
 
@@ -223,7 +237,8 @@
     const forkedFrom = userData?.initialComposition?.comp;
     await saveNewVersion(
       newComp,
-      treeState.serialize(),
+      currentDoc(),
+      activeTreeId,
       viz,
       materialDefinitions,
       preludeEjected,
@@ -850,8 +865,7 @@
   };
 
   // Solo + disabled visibility. Membership uses the last-run tree; disabled flags
-  // come from the live tree so toggles are instant. Precomputed sets keep the
-  // per-mesh check O(1).
+  // come from the live tree so toggles are instant.
   $effect(() => {
     const soloId = treeState.state.soloId;
     const renderTree = lastRunTree;
@@ -910,7 +924,8 @@
   const beforeUnloadHandler = () =>
     saveState(
       {
-        tree: treeState.serialize(),
+        doc: currentDoc(),
+        activeTreeId,
         materials: materialDefinitions,
         view: getView(viz),
         preludeEjected,
@@ -960,10 +975,12 @@
         run: () => {
           saveState(
             {
-              tree: treeState.serialize(),
+              doc: currentDoc(),
+              activeTreeId,
               materials: materialDefinitions,
               view: getView(viz),
               preludeEjected,
+              environment,
             },
             userData
           );
@@ -1637,7 +1654,8 @@
   const toggleEditorCollapsed = () => {
     saveState(
       {
-        tree: treeState.serialize(),
+        doc: currentDoc(),
+        activeTreeId,
         materials: materialDefinitions,
         view: getView(viz),
         preludeEjected,
@@ -1700,7 +1718,7 @@
     exportDialog?.showModal();
   };
 
-  const setView = async (view: CompositionVersionMetadata['view']) => {
+  const setView = async (view: ViewState) => {
     while (!viz.orbitControls) {
       await new Promise(resolve => setTimeout(resolve, 10));
     }
@@ -1732,7 +1750,8 @@
     isDirty = true;
     saveState(
       {
-        tree: treeState.serialize(),
+        doc: currentDoc(),
+        activeTreeId,
         materials: materialDefinitions,
         view: getView(viz),
         preludeEjected,
@@ -1752,6 +1771,8 @@
 
     const serverState = getServerState(userData);
 
+    doc = serverState.doc;
+    activeTreeId = serverState.activeTreeId;
     treeState.replaceTree(serverState.tree);
     treeState.setSelected(serverState.tree.rootId);
 
@@ -1777,7 +1798,8 @@
 
     saveState(
       {
-        tree: serverState.tree,
+        doc: serverState.doc,
+        activeTreeId: serverState.activeTreeId,
         materials: serverState.materials,
         view: serverState.view,
         preludeEjected: serverState.preludeEjected,
@@ -2138,7 +2160,8 @@
           {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}
             <SaveControls
               comp={userData.initialComposition?.comp}
-              getCurrentTree={() => treeState.serialize()}
+              getCurrentDoc={currentDoc}
+              {activeTreeId}
               materials={materialDefinitions}
               {viz}
               {preludeEjected}

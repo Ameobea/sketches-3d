@@ -5,8 +5,8 @@
     createComposition,
     type Composition,
     type CompositionVersion,
+    type CompositionDoc,
     type EnvironmentConfig,
-    type TreeDef,
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
@@ -22,7 +22,8 @@
     viz,
     comp,
     materials,
-    getCurrentTree,
+    getCurrentDoc,
+    activeTreeId,
     onSave,
     preludeEjected,
     environment,
@@ -32,7 +33,8 @@
     viz: Viz;
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
-    getCurrentTree: () => TreeDef;
+    getCurrentDoc: () => CompositionDoc;
+    activeTreeId: string;
     onSave: () => void;
     preludeEjected: boolean;
     environment: EnvironmentConfig | undefined;
@@ -52,7 +54,13 @@
   const createNewComposition = async (): Promise<
     { type: 'ok'; comp: Composition } | { type: 'error'; msg: string }
   > => {
-    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected, environment);
+    const metadataRes = buildCompositionVersionMetadata(
+      viz,
+      activeTreeId,
+      materials,
+      preludeEjected,
+      environment
+    );
     if (metadataRes.type === 'error') {
       return metadataRes;
     }
@@ -61,7 +69,7 @@
         title,
         description,
         metadata: metadataRes.metadata,
-        tree: getCurrentTree(),
+        tree: getCurrentDoc(),
         is_shared: isShared,
         tags,
       });
@@ -84,7 +92,8 @@
       if (comp) {
         const res = await saveNewVersion(
           comp,
-          getCurrentTree(),
+          getCurrentDoc(),
+          activeTreeId,
           viz,
           materials,
           preludeEjected,

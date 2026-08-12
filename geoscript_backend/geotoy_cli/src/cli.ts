@@ -34,6 +34,24 @@ interface TreeDef {
   nodes: Record<string, NodeDef>;
 }
 
+interface TreeEntry {
+  id: string;
+  kind: 'mesh' | 'texture';
+  name: string;
+  tree: TreeDef;
+}
+
+/** v2 container: 1+ typed trees, each an intact v1-shaped core. */
+interface CompositionDoc {
+  version: 2;
+  trees: TreeEntry[];
+}
+
+const wrapTree = (tree: TreeDef): CompositionDoc => ({
+  version: 2,
+  trees: [{ id: 'main', kind: 'mesh', name: 'main', tree }],
+});
+
 interface ViewDef {
   cameraPosition: [number, number, number];
   target: [number, number, number];
@@ -65,7 +83,7 @@ interface RenderOptions {
 }
 
 interface TransientPayload {
-  tree: TreeDef;
+  tree: CompositionDoc;
   metadata: {
     view?: ViewDef;
     materials?: unknown;
@@ -151,7 +169,7 @@ const buildPayload = (input: string): TransientPayload => {
   let rootSource: string;
   let globalsSource = '';
   let extraNodes: { name: string; source: string }[] = [];
-  let tree: TreeDef | null = null;
+  let doc: CompositionDoc | null = null;
   let view: ViewDef | undefined;
   let materials: unknown;
   let environment: unknown;
@@ -166,7 +184,15 @@ const buildPayload = (input: string): TransientPayload => {
     const mainPath = path.join(input, 'main.geo');
     const treePath = path.join(input, 'tree.json');
     if (fs.existsSync(treePath)) {
-      tree = parseJsonFile(treePath) as TreeDef;
+      // Accepts either a bare v1 tree core (auto-wrapped) or a full v2 container.
+      const parsed = parseJsonFile(treePath) as TreeDef | CompositionDoc;
+      if (parsed && (parsed as CompositionDoc).version === 2) {
+        doc = parsed as CompositionDoc;
+      } else if (parsed && (parsed as TreeDef).version === 1) {
+        doc = wrapTree(parsed as TreeDef);
+      } else {
+        die(`${treePath}: expected a v1 TreeDef or v2 composition container`);
+      }
       rootSource = '';
     } else if (fs.existsSync(mainPath)) {
       rootSource = fs.readFileSync(mainPath, 'utf8');
@@ -202,7 +228,7 @@ const buildPayload = (input: string): TransientPayload => {
     if (fs.existsSync(ejectPath)) preludeEjected = true;
   }
 
-  if (!tree) {
+  if (!doc) {
     const rootId = randomUUID();
     const nodes: Record<string, NodeDef> = {
       [rootId]: {
@@ -224,11 +250,11 @@ const buildPayload = (input: string): TransientPayload => {
       };
       nodes[rootId].children.push(id);
     }
-    tree = { version: 1, rootId, globalsSource, nodes };
+    doc = wrapTree({ version: 1, rootId, globalsSource, nodes });
   }
 
   return {
-    tree,
+    tree: doc,
     metadata: {
       view,
       materials,

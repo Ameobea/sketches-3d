@@ -150,7 +150,7 @@ export const generateGradientEnvironment = (
     data[rowOff + 1] = THREE.DataUtils.toHalfFloat(tmp.g);
     data[rowOff + 2] = THREE.DataUtils.toHalfFloat(tmp.b);
     data[rowOff + 3] = alpha;
-    for (let filled = 1; filled < width;) {
+    for (let filled = 1; filled < width; ) {
       const n = Math.min(filled, width - filled);
       data.copyWithin(rowOff + filled * 4, rowOff, rowOff + n * 4);
       filled += n;

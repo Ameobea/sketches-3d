@@ -423,6 +423,7 @@ impl Callable {
           "print"
             | "render"
             | "render_path"
+            | "render_texture"
             | "set_default_material"
             | "call"
             | "randv"
@@ -685,6 +686,47 @@ impl Drop for ManifoldHandle {
 pub type Vec2 = Vector2<f32>;
 pub type Mat4 = Matrix4<f32>;
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextureWrap {
+  Repeat,
+  Clamp,
+  Mirror,
+}
+
+impl TextureWrap {
+  pub fn from_name(s: &str) -> Result<Self, ErrorStack> {
+    match s {
+      "repeat" => Ok(TextureWrap::Repeat),
+      "clamp" => Ok(TextureWrap::Clamp),
+      "mirror" => Ok(TextureWrap::Mirror),
+      _ => Err(ErrorStack::new(format!(
+        "Invalid texture wrap mode: \"{s}\"; expected one of \"repeat\", \"clamp\", \"mirror\""
+      ))),
+    }
+  }
+}
+
+pub struct TextureHandle {
+  /// Row-major interleaved f32; len = width * height * channels. Row y maps to
+  /// v = (y + 0.5) / height.
+  pub pixels: Rc<Vec<f32>>,
+  pub width: usize,
+  pub height: usize,
+  pub channels: usize,
+  pub wrap: TextureWrap,
+}
+
+impl Debug for TextureHandle {
+  #[cold]
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(
+      f,
+      "Texture {{ {}x{}, channels: {}, wrap: {:?} }}",
+      self.width, self.height, self.channels, self.wrap
+    )
+  }
+}
+
 #[repr(u8)]
 pub enum Value {
   Nil,
@@ -704,6 +746,7 @@ pub enum Value {
   // wasm32 the `Rc` is a 4-byte thin pointer, keeping `Value` at 16 bytes.
   // Must stay after discriminant 5 so the `clone` fast path doesn't shallow-copy it.
   Mat4(Rc<Mat4>),
+  Texture(Rc<TextureHandle>),
 }
 
 // The wasm-side `maybe_init` also asserts this at runtime; this fails the build.
@@ -781,6 +824,7 @@ fn clone_value_slow(val: &Value) -> Value {
     Value::String(s) => Value::String(s.clone()),
     Value::Material(material) => Value::Material(Rc::clone(material)),
     Value::Mat4(mat) => Value::Mat4(Rc::clone(mat)),
+    Value::Texture(tex) => Value::Texture(Rc::clone(tex)),
   }
 }
 
@@ -812,6 +856,7 @@ impl Debug for Value {
       Value::String(s) => write!(f, "String({s})"),
       Value::Material(material) => write!(f, "Material({material:?})"),
       Value::Mat4(mat) => write!(f, "Mat4({mat:?})"),
+      Value::Texture(tex) => write!(f, "{tex:?}"),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -920,6 +965,7 @@ const STRING_FLAG: u16 = 0b0000_0100_0000_0000;
 const MATERIAL_FLAG: u16 = 0b0000_1000_0000_0000;
 const NIL_FLAG: u16 = 0b0001_0000_0000_0000;
 const MAT4_FLAG: u16 = 0b0010_0000_0000_0000;
+const TEXTURE_FLAG: u16 = 0b0100_0000_0000_0000;
 const ANY_FLAG: u16 = 0xFFFF;
 
 impl Value {
@@ -987,6 +1033,13 @@ impl Value {
     }
   }
 
+  fn as_texture(&self) -> Option<&Rc<TextureHandle>> {
+    match self {
+      Value::Texture(tex) => Some(tex),
+      _ => None,
+    }
+  }
+
   fn as_int(&self) -> Option<i64> {
     match self {
       Value::Int(i) => Some(*i),
@@ -1050,6 +1103,7 @@ impl Value {
       Value::String(_) => ArgType::String,
       Value::Material(_) => ArgType::Material,
       Value::Mat4(_) => ArgType::Mat4,
+      Value::Texture(_) => ArgType::Texture,
       Value::Nil => ArgType::Nil,
     }
   }
@@ -1069,6 +1123,7 @@ impl Value {
       Value::String(_) => STRING_FLAG,
       Value::Material(_) => MATERIAL_FLAG,
       Value::Mat4(_) => MAT4_FLAG,
+      Value::Texture(_) => TEXTURE_FLAG,
       Value::Nil => NIL_FLAG,
     }
   }
@@ -1090,6 +1145,7 @@ pub enum ArgType {
   String,
   Material,
   Mat4,
+  Texture,
   Nil,
   Any,
 }
@@ -1115,6 +1171,7 @@ impl ArgType {
       ArgType::String => STRING_FLAG,
       ArgType::Material => MATERIAL_FLAG,
       ArgType::Mat4 => MAT4_FLAG,
+      ArgType::Texture => TEXTURE_FLAG,
       ArgType::Nil => NIL_FLAG,
       ArgType::Any => ANY_FLAG,
     }
@@ -1136,6 +1193,7 @@ impl ArgType {
       ArgType::String => "str",
       ArgType::Material => "material",
       ArgType::Mat4 => "mat4",
+      ArgType::Texture => "texture",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
@@ -1159,6 +1217,7 @@ impl ArgType {
       ArgType::String,
       ArgType::Material,
       ArgType::Mat4,
+      ArgType::Texture,
       ArgType::Nil,
     ] {
       if valid_types & arg_type.as_bitflags() != 0 {
@@ -1613,9 +1672,19 @@ pub struct RenderedPath {
   pub path_id: u32,
 }
 
+/// A texture registered as a named output channel via `render_texture`.
+#[derive(Clone)]
+pub struct RenderedTexture {
+  pub texture: Rc<TextureHandle>,
+  pub name: String,
+  pub source_module: Option<String>,
+  pub texture_id: u32,
+}
+
 type RenderedMeshes = AppendOnlyBuffer<RenderedMesh>;
 type RenderedLights = AppendOnlyBuffer<RenderedLight>;
 type RenderedPaths = AppendOnlyBuffer<RenderedPath>;
+type RenderedTextures = AppendOnlyBuffer<RenderedTexture>;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GizmoKind {
@@ -1971,6 +2040,7 @@ pub struct ModuleExportsCacheEntry {
   pub own_renders: Vec<RenderedMesh>,
   pub own_lights: Vec<RenderedLight>,
   pub own_paths: Vec<RenderedPath>,
+  pub own_textures: Vec<RenderedTexture>,
   pub own_gizmos: Vec<RenderedGizmo>,
   pub own_controls: Vec<RenderedControl>,
   pub rng_state_at_start: Pcg32,
@@ -1999,13 +2069,13 @@ pub struct EvalCtx {
   pub rendered_meshes: RenderedMeshes,
   pub rendered_lights: RenderedLights,
   pub rendered_paths: RenderedPaths,
+  pub rendered_textures: RenderedTextures,
   pub rendered_gizmos: RenderedGizmos,
   pub rendered_controls: RenderedControls,
   pub log_fn: fn(&str),
   #[cfg(target_arch = "wasm32")]
   rng: UnsafeCell<Pcg32>,
   pub materials: FxHashMap<String, Rc<Material>>,
-  pub textures: FxHashSet<String>,
   pub default_material: RefCell<Option<Rc<Material>>>,
   pub sharp_angle_threshold_degrees: RefCell<f32>,
   /// Default `curve_angle_degrees` for discretizing continuous path features when the kwarg is
@@ -2096,13 +2166,13 @@ impl Default for EvalCtx {
       rendered_meshes: RenderedMeshes::default(),
       rendered_lights: RenderedLights::default(),
       rendered_paths: RenderedPaths::default(),
+      rendered_textures: RenderedTextures::default(),
       rendered_gizmos: RenderedGizmos::default(),
       rendered_controls: RenderedControls::default(),
       log_fn: |msg| println!("{msg}"),
       #[cfg(target_arch = "wasm32")]
       rng: UnsafeCell::new(Pcg32::new(7718587666045340534, 17289744314186392832)),
       materials: FxHashMap::default(),
-      textures: FxHashSet::default(),
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
       default_curve_angle_degrees: RefCell::new(1.0),
@@ -3601,6 +3671,9 @@ impl EvalCtx {
         for path in &entry.own_paths {
           self.rendered_paths.push(path.clone());
         }
+        for texture in &entry.own_textures {
+          self.rendered_textures.push(texture.clone());
+        }
         for gizmo in &entry.own_gizmos {
           self.rendered_gizmos.push(gizmo.clone());
         }
@@ -3743,6 +3816,7 @@ impl EvalCtx {
     let renders_before = self.rendered_meshes.len();
     let lights_before = self.rendered_lights.len();
     let paths_before = self.rendered_paths.len();
+    let textures_before = self.rendered_textures.len();
     let gizmos_before = self.rendered_gizmos.len();
     let controls_before = self.rendered_controls.len();
     #[cfg(target_arch = "wasm32")]
@@ -3818,6 +3892,18 @@ impl EvalCtx {
           .collect()
       })
       .unwrap_or_default();
+    let own_textures: Vec<RenderedTexture> = self
+      .rendered_textures
+      .inner
+      .borrow()
+      .get(textures_before..)
+      .map(|s| {
+        s.iter()
+          .filter(|t| is_own(&t.source_module))
+          .cloned()
+          .collect()
+      })
+      .unwrap_or_default();
     let own_gizmos: Vec<RenderedGizmo> = self
       .rendered_gizmos
       .inner
@@ -3880,6 +3966,7 @@ impl EvalCtx {
       own_renders,
       own_lights,
       own_paths,
+      own_textures,
       own_gizmos,
       own_controls,
       rng_state_at_start: rng_at_start,
@@ -7319,6 +7406,7 @@ fn test_random_module_cache_requires_matching_rng_state() {
     own_renders: Vec::new(),
     own_lights: Vec::new(),
     own_paths: Vec::new(),
+    own_textures: Vec::new(),
     own_gizmos: Vec::new(),
     own_controls: Vec::new(),
     rng_state_at_start: rng_start,

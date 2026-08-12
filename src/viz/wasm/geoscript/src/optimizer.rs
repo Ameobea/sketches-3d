@@ -1035,6 +1035,9 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     Value::Light(light) => {
       (light.as_ref() as *const _ as usize).hash(hasher);
     }
+    Value::Texture(tex) => {
+      (Rc::as_ptr(tex) as usize).hash(hasher);
+    }
   }
   Some(())
 }

@@ -1,13 +1,17 @@
 import {
   APIError,
-  buildLegacyRootTree,
+  buildDefaultDoc,
   createCompositionVersion,
+  defaultTreeEntry,
+  isCompositionDocV2,
   ROOT_NODE_NAME,
   updateComposition,
   type Composition,
+  type CompositionDoc,
   type CompositionVersionMetadata,
   type EnvironmentConfig,
   type TreeDef,
+  type ViewState,
 } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
 import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget, DefaultCameraZoom } from './types';
@@ -19,13 +23,24 @@ import { OrthographicCamera, PerspectiveCamera } from 'three';
 const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
 
 export interface PlaygroundState {
+  doc: CompositionDoc;
+  /** Active tree core within `doc` (currently always the default mesh tree). */
   tree: TreeDef;
+  activeTreeId: string;
   materials: MaterialDefinitions;
-  view: CompositionVersionMetadata['view'];
+  view: ViewState;
   lastRunWasSuccessful: boolean;
   preludeEjected: boolean;
   environment?: EnvironmentConfig;
 }
+
+// v2-container draft keys; the prefix bump deliberately orphans all v1 drafts.
+const KEY_DOC = 'geotoy2:doc';
+const KEY_MATERIALS = 'geotoy2:materials';
+const KEY_VIEWS = 'geotoy2:views';
+const KEY_PRELUDE_EJECTED = 'geotoy2:preludeEjected';
+const KEY_ENVIRONMENT = 'geotoy2:environment';
+const KEY_LAST_RUN_COMPLETED = 'geotoy2:lastRunCompleted';
 
 const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefined): string => {
   const initComposition = userData?.initialComposition;
@@ -35,10 +50,7 @@ const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefi
   return `-${initComposition.comp.id}-${initComposition.version.id}`;
 };
 
-const getTreeKey = (userData: GeoscriptPlaygroundUserData | undefined): string =>
-  `lastGeoscriptPlaygroundTree${getLocalStorageKeySuffix(userData)}`;
-
-const DefaultView: CompositionVersionMetadata['view'] = {
+const DefaultView: ViewState = {
   cameraPosition: [DefaultCameraPos.x, DefaultCameraPos.y, DefaultCameraPos.z],
   target: [DefaultCameraTarget.x, DefaultCameraTarget.y, DefaultCameraTarget.z],
   fov: DefaultCameraFOV,
@@ -46,48 +58,42 @@ const DefaultView: CompositionVersionMetadata['view'] = {
   projection: 'perspective',
 };
 
-const parseTreeOrNull = (raw: string | null): TreeDef | null => {
+const parseDocOrNull = (raw: string | null): CompositionDoc | null => {
   if (!raw) return null;
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    console.warn('Error parsing saved tree:', err);
+    console.warn('Error parsing saved composition doc:', err);
     return null;
   }
-  if (!parsed || typeof parsed !== 'object') return null;
-  const t = parsed as Partial<TreeDef>;
-  // Drafts predating the v1 instances migration are dropped, not upgraded.
-  if (t.version !== 1) {
-    console.warn('Discarding saved tree: not version 1', t);
+  if (!isCompositionDocV2(parsed)) {
+    console.warn('Discarding saved composition doc: not a v2 container', parsed);
     return null;
   }
-  if (typeof t.rootId !== 'string' || t.rootId.length === 0) {
-    console.warn('Discarding saved tree: missing/invalid rootId', t);
-    return null;
+  for (const entry of parsed.trees) {
+    const rootNode = entry.tree.nodes[entry.tree.rootId];
+    if (!rootNode || rootNode.name !== ROOT_NODE_NAME) {
+      console.warn(`Discarding saved composition doc: tree "${entry.name}" has no \`_root\` node`, parsed);
+      return null;
+    }
   }
-  if (!t.nodes || typeof t.nodes !== 'object') {
-    console.warn('Discarding saved tree: missing nodes', t);
-    return null;
-  }
-  const rootNode = t.nodes[t.rootId];
-  if (!rootNode || rootNode.name !== ROOT_NODE_NAME) {
-    console.warn('Discarding saved tree: rootId does not resolve to a `_root` node', t);
-    return null;
-  }
-  return parsed as TreeDef;
+  return parsed;
 };
 
-/** Locally-saved draft `TreeDef`, or null if absent / unparseable. */
-export const loadTreeFromLocal = (userData: GeoscriptPlaygroundUserData | undefined): TreeDef | null =>
-  parseTreeOrNull(localStorage.getItem(getTreeKey(userData)));
-
-export const saveTreeToLocal = (tree: TreeDef, userData: GeoscriptPlaygroundUserData | undefined): void => {
-  localStorage.setItem(getTreeKey(userData), JSON.stringify(tree));
+const parseViewsOrNull = (raw: string | null): Record<string, ViewState> | null => {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, ViewState>) : null;
+  } catch (err) {
+    console.warn('Error parsing saved view metadata:', err);
+    return null;
+  }
 };
 
-/** Server-side tree from the loaded composition, or null if there's no initial composition. */
-export const getServerTree = (userData: GeoscriptPlaygroundUserData | undefined): TreeDef | null =>
+/** Server-side doc from the loaded composition, or null if there's no initial composition. */
+export const getServerDoc = (userData: GeoscriptPlaygroundUserData | undefined): CompositionDoc | null =>
   userData?.initialComposition?.version.tree ?? null;
 
 /** Pre-unification `physical`/`basic` drafts can't be read by the shared build path; discard them. */
@@ -96,52 +102,52 @@ const isLegacyMaterials = (m: MaterialDefinitions): boolean =>
     d => (d as { type?: string }).type === 'physical' || (d as { type?: string }).type === 'basic'
   );
 
+/** Active-tree id for a doc: the metadata's pick when it still exists, else the default entry. */
+const resolveActiveTreeId = (doc: CompositionDoc, metadataActiveId: string | undefined): string =>
+  metadataActiveId && doc.trees.some(t => t.id === metadataActiveId)
+    ? metadataActiveId
+    : defaultTreeEntry(doc).id;
+
 export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
   const suffix = getLocalStorageKeySuffix(userData);
 
-  const savedTree = parseTreeOrNull(localStorage.getItem(`lastGeoscriptPlaygroundTree${suffix}`));
-  const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${suffix}`);
-  const savedView = localStorage.getItem(`geoscriptPlaygroundView${suffix}`);
-  const savedPreludeEjected = localStorage.getItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
-  const savedEnvironment = localStorage.getItem(`geoscriptPlaygroundEnvironment${suffix}`);
+  const savedDoc = parseDocOrNull(localStorage.getItem(`${KEY_DOC}${suffix}`));
+  const savedMaterialsRaw = localStorage.getItem(`${KEY_MATERIALS}${suffix}`);
+  const savedViews = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`));
+  const savedPreludeEjected = localStorage.getItem(`${KEY_PRELUDE_EJECTED}${suffix}`);
+  const savedEnvironment = localStorage.getItem(`${KEY_ENVIRONMENT}${suffix}`);
 
-  const lastRunWasSuccessful = localStorage.getItem(`lastGeoscriptRunCompleted${suffix}`) !== 'false';
+  const lastRunWasSuccessful = localStorage.getItem(`${KEY_LAST_RUN_COMPLETED}${suffix}`) !== 'false';
 
-  const serverTree = userData?.initialComposition?.version.tree;
-  const serverMaterials = userData?.initialComposition?.version.metadata?.materials;
-  const serverView = userData?.initialComposition?.version.metadata?.view;
-  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected;
-  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
+  const serverMeta = userData?.initialComposition?.version.metadata;
+  const serverDoc = userData?.initialComposition?.version.tree;
 
-  const tree: TreeDef = savedTree ?? serverTree ?? buildLegacyRootTree(DefaultCode);
+  const doc: CompositionDoc = savedDoc ?? serverDoc ?? buildDefaultDoc(DefaultCode);
+  const activeTreeId = resolveActiveTreeId(doc, serverMeta?.activeTreeId);
+  const tree = doc.trees.find(t => t.id === activeTreeId)!.tree;
 
   let materials: MaterialDefinitions;
   if (savedMaterialsRaw) {
     try {
       const parsed = JSON.parse(savedMaterialsRaw);
-      materials = isLegacyMaterials(parsed) ? (serverMaterials ?? buildDefaultMaterialDefinitions()) : parsed;
+      materials = isLegacyMaterials(parsed)
+        ? (serverMeta?.materials ?? buildDefaultMaterialDefinitions())
+        : parsed;
     } catch (err) {
       console.warn('Error parsing saved material definitions:', err);
-      materials = serverMaterials ?? buildDefaultMaterialDefinitions();
+      materials = serverMeta?.materials ?? buildDefaultMaterialDefinitions();
     }
   } else {
-    materials = serverMaterials ?? buildDefaultMaterialDefinitions();
+    materials = serverMeta?.materials ?? buildDefaultMaterialDefinitions();
   }
 
-  let view: CompositionVersionMetadata['view'] = serverView ?? DefaultView;
-  if (savedView) {
-    try {
-      view = JSON.parse(savedView);
-    } catch (err) {
-      console.warn('Error parsing saved view metadata:', err);
-    }
-  }
+  const view = savedViews?.[activeTreeId] ?? serverMeta?.views?.[activeTreeId] ?? DefaultView;
 
   const preludeEjected = savedPreludeEjected
     ? savedPreludeEjected === 'true'
-    : (serverPreludeEjected ?? false);
+    : (serverMeta?.preludeEjected ?? false);
 
-  let environment: EnvironmentConfig | undefined = serverEnvironment;
+  let environment: EnvironmentConfig | undefined = serverMeta?.environment;
   if (savedEnvironment !== null) {
     try {
       environment = savedEnvironment === '' ? undefined : JSON.parse(savedEnvironment);
@@ -150,10 +156,10 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
     }
   }
 
-  return { tree, materials, view, lastRunWasSuccessful, preludeEjected, environment };
+  return { doc, tree, activeTreeId, materials, view, lastRunWasSuccessful, preludeEjected, environment };
 };
 
-export const getView = (viz: Viz): CompositionVersionMetadata['view'] => ({
+export const getView = (viz: Viz): ViewState => ({
   cameraPosition: viz.camera.position.toArray(),
   target: viz.orbitControls?.target.toArray() || DefaultCameraTarget.toArray(),
   fov: viz.camera instanceof PerspectiveCamera ? viz.camera.fov : undefined,
@@ -162,23 +168,26 @@ export const getView = (viz: Viz): CompositionVersionMetadata['view'] => ({
 });
 
 export const saveState = (
-  state: Omit<PlaygroundState, 'lastRunWasSuccessful'>,
+  state: Omit<PlaygroundState, 'lastRunWasSuccessful' | 'tree'>,
   userData: GeoscriptPlaygroundUserData | undefined
 ) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  localStorage.setItem(`lastGeoscriptPlaygroundTree${suffix}`, JSON.stringify(state.tree));
-  localStorage.setItem(`geoscriptPlaygroundMaterials${suffix}`, JSON.stringify(state.materials));
-  localStorage.setItem(`geoscriptPlaygroundView${suffix}`, JSON.stringify(state.view));
-  localStorage.setItem(`geoscriptPlaygroundPreludeEjected${suffix}`, state.preludeEjected ? 'true' : 'false');
+  localStorage.setItem(`${KEY_DOC}${suffix}`, JSON.stringify(state.doc));
+  localStorage.setItem(`${KEY_MATERIALS}${suffix}`, JSON.stringify(state.materials));
+  const views = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`)) ?? {};
+  views[state.activeTreeId] = state.view;
+  localStorage.setItem(`${KEY_VIEWS}${suffix}`, JSON.stringify(views));
+  localStorage.setItem(`${KEY_PRELUDE_EJECTED}${suffix}`, state.preludeEjected ? 'true' : 'false');
   // Persist '' to mean "explicitly no environment" so it overrides a server default.
   localStorage.setItem(
-    `geoscriptPlaygroundEnvironment${suffix}`,
+    `${KEY_ENVIRONMENT}${suffix}`,
     state.environment ? JSON.stringify(state.environment) : ''
   );
 };
 
 export const buildCompositionVersionMetadata = (
   viz: Viz,
+  activeTreeId: string,
   materials: MaterialDefinitions,
   preludeEjected: boolean,
   environment: EnvironmentConfig | undefined
@@ -187,7 +196,7 @@ export const buildCompositionVersionMetadata = (
   if (!controls) {
     return { type: 'error', msg: 'missing orbit controls; app not yet initialized?' };
   }
-  const view: CompositionVersionMetadata['view'] = {
+  const view: ViewState = {
     cameraPosition: [viz.camera.position.x, viz.camera.position.y, viz.camera.position.z],
     target: [controls.target.x, controls.target.y, controls.target.z],
     projection: viz.camera instanceof OrthographicCamera ? 'orthographic' : 'perspective',
@@ -199,7 +208,8 @@ export const buildCompositionVersionMetadata = (
     view.zoom = viz.camera.zoom;
   }
   const metadata: CompositionVersionMetadata = {
-    view,
+    views: { [activeTreeId]: view },
+    activeTreeId,
     materials,
     preludeEjected,
     environment,
@@ -217,7 +227,8 @@ export interface CompositionMeta {
 
 export const saveNewVersion = async (
   comp: Composition,
-  currentTree: TreeDef,
+  currentDoc: CompositionDoc,
+  activeTreeId: string,
   viz: Viz,
   materials: MaterialDefinitions,
   preludeEjected: boolean,
@@ -226,14 +237,20 @@ export const saveNewVersion = async (
   userData?: GeoscriptPlaygroundUserData
 ): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
   try {
-    const metadataRes = buildCompositionVersionMetadata(viz, materials, preludeEjected, environment);
+    const metadataRes = buildCompositionVersionMetadata(
+      viz,
+      activeTreeId,
+      materials,
+      preludeEjected,
+      environment
+    );
     if (metadataRes.type === 'error') {
       return metadataRes;
     }
     const metadata = metadataRes.metadata;
 
     await Promise.all([
-      createCompositionVersion(comp.id, { tree: currentTree, metadata }),
+      createCompositionVersion(comp.id, { tree: currentDoc, metadata }),
       updateComposition(comp.id, ['title', 'description', 'is_shared', 'tags'], {
         title,
         description,
@@ -243,9 +260,10 @@ export const saveNewVersion = async (
     ]);
     saveState(
       {
-        tree: currentTree,
+        doc: currentDoc,
+        activeTreeId,
         materials,
-        view: metadata.view,
+        view: metadata.views![activeTreeId],
         preludeEjected,
         environment,
       },
@@ -267,13 +285,13 @@ export const saveNewVersion = async (
  */
 export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): boolean => {
   const suffix = getLocalStorageKeySuffix(userData);
-  const savedTreeRaw = localStorage.getItem(`lastGeoscriptPlaygroundTree${suffix}`);
-  const savedMaterialsRaw = localStorage.getItem(`geoscriptPlaygroundMaterials${suffix}`);
-  const savedPreludeEjected = localStorage.getItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
-  const savedEnvironment = localStorage.getItem(`geoscriptPlaygroundEnvironment${suffix}`);
+  const savedDocRaw = localStorage.getItem(`${KEY_DOC}${suffix}`);
+  const savedMaterialsRaw = localStorage.getItem(`${KEY_MATERIALS}${suffix}`);
+  const savedPreludeEjected = localStorage.getItem(`${KEY_PRELUDE_EJECTED}${suffix}`);
+  const savedEnvironment = localStorage.getItem(`${KEY_ENVIRONMENT}${suffix}`);
 
-  const serverTree = userData?.initialComposition?.version.tree;
-  const serverTreeJson = serverTree ? JSON.stringify(serverTree) : null;
+  const serverDoc = userData?.initialComposition?.version.tree;
+  const serverDocJson = serverDoc ? JSON.stringify(serverDoc) : null;
   const serverMaterials =
     userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
   const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
@@ -281,9 +299,7 @@ export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): b
   const serverEnvironmentJson = serverEnvironment ? JSON.stringify(serverEnvironment) : '';
 
   return (
-    (savedTreeRaw !== null && serverTreeJson !== null
-      ? savedTreeRaw !== serverTreeJson
-      : savedTreeRaw !== null) ||
+    (savedDocRaw !== null && serverDocJson !== null ? savedDocRaw !== serverDocJson : savedDocRaw !== null) ||
     (savedMaterialsRaw ? savedMaterialsRaw !== JSON.stringify(serverMaterials) : false) ||
     (savedPreludeEjected !== null ? (savedPreludeEjected === 'true') !== serverPreludeEjected : false) ||
     (savedEnvironment !== null ? savedEnvironment !== serverEnvironmentJson : false)
@@ -291,30 +307,30 @@ export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): b
 };
 
 export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
-  const serverTree = userData?.initialComposition?.version.tree ?? buildLegacyRootTree(DefaultCode);
-  const serverMaterials =
-    userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
-  const serverView = userData?.initialComposition?.version.metadata?.view || DefaultView;
-  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
-  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
+  const serverMeta = userData?.initialComposition?.version.metadata;
+  const doc = userData?.initialComposition?.version.tree ?? buildDefaultDoc(DefaultCode);
+  const activeTreeId = resolveActiveTreeId(doc, serverMeta?.activeTreeId);
+  const tree = doc.trees.find(t => t.id === activeTreeId)!.tree;
+  const materials = serverMeta?.materials || buildDefaultMaterialDefinitions();
+  const view = serverMeta?.views?.[activeTreeId] || DefaultView;
 
   return {
-    tree: serverTree,
-    materials: serverMaterials,
-    view: serverView,
+    doc,
+    tree,
+    activeTreeId,
+    materials,
+    view,
     lastRunWasSuccessful: true,
-    preludeEjected: serverPreludeEjected,
-    environment: serverEnvironment,
+    preludeEjected: serverMeta?.preludeEjected || false,
+    environment: serverMeta?.environment,
   };
 };
 
 export const clearSavedState = (userData: GeoscriptPlaygroundUserData | undefined) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  localStorage.removeItem(`lastGeoscriptPlaygroundTree${suffix}`);
-  localStorage.removeItem(`geoscriptPlaygroundMaterials${suffix}`);
-  localStorage.removeItem(`geoscriptPlaygroundView${suffix}`);
-  localStorage.removeItem(`geoscriptPlaygroundPreludeEjected${suffix}`);
-  localStorage.removeItem(`geoscriptPlaygroundEnvironment${suffix}`);
+  for (const key of [KEY_DOC, KEY_MATERIALS, KEY_VIEWS, KEY_PRELUDE_EJECTED, KEY_ENVIRONMENT]) {
+    localStorage.removeItem(`${key}${suffix}`);
+  }
 };
 
 export const setLastRunWasSuccessful = (
@@ -322,5 +338,5 @@ export const setLastRunWasSuccessful = (
   userData: GeoscriptPlaygroundUserData | undefined
 ) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  localStorage[`lastGeoscriptRunCompleted${suffix}`] = wasSuccessful ? 'true' : 'false';
+  localStorage[`${KEY_LAST_RUN_COMPLETED}${suffix}`] = wasSuccessful ? 'true' : 'false';
 };

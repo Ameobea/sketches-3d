@@ -12,7 +12,7 @@ import { Database } from 'bun:sqlite';
 import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import type { NodeDef, TreeDef } from '../src/geoscript/geotoyAPIClient';
+import type { CompositionDoc, NodeDef, TreeDef } from '../src/geoscript/geotoyAPIClient';
 
 const REMOTE_DB = 'debian@ameo.dev:/opt/dream/db/geoscript_backend.sqlite3';
 const ROOT = join(import.meta.dir, '..');
@@ -81,11 +81,22 @@ const orderNodes = (tree: TreeDef): NodeDef[] => {
   return ordered;
 };
 
-const renderGeo = (id: number, title: string, tree: TreeDef): string => {
+const renderTreeSections = (tree: TreeDef): string[] => {
   const sections = orderNodes(tree).map(node => `// === node: ${node.name} ===\n${node.source}`);
   if (tree.globalsSource.trim()) {
     sections.unshift(`// === globals ===\n${tree.globalsSource}`);
   }
+  return sections;
+};
+
+const renderGeo = (id: number, title: string, doc: CompositionDoc): string => {
+  const sections =
+    doc.trees.length === 1
+      ? renderTreeSections(doc.trees[0].tree)
+      : doc.trees.flatMap(entry => [
+          `// ==== tree: ${entry.name} (${entry.kind}) ====`,
+          ...renderTreeSections(entry.tree),
+        ]);
   return `// Composition ${id}: ${title}\n${sections.join('\n')}\n`;
 };
 
@@ -104,9 +115,9 @@ let added = 0;
 let updated = 0;
 let renamed = 0;
 for (const row of rows) {
-  const tree = JSON.parse(row.tree) as TreeDef;
-  if (tree.version !== 1) {
-    console.warn(`! composition ${row.id}: unsupported tree version ${tree.version}; skipped`);
+  const doc = JSON.parse(row.tree) as CompositionDoc;
+  if (doc.version !== 2) {
+    console.warn(`! composition ${row.id}: unsupported tree version ${doc.version}; skipped`);
     continue;
   }
 
@@ -121,7 +132,7 @@ for (const row of rows) {
 
   const path = join(outDir, fileName);
   const prev = existsSync(path) ? readFileSync(path, 'utf8') : null;
-  const content = renderGeo(row.id, row.title, tree);
+  const content = renderGeo(row.id, row.title, doc);
   if (prev === content) {
     continue;
   }

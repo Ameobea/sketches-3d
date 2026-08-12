@@ -324,6 +324,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_textures.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
 
@@ -435,6 +436,7 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
+  ctx.geo_ctx.rendered_textures.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
   ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
   // Ambient discarded any replayed side effects; let them fire again in `_root`.
@@ -655,6 +657,58 @@ pub fn geoscript_get_rendered_path_source_module(
     .source_module
     .clone()
     .unwrap_or_default()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_count(ctx: *const GeoscriptReplCtx) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.len()
+}
+
+/// `[width, height, channels]`
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_dims(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> Vec<usize> {
+  let ctx = unsafe { &*ctx };
+  let tex = &ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix].texture;
+  vec![tex.width, tex.height, tex.channels]
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_name(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .name
+    .clone()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_pixels(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .texture
+    .pixels
+    .to_vec()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_source_module(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .source_module
+    .clone()
+    .unwrap_or_default()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_id(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> u32 {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix].texture_id
 }
 
 #[wasm_bindgen]

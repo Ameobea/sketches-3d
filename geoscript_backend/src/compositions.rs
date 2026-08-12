@@ -67,6 +67,29 @@ pub struct TreeDef {
   pub nodes: HashMap<String, NodeDef>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TreeKind {
+  Mesh,
+  Texture,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TreeEntry {
+  pub id: String,
+  pub kind: TreeKind,
+  pub name: String,
+  pub tree: TreeDef,
+}
+
+/// v2 container: a composition version holds 1+ typed trees. The inner cores keep the
+/// v1 `TreeDef` shape (including their own `version: 1`) verbatim.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompositionDoc {
+  pub version: u32,
+  pub trees: Vec<TreeEntry>,
+}
+
 #[derive(Debug, FromRow, Serialize)]
 pub struct Composition {
   pub id: i64,
@@ -94,7 +117,7 @@ pub struct CompositionAndVersion {
 pub struct CompositionVersion {
   pub id: i64,
   pub composition_id: i64,
-  pub tree: sqlx::types::Json<TreeDef>,
+  pub tree: sqlx::types::Json<CompositionDoc>,
   pub created_at: DateTime<Utc>,
   pub thumbnail_url: Option<String>,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
@@ -104,7 +127,7 @@ pub struct CompositionVersion {
 pub struct CreateComposition {
   pub title: String,
   pub description: String,
-  pub tree: sqlx::types::Json<TreeDef>,
+  pub tree: sqlx::types::Json<CompositionDoc>,
   pub is_shared: bool,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
   #[serde(default)]
@@ -113,7 +136,7 @@ pub struct CreateComposition {
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub struct CreateCompositionVersion {
-  pub tree: sqlx::types::Json<TreeDef>,
+  pub tree: sqlx::types::Json<CompositionDoc>,
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
@@ -623,7 +646,7 @@ async fn list_compositions(
     comp: Composition,
     latest_id: i64,
     latest_composition_id: i64,
-    latest_tree: sqlx::types::Json<TreeDef>,
+    latest_tree: sqlx::types::Json<CompositionDoc>,
     latest_created_at: DateTime<Utc>,
     latest_thumbnail_url: Option<String>,
     latest_metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
@@ -671,11 +694,12 @@ ORDER BY c.updated_at DESC
     if include_code {
       "cv.tree as latest_tree"
     } else {
-      // Stub TreeDef containing only an empty `_root`. Used as a placeholder when the
-      // caller didn't ask for the actual code.
-      "'{\"version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"\
-       name\":\"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":\
-       [1,1,1]}],\"children\":[]}}}' as latest_tree"
+      // Stub container holding one empty-`_root` mesh tree. Used as a placeholder when
+      // the caller didn't ask for the actual code.
+      "'{\"version\":2,\"trees\":[{\"id\":\"main\",\"kind\":\"mesh\",\"name\":\"main\",\"tree\":{\"\
+       version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\
+       \"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]}\
+       ],\"children\":[]}}}}]}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),
@@ -943,5 +967,22 @@ mod tests {
     assert_eq!(inst.transform.pos[0], 1.5);
     assert_eq!(inst.id.len(), 8);
     assert!(inst.id.chars().all(|c| c.is_ascii_hexdigit()));
+  }
+
+  #[test]
+  fn v2_container_round_trip_rejects_v1() {
+    let doc_json = format!(
+      r#"{{"version":2,"trees":[{{"id":"main","kind":"mesh","name":"main","tree":{WITH_ID}}}]}}"#
+    );
+    let doc: CompositionDoc = serde_json::from_str(&doc_json).unwrap();
+    assert_eq!(doc.trees.len(), 1);
+    assert_eq!(doc.trees[0].kind, TreeKind::Mesh);
+    assert_eq!(doc.trees[0].tree.nodes["r"].instances[0].id, "deadbeef");
+    let out = serde_json::to_value(&doc).unwrap();
+    assert_eq!(out["trees"][0]["kind"], "mesh");
+    assert!(out["trees"][0]["tree"]["nodes"]["r"].is_object());
+
+    // bare v1 payloads must fail to parse as a container, not silently lose data
+    assert!(serde_json::from_str::<CompositionDoc>(WITH_ID).is_err());
   }
 }

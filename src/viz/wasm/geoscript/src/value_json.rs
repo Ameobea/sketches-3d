@@ -150,6 +150,15 @@ fn write_value(out: &mut String, ctx: &EvalCtx, val: &Value, sample_count: usize
       out.push_str(&m.mesh.faces.len().to_string());
       out.push('}');
     }
+    Value::Texture(tex) => {
+      out.push_str("{\"t\":\"texture\",\"width\":");
+      out.push_str(&tex.width.to_string());
+      out.push_str(",\"height\":");
+      out.push_str(&tex.height.to_string());
+      out.push_str(",\"channels\":");
+      out.push_str(&tex.channels.to_string());
+      out.push('}');
+    }
     Value::Material(mat) => {
       let Material::External(name) = &**mat;
       out.push_str("{\"t\":\"material\",\"name\":");

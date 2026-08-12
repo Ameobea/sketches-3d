@@ -11742,6 +11742,137 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "texture" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Width in pixels"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Height in pixels"
+          },
+          ArgDef {
+            name: "generator",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Callable of signature `|uv: vec2|: float | vec3`, invoked once per pixel at the pixel's center UV.  A float return produces a 1-channel texture, vec3 a 3-channel one."
+          },
+          ArgDef {
+            name: "wrap",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("repeat".to_owned())),
+            description: "Boundary behavior consulted by texture ops: \"repeat\" (seamless/toroidal, the default), \"clamp\", or \"mirror\""
+          },
+        ],
+        description: "Synthesizes a new texture by evaluating `generator` at every pixel",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "blur" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Gaussian standard deviation in pixels.  <= 0 returns the input unchanged."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Gaussian-blurs a texture (all channels), respecting its wrap mode at the boundaries",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "height_to_normal" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Heightmap; channel 0 is read as the height"
+          },
+        ],
+        description: "Generates a 3-channel tangent-space normal map (OpenGL convention, encoded 0-1) from a heightmap via wrap-aware central differences",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "strength",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Scale applied to the height gradient (height units per texel)"
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Heightmap; channel 0 is read as the height"
+          },
+        ],
+        description: "Generates a 3-channel tangent-space normal map (OpenGL convention, encoded 0-1) from a heightmap via wrap-aware central differences",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "render_texture" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("default".to_owned())),
+            description: "Output channel name this texture is published under"
+          },
+        ],
+        description: "Registers a texture as a named output of the composition, symmetric to `render` for meshes",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
   "path_reflect_y" => FnDef {
     module: "path",
     examples: &[],

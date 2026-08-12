@@ -182,9 +182,12 @@ For nested trees or non-identity transforms, write a full `tree.json` instead.
 
 ### `tree.json`
 
-Full override — same shape the backend stores. Useful when you've exported a
-composition from the editor and want a faithful local copy. Documented by the
-`TreeDef` interface in `src/geoscript/geotoyAPIClient.ts`.
+Full override — either a bare v1 tree core (auto-wrapped into a single-tree
+container) or the v2 container shape the backend stores
+(`{"version": 2, "trees": [{"id", "kind": "mesh"|"texture", "name", "tree": <core>}]}`).
+Useful when you've exported a composition from the editor and want a faithful
+local copy. Documented by the `TreeDef` / `CompositionDoc` interfaces in
+`src/geoscript/geotoyAPIClient.ts`.
 
 ```json
 {

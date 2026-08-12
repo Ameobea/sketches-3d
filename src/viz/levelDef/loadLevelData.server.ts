@@ -25,7 +25,7 @@ import {
   getCompositionLatest,
   getCompositionVersion,
   getGeotoyAPIBaseURL,
-  isTreeDefV1,
+  isCompositionDocV2,
 } from 'src/geoscript/geotoyAPIClient';
 
 /**
@@ -112,12 +112,18 @@ const resolveCompositionAsset = async (
       `[loadLevelData] Failed to resolve geotoyComposition asset "${assetId}" (composition ${def.compositionId}): ${err instanceof Error ? err.message : String(err)}`
     );
   }
-  if (!isTreeDefV1(version.tree)) {
+  if (!isCompositionDocV2(version.tree)) {
     throw new Error(
-      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) returned a non-v1 tree`
+      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) returned a non-v2 composition container`
     );
   }
-  const resolved: GeotoyCompositionAssetDef = { ...def, tree: version.tree };
+  const meshEntry = version.tree.trees.find(t => t.kind === 'mesh');
+  if (!meshEntry) {
+    throw new Error(
+      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no mesh tree`
+    );
+  }
+  const resolved: GeotoyCompositionAssetDef = { ...def, tree: meshEntry.tree };
   if (version.metadata?.preludeEjected) resolved.preludeEjected = true;
 
   const palette = version.metadata?.materials;
