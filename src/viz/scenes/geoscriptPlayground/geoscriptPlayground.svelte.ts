@@ -1,17 +1,13 @@
 import * as THREE from 'three';
-import { N8AOPostPass } from 'n8ao';
 import { mount } from 'svelte';
 
 import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
-import {
-  configureDefaultPostprocessingPipeline,
-  type PostprocessingPipelineController,
-} from 'src/viz/postprocessing/defaultPostprocessing';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import GeotoyApp from 'src/geotoy/GeotoyApp.svelte';
+import { buildMeshPipeline } from 'src/geotoy/modes/mesh/pipeline';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
-import type { MaterialOverrideMode, ReplCtx } from './types';
+import type { MaterialOverrideMode, GeotoyRenderHarnessCtx } from './types';
 import { buildGeotoyKeymap } from './keymap';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { EvalRequest } from './evalResult';
@@ -21,27 +17,6 @@ const locations = {
     pos: new THREE.Vector3(48.17740050559579, 23.920086905508146, 8.603910511800485),
     rot: new THREE.Vector3(-0.022, 1.488, 0),
   },
-};
-
-const initRepl = async (
-  viz: Viz,
-  workerManager: WorkerManager,
-  setReplCtx: (ctx: ReplCtx) => void,
-  userData: GeoscriptPlaygroundUserData | undefined = undefined,
-  onSizeChange: (size: number, isCollapsed: boolean, orientation: 'vertical' | 'horizontal') => void,
-  pipelineController: PostprocessingPipelineController | null
-) => {
-  mount(GeotoyApp, {
-    target: document.getElementById('viz-container')!,
-    props: {
-      viz,
-      workerManager,
-      setReplCtx,
-      userData,
-      onSizeChange,
-      pipelineController,
-    },
-  });
 };
 
 export interface GeoscriptPlaygroundUserData {
@@ -70,37 +45,9 @@ export const processLoadedScene = async (
 
   const quality = userData?.renderMode ? GraphicsQuality.High : vizConf.graphics.quality;
 
-  let ctx = $state<ReplCtx | null>(null);
+  let ctx = $state<GeotoyRenderHarnessCtx | null>(null);
 
-  let pipelineController: PostprocessingPipelineController | null = configureDefaultPostprocessingPipeline({
-    viz,
-    quality,
-    addMiddlePasses: (composer, viz, _quality) => {
-      if (quality > GraphicsQuality.Low && (window.innerWidth > 800 || userData?.renderMode)) {
-        const n8aoPass = new N8AOPostPass(
-          viz.scene,
-          viz.camera,
-          viz.renderer.domElement.width,
-          viz.renderer.domElement.height
-        );
-        composer.addPass(n8aoPass);
-        n8aoPass.gammaCorrection = false;
-        n8aoPass.configuration.intensity = 2;
-        n8aoPass.configuration.aoRadius = 5;
-        n8aoPass.configuration.halfRes = quality <= GraphicsQuality.Medium;
-        n8aoPass.setQualityMode(
-          {
-            [GraphicsQuality.Low]: 'Performance',
-            [GraphicsQuality.Medium]: 'Low',
-            [GraphicsQuality.High]: 'Medium',
-          }[quality]
-        );
-      }
-    },
-    autoUpdateShadowMap: !userData?.renderMode,
-    toneMapping: { mode: 'neutral', exposure: 1 },
-    pomExitBuffers: true,
-  });
+  const pipelineController = buildMeshPipeline(viz, quality, userData?.renderMode ?? false);
 
   if (userData?.renderMode) {
     let didRender = false;
@@ -173,7 +120,7 @@ export const processLoadedScene = async (
           o.shadow.needsUpdate = true;
         }
       });
-      pipelineController?.renderFrame(timeDiffSeconds);
+      pipelineController.renderFrame(timeDiffSeconds);
       if (shaderErrors.length) {
         const joined = shaderErrors.join('\n\n');
         fail(joined.length > 8192 ? `${joined.slice(0, 8192)}\n… (truncated)` : joined);
@@ -190,67 +137,18 @@ export const processLoadedScene = async (
     viz.scene.add(axisHelper);
   }
 
-  let layoutOrientation = $state<'vertical' | 'horizontal'>(
-    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
-  );
-  let controlsSize = $state(
-    layoutOrientation === 'horizontal'
-      ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
-      : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
-  );
-  let isEditorCollapsed = $state(window.innerWidth < 768);
-
-  const updateCanvasSize = () => {
-    if (userData?.renderMode) {
-      return;
-    }
-
-    let canvasWidth: number;
-    let canvasHeight: number;
-    if (layoutOrientation === 'horizontal') {
-      const newWidth = isEditorCollapsed ? 36 : controlsSize;
-      canvasWidth = Math.max(window.innerWidth - newWidth, 0);
-      canvasHeight = window.innerHeight;
-    } else {
-      const newHeight = isEditorCollapsed ? 36 : controlsSize;
-      canvasWidth = window.innerWidth;
-      canvasHeight = Math.max(window.innerHeight - newHeight, 0);
-    }
-
-    if (pipelineController) {
-      pipelineController.effectComposer.setSize(canvasWidth, canvasHeight, true);
-    } else {
-      viz.renderer.setSize(canvasWidth, canvasHeight, true);
-    }
-
-    if (viz.camera instanceof THREE.PerspectiveCamera) {
-      viz.camera.aspect = canvasWidth / canvasHeight;
-    } else if (viz.camera instanceof THREE.OrthographicCamera) {
-      const halfH = (viz.camera.top - viz.camera.bottom) / 2;
-      const aspect = canvasHeight > 0 ? canvasWidth / canvasHeight : 1;
-      viz.camera.left = -halfH * aspect;
-      viz.camera.right = halfH * aspect;
-    }
-    viz.camera.updateProjectionMatrix();
-  };
-  viz.registerResizeCb(updateCanvasSize);
-  updateCanvasSize();
-
-  await initRepl(
-    viz,
-    workerManager,
-    (newCtx: ReplCtx) => {
-      ctx = newCtx;
+  mount(GeotoyApp, {
+    target: document.getElementById('viz-container')!,
+    props: {
+      viz,
+      workerManager,
+      setHarnessCtx: (newCtx: GeotoyRenderHarnessCtx) => {
+        ctx = newCtx;
+      },
+      userData,
+      pipelineController,
     },
-    userData,
-    (newSize: number, newIsCollapsed: boolean, newOrientation: 'vertical' | 'horizontal') => {
-      controlsSize = newSize;
-      isEditorCollapsed = newIsCollapsed;
-      layoutOrientation = newOrientation;
-      updateCanvasSize();
-    },
-    pipelineController
-  );
+  });
 
   return {
     locations,

@@ -1,4 +1,4 @@
-import type { ReplCtx } from './types';
+import type { GizmoMode } from './transformGizmo';
 
 const ROTATION_AMOUNT = Math.PI / 16;
 
@@ -9,7 +9,30 @@ export interface KeymapEntry {
   group?: string;
 }
 
-export const buildGeotoyKeymap = (getCtx?: () => ReplCtx | null | undefined): KeymapEntry[] => [
+/** The shell-supplied action surface the keymap table binds to. */
+export interface GeotoyKeymapActions {
+  run: () => void;
+  toggleWireframe: () => void;
+  toggleWireframeXray: () => void;
+  toggleNormalMat: () => void;
+  toggleLightHelpers: () => void;
+  toggleAxesHelper: () => void;
+  centerView: () => void;
+  toggleProjection: () => void;
+  snapView: (axis: 'x' | 'y' | 'z') => void;
+  orbit: (axis: 'vertical' | 'horizontal', angle: number) => void;
+  toggleRecording: () => void;
+  setGizmoMode: (mode: GizmoMode) => void;
+  toggleGizmoSpace: () => void;
+  toggleSelectionSolo: () => void;
+  escapeSelection: (event?: KeyboardEvent) => void;
+  deleteSelected: () => void;
+  startRenameSelected: () => void;
+  treeUndo: (event?: KeyboardEvent) => void;
+  treeRedo: (event?: KeyboardEvent) => void;
+}
+
+export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | undefined): KeymapEntry[] => [
   { key: 'w', action: () => getCtx?.()?.toggleWireframe(), label: 'toggle wireframe' },
   { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
   { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
