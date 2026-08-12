@@ -59,7 +59,8 @@
       activeTreeId,
       materials,
       preludeEjected,
-      environment
+      environment,
+      userData?.initialComposition?.version.metadata?.views
     );
     if (metadataRes.type === 'error') {
       return metadataRes;

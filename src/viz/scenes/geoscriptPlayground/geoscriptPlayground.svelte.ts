@@ -260,6 +260,8 @@ export const processLoadedScene = async (
       pos: new THREE.Vector3(10, 10, 10),
       target: new THREE.Vector3(0, 0, 0),
     },
-    customControlsEntries: buildGeotoyKeymap(() => ctx),
+    // Label-only (argless → no-op actions) for the PauseMenu's shortcut listing;
+    // dispatch is handled by the geotoy keymap module.
+    customControlsEntries: buildGeotoyKeymap(),
   };
 };

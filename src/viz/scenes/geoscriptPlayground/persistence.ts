@@ -38,6 +38,7 @@ export interface PlaygroundState {
 const KEY_DOC = 'geotoy2:doc';
 const KEY_MATERIALS = 'geotoy2:materials';
 const KEY_VIEWS = 'geotoy2:views';
+const KEY_ACTIVE_TREE = 'geotoy2:activeTreeId';
 const KEY_PRELUDE_EJECTED = 'geotoy2:preludeEjected';
 const KEY_ENVIRONMENT = 'geotoy2:environment';
 const KEY_LAST_RUN_COMPLETED = 'geotoy2:lastRunCompleted';
@@ -123,7 +124,8 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   const serverDoc = userData?.initialComposition?.version.tree;
 
   const doc: CompositionDoc = savedDoc ?? serverDoc ?? buildDefaultDoc(DefaultCode);
-  const activeTreeId = resolveActiveTreeId(doc, serverMeta?.activeTreeId);
+  const savedActiveTreeId = localStorage.getItem(`${KEY_ACTIVE_TREE}${suffix}`);
+  const activeTreeId = resolveActiveTreeId(doc, savedActiveTreeId ?? serverMeta?.activeTreeId);
   const tree = doc.trees.find(t => t.id === activeTreeId)!.tree;
 
   let materials: MaterialDefinitions;
@@ -172,11 +174,19 @@ export const saveState = (
   userData: GeoscriptPlaygroundUserData | undefined
 ) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  localStorage.setItem(`${KEY_DOC}${suffix}`, JSON.stringify(state.doc));
-  localStorage.setItem(`${KEY_MATERIALS}${suffix}`, JSON.stringify(state.materials));
+  const docJson = JSON.stringify(state.doc);
+  const materialsJson = JSON.stringify(state.materials);
+  // Drafts must stay text-only (no textures/runtime assets) and far below localStorage limits.
+  const bytes = docJson.length + materialsJson.length;
+  if (bytes > 1_000_000) {
+    console.warn(`geotoy draft is ${(bytes / 1e6).toFixed(2)}MB; drafts are expected to stay text-only`);
+  }
+  localStorage.setItem(`${KEY_DOC}${suffix}`, docJson);
+  localStorage.setItem(`${KEY_MATERIALS}${suffix}`, materialsJson);
   const views = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`)) ?? {};
   views[state.activeTreeId] = state.view;
   localStorage.setItem(`${KEY_VIEWS}${suffix}`, JSON.stringify(views));
+  localStorage.setItem(`${KEY_ACTIVE_TREE}${suffix}`, state.activeTreeId);
   localStorage.setItem(`${KEY_PRELUDE_EJECTED}${suffix}`, state.preludeEjected ? 'true' : 'false');
   // Persist '' to mean "explicitly no environment" so it overrides a server default.
   localStorage.setItem(
@@ -190,7 +200,9 @@ export const buildCompositionVersionMetadata = (
   activeTreeId: string,
   materials: MaterialDefinitions,
   preludeEjected: boolean,
-  environment: EnvironmentConfig | undefined
+  environment: EnvironmentConfig | undefined,
+  /** Prior per-tree views to merge under, so saving one tree can't drop the others'. */
+  baseViews?: Record<string, ViewState>
 ): { type: 'ok'; metadata: CompositionVersionMetadata } | { type: 'error'; msg: string } => {
   const controls: OrbitControls | null = viz.orbitControls;
   if (!controls) {
@@ -208,7 +220,7 @@ export const buildCompositionVersionMetadata = (
     view.zoom = viz.camera.zoom;
   }
   const metadata: CompositionVersionMetadata = {
-    views: { [activeTreeId]: view },
+    views: { ...baseViews, [activeTreeId]: view },
     activeTreeId,
     materials,
     preludeEjected,
@@ -242,7 +254,8 @@ export const saveNewVersion = async (
       activeTreeId,
       materials,
       preludeEjected,
-      environment
+      environment,
+      userData?.initialComposition?.version.metadata?.views
     );
     if (metadataRes.type === 'error') {
       return metadataRes;
@@ -328,7 +341,14 @@ export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined
 
 export const clearSavedState = (userData: GeoscriptPlaygroundUserData | undefined) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  for (const key of [KEY_DOC, KEY_MATERIALS, KEY_VIEWS, KEY_PRELUDE_EJECTED, KEY_ENVIRONMENT]) {
+  for (const key of [
+    KEY_DOC,
+    KEY_MATERIALS,
+    KEY_VIEWS,
+    KEY_ACTIVE_TREE,
+    KEY_PRELUDE_EJECTED,
+    KEY_ENVIRONMENT,
+  ]) {
     localStorage.removeItem(`${key}${suffix}`);
   }
 };

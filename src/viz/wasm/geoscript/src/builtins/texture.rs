@@ -124,17 +124,34 @@ pub(crate) fn blur_impl(
   }
 
   let pass = |src: &TextureHandle, dx: i64, dy: i64| -> Vec<f32> {
+    let px: &[f32] = &src.pixels;
+    let stride = (if dx == 1 { 1 } else { w }) * ch;
+    let lim = (if dx == 1 { w } else { h }) as i64;
     let mut out = vec![0f32; w * h * ch];
     for y in 0..h {
       for x in 0..w {
-        for c in 0..ch {
-          let mut acc = weights[0] * src.texel(x as i64, y as i64, c);
-          for i in 1..=half {
-            acc += weights[i as usize]
-              * (src.texel(x as i64 - i * dx, y as i64 - i * dy, c)
-                + src.texel(x as i64 + i * dx, y as i64 + i * dy, c));
+        let base = (y * w + x) * ch;
+        let pos = (if dx == 1 { x } else { y }) as i64;
+        if pos >= half && pos + half < lim {
+          // Interior: no tap can wrap, so index directly instead of paying
+          // `wrap_coord`'s rem_euclid + branch per tap.
+          for c in 0..ch {
+            let mut acc = weights[0] * px[base + c];
+            for i in 1..=half as usize {
+              acc += weights[i] * (px[base + c - i * stride] + px[base + c + i * stride]);
+            }
+            out[base + c] = acc;
           }
-          out[(y * w + x) * ch + c] = acc;
+        } else {
+          for c in 0..ch {
+            let mut acc = weights[0] * src.texel(x as i64, y as i64, c);
+            for i in 1..=half {
+              acc += weights[i as usize]
+                * (src.texel(x as i64 - i * dx, y as i64 - i * dy, c)
+                  + src.texel(x as i64 + i * dx, y as i64 + i * dy, c));
+            }
+            out[base + c] = acc;
+          }
         }
       }
     }

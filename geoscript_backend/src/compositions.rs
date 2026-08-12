@@ -90,6 +90,26 @@ pub struct CompositionDoc {
   pub trees: Vec<TreeEntry>,
 }
 
+impl CompositionDoc {
+  /// Serde alone admits degenerate containers (wrong version, zero trees) that crash
+  /// every consumer; reject them at the API boundary.
+  fn validate(&self) -> Result<(), APIError> {
+    if self.version != 2 {
+      return Err(APIError::new(
+        StatusCode::BAD_REQUEST,
+        format!("Unsupported composition doc version {}; expected 2", self.version),
+      ));
+    }
+    if self.trees.is_empty() {
+      return Err(APIError::new(
+        StatusCode::BAD_REQUEST,
+        "Composition doc must contain at least one tree",
+      ));
+    }
+    Ok(())
+  }
+}
+
 #[derive(Debug, FromRow, Serialize)]
 pub struct Composition {
   pub id: i64,
@@ -168,6 +188,8 @@ pub async fn create_composition(
   Extension(user): Extension<User>,
   Json(payload): Json<CreateComposition>,
 ) -> Result<Json<Composition>, APIError> {
+  payload.tree.validate()?;
+
   let mut tx = pool.begin().await.map_err(|err| {
     APIError::new(
       StatusCode::INTERNAL_SERVER_ERROR,
@@ -248,6 +270,8 @@ pub async fn create_composition_version(
   Path(composition_id): Path<i64>,
   Json(payload): Json<CreateCompositionVersion>,
 ) -> Result<Json<CompositionVersion>, APIError> {
+  payload.tree.validate()?;
+
   let _comp_id: i64 =
     sqlx::query_scalar("SELECT id FROM compositions WHERE id = ? AND author_id = ?")
       .bind(composition_id)
@@ -984,5 +1008,13 @@ mod tests {
 
     // bare v1 payloads must fail to parse as a container, not silently lose data
     assert!(serde_json::from_str::<CompositionDoc>(WITH_ID).is_err());
+
+    // degenerate containers parse but must fail validation
+    let empty: CompositionDoc = serde_json::from_str(r#"{"version":2,"trees":[]}"#).unwrap();
+    assert!(empty.validate().is_err());
+    let bad_version: CompositionDoc =
+      serde_json::from_str(&doc_json.replace(r#""version":2"#, r#""version":3"#)).unwrap();
+    assert!(bad_version.validate().is_err());
+    assert!(doc.validate().is_ok());
   }
 }
