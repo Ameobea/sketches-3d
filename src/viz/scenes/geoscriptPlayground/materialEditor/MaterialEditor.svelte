@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
   import type * as Comlink from 'comlink';
   import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 
@@ -52,14 +51,15 @@
     | { type: 'save_material' }
   >({ type: 'properties' });
 
-  let selectedMaterialID: MaterialID | null = $state(null);
+  // Explicit pick, validated against the live defs; falls back to the first material,
+  // so deletes/reverts self-heal without a null window.
+  let pickedID = $state<MaterialID | null>(null);
+  const selectedMaterialID = $derived(
+    pickedID !== null && materials.materials[pickedID]
+      ? pickedID
+      : (Object.keys(materials.materials)[0] ?? null)
+  );
   let showAdvanced = $state(false);
-
-  $effect(() => {
-    if (!selectedMaterialID && materials.materials) {
-      selectedMaterialID = Object.keys(materials.materials)[0] || null;
-    }
-  });
 
   const addMaterial = () => {
     let i = 1;
@@ -70,7 +70,7 @@
     }
     const id = uuidv4();
     materials.materials[id] = buildDefaultMaterial(newName);
-    selectedMaterialID = id;
+    pickedID = id;
     logGeotoyEvent('materials', 'material_add');
   };
 
@@ -79,25 +79,21 @@
     checkBounds: () => void;
   } | null = null;
 
+  // Draggable lives exactly as long as its elements: close/reopen and element churn are
+  // handled by effect teardown (previously the window-level listeners leaked while closed).
   $effect(() => {
-    if (dialogElement && dragHandleElement) {
-      dragCbs?.destroy();
-      if (window.innerWidth > 600) {
-        dragCbs = makeDraggable(dialogElement, dragHandleElement);
-      }
-    }
+    if (!dialogElement || !dragHandleElement || window.innerWidth <= 600) return;
+    const cbs = makeDraggable(dialogElement, dragHandleElement);
+    dragCbs = cbs;
+    return () => {
+      cbs.destroy();
+      dragCbs = null;
+    };
   });
 
   $effect(() => {
     if (view.type === 'shader_editor') {
       dragCbs?.checkBounds();
-    }
-  });
-
-  onDestroy(() => {
-    if (dragCbs) {
-      dragCbs.destroy();
-      dragCbs = null;
     }
   });
 </script>
@@ -121,7 +117,7 @@
                 <button
                   class="select-button"
                   onclick={() => {
-                    selectedMaterialID = id;
+                    pickedID = id;
                   }}
                 >
                   {material.name}
@@ -132,10 +128,6 @@
                     const newMaterials = { ...materials.materials };
                     delete newMaterials[id];
                     materials.materials = newMaterials;
-
-                    if (selectedMaterialID === id) {
-                      selectedMaterialID = null;
-                    }
                   }}
                 >
                   ×
@@ -188,7 +180,7 @@
             }
             const id = uuidv4();
             materials.materials[id] = { ...material.materialDefinition, name: newName };
-            selectedMaterialID = id;
+            pickedID = id;
             view = { type: 'properties' };
             logGeotoyEvent('materials', 'library_pick', { name: material.name });
           }}

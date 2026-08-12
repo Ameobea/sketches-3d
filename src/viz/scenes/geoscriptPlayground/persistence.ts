@@ -296,29 +296,6 @@ export const saveNewVersion = async (
 /**
  * Not an efficient function; shouldn't be called frequently.
  */
-export const getIsDirty = (userData: GeoscriptPlaygroundUserData | undefined): boolean => {
-  const suffix = getLocalStorageKeySuffix(userData);
-  const savedDocRaw = localStorage.getItem(`${KEY_DOC}${suffix}`);
-  const savedMaterialsRaw = localStorage.getItem(`${KEY_MATERIALS}${suffix}`);
-  const savedPreludeEjected = localStorage.getItem(`${KEY_PRELUDE_EJECTED}${suffix}`);
-  const savedEnvironment = localStorage.getItem(`${KEY_ENVIRONMENT}${suffix}`);
-
-  const serverDoc = userData?.initialComposition?.version.tree;
-  const serverDocJson = serverDoc ? JSON.stringify(serverDoc) : null;
-  const serverMaterials =
-    userData?.initialComposition?.version.metadata?.materials || buildDefaultMaterialDefinitions();
-  const serverPreludeEjected = userData?.initialComposition?.version.metadata?.preludeEjected || false;
-  const serverEnvironment = userData?.initialComposition?.version.metadata?.environment;
-  const serverEnvironmentJson = serverEnvironment ? JSON.stringify(serverEnvironment) : '';
-
-  return (
-    (savedDocRaw !== null && serverDocJson !== null ? savedDocRaw !== serverDocJson : savedDocRaw !== null) ||
-    (savedMaterialsRaw ? savedMaterialsRaw !== JSON.stringify(serverMaterials) : false) ||
-    (savedPreludeEjected !== null ? (savedPreludeEjected === 'true') !== serverPreludeEjected : false) ||
-    (savedEnvironment !== null ? savedEnvironment !== serverEnvironmentJson : false)
-  );
-};
-
 export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
   const serverMeta = userData?.initialComposition?.version.metadata;
   const doc = userData?.initialComposition?.version.tree ?? buildDefaultDoc(DefaultCode);

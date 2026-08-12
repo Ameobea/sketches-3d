@@ -7,7 +7,7 @@
     type TextureDescriptor,
     APIError,
   } from 'src/geoscript/geotoyAPIClient';
-  import TagsInput from '../TagsInput.svelte';
+  import TagsInput from 'src/geotoy/panels/TagsInput.svelte';
   import { Textures } from './state.svelte';
   import { untrack } from 'svelte';
   import { logGeotoyEvent } from 'src/analytics';

@@ -10,8 +10,11 @@
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
-  import { buildCompositionVersionMetadata, saveNewVersion } from './persistence';
-  import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
+  import {
+    buildCompositionVersionMetadata,
+    saveNewVersion,
+  } from 'src/viz/scenes/geoscriptPlayground/persistence';
+  import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
   import { untrack } from 'svelte';
   import ForkCompositionButton from './ForkCompositionButton.svelte';

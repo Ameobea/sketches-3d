@@ -22,6 +22,20 @@ const computeCompositeBoundingBox = (objects: RenderedObject[]): THREE.Box3 => {
   return box;
 };
 
+/** Polls for the async-assigned `viz.orbitControls` (a frozen Viz-internals contract). */
+export const untilOrbitControls = (
+  viz: Viz,
+  signal?: AbortSignal
+): Promise<NonNullable<Viz['orbitControls']>> =>
+  new Promise((resolve, reject) => {
+    const tick = () => {
+      if (signal?.aborted) return reject(new DOMException('aborted', 'AbortError'));
+      if (viz.orbitControls) return resolve(viz.orbitControls);
+      setTimeout(tick, 16);
+    };
+    tick();
+  });
+
 export const centerView = async (viz: Viz, renderedObjects: RenderedObject[]) => {
   while (!viz.orbitControls) {
     await new Promise(resolve => setTimeout(resolve, 10));

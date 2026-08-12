@@ -194,7 +194,10 @@ export const runGeoscript = async ({
 
     const uvUnwrapParams = (() => {
       const unwrap = matDef?.type === 'customShader' ? matDef.meshUvUnwrap : undefined;
-      if (!!overrideMat || !unwrap) {
+      // Skip unwrap for headless override thumbnails only; interactive override runs
+      // must still unwrap, else un-toggling restores textured materials onto
+      // never-unwrapped geometry.
+      if ((renderMode && !!overrideMat) || !unwrap) {
         return null;
       }
 
@@ -284,7 +287,9 @@ export const runGeoscript = async ({
       geometry,
       material,
       materialName,
-      materialPromise: matEntry.promise,
+      // Plain-material entries (geotoy's MaterialRuntime) are assigned reactively by
+      // the shell; only MatEntry callers rely on populateScene's async swap.
+      materialPromise: 'promise' in mat ? matEntry.promise : null,
       transform: new THREE.Matrix4().fromArray(transform),
       castShadow: true,
       receiveShadow: true,

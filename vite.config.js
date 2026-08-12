@@ -35,6 +35,7 @@ const config = defineConfig({
         /[\\/](?:backend|geoscript_backend)(?:[\\/]|$)/.test(p) ||
         /[\\/]src[\\/]viz[\\/]wasm(?:[\\/]|$)/.test(p),
     },
+    allowedHosts: ['3d.p.ameo.design'],
   },
   optimizeDeps: {
     exclude: ['codemirror'],

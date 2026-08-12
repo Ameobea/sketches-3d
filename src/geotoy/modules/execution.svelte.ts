@@ -21,7 +21,28 @@ export interface RunInput {
   renderMode: boolean;
   gizmoValues: RunGeoscriptOptions['gizmoValues'];
   moduleNameToNodeId: Record<string, string>;
+  /**
+   * Content hash of everything the eval depends on except per-node transforms, computed
+   * by the shell at build time. The module records it on ok-settle as `lastOkInputKey`
+   * so the transform-only fast path can prove the scene still reflects current inputs.
+   */
+  inputKey: string;
 }
+
+export type RunOutcome<T extends RunInput = RunInput> =
+  | { type: 'ok'; result: RunResult; input: T; isCurrent: () => boolean }
+  | { type: 'err'; err: string; failedNodeIds: Set<string> }
+  | { type: 'cancelled' };
+
+interface Deferred<T> {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+}
+const deferred = <T>(): Deferred<T> => {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>(r => (resolve = r));
+  return { promise, resolve };
+};
 
 interface ExecutionOpts<T extends RunInput> {
   workerManager: WorkerManager;
@@ -30,20 +51,14 @@ interface ExecutionOpts<T extends RunInput> {
   onRunStart: () => void;
   setLastRunWasSuccessful: (success: boolean) => void;
   /**
-   * Scene-side bookkeeping for a successful run. Runs inside the try, before `isRunning`
-   * clears; `isCurrent` guards async continuations against a cancel mid-flight.
+   * Applies a successful run to the scene. Module-invoked (trailing/debounced runs have
+   * no awaiting caller) outside the eval error domain, so a failure here surfaces as
+   * "Failed to apply run result" instead of masquerading as an eval error; `isCurrent`
+   * guards async continuations against a cancel mid-flight.
    */
-  onRunSuccess: (result: RunResult, input: T, isCurrent: () => boolean) => void;
+  consume: (result: RunResult, input: T, isCurrent: () => boolean) => void;
   /** Tear down rendered objects when a run is cancelled. */
   onCancelCleanup: () => void;
-  /** Fired when the control-edit debounce settles (shell routes to its fast path). */
-  onDebouncedRun: () => void;
-  /**
-   * Fired whenever a fresh wasm ctx exists (initial init + post-cancel recreate). The
-   * shell must re-push ctx-scoped state here (materials): a recreated wasm instance
-   * usually allocates the ctx at the same address, so `ctxPtr` alone can't signal it.
-   */
-  onCtxReady: () => void;
 }
 
 const extractFailedModuleName = (msg: string): string | null => {
@@ -55,8 +70,9 @@ const extractFailedModuleName = (msg: string): string | null => {
  * Owns the geoscript worker + run lifecycle: init, run, cancel (worker terminate +
  * recreate), and the control-edit run debounce. Run requests during an in-flight run
  * coalesce into one trailing re-run (latest-wins; input is rebuilt when it fires).
- * Ignorant of tree shape; compilation input comes from `buildRunInput` and results
- * flow back through `onRunSuccess`.
+ * Ignorant of tree shape; compilation input comes from `buildRunInput`, and settled
+ * runs flow back as `RunOutcome` values (`run()`'s resolution) with successful results
+ * applied via the module-invoked `consume` hook.
  */
 export class GeoscriptExecution<T extends RunInput = RunInput> {
   private readonly opts: ExecutionOpts<T>;
@@ -65,11 +81,25 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
   // terminated mid-call" from a real eval failure.
   private runGen = 0;
   private pendingRun = false;
-  private controlRunTimer = 0;
-  private controlRunPending = false;
+  private inFlightSettled: Deferred<RunOutcome<T>> | null = null;
+  private queuedSettled: Deferred<RunOutcome<T>> | null = null;
 
-  repl = $state.raw() as Comlink.Remote<GeoscriptWorkerMethods>;
+  /** `inputKey` of the last ok-settled run — i.e. what the current scene was built from.
+   *  Null after cancel (scene torn down) and before the first successful run. */
+  lastOkInputKey: string | null = null;
+
+  // Boxed: Svelte's dev-mode tracing tags values written to $state via a symbol-keyed
+  // property probe, which a Comlink proxy turns into a doomed RPC (uncaught rejection
+  // on every boot). Tagging the box instead is a no-op.
+  private replBox = $state.raw() as { repl: Comlink.Remote<GeoscriptWorkerMethods> };
+  get repl() {
+    return this.replBox.repl;
+  }
   ctxPtr: number | null = $state(null);
+  // Bumped alongside every ctxPtr assignment (init() is the sole assigner). Ctx-scoped
+  // state (materials) keys re-pushes off this: a recreated wasm instance usually
+  // allocates the ctx at the same address, so ctxPtr equality can't signal recreation.
+  ctxEpoch = $state(0);
   isRunning = $state(false);
   err: string | null = $state(null);
   runStats: RunStats | null = $state(null);
@@ -77,7 +107,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
 
   constructor(opts: ExecutionOpts<T>) {
     this.opts = opts;
-    this.repl = opts.workerManager.getWorker();
+    this.replBox = { repl: opts.workerManager.getWorker() };
   }
 
   get lastOutcome(): { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null {
@@ -92,7 +122,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
 
   init = async () => {
     this.ctxPtr = await this.repl.init(getGeoscriptWorkerWasmURLs());
-    this.opts.onCtxReady();
+    this.ctxEpoch++;
   };
 
   private maybeRunPending() {
@@ -103,13 +133,19 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.run();
   }
 
-  run = async () => {
+  /**
+   * Resolves with the run's settled outcome — for a request coalesced into the
+   * latest-wins queue, the trailing run's outcome. Returns null when no ctx exists yet.
+   * The outcome settles only after `consume` has applied it.
+   */
+  run = async (): Promise<RunOutcome<T> | null> => {
     if (this.ctxPtr === null) {
-      return;
+      return null;
     }
     if (this.isRunning) {
       this.pendingRun = true;
-      return;
+      this.queuedSettled ??= deferred();
+      return this.queuedSettled.promise;
     }
 
     this.opts.onRunStart();
@@ -120,8 +156,47 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.failedNodeIds = new Set();
     this.runStats = null;
 
-    const input = this.opts.buildRunInput();
+    // A queued requester's deferred is adopted by the trailing run it coalesced into.
+    const settled = this.queuedSettled ?? deferred();
+    this.queuedSettled = null;
+    this.inFlightSettled = settled;
 
+    const input = this.opts.buildRunInput();
+    // Race against `settled`: cancel() terminates the worker, which strands the eval's
+    // Comlink promise forever — awaiting evalRun alone would hang this caller.
+    const outcome = await Promise.race([this.evalRun(input, myGen), settled.promise]);
+    if (outcome === null || outcome.type === 'cancelled') {
+      // Cancelled mid-flight (or a gen-stale rejection racing the cancel): cancel()
+      // resolves `settled` and owns all state cleanup.
+      return settled.promise;
+    }
+
+    if (outcome.type === 'ok') {
+      this.runStats = outcome.result.stats;
+      try {
+        this.opts.consume(outcome.result, outcome.input, outcome.isCurrent);
+        // Recorded only after consume succeeds: a half-populated scene must not
+        // hash-match the fast path, else it never re-evals its way back to health.
+        this.lastOkInputKey = outcome.input.inputKey;
+      } catch (e) {
+        console.error('applying run result failed', e);
+        this.err = `Failed to apply run result: ${e instanceof Error ? e.message : String(e)}`;
+        this.lastOkInputKey = null;
+      }
+    } else if (outcome.type === 'err') {
+      // Keep the previous scene visible on failure.
+      this.err = outcome.err;
+      this.failedNodeIds = outcome.failedNodeIds;
+    }
+    this.isRunning = false;
+    this.inFlightSettled = null;
+    settled.resolve(outcome);
+    this.maybeRunPending();
+    return outcome;
+  };
+
+  /** Eval error domain only — shell-side consumption failures must not land here. */
+  private evalRun = async (input: T, myGen: number): Promise<RunOutcome<T> | null> => {
     try {
       const ambientSources: string[] = [];
       if (input.includePrelude) {
@@ -134,7 +209,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         code: input.code,
         modules: input.modules,
         ambientSources,
-        ctxPtr: this.ctxPtr,
+        ctxPtr: this.ctxPtr!,
         repl: this.repl,
         materials: input.materials,
         includePrelude: input.includePrelude,
@@ -143,33 +218,30 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         gizmoValues: input.gizmoValues,
       });
 
-      if (myGen !== this.runGen) return;
+      if (myGen !== this.runGen) return null;
 
       if (result.error) {
-        // Keep the previous scene visible on failure.
-        this.err = result.error;
         const failedModule = extractFailedModuleName(result.error);
-        if (failedModule && input.moduleNameToNodeId[failedModule]) {
-          this.failedNodeIds = new Set([input.moduleNameToNodeId[failedModule]]);
-        }
-        this.isRunning = false;
-        this.maybeRunPending();
-        return;
+        return {
+          type: 'err',
+          err: result.error,
+          failedNodeIds:
+            failedModule && input.moduleNameToNodeId[failedModule]
+              ? new Set([input.moduleNameToNodeId[failedModule]])
+              : new Set(),
+        };
       }
 
       this.opts.setLastRunWasSuccessful(true);
-      this.runStats = result.stats;
-      this.opts.onRunSuccess(result, input, () => myGen === this.runGen);
-      this.isRunning = false;
-      this.maybeRunPending();
+      return { type: 'ok', result, input, isCurrent: () => myGen === this.runGen };
     } catch (e) {
-      if (myGen !== this.runGen) {
-        return;
-      }
+      if (myGen !== this.runGen) return null;
       console.error('geoscript run failed', e);
-      this.err = `Run failed: ${e instanceof Error ? e.message : String(e)}`;
-      this.isRunning = false;
-      this.maybeRunPending();
+      return {
+        type: 'err',
+        err: `Run failed: ${e instanceof Error ? e.message : String(e)}`,
+        failedNodeIds: new Set(),
+      };
     }
   };
 
@@ -184,37 +256,31 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.opts.onCancelCleanup();
     this.runStats = null;
 
-    this.repl = await this.opts.workerManager.recreate();
-    this.ctxPtr = await this.repl.init(getGeoscriptWorkerWasmURLs());
-    this.opts.onCtxReady();
+    this.replBox = { repl: await this.opts.workerManager.recreate() };
+    await this.init();
 
+    this.lastOkInputKey = null;
     this.err = 'Execution interrupted';
     this.isRunning = false;
     // Discard anything queued before/during the cancel — the user said stop.
     this.discardPending();
+    // terminate() strands the in-flight Comlink promise forever; settle awaiters here.
+    const settled = this.inFlightSettled;
+    this.inFlightSettled = null;
+    settled?.resolve({ type: 'cancelled' });
   };
 
   private discardPending() {
     this.pendingRun = false;
-    this.controlRunPending = false;
-    clearTimeout(this.controlRunTimer);
+    const queued = this.queuedSettled;
+    this.queuedSettled = null;
+    queued?.resolve({ type: 'cancelled' });
   }
 
   dispose = () => {
     this.discardPending();
-  };
-
-  // Continuous inputs (sliders) fire rapidly; coalesce into a trailing re-run once edits settle.
-  scheduleControlRun = () => {
-    this.controlRunPending = true;
-    clearTimeout(this.controlRunTimer);
-    this.controlRunTimer = window.setTimeout(this.fireControlRun, 120);
-  };
-
-  private fireControlRun = () => {
-    if (!this.controlRunPending) return;
-    this.controlRunPending = false;
-    // If a run is in flight this lands in the latest-wins queue via `run()`.
-    this.opts.onDebouncedRun();
+    const settled = this.inFlightSettled;
+    this.inFlightSettled = null;
+    settled?.resolve({ type: 'cancelled' });
   };
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import ActionsMenu from './ActionsMenu.svelte';
-  import type { RecordingState } from './recording';
+  import type { RecordingState } from 'src/viz/scenes/geoscriptPlayground/recording';
 
   let {
     isRunning,

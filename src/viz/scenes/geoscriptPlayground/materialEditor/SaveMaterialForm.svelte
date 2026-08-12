@@ -2,7 +2,7 @@
   import { untrack } from 'svelte';
   import { createMaterial } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDef } from 'src/geoscript/materials';
-  import TagsInput from '../TagsInput.svelte';
+  import TagsInput from 'src/geotoy/panels/TagsInput.svelte';
   import { logGeotoyEvent } from 'src/analytics';
 
   let {

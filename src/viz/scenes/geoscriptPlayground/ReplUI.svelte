@@ -1,21 +1,20 @@
 <script lang="ts">
   import * as THREE from 'three';
-  import { onDestroy, onMount, untrack } from 'svelte';
-  import type { EditorView, KeyBinding } from '@codemirror/view';
+  import { onMount, untrack } from 'svelte';
   import { resolve } from '$app/paths';
 
   import type { Viz } from 'src/viz';
   import type { WorkerManager } from 'src/geoscript/workerManager';
-  import { buildEditor } from '../../../geoscript/editor';
   import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
-  import SaveControls from './SaveControls.svelte';
+  import SaveControls from 'src/geotoy/panels/SaveControls.svelte';
   import { goto } from '$app/navigation';
   import { type ReplCtx } from './types';
-  import ReplOutput from './ReplOutput.svelte';
-  import ReplControls from './ReplControls.svelte';
-  import ExportModal from './ExportModal.svelte';
+  import ReplOutput from 'src/geotoy/panels/ReplOutput.svelte';
+  import ReplControls from 'src/geotoy/panels/ReplControls.svelte';
+  import EditorPane from 'src/geotoy/panels/EditorPane.svelte';
+  import ExportModal from 'src/geotoy/panels/ExportModal.svelte';
   import { GeoscriptExecution, type RunInput } from 'src/geotoy/modules/execution.svelte';
-  import { HiddenMat, NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
+  import { FallbackMat, HiddenMat, NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
   import MaterialEditor from './materialEditor/MaterialEditor.svelte';
   import EnvironmentSettings from './EnvironmentSettings.svelte';
   import { Textures } from './materialEditor/state.svelte';
@@ -33,12 +32,12 @@
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
   import { buildGeotoyKeymap } from './keymap';
   import { compileTree, buildInjectedValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
-  import ControlsPanel from './ControlsPanel.svelte';
+  import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
   import { buildEvalResultJson } from './evalResult';
   import { TreeState, GLOBALS_SELECTION_ID } from './treeState.svelte';
   import { buildParentMap, composeInstance0World, computeMeshCounts, findParentId } from './treeOps';
-  import HierarchyPanel from './HierarchyPanel.svelte';
-  import NodeInspector from './NodeInspector.svelte';
+  import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
+  import NodeInspector from 'src/geotoy/panels/NodeInspector.svelte';
   import { TransformGizmo, type GizmoMode, type GizmoSpace } from './transformGizmo';
   import type { GizmoTargetRef } from 'src/viz/gizmos/gizmoTypes';
   import { scanGizmoHandleIds, scanGizmoHandleOrder, scanControlHandleIds } from 'src/geoscript/gizmoScan';
@@ -49,19 +48,16 @@
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { installRaycastSelect } from './raycastSelect';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
-  import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
+  import ReadOnlyCompositionDetails from 'src/geotoy/panels/ReadOnlyCompositionDetails.svelte';
   import {
     populateScene,
     buildWorldMatrixCache,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
   import { decomposeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
-  import type { MatEntry, RenderedObject, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
-  import {
-    buildCustomMaterials,
-    fetchAndSetTextures,
-    getReferencedTextureIDs,
-  } from './materialLoading.svelte';
+  import type { RenderedObject, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
+  import { fetchAndSetTextures, getReferencedTextureIDs } from './materialLoading.svelte';
+  import { MaterialRuntime } from 'src/geotoy/modules/materialRuntime.svelte';
   import {
     centerView,
     focusOnSubtree,
@@ -69,6 +65,7 @@
     orbit,
     setProjection,
     toggleProjection,
+    untilOrbitControls,
   } from './cameraControls';
   import { buildLightHelpers, toggleAxisHelpers, toggleLightHelpers } from './gizmos';
   import { applyGeoscriptSceneEnvironment } from './sceneEnvironment';
@@ -122,8 +119,11 @@
     viz: untrack(() => viz),
     getUserData: () => userData,
     serializeActiveTree: () => treeState.serialize(),
+    isTreeDirty: () => treeState.treeDirty,
   });
   const keymap = new GeotoyKeymap();
+  /** Aborts boot-time orbit-controls waiters if the component unmounts mid-boot. */
+  const bootAbort = new AbortController();
   const initialTree = persistence.initial.tree;
 
   const serverDoc = untrack(() => userData?.initialComposition?.version.tree);
@@ -134,22 +134,6 @@
       : initialTree,
   });
   treeState.setSelected(initialTree.rootId);
-
-  const getActiveSource = (): string => {
-    const sel = treeState.state.selectedId;
-    if (sel === GLOBALS_SELECTION_ID) return treeState.state.tree.globalsSource;
-    if (sel && treeState.state.tree.nodes[sel]) return treeState.state.tree.nodes[sel].source;
-    return '';
-  };
-  // Source edits stay out of tree undo: CodeMirror owns per-node text history.
-  const writeActiveSource = (source: string): void => {
-    const sel = treeState.state.selectedId;
-    if (sel === GLOBALS_SELECTION_ID) {
-      treeState.setGlobalsSource(source);
-    } else if (sel && treeState.state.tree.nodes[sel]) {
-      treeState.setSource(sel, source);
-    }
-  };
 
   const treePanelVisible = $derived(
     Object.keys(treeState.state.tree.nodes).length > 1 ||
@@ -213,7 +197,7 @@
     );
     userData = newUserData;
     treeState.markSaved();
-    persistence.isDirty = false;
+    persistence.markClean();
   };
 
   const initialLayoutOrientation =
@@ -225,7 +209,13 @@
   );
   onMount(() => {
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
-    execution.init();
+    execution.init().then(() => {
+      // If the tab was closed while the last run was in progress, don't eagerly re-run
+      // it — it may have been an infinite loop.
+      if (persistence.initial.lastRunWasSuccessful) {
+        execution.run();
+      }
+    });
   });
 
   let gizmo = $state<TransformGizmo | null>(null);
@@ -234,33 +224,53 @@
   let gizmoMode = $state<GizmoMode>('translate');
   let gizmoSpace = $state<GizmoSpace>('local');
 
-  // What the viewport gizmo edits. Defaults to the selected node's first instance, but
-  // the inspector / a viewport click can arm any specific instance without changing
-  // selection. `armedForSel` (plain) records which selection the default was applied for,
-  // so an explicit arm in the same tick isn't clobbered by the selection-tracking effect.
-  let armedRef = $state<GizmoTargetRef | null>(null);
-  let armedForSel: string | null = null;
+  // What the viewport gizmo edits: an explicit arm (inspector / viewport click / chip)
+  // recorded against the selection it was made under, falling back to the selected
+  // node's first instance. A stale override (selection moved on, armed node/instance
+  // deleted) falls back automatically — no latch, no same-tick clobber window.
+  let armedOverride = $state<{ sel: string | null; ref: GizmoTargetRef | null } | null>(null);
+  const armedRef = $derived.by((): GizmoTargetRef | null => {
+    const sel = treeState.state.selectedId;
+    if (armedOverride?.sel !== sel) return defaultArmFor(sel);
+    const ref = armedOverride.ref;
+    if (ref === null) return null;
+    const node = treeState.state.tree.nodes[ref.nodeId];
+    if (!node) return defaultArmFor(sel);
+    if (ref.kind === 'instance' && !node.instances.some(i => i.id === ref.instanceId)) {
+      return defaultArmFor(sel);
+    }
+    return ref;
+  });
 
   let dragStartTransform: Transform3 | null = null;
   let dragStartHandle: GizmoValue | null = null;
-  /** Gizmos reported by the last successful run; feeds handle arming + GC. */
-  let lastGizmos: RenderedGizmo[] = [];
-  /** Whether the last run produced any gizmos anywhere — gates the ghost-toggle menu item. */
-  let hasAnyGizmos = $state(false);
-  /** Input controls reported by the last successful run; feeds the auto-generated panel + GC. */
-  let lastControls = $state<RenderedControl[]>([]);
-  let hasAnyControls = $derived(lastControls.length > 0);
-  /** Module-name → node-id from the last run, so the panel resolves a control's owning node. */
-  let lastModuleNameToNodeId = $state<Record<string, string>>({});
+  /**
+   * Snapshot of the last successful run: serialized tree, reported gizmos/controls, and
+   * the module-name → node-id mapping. Written once per run; effects key on it as their
+   * run-completed signal (the transform-only fast path reassigns it as a change token).
+   */
+  let lastRun = $state.raw<{
+    tree: TreeDef;
+    gizmos: RenderedGizmo[];
+    controls: RenderedControl[];
+    moduleNameToNodeId: Record<string, string>;
+  } | null>(null);
+  /** Gates the ghost-toggle menu item / controls panel. */
+  const hasAnyGizmos = $derived((lastRun?.gizmos.length ?? 0) > 0);
+  const hasAnyControls = $derived((lastRun?.controls.length ?? 0) > 0);
   const controlScanCache = new Map<string, { source: string; ids: Set<string> }>();
 
   let loggedControlUse = false;
+  let controlRunTimer = 0;
+  // Continuous inputs (sliders) fire rapidly; coalesce into a trailing run once edits
+  // settle. Discarded on cancel (onCancelCleanup) and unmount.
   const scheduleControlRun = () => {
     if (!loggedControlUse) {
       loggedControlUse = true;
       logGeotoyEvent('editor', 'controls_used');
     }
-    execution.scheduleControlRun();
+    clearTimeout(controlRunTimer);
+    controlRunTimer = window.setTimeout(runOrFast, 120);
   };
   // Spline-control viewport editing (input_spline): one control editable at a time; the
   // shared SplineOverlay owns markers/polyline/point-gizmo, we own persistence + the panel
@@ -292,13 +302,13 @@
 
   const enterSplineEdit = (c: RenderedControl) => {
     exitSplineEdit();
-    const nodeId = c.sourceModule ? lastModuleNameToNodeId[c.sourceModule] : undefined;
+    const nodeId = c.sourceModule ? lastRun?.moduleNameToNodeId[c.sourceModule] : undefined;
     const g = gizmo;
     if (!nodeId || !g) return;
     treeState.setSelected(nodeId);
     splineEdit = { key: splineKeyOf(c), nodeId, handleId: c.handleId };
     splineState.activeKey = splineEdit.key;
-    armedRef = null;
+    armedOverride = { sel: treeState.state.selectedId, ref: null };
     const overlay = new SplineOverlay({
       overlayScene: viz.overlayScene,
       camera: viz.camera,
@@ -330,7 +340,6 @@
     const before = treeState.captureControl(nodeId, handleId);
     treeState.setControl(nodeId, handleId, { kind: 'spline', value: points });
     treeState.recordControlChange(nodeId, handleId, before, treeState.captureControl(nodeId, handleId));
-    persistence.isDirty = true;
     runOrFast();
   };
 
@@ -363,22 +372,18 @@
   let showGizmoGhosts = $state(localStorage.getItem('geoscript-gizmo-ghosts') !== 'false');
   let ghosts: GizmoGhosts | null = null;
   let ghostTick: (() => void) | null = null;
-  /** Inline-readout subscribers + armed-state pusher, wired once the editor's gizmo extensions install. */
-  // Editor push channels, wired once the gizmo extensions install (null until then).
-  let dispatchArmed: ((handleId: string | null) => void) | null = null;
-  let dispatchValues: ((values: Map<string, GizmoReadout>) => void) | null = null;
-  let dispatchValuePatch: ((id: string, readout: GizmoReadout) => void) | null = null;
+  let editorPane = $state<{
+    blur: () => void;
+    togglePreludeEjected: () => Promise<void>;
+  } | null>(null);
   /** nodeId → last-scanned {source, handleIds}; skips re-parsing unchanged sources on GC. */
   const handleScanCache = new Map<string, { source: string; ids: Set<string> }>();
 
   onMount(() => {
     let cancelled = false;
     (async () => {
-      while (!viz.orbitControls && !cancelled) {
-        await new Promise(r => setTimeout(r, 16));
-      }
-      if (cancelled) return;
-      const orbit = viz.orbitControls!;
+      const orbit = await untilOrbitControls(viz, bootAbort.signal).catch(() => null);
+      if (!orbit || cancelled) return;
       const g = new TransformGizmo(
         viz.camera,
         viz.renderer.domElement,
@@ -400,16 +405,12 @@
           onTransformChange: (ref, transform) => {
             if (ref.kind !== 'instance') return;
             treeState.setInstanceTransform(ref.nodeId, ref.instanceId, transform);
-            persistence.isDirty = true;
             runOrFast();
           },
           onHandleChange: (nodeId, handleId, value) => {
             // Store + live readout per drag-tick, but defer the (geometry-changing) re-eval
             // to drag end — per-tick re-runs aren't smooth enough to be worth it.
             treeState.setHandle(nodeId, handleId, value);
-            persistence.isDirty = true;
-            // single-handle, no full rebuild
-            dispatchValuePatch?.(handleId, storedReadout(value, axesForHandle(nodeId, handleId)));
           },
           onDragEnd: ref => {
             if (ref.kind === 'handle') {
@@ -434,7 +435,9 @@
       g.setHandleContextResolver((nodeId, handleId) => {
         const node = treeState.state.tree.nodes[nodeId];
         if (!node) return null;
-        const reported = lastGizmos.find(gz => gz.sourceModule === node.name && gz.handleId === handleId);
+        const reported = lastRun?.gizmos.find(
+          gz => gz.sourceModule === node.name && gz.handleId === handleId
+        );
         const stored = node.handles?.[handleId];
         const kind = reported?.kind ?? stored?.kind ?? 'vec3';
         return {
@@ -473,10 +476,9 @@
         },
         onSelect: (id, instancePath) => {
           if (id === null) {
-            // Background click: deselect to root and unarm the gizmo entirely.
+            // Background click: deselect to root (whose default arm is none).
             treeState.setSelected(treeState.state.tree.rootId);
-            armedForSel = treeState.state.tree.rootId;
-            armedRef = null;
+            armedOverride = null;
             return;
           }
           const tree = treeState.state.tree;
@@ -538,36 +540,20 @@
 
   /** Arm a specific instance without disturbing selection (inspector / viewport click). */
   const armInstance = (nodeId: string, instanceId: string) => {
-    armedForSel = treeState.state.selectedId;
-    armedRef = { kind: 'instance', nodeId, instanceId };
+    armedOverride = {
+      sel: treeState.state.selectedId,
+      ref: { kind: 'instance', nodeId, instanceId },
+    };
   };
 
-  // Default-arm the selected node's first instance whenever selection changes. Guarded by
-  // `armedForSel` so an explicit arm (raycast/inspector) in the same tick survives.
-  $effect(() => {
-    const sel = treeState.state.selectedId;
-    if (sel === armedForSel) return;
-    armedForSel = sel;
-    armedRef = defaultArmFor(sel);
-  });
-
   // Keep the gizmo bound to whatever is armed; re-sync after each run (ancestor world
-  // transforms refresh). Reading `armedRef`/`lastRunTree` subscribes the effect to both.
+  // transforms refresh). Reading `armedRef`/`lastRun` subscribes the effect to both.
   // Suspended while spline editing owns the gizmo via a custom target (re-fires on exit).
   $effect(() => {
     void armedRef;
-    void lastRunTree;
+    void lastRun;
     if (splineState.activeKey !== null) return;
     gizmo?.syncTo(armedRef, treeState.state.tree);
-  });
-
-  // Mirror the armed handle into the editor so the armed chip highlights (and clears on
-  // node switch / instance arm, which reset `armedRef` to a non-handle). Read `armedRef`
-  // into a local first: `dispatchArmed?.(…)` would short-circuit arg eval while
-  // `dispatchArmed` is still null (pre-import), leaving the effect with no tracked dep.
-  $effect(() => {
-    const armedHandle = armedRef?.kind === 'handle' ? armedRef.name : null;
-    dispatchArmed?.(armedHandle);
   });
 
   // Rebuild ghosts on discrete changes only (selection / arm / setting / each run); the
@@ -576,7 +562,7 @@
     void treeState.state.selectedId;
     void armedRef;
     void showGizmoGhosts;
-    void lastRunTree;
+    void lastRun;
     untrack(rebuildGhosts);
   });
 
@@ -605,7 +591,7 @@
     const node = nodeId ? treeState.state.tree.nodes[nodeId] : null;
     if (!node) return map;
     const axesByHandle = new Map<string, [boolean, boolean, boolean]>();
-    for (const gz of lastGizmos) {
+    for (const gz of lastRun?.gizmos ?? []) {
       if (gz.sourceModule !== node.name) continue;
       axesByHandle.set(gz.handleId, gz.axes);
       map.set(gz.handleId, channelReadout(gz));
@@ -618,15 +604,7 @@
     return map;
   };
 
-  const publishGizmoReadouts = () => {
-    dispatchValues?.(buildGizmoReadouts(treeState.state.selectedId));
-  };
-
-  const axesForHandle = (nodeId: string, handleId: string): [boolean, boolean, boolean] => {
-    const node = treeState.state.tree.nodes[nodeId];
-    const gz = node ? lastGizmos.find(g => g.sourceModule === node.name && g.handleId === handleId) : null;
-    return gz?.axes ?? [true, true, true];
-  };
+  const gizmoReadouts = $derived.by(() => buildGizmoReadouts(treeState.state.selectedId));
 
   // World matrix of a node's representative (instance-0) copy, root → node inclusive — same
   // anchor `HandleTarget` uses, so a ghost sits exactly where its armed gizmo would.
@@ -653,7 +631,7 @@
     const armedHandle = armedRef?.kind === 'handle' && armedRef.nodeId === sel ? armedRef.name : null;
     const world = nodeWorldMatrix(sel!);
     const specs: GhostSpec[] = [];
-    for (const gz of lastGizmos) {
+    for (const gz of lastRun?.gizmos ?? []) {
       if (gz.sourceModule !== node.name || gz.handleId === armedHandle) continue;
       if (!(gz.ghost ?? showGizmoGhosts)) continue;
       // transform handles report a 16-float matrix; its translation is `origin`.
@@ -680,13 +658,12 @@
       const sel = treeState.state.selectedId;
       // Handles are valid on any real node, including `_root` (unlike instance arming).
       if (!sel || sel === GLOBALS_SELECTION_ID || !treeState.state.tree.nodes[sel]) return;
-      armedForSel = sel;
-      armedRef = { kind: 'handle', nodeId: sel, name: handleId };
+      armedOverride = { sel, ref: { kind: 'handle', nodeId: sel, name: handleId } };
       if (kind === 'vec3') setGizmoMode('translate');
-      editorView?.contentDOM.blur(); // viewport mode → Ctrl-Z routes to the tree undo stack
+      editorPane?.blur();
     },
     disarm: () => {
-      if (armedRef?.kind === 'handle') armedRef = defaultArmFor(treeState.state.selectedId);
+      if (armedRef?.kind === 'handle') armedOverride = null;
     },
     resetHandle: handleId => {
       const sel = treeState.state.selectedId;
@@ -694,8 +671,6 @@
       if (!sel || before === null) return; // already at default
       treeState.deleteHandle(sel, handleId);
       treeState.recordHandleChange(sel, handleId, before, null);
-      persistence.isDirty = true;
-      publishGizmoReadouts();
       runOrFast();
     },
     setHandleVec3: (handleId, value) => {
@@ -709,8 +684,6 @@
       };
       treeState.setHandle(sel, handleId, after);
       treeState.recordHandleChange(sel, handleId, before, after);
-      persistence.isDirty = true;
-      publishGizmoReadouts();
       runOrFast();
     },
     getArmedHandleId: () => (armedRef?.kind === 'handle' ? armedRef.name : null),
@@ -728,18 +701,14 @@
     gizmo?.setSpace(gizmoSpace);
   };
 
-  let resetEditorHistory: (() => void) | null = null;
-
   const runUndo = (): boolean => {
     if (!treeState.undo()) return true;
-    persistence.isDirty = treeState.isDirty();
     runOrFast();
     return true;
   };
 
   const runRedo = (): boolean => {
     if (!treeState.redo()) return true;
-    persistence.isDirty = treeState.isDirty();
     runOrFast();
     return true;
   };
@@ -776,10 +745,8 @@
     window.addEventListener('mouseup', handleMouseup);
   };
 
-  let materialErr: string | null = $state(null);
   let renderedObjects: RenderedObject[] = $state([]);
   let lightHelpers: THREE.Object3D[] = $state([]);
-  let lastRunTree: TreeDef | null = $state(null);
   let meshCounts: ReadonlyMap<string, number> = $state(new Map());
 
   const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
@@ -803,7 +770,7 @@
   // come from the live tree so toggles are instant.
   $effect(() => {
     const soloId = treeState.state.soloId;
-    const renderTree = lastRunTree;
+    const renderTree = lastRun?.tree ?? null;
     const liveTree = treeState.state.tree;
     if (!renderTree) {
       for (const obj of renderedObjects) {
@@ -835,168 +802,19 @@
     }
   });
 
-  let codemirrorContainer = $state<HTMLDivElement | null>(null);
-  let editorView = $state<EditorView | null>(null);
-
-  let didFirstRun = $state(false);
-  $effect(() => {
-    if (execution.ctxPtr === null) {
-      return;
-    }
-
-    if (didFirstRun) {
-      return;
-    }
-    didFirstRun = true;
-
-    // if the user closed the tab while the last run was in progress, avoid eagerly running it again in
-    // case there was an infinite loop or something
-    if (persistence.initial.lastRunWasSuccessful) {
-      execution.run();
-    }
-  });
-
-  let lastSwappedSelection: string | null = null;
-  let loggedCodeEdit = false;
-
-  const setupEditor = () => {
-    if (!codemirrorContainer) {
-      if (editorView) {
-        persistence.saveDraft();
-        editorView.destroy();
-        editorView = null;
-        resetEditorHistory = null;
-      }
-      return;
-    }
-
-    if (editorView) {
-      return;
-    }
-
-    const customKeymap: readonly KeyBinding[] = [
-      {
-        key: 'Ctrl-Enter',
-        run: () => {
-          if (!editorView) {
-            return true;
-          }
-          runManual();
-          return true;
-        },
-      },
-      {
-        key: 'Ctrl-.',
-        run: () => {
-          centerView(viz, renderedObjects);
-          return true;
-        },
-      },
-      {
-        key: 'Ctrl-s',
-        run: () => {
-          persistence.saveDraft();
-          return true;
-        },
-      },
-    ];
-
-    const editor = buildEditor({
-      container: codemirrorContainer,
-      customKeymap,
-      initialCode: untrack(() => getActiveSource()),
-      onDocChange: () => {
-        if (editorView) {
-          writeActiveSource(editorView.state.doc.toString());
-          if (!loggedCodeEdit && editorView.hasFocus) {
-            loggedCodeEdit = true;
-            logGeotoyEvent('editor', 'code_edited');
-          }
-        }
-        // Recompute (not just `= true`) so CM undo back to the saved baseline clears dirty.
-        persistence.isDirty = treeState.isDirty();
-      },
-    });
-    editorView = editor.editorView;
-    resetEditorHistory = editor.resetHistory;
-    lastSwappedSelection = untrack(() => treeState.state.selectedId);
-
-    import('../../../geoscript/analysisExtensions').then(({ buildAnalysisExtensions }) => {
-      // Expose the `_globals` node as ambient scope so its helpers/constants resolve in other
-      // nodes; '' while editing `_globals` itself so it's analyzed directly.
-      const getAmbientSource = () =>
-        treeState.state.selectedId === GLOBALS_SELECTION_ID ? '' : treeState.state.tree.globalsSource;
-      editor.setAnalysisExtensions(
-        buildAnalysisExtensions(() => !persistence.preludeEjected, getAmbientSource)
-      );
-    });
-
-    import('../../../geoscript/gizmoExtensions').then(
-      ({ buildGizmoExtensions, pushGizmoArmed, pushGizmoValues, pushGizmoValue }) => {
-        editor.setGizmoExtensions(buildGizmoExtensions(gizmoEditorHooks));
-        dispatchArmed = h => editorView && pushGizmoArmed(editorView, h);
-        dispatchValues = m => editorView && pushGizmoValues(editorView, m);
-        dispatchValuePatch = (id, r) => editorView && pushGizmoValue(editorView, id, r);
-        dispatchArmed(gizmoEditorHooks.getArmedHandleId());
-        publishGizmoReadouts(); // seed inline readouts
-      }
-    );
-  };
-
-  // Swap the editor doc on selection change; clear CM undo so Ctrl-Z can't
-  // rewind past the swap.
-  $effect(() => {
-    const sel = treeState.state.selectedId;
-    if (sel === lastSwappedSelection) return;
-    if (!editorView) {
-      lastSwappedSelection = sel;
-      return;
-    }
-    const newSource = untrack(() => getActiveSource());
-    editorView.dispatch({
-      changes: { from: 0, to: editorView.state.doc.length, insert: newSource },
-      selection: { anchor: 0 },
-    });
-    resetEditorHistory?.();
-    lastSwappedSelection = sel;
-    publishGizmoReadouts();
-  });
-
-  onDestroy(() => {
-    if (editorView) {
-      persistence.saveDraft();
-      editorView.destroy();
-    }
-  });
-
-  $effect(setupEditor);
-
   let materialOverride = $state<'wireframe' | 'wireframe-xray' | 'normal' | null>(null);
 
-  const restoreMaterials = () => {
-    for (const obj of renderedObjects) {
-      if (obj instanceof THREE.Mesh) {
-        obj.material = customMaterialsByName[obj.userData.materialName]?.resolved ?? HiddenMat;
-      }
-    }
+  const resetDepthPrepass = () => {
     if (pipelineController?.depthPrePassMaterial) {
       pipelineController.depthPrePassMaterial.polygonOffset = false;
     }
     pipelineController?.setDepthPrePassEnabled(true);
   };
 
-  const applyWireframeMaterial = () => {
-    for (const obj of renderedObjects) {
-      if (obj instanceof THREE.Mesh) {
-        obj.material = WireframeMat;
-      }
-    }
-  };
-
   const toggleWireframe = () => {
     const wasWireframe = materialOverride === 'wireframe';
     if (materialOverride) {
-      restoreMaterials();
+      resetDepthPrepass();
       materialOverride = null;
     }
     if (wasWireframe) {
@@ -1004,7 +822,6 @@
     }
 
     materialOverride = 'wireframe';
-    applyWireframeMaterial();
     if (pipelineController?.depthPrePassMaterial) {
       pipelineController.depthPrePassMaterial.polygonOffset = true;
       pipelineController.depthPrePassMaterial.polygonOffsetFactor = 1;
@@ -1016,7 +833,7 @@
   const toggleWireframeXray = () => {
     const wasXray = materialOverride === 'wireframe-xray';
     if (materialOverride) {
-      restoreMaterials();
+      resetDepthPrepass();
       materialOverride = null;
     }
     if (wasXray) {
@@ -1024,14 +841,13 @@
     }
 
     materialOverride = 'wireframe-xray';
-    applyWireframeMaterial();
     pipelineController?.setDepthPrePassEnabled(false);
   };
 
   const toggleNormalMat = () => {
     const wasNormal = materialOverride === 'normal';
     if (materialOverride) {
-      restoreMaterials();
+      resetDepthPrepass();
       materialOverride = null;
     }
     if (wasNormal) {
@@ -1039,11 +855,6 @@
     }
 
     materialOverride = 'normal';
-    for (const obj of renderedObjects) {
-      if (obj instanceof THREE.Mesh) {
-        obj.material = NormalMat;
-      }
-    }
   };
 
   let materialEditorOpen = $state(false);
@@ -1070,130 +881,82 @@
     }
   });
 
-  let lastMaterialsKey: string | null = null;
-  const syncMaterials = (force: boolean) => {
+  const materialNames = $derived(
+    Object.values(persistence.materialDefinitions.materials).map(mat => mat.name)
+  );
+  let pushedMaterialsKey: string | null = null;
+  // Push ctx-scoped material state on change and on ctx recreation. Keyed on
+  // `execution.ctxEpoch`, not `ctxPtr` — a recreated wasm instance usually allocates
+  // the ctx at the same address.
+  $effect(() => {
     if (execution.ctxPtr === null) {
       return;
     }
-
-    const materialNames = Object.values(persistence.materialDefinitions.materials).map(mat => mat.name);
-    const key = `${persistence.materialDefinitions.defaultMaterialID ?? ''}|${materialNames.join('\u0000')}`;
-    if (!force && key === lastMaterialsKey) {
+    const defaultMaterialID = persistence.materialDefinitions.defaultMaterialID;
+    const key = `${execution.ctxEpoch}|${defaultMaterialID ?? ''}|${materialNames.join('\u0000')}`;
+    if (key === pushedMaterialsKey) {
       return;
     }
-
-    execution.repl.setMaterials(
-      execution.ctxPtr,
-      persistence.materialDefinitions.defaultMaterialID,
-      materialNames
-    );
-    lastMaterialsKey = key;
-  };
-  $effect(() => syncMaterials(false));
+    pushedMaterialsKey = key;
+    untrack(() => void execution.repl.setMaterials(execution.ctxPtr!, defaultMaterialID, materialNames));
+  });
 
   const loader = new THREE.ImageBitmapLoader();
-  let customMaterials: Record<string, MatEntry> = $derived.by(() => {
-    // Re-run when async-fetched texture metadata arrives.
+  const materialRuntime = new MaterialRuntime(
+    untrack(() => viz),
+    loader
+  );
+  // Rebuild on def edits and texture-metadata arrival (per-id hashing inside sync).
+  $effect(() => {
     void Textures.textures;
-    // `$state.snapshot` seems required here in order to trigger this derived to actually run when things change
-    return buildCustomMaterials(
-      loader,
-      $state.snapshot(persistence.materialDefinitions.materials) as Record<string, MaterialDef>,
+    const defs = $state.snapshot(persistence.materialDefinitions.materials) as Record<string, MaterialDef>;
+    untrack(() => materialRuntime.sync(defs));
+  });
+
+  const applyEnv = () =>
+    void applyGeoscriptSceneEnvironment(
       viz,
-      // queueMicrotask: synchronous `$state` writes inside `$derived.by` are disallowed.
-      msg => queueMicrotask(() => (materialErr = msg))
+      loader,
+      $state.snapshot(persistence.environment) as EnvironmentConfig | undefined,
+      id => Textures.textures[id]?.url
     );
-  });
-
-  // avoid a ton of before render callbacks from being stuck around, which also prevents
-  // old materials from being garbage collected
-  $effect(() => {
-    const customMatVals = Object.values(customMaterials);
-    return () => {
-      for (const matEntry of customMatVals) {
-        if (matEntry.beforeRenderCb) {
-          viz.unregisterBeforeRenderCb(matEntry.beforeRenderCb);
-        }
-      }
-    };
-  });
-
-  let didInitMats = false;
-  $effect(() => {
-    // force dependency
-    if ($state.snapshot(persistence.materialDefinitions)) {
-      if (!didInitMats) {
-        didInitMats = true;
-      } else {
-        persistence.isDirty = true;
-      }
-    } else {
-      throw new Error('unreachable');
-    }
-  });
-
-  // Re-apply on env change, texture-metadata arrival, and after each run rebuilds
-  // materials (the `void` refs are the deps). PMREM is cached, so this is cheap.
+  // Re-apply on env config change and texture-metadata arrival (the equirect URL may
+  // resolve late); the post-run re-apply is an explicit call in consume. PMREM is
+  // cached, so double-applies are cheap and idempotent.
   $effect(() => {
     void Textures.textures;
-    void renderedObjects;
-    const env = $state.snapshot(persistence.environment) as EnvironmentConfig | undefined;
-    void applyGeoscriptSceneEnvironment(viz, loader, env, id => Textures.textures[id]?.url);
-  });
-
-  // Editing the environment marks the composition dirty (mirrors materials).
-  let didInitEnv = false;
-  $effect(() => {
     void $state.snapshot(persistence.environment);
-    if (!didInitEnv) {
-      didInitEnv = true;
-    } else {
-      persistence.isDirty = true;
-    }
+    untrack(applyEnv);
   });
 
-  let customMaterialsByName: Record<
-    string,
-    { promise: Promise<THREE.Material>; resolved: THREE.Material | null }
-  > = $derived.by(() => {
-    const matsByName: Record<string, { promise: Promise<THREE.Material>; resolved: THREE.Material | null }> =
-      {};
-    for (const [id, def] of Object.entries($state.snapshot(persistence.materialDefinitions.materials))) {
-      matsByName[def.name] = customMaterials[id];
-    }
-    return matsByName;
-  });
+  let pomRescanQueued = false;
+  // Material swaps invalidate the bounded-silhouette manager's per-mesh registry.
+  const schedulePomRescan = () => {
+    if (pomRescanQueued) return;
+    pomRescanQueued = true;
+    queueMicrotask(() => {
+      pomRescanQueued = false;
+      viz.postprocessingController?.rescanPomMeshes();
+    });
+  };
 
+  const OverrideMats = { wireframe: WireframeMat, 'wireframe-xray': WireframeMat, normal: NormalMat };
+  // Single owner of mesh material assignment: run completions (renderedObjects), build
+  // landings / def edits (byName), and override toggles all converge here. Pending
+  // build → HiddenMat; unknown material name → FallbackMat (matches the runner).
   $effect(() => {
-    const pendingSwaps: Promise<unknown>[] = [];
+    const overrideMat = materialOverride ? OverrideMats[materialOverride] : null;
+    const byName = materialRuntime.byName;
     for (const obj of renderedObjects) {
-      if (!(obj instanceof THREE.Mesh)) {
+      if (!(obj instanceof THREE.Mesh)) continue;
+      if (overrideMat) {
+        obj.material = overrideMat;
         continue;
       }
-
-      for (const [id, matEntry] of Object.entries(customMaterials)) {
-        if (obj.material.name === id) {
-          if (matEntry.resolved) {
-            obj.material = matEntry.resolved;
-          } else {
-            pendingSwaps.push(
-              matEntry.promise.then(mat => {
-                obj.material = mat;
-              })
-            );
-          }
-          break;
-        }
-      }
+      const entry = byName[obj.userData.materialName as string];
+      obj.material = entry ? (entry.material ?? HiddenMat) : FallbackMat;
     }
-    // Material swaps invalidate the bounded-silhouette manager's per-mesh
-    // registry, so reconcile after swaps settle.
-    const reconcile = () => viz.postprocessingController?.rescanPomMeshes();
-    if (pendingSwaps.length === 0) {
-      reconcile();
-    } else {
-      Promise.allSettled(pendingSwaps).then(reconcile);
-    }
+    schedulePomRescan();
   });
 
   const removeRenderedObject = (obj: RenderedObject) => {
@@ -1240,7 +1003,6 @@
     return parts.join('\x00');
   };
 
-  let lastEvalInputsHash: string | null = null;
   // Set for the duration of a gizmo drag, where the tree structure is frozen, so the
   // fast path can skip the eval-hash recompute + parent-map rebuild every frame.
   let dragSession: { parentMap: Map<string, string> } | null = null;
@@ -1249,9 +1011,9 @@
   /** Recompose each mesh's `ancestor × localInScript` if only transforms changed. */
   const tryTransformOnlyFastPath = (): boolean => {
     if (execution.isRunning) return false;
-    if (lastEvalInputsHash === null) return false;
+    if (execution.lastOkInputKey === null) return false;
     const drag = dragSession;
-    if (!drag && computeEvalInputsHash() !== lastEvalInputsHash) return false;
+    if (!drag && computeEvalInputsHash() !== execution.lastOkInputKey) return false;
 
     const tree = treeState.state.tree;
     const worldMatrices = buildWorldMatrixCache(tree, drag?.parentMap ?? buildParentMap(tree));
@@ -1271,9 +1033,10 @@
       _fastScratch.multiply(localInScript);
       _fastScratch.decompose(obj.position, obj.quaternion, obj.scale);
     }
-    // Skip the snapshot mid-drag: structure is frozen, so `lastRunTree`-derived effects
-    // (solo/disabled visibility) needn't re-run; `onDragEnd`'s final run refreshes it.
-    if (!drag) lastRunTree = treeState.serialize();
+    // Reassign as a change token so `lastRun`-keyed effects (gizmo re-sync, ghosts)
+    // re-fire; structure is frozen on this path so the contents are still accurate.
+    // Skipped mid-drag; `onDragEnd`'s full run refreshes everything.
+    if (!drag && lastRun) lastRun = { ...lastRun };
     return true;
   };
 
@@ -1283,10 +1046,10 @@
   };
 
   const runManual = async () => {
-    await execution.run();
-    if (!userData?.renderMode) {
+    const outcome = await execution.run();
+    if (!userData?.renderMode && outcome) {
       logGeotoyEvent('editor', 'run', {
-        success: !execution.err,
+        success: outcome.type === 'ok',
         num_nodes: Object.keys(treeState.state.tree.nodes).length,
         comp_id: userData?.initialComposition?.comp.id ?? null,
       });
@@ -1302,9 +1065,13 @@
     onRunStart: persistence.saveDraft,
     setLastRunWasSuccessful: persistence.setLastRunWasSuccessful,
     buildRunInput: () => {
-      const matsByName: Record<string, { def: MaterialDef; mat: MatEntry }> = {};
-      for (const [id, def] of Object.entries(persistence.materialDefinitions.materials)) {
-        matsByName[def.name] = { def, mat: customMaterials[id] };
+      const defs = $state.snapshot(persistence.materialDefinitions.materials) as Record<string, MaterialDef>;
+      // Hash-guarded no-op unless a def changed this tick — the run never sees entries
+      // staler than the defs it compiles against.
+      materialRuntime.sync(defs);
+      const matsByName: Record<string, { def: MaterialDef; mat: THREE.Material }> = {};
+      for (const [id, def] of Object.entries(defs)) {
+        matsByName[def.name] = { def, mat: materialRuntime.entries[id]?.material ?? HiddenMat };
       }
 
       const tree = treeState.serialize();
@@ -1320,9 +1087,10 @@
         gizmoValues: buildInjectedValues(tree),
         moduleNameToNodeId: buildModuleNameToNodeId(tree),
         tree,
+        inputKey: computeEvalInputsHash(),
       };
     },
-    onRunSuccess: (result, { tree, moduleNameToNodeId }, isCurrent) => {
+    consume: (result, { tree, moduleNameToNodeId }, isCurrent) => {
       // Defer disposal until after populate so unchanged objects can be reused.
       const prevObjects = renderedObjects;
       const prevByReuseKey = new Map<string, RenderedObject>();
@@ -1342,21 +1110,6 @@
         if (typeof key === 'string' && populated.reusedKeys.has(key)) continue;
         removeRenderedObject(obj);
       }
-      lastRunTree = tree;
-
-      // populateScene's own `materialPromise.then` swaps `HiddenMat` for the
-      // real material later, but that mutation isn't reactive — rescan manually.
-      const pendingMatPromises = Object.values(customMaterials)
-        .filter(m => !m.resolved)
-        .map(m => m.promise);
-      if (pendingMatPromises.length > 0) {
-        Promise.allSettled(pendingMatPromises).then(() => {
-          if (!isCurrent()) {
-            return;
-          }
-          viz.postprocessingController?.rescanPomMeshes();
-        });
-      }
 
       const directCounts = new Map<string, number>();
       for (const obj of renderedObjects) {
@@ -1367,10 +1120,7 @@
       }
       meshCounts = computeMeshCounts(tree, directCounts);
 
-      lastGizmos = result.gizmos;
-      hasAnyGizmos = result.gizmos.length > 0;
-      lastControls = result.controls;
-      lastModuleNameToNodeId = moduleNameToNodeId;
+      lastRun = { tree, gizmos: result.gizmos, controls: result.controls, moduleNameToNodeId };
       // Refresh the active spline editor from the run channel (or exit if its control vanished).
       if (splineEdit) {
         const sc = result.controls.find(c => splineKeyOf(c) === splineEdit!.key);
@@ -1382,7 +1132,6 @@
           splineState.points = pts;
         }
       }
-      publishGizmoReadouts();
       // GC orphaned handles: keep ids the channel reported this run (covers dynamic names
       // the static scan can't see), plus the static handle ids in each node's source
       // (covers gizmos in branches that didn't execute this run).
@@ -1442,19 +1191,16 @@
         lightHelpers = [];
       }
 
-      lastEvalInputsHash = computeEvalInputsHash();
+      // Fresh CustomShaderMaterials need scene.environment re-pushed after populate.
+      applyEnv();
     },
     onCancelCleanup: () => {
       for (const obj of renderedObjects) {
         removeRenderedObject(obj);
       }
       renderedObjects = [];
-      // The scene is gone; a stale hash would let the transform-only fast path
-      // swallow the next run over an empty scene.
-      lastEvalInputsHash = null;
+      clearTimeout(controlRunTimer);
     },
-    onDebouncedRun: runOrFast,
-    onCtxReady: () => syncMaterials(true),
   });
 
   const handleInstanceTransformChange = (nodeId: string, instanceId: string, transform: Transform3) => {
@@ -1462,7 +1208,6 @@
     if (!before) return;
     treeState.setInstanceTransform(nodeId, instanceId, transform);
     treeState.recordInstanceTransformChange(nodeId, instanceId, before, transform);
-    persistence.isDirty = true;
     runOrFast();
   };
 
@@ -1474,30 +1219,24 @@
     seed.pos[0] += 0.5;
     seed.pos[2] += 0.5;
     const newId = treeState.addInstance(nodeId, seed);
-    persistence.isDirty = true;
     runOrFast();
     if (newId) armInstance(nodeId, newId);
   };
 
   const handleRemoveInstance = (nodeId: string, instanceId: string) => {
     treeState.removeInstance(nodeId, instanceId);
-    if (armedRef?.kind === 'instance' && armedRef.nodeId === nodeId && armedRef.instanceId === instanceId) {
-      armedRef = defaultArmFor(treeState.state.selectedId);
-    }
-    persistence.isDirty = true;
     runOrFast();
   };
 
   const handleInspectorDisableToggle = (id: string, disabled: boolean) => {
     treeState.setDisabled(id, disabled);
-    persistence.isDirty = true;
   };
 
   const rerun = async (onlyIfUVUnwrapperNotLoaded: boolean) => {
     if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
       return;
     }
-    return execution.run();
+    await execution.run();
   };
 
   const toggleEditorCollapsed = () => {
@@ -1506,51 +1245,7 @@
     onSizeChange(size, isEditorCollapsed, layoutOrientation);
   };
 
-  const ejectPrelude = async (editorView: EditorView) => {
-    const prelude = await execution.repl.getPrelude();
-    editorView.dispatch({
-      changes: { from: 0, insert: prelude + '\n//-- end prelude\n\n' },
-    });
-  };
-
-  // Tree mode: the prelude is render-only (default lights), and renders fired in `_globals`
-  // (ambient scope) are dropped — so it has to land in a real scene-eval'd node. The root is
-  // that node; dump it there and focus it so it's clear where the code went.
-  const ejectPreludeIntoRoot = async () => {
-    const prelude = await execution.repl.getPrelude();
-    const rootId = treeState.state.tree.rootId;
-    const cur = treeState.state.tree.nodes[rootId]?.source ?? '';
-    const newSource = prelude + '\n//-- end prelude\n\n' + cur;
-    treeState.setSource(rootId, newSource);
-    treeState.setSelected(rootId);
-    if (editorView) {
-      // Force the swap even if the root was already selected (the doc-swap effect no-ops then).
-      editorView.dispatch({
-        changes: { from: 0, to: editorView.state.doc.length, insert: newSource },
-        selection: { anchor: 0 },
-      });
-      resetEditorHistory?.();
-      lastSwappedSelection = rootId;
-    }
-  };
-
-  const togglePreludeEjected = async () => {
-    if (!editorView) {
-      return;
-    }
-
-    if (!persistence.preludeEjected) {
-      if (Object.keys(treeState.state.tree.nodes).length > 1) {
-        await ejectPreludeIntoRoot();
-      } else {
-        await ejectPrelude(editorView);
-      }
-    }
-    persistence.preludeEjected = !persistence.preludeEjected;
-    logGeotoyEvent('editor', 'prelude_toggle', { ejected: persistence.preludeEjected });
-
-    execution.run();
-  };
+  const togglePreludeEjected = () => void editorPane?.togglePreludeEjected();
 
   let exportDialog = $state<HTMLDialogElement | null>(null);
   const onExport = () => {
@@ -1558,15 +1253,14 @@
   };
 
   const setView = async (view: ViewState) => {
-    while (!viz.orbitControls) {
-      await new Promise(resolve => setTimeout(resolve, 10));
-    }
+    const orbitControls = await untilOrbitControls(viz, bootAbort.signal).catch(() => null);
+    if (!orbitControls) return;
 
     if (view.cameraPosition) {
       viz.camera.position.set(...view.cameraPosition);
     }
     if (view.target) {
-      viz.orbitControls.target.set(...view.target);
+      orbitControls.target.set(...view.target);
     }
     // Position/target are set first so the ortho frustum is sized from the correct distance.
     cameraProjection = view.projection ?? 'perspective';
@@ -1579,14 +1273,14 @@
       viz.camera.zoom = view.zoom;
       viz.camera.updateProjectionMatrix();
     }
-    viz.camera.lookAt(viz.orbitControls.target);
-    viz.orbitControls.update();
+    viz.camera.lookAt(orbitControls.target);
+    orbitControls.update();
   };
 
   const handleToggleProjection = () => {
     cameraProjection = toggleProjection(viz);
     logGeotoyEvent('view', 'projection_toggle', { projection: cameraProjection });
-    persistence.isDirty = true;
+    persistence.viewDirty = true;
     persistence.saveDraft();
   };
 
@@ -1596,7 +1290,6 @@
     }
 
     logGeotoyEvent('editor', 'clear_local_changes');
-    didInitMats = false;
     const serverState = persistence.revertToServer();
 
     treeState.replaceTree(serverState.tree);
@@ -1607,7 +1300,6 @@
       referencedTextureIDs.push(serverState.environment.textureId);
     }
     fetchAndSetTextures(loader, referencedTextureIDs).then(() => {
-      didInitMats = false;
       persistence.materialDefinitions = { ...serverState.materials };
     });
 
@@ -1639,16 +1331,15 @@
 
     if (!userData?.renderMode) {
       let loggedVizEngaged = false;
-      (async () => {
-        while (!viz.orbitControls) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-        }
-        viz.orbitControls.addEventListener('start', () => {
-          if (loggedVizEngaged) return;
-          loggedVizEngaged = true;
-          logGeotoyEvent('view', 'viz_engaged');
-        });
-      })();
+      untilOrbitControls(viz, bootAbort.signal).then(
+        orbitControls =>
+          orbitControls.addEventListener('start', () => {
+            if (loggedVizEngaged) return;
+            loggedVizEngaged = true;
+            logGeotoyEvent('view', 'viz_engaged');
+          }),
+        () => {}
+      );
     }
 
     const replCtx: ReplCtx = {
@@ -1666,7 +1357,7 @@
       toggleLightHelpers: wrappedToggleLightHelpers,
       toggleAxesHelper: wrappedToggleAxesHelpers,
       getLastRunOutcome: () => execution.lastOutcome,
-      getAreAllMaterialsLoaded: () => Object.values(customMaterials).every(mat => mat.resolved),
+      getAreAllMaterialsLoaded: () => materialRuntime.allLoaded,
       run: runManual,
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
@@ -1709,7 +1400,6 @@
         const ns = resolveSelectedNode();
         if (!ns || !treeState.canDelete(ns.sel)) return;
         treeState.deleteNode(ns.sel);
-        persistence.isDirty = true;
         logGeotoyEvent('editor', 'node_delete');
       },
       startRenameSelected: () => {
@@ -1749,6 +1439,8 @@
     window.addEventListener('beforeunload', persistence.saveDraft);
 
     return () => {
+      bootAbort.abort();
+      clearTimeout(controlRunTimer);
       workerManager.terminate();
       execution.dispose();
       keymap.dispose();
@@ -1780,9 +1472,9 @@
 
 {#if hasAnyControls && !userData?.renderMode}
   <ControlsPanel
-    controls={lastControls}
+    controls={lastRun?.controls ?? []}
     {treeState}
-    moduleNameToNodeId={lastModuleNameToNodeId}
+    moduleNameToNodeId={lastRun?.moduleNameToNodeId ?? {}}
     onEdit={scheduleControlRun}
     spline={splinePanelCtx}
   />
@@ -1804,37 +1496,41 @@
   me={userData?.me}
 />
 
+{#snippet replControls()}
+  <ReplControls
+    isRunning={execution.isRunning}
+    {isEditorCollapsed}
+    run={runManual}
+    cancel={execution.cancel}
+    {toggleEditorCollapsed}
+    {goHome}
+    err={execution.err}
+    {onExport}
+    {clearLocalChanges}
+    onRecord={toggleRecording}
+    recordingState={$recordingState}
+    toggleAxisHelpers={wrappedToggleAxesHelpers}
+    toggleLightHelpers={wrappedToggleLightHelpers}
+    {toggleGizmoGhosts}
+    {showGizmoGhosts}
+    gizmosExist={hasAnyGizmos}
+    {cameraProjection}
+    toggleProjection={handleToggleProjection}
+    isDirty={persistence.isDirty}
+    preludeEjected={persistence.preludeEjected}
+    {togglePreludeEjected}
+    {toggleMaterialEditorOpen}
+    {toggleEnvironmentSettingsOpen}
+    {toggleLayoutOrientation}
+  />
+{/snippet}
+
 {#if isEditorCollapsed}
   <div
     class={['root', 'collapsed', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
     style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} ${layoutOrientation === 'horizontal' ? 'width: 36px;' : 'height: 36px;'}`}
   >
-    <ReplControls
-      isRunning={execution.isRunning}
-      {isEditorCollapsed}
-      run={runManual}
-      cancel={execution.cancel}
-      {toggleEditorCollapsed}
-      {goHome}
-      err={execution.err}
-      {onExport}
-      {clearLocalChanges}
-      onRecord={toggleRecording}
-      recordingState={$recordingState}
-      toggleAxisHelpers={wrappedToggleAxesHelpers}
-      toggleLightHelpers={wrappedToggleLightHelpers}
-      {toggleGizmoGhosts}
-      {showGizmoGhosts}
-      gizmosExist={hasAnyGizmos}
-      {cameraProjection}
-      toggleProjection={handleToggleProjection}
-      isDirty={persistence.isDirty}
-      preludeEjected={persistence.preludeEjected}
-      {togglePreludeEjected}
-      {toggleMaterialEditorOpen}
-      {toggleEnvironmentSettingsOpen}
-      {toggleLayoutOrientation}
-    />
+    {@render replControls()}
   </div>
 {:else}
   <div
@@ -1862,23 +1558,19 @@
             onDisableToggle={id => {
               const node = treeState.state.tree.nodes[id];
               if (node) treeState.setDisabled(id, !node.disabled);
-              persistence.isDirty = true;
             }}
             oncreate={parentId => {
               const newId = treeState.createNode({ parentId: parentId ?? undefined });
               treeState.setSelected(newId);
-              persistence.isDirty = true;
               logGeotoyEvent('editor', 'node_add');
             }}
             ondelete={id => {
               treeState.deleteNode(id);
-              persistence.isDirty = true;
               logGeotoyEvent('editor', 'node_delete');
             }}
             onrename={(id, newName) => {
               try {
                 treeState.rename(id, newName);
-                persistence.isDirty = true;
                 return true;
               } catch (err) {
                 console.warn('rename failed:', err);
@@ -1888,7 +1580,6 @@
             onreparent={(id, newParentId) => {
               try {
                 treeState.reparent(id, newParentId);
-                persistence.isDirty = true;
               } catch (err) {
                 console.warn('reparent failed:', err);
               }
@@ -1913,7 +1604,6 @@
                 onclick={() => {
                   const newId = treeState.createNode({ name: 'node_2' });
                   treeState.setSelected(newId);
-                  persistence.isDirty = true;
                   logGeotoyEvent('editor', 'node_add');
                 }}
               >
@@ -1936,41 +1626,22 @@
             onDisableToggle={handleInspectorDisableToggle}
           />
         {/if}
-        <div
-          bind:this={codemirrorContainer}
-          class="codemirror-wrapper"
-          style="flex: 1; background: #222;"
-        ></div>
+        <EditorPane
+          bind:this={editorPane}
+          {treeState}
+          {persistence}
+          {execution}
+          {gizmoEditorHooks}
+          onRun={runManual}
+          onCenterView={() => centerView(viz, renderedObjects)}
+          armedHandleId={armedRef?.kind === 'handle' ? armedRef.name : null}
+          readouts={gizmoReadouts}
+        />
       </div>
       <div class="controls">
         <div class="output">
-          <ReplControls
-            isRunning={execution.isRunning}
-            {isEditorCollapsed}
-            run={runManual}
-            cancel={execution.cancel}
-            {toggleEditorCollapsed}
-            {goHome}
-            err={execution.err}
-            {onExport}
-            {clearLocalChanges}
-            onRecord={toggleRecording}
-            recordingState={$recordingState}
-            toggleAxisHelpers={wrappedToggleAxesHelpers}
-            toggleLightHelpers={wrappedToggleLightHelpers}
-            {toggleGizmoGhosts}
-            {showGizmoGhosts}
-            gizmosExist={hasAnyGizmos}
-            {cameraProjection}
-            toggleProjection={handleToggleProjection}
-            isDirty={persistence.isDirty}
-            preludeEjected={persistence.preludeEjected}
-            {togglePreludeEjected}
-            {toggleMaterialEditorOpen}
-            {toggleEnvironmentSettingsOpen}
-            {toggleLayoutOrientation}
-          />
-          <ReplOutput err={execution.err ?? materialErr} runStats={execution.runStats} />
+          {@render replControls()}
+          <ReplOutput err={execution.err ?? materialRuntime.err} runStats={execution.runStats} />
         </div>
         {#if userData?.me}
           {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}
@@ -1983,7 +1654,7 @@
               preludeEjected={persistence.preludeEjected}
               environment={persistence.environment}
               onSave={() => {
-                persistence.isDirty = false;
+                persistence.markClean();
                 treeState.markSaved();
               }}
               onForked={handleForkedComposition}
@@ -2165,27 +1836,6 @@
     border-color: #666;
   }
 
-  .codemirror-wrapper {
-    display: flex;
-    flex: 1;
-    width: 100%;
-    min-width: 0;
-    overflow-x: auto;
-    background: #222;
-  }
-
-  :global(.codemirror-wrapper > div) {
-    display: flex;
-    flex: 1;
-    width: 100%;
-    min-width: 0;
-    box-sizing: border-box;
-  }
-
-  :global(.cm-content) {
-    padding-top: 0 !important;
-  }
-
   .controls {
     display: flex;
     flex-direction: column;
@@ -2214,10 +1864,6 @@
 
     .output {
       padding: 4px;
-    }
-
-    .codemirror-wrapper {
-      flex: 1;
     }
 
     .controls {

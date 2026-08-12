@@ -10,7 +10,6 @@ import type { MaterialDefinitions } from 'src/geoscript/materials';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
 import {
   clearSavedState,
-  getIsDirty,
   getServerState,
   getView,
   loadState,
@@ -27,7 +26,17 @@ interface PersistenceOpts {
   getUserData: () => GeoscriptPlaygroundUserData | undefined;
   /** Serializes the active tree's live editing state (tree content lives in TreeState). */
   serializeActiveTree: () => TreeDef;
+  /** Reactive read of the active tree's dirty flag (latched + recomputed by TreeState). */
+  isTreeDirty: () => boolean;
 }
+
+/** Sorted-key stringify so server-parsed vs live objects compare by content, not key order. */
+const stableJson = (v: unknown): string =>
+  JSON.stringify(v, (_k, val) =>
+    val && typeof val === 'object' && !Array.isArray(val)
+      ? Object.fromEntries(Object.entries(val).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : val
+  );
 
 /**
  * Owns the draftable composition state (container doc, materials, prelude flag,
@@ -44,7 +53,17 @@ export class GeotoyPersistence {
   materialDefinitions = $state() as MaterialDefinitions;
   preludeEjected = $state(false);
   environment: EnvironmentConfig | undefined = $state(undefined);
-  isDirty = $state(false);
+
+  /** Serialized server-version meta state; dirty = live content vs this. */
+  private metaBaselines = $state.raw({ mats: '', env: '', prelude: false });
+  /** Camera/view changes aren't content-baselined; explicit flag, cleared by markClean. */
+  viewDirty = $state(false);
+  private readonly metaDirty = $derived(
+    stableJson($state.snapshot(this.materialDefinitions)) !== this.metaBaselines.mats ||
+      stableJson(($state.snapshot(this.environment) as unknown) ?? null) !== this.metaBaselines.env ||
+      this.preludeEjected !== this.metaBaselines.prelude
+  );
+  readonly isDirty = $derived.by(() => this.metaDirty || this.viewDirty || this.opts.isTreeDirty());
 
   constructor(opts: PersistenceOpts) {
     this.opts = opts;
@@ -54,8 +73,23 @@ export class GeotoyPersistence {
     this.materialDefinitions = this.initial.materials;
     this.preludeEjected = this.initial.preludeEjected;
     this.environment = this.initial.environment;
-    this.isDirty = getIsDirty(opts.getUserData());
+    const server = getServerState(opts.getUserData());
+    this.metaBaselines = {
+      mats: stableJson(server.materials),
+      env: stableJson(server.environment ?? null),
+      prelude: server.preludeEjected,
+    };
   }
+
+  /** Re-baseline meta dirt to the current live values (after save/fork/revert). */
+  markClean = () => {
+    this.metaBaselines = {
+      mats: stableJson($state.snapshot(this.materialDefinitions)),
+      env: stableJson(($state.snapshot(this.environment) as unknown) ?? null),
+      prelude: this.preludeEjected,
+    };
+    this.viewDirty = false;
+  };
 
   private get userData() {
     return this.opts.getUserData();
@@ -114,7 +148,7 @@ export class GeotoyPersistence {
       },
       this.userData
     );
-    this.isDirty = false;
+    this.markClean();
     return server;
   };
 }

@@ -95,13 +95,31 @@ export class TreeState {
    *  live tree on `isDirty()`. */
   private savedSnapshotJson: string;
 
+  /** Bumped when tree content changes out from under the editor (`replaceTree`/
+   *  `rewriteSource` — never CM-originated edits). The editor's doc-swap effect keys
+   *  on it so tree replacement can't leave a stale doc behind. */
+  contentEpoch = $state(0);
+
   readonly undoSystem: GeotoyUndoSystem = buildGeotoyUndoSystem();
+
+  /**
+   * Reactive dirty-vs-saved flag. Discrete mutations recompute it exactly; the per-tick
+   * hot paths (drag transforms, handle/control scrubs) only latch it true, with the
+   * exact recompute deferred to the gesture's `record*Change` commit — serializing the
+   * whole tree per drag tick would be wasteful.
+   */
+  treeDirty = $state(false);
 
   constructor(opts: TreeStateOpts) {
     this.state.tree = $state.snapshot(opts.initial) as TreeDef;
     this.savedSnapshotJson = stableSerializeTree(
       $state.snapshot(opts.savedBaseline ?? opts.initial) as TreeDef
     );
+    this.recomputeDirty();
+  }
+
+  private recomputeDirty(): void {
+    this.treeDirty = this.isDirty();
   }
 
   private applyUndoEntry = (
@@ -113,11 +131,15 @@ export class TreeState {
   };
 
   undo(): boolean {
-    return this.undoSystem.undo(this.applyUndoEntry);
+    const did = this.undoSystem.undo(this.applyUndoEntry);
+    if (did) this.recomputeDirty();
+    return did;
   }
 
   redo(): boolean {
-    return this.undoSystem.redo(this.applyUndoEntry);
+    const did = this.undoSystem.redo(this.applyUndoEntry);
+    if (did) this.recomputeDirty();
+    return did;
   }
 
   private applySelectAfter(selectAfter: string | undefined): void {
@@ -144,6 +166,7 @@ export class TreeState {
   /** Record the current tree as the saved baseline. Call after a successful save. */
   markSaved(): void {
     this.savedSnapshotJson = stableSerializeTree($state.snapshot(this.state.tree) as TreeDef);
+    this.treeDirty = false;
   }
 
   /** Replace the entire tree (e.g. on "clear local changes" or fork). Clears
@@ -156,6 +179,8 @@ export class TreeState {
     this.state.soloId = null;
     this.savedSnapshotJson = stableSerializeTree(snap);
     this.undoSystem.clear();
+    this.contentEpoch++;
+    this.treeDirty = false;
   }
 
   createNode(opts: CreateNodeOpts = {}): string {
@@ -165,6 +190,7 @@ export class TreeState {
     const index = parent.children.indexOf(id);
     const nodeDef = $state.snapshot(this.state.tree.nodes[id]);
     this.undoSystem.push({ type: 'createNode', nodeDef, parentId, index });
+    this.recomputeDirty();
     return id;
   }
 
@@ -187,6 +213,7 @@ export class TreeState {
     opsDeleteNode(tree, id);
 
     this.undoSystem.push({ type: 'deleteSubtree', rootId: id, nodes, parentId, index });
+    this.recomputeDirty();
 
     const sel = this.state.selectedId;
     if (sel !== null && sel !== GLOBALS_SELECTION_ID) {
@@ -217,15 +244,18 @@ export class TreeState {
       newParentId: effectiveNewParentId,
       newIndex,
     });
+    this.recomputeDirty();
   }
 
   rename(id: string, newName: string): void {
     opsRenameNode(this.state.tree, id, newName);
+    this.recomputeDirty();
   }
 
   /** Does NOT push undo. Pair with `recordInstanceTransformChange` on gesture commit. */
   setInstanceTransform(nodeId: string, instanceId: string, transform: Transform3): void {
     opsSetInstanceTransform(this.state.tree, nodeId, instanceId, transform);
+    this.treeDirty = true;
   }
 
   /** Plain-value snapshot of one instance's transform, for capturing the `before`
@@ -250,6 +280,7 @@ export class TreeState {
       before: cloneTransform3(before),
       after: cloneTransform3(after),
     });
+    this.recomputeDirty();
   }
 
   /** Appends a placement (undo-tracked); returns its id, or null for `_root`/missing. */
@@ -258,6 +289,7 @@ export class TreeState {
     if (newId === null) return null;
     const inst = this.state.tree.nodes[nodeId].instances.find(i => i.id === newId)!;
     this.undoSystem.push({ type: 'addInstance', nodeId, instance: $state.snapshot(inst) as Instance });
+    this.recomputeDirty();
     return newId;
   }
 
@@ -270,11 +302,13 @@ export class TreeState {
     const instance = $state.snapshot(node.instances[index]) as Instance;
     opsRemoveInstance(this.state.tree, nodeId, instanceId);
     this.undoSystem.push({ type: 'removeInstance', nodeId, instance, index });
+    this.recomputeDirty();
   }
 
   /** Does NOT push undo. Pair with `recordHandleChange` on gesture commit. */
   setHandle(nodeId: string, handleId: string, value: GizmoValue): void {
     opsSetHandle(this.state.tree, nodeId, handleId, value);
+    this.treeDirty = true;
   }
 
   /** Plain-value snapshot of one handle's stored value (or null), for capturing a gesture's `before`. */
@@ -292,20 +326,24 @@ export class TreeState {
     if (!this.state.tree.nodes[nodeId]) return;
     if (JSON.stringify(before) === JSON.stringify(after)) return; // skip no-op (e.g. click without drag)
     this.undoSystem.push({ type: 'setHandle', nodeId, handleId, before, after });
+    this.recomputeDirty();
   }
 
   /** GC orphaned handle values (no undo entry — automatic cleanup on run/save). */
   pruneHandles(nodeId: string, liveHandleIds: ReadonlySet<string>): void {
     opsPruneHandles(this.state.tree, nodeId, liveHandleIds);
+    this.recomputeDirty();
   }
 
   deleteHandle(nodeId: string, handleId: string): void {
     opsDeleteHandle(this.state.tree, nodeId, handleId);
+    this.recomputeDirty();
   }
 
   /** Does NOT push undo. Pair with `recordControlChange` to commit an undo entry. */
   setControl(nodeId: string, handleId: string, value: ControlValue): void {
     opsSetControl(this.state.tree, nodeId, handleId, value);
+    this.treeDirty = true;
   }
 
   captureControl(nodeId: string, handleId: string): ControlValue | null {
@@ -322,27 +360,40 @@ export class TreeState {
     if (!this.state.tree.nodes[nodeId]) return;
     if (JSON.stringify(before) === JSON.stringify(after)) return;
     this.undoSystem.push({ type: 'setControl', nodeId, handleId, before, after });
+    this.recomputeDirty();
   }
 
   /** GC orphaned control values (no undo entry — automatic cleanup on run/save). */
   pruneControls(nodeId: string, liveHandleIds: ReadonlySet<string>): void {
     opsPruneControls(this.state.tree, nodeId, liveHandleIds);
+    this.recomputeDirty();
   }
 
   deleteControl(nodeId: string, handleId: string): void {
     opsDeleteControl(this.state.tree, nodeId, handleId);
+    this.recomputeDirty();
   }
 
   setSource(id: string, source: string): void {
     opsSetSource(this.state.tree, id, source);
+    this.recomputeDirty();
+  }
+
+  /** Programmatic source rewrite (not CM-originated): also signals the editor to re-swap. */
+  rewriteSource(id: string, source: string): void {
+    opsSetSource(this.state.tree, id, source);
+    this.contentEpoch++;
+    this.recomputeDirty();
   }
 
   setDisabled(id: string, disabled: boolean): void {
     opsSetDisabled(this.state.tree, id, disabled);
+    this.recomputeDirty();
   }
 
   setGlobalsSource(source: string): void {
     opsSetGlobalsSource(this.state.tree, source);
+    this.recomputeDirty();
   }
 
   setSelected(id: string | null): void {

@@ -35,7 +35,7 @@
     for (const texture of textureList) {
       texturesMap[texture.id] = texture;
     }
-    Textures.textures = texturesMap;
+    Textures.textures = { ...Textures.textures, ...texturesMap };
 
     textures = textureList;
     isLoading = false;
