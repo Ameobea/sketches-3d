@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { EnvironmentConfig, TextureID, User } from 'src/geoscript/geotoyAPIClient';
-  import { Textures } from './materialEditor/state.svelte';
-  import TexturePicker from './materialEditor/TexturePicker.svelte';
-  import TexturePreview from './materialEditor/TexturePreview.svelte';
+  import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
+  import TexturePicker from 'src/geotoy/panels/materialEditor/TexturePicker.svelte';
+  import TexturePreview from 'src/geotoy/panels/materialEditor/TexturePreview.svelte';
 
   let {
     isOpen = $bindable(),

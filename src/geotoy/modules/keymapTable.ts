@@ -1,4 +1,4 @@
-import type { GizmoMode } from './transformGizmo';
+import type { GizmoMode } from 'src/geotoy/modes/mesh/transformGizmo';
 
 const ROTATION_AMOUNT = Math.PI / 16;
 

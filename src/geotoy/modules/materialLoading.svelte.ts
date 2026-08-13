@@ -2,7 +2,7 @@ import type * as THREE from 'three';
 import { DataTexture } from 'three';
 import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
 import { LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
-import { Textures } from './materialEditor/state.svelte';
+import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { loadTexture } from 'src/viz/textureLoading';
 
 let fallbackTex: THREE.Texture | null = null;

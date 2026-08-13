@@ -9,7 +9,7 @@ import type {
   RenderedGizmo,
   RenderedControl,
 } from './types';
-import { buildLight, fitAutoShadowFrusta } from 'src/viz/scenes/geoscriptPlayground/lights';
+import { buildLight, fitAutoShadowFrusta } from 'src/geotoy/modes/mesh/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
@@ -17,7 +17,7 @@ import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWor
 import { bitmaskToAsyncDepNames } from '../asyncDepBits';
 import type { TreeDef } from '../geotoyAPIClient';
 import { ROOT_NODE_NAME } from '../geotoyAPIClient';
-import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { buildParentMap } from 'src/geotoy/modules/treeOps';
 import { buildWorldMatrixCache, instancePathKey, type NodeWorldInstance } from './worldMatrixCache';
 export { buildWorldMatrixCache, instancePathKey };
 export type { NodeWorldInstance, WorldMatrixCache } from './worldMatrixCache';

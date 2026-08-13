@@ -1,7 +1,7 @@
 // Drive live `treeOps` mutations and verify a round-trip through the undo
 // stack matches the original / final tree.
 //
-//   yarn tsx --test src/viz/scenes/geoscriptPlayground/treeUndoSystem.test.ts
+//   yarn tsx --test src/geotoy/modules/treeUndoSystem.test.ts
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

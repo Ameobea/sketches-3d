@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { buildGeotoyKeymap, type KeymapEntry } from 'src/viz/scenes/geoscriptPlayground/keymap';
+  import { buildGeotoyKeymap, type KeymapEntry } from 'src/geotoy/modules/keymapTable';
 
   const keymap = buildGeotoyKeymap();
   const keymapGroups: Record<string, KeymapEntry[]> = {};

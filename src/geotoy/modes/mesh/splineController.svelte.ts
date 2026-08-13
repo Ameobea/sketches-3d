@@ -5,8 +5,8 @@ import type { Viz } from 'src/viz';
 import { controlKey, splineControlPoints, type SplinePanelCtx } from 'src/geoscript/controlsUi';
 import type { RenderedControl } from 'src/geoscript/runner/types';
 import { SplineOverlay, type SplinePoint } from 'src/viz/gizmos/splineOverlay';
-import type { TransformGizmo } from 'src/viz/scenes/geoscriptPlayground/transformGizmo';
-import type { TreeState } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+import type { TransformGizmo } from 'src/geotoy/modes/mesh/transformGizmo';
+import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 
 interface SplineControllerDeps {
   viz: Viz;

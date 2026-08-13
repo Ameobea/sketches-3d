@@ -2,7 +2,7 @@ import * as THREE from 'three';
 
 import { ROOT_NODE_NAME, type TreeDef } from '../geotoyAPIClient';
 import { buildModuleNameToNodeId } from '../treeCodegen';
-import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { buildParentMap } from 'src/geotoy/modules/treeOps';
 import type { GeneratedObject } from './types';
 import { buildWorldMatrixCache, type NodeWorldInstance } from './worldMatrixCache';
 

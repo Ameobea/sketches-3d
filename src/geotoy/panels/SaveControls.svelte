@@ -10,10 +10,7 @@
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
   import type { Viz } from 'src/viz';
-  import {
-    buildCompositionVersionMetadata,
-    saveNewVersion,
-  } from 'src/viz/scenes/geoscriptPlayground/persistence';
+  import { buildCompositionVersionMetadata, saveNewVersion } from 'src/geotoy/modules/compositionStorage';
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
   import { untrack } from 'svelte';

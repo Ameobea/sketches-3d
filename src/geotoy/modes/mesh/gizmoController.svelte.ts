@@ -10,19 +10,11 @@ import type { Viz } from 'src/viz';
 import { GizmoGhosts, type GhostSpec } from 'src/viz/gizmos/gizmoGhosts';
 import { gizmoColorForIndex } from 'src/viz/gizmos/gizmoPalette';
 import type { GizmoTargetRef } from 'src/viz/gizmos/gizmoTypes';
-import { untilOrbitControls } from 'src/viz/scenes/geoscriptPlayground/cameraControls';
-import { installRaycastSelect } from 'src/viz/scenes/geoscriptPlayground/raycastSelect';
-import {
-  TransformGizmo,
-  type GizmoMode,
-  type GizmoSpace,
-} from 'src/viz/scenes/geoscriptPlayground/transformGizmo';
-import {
-  buildParentMap,
-  composeInstance0World,
-  findParentId,
-} from 'src/viz/scenes/geoscriptPlayground/treeOps';
-import { GLOBALS_SELECTION_ID, type TreeState } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+import { untilOrbitControls } from 'src/geotoy/modes/mesh/cameraControls';
+import { installRaycastSelect } from 'src/geotoy/modes/mesh/raycastSelect';
+import { TransformGizmo, type GizmoMode, type GizmoSpace } from 'src/geotoy/modes/mesh/transformGizmo';
+import { buildParentMap, composeInstance0World, findParentId } from 'src/geotoy/modules/treeOps';
+import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
 
 interface GizmoControllerDeps {
   viz: Viz;

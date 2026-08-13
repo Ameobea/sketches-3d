@@ -18,7 +18,7 @@ import {
   setLastRunWasSuccessful,
   type CompositionMeta,
   type PlaygroundState,
-} from 'src/viz/scenes/geoscriptPlayground/persistence';
+} from 'src/geotoy/modules/compositionStorage';
 
 interface PersistenceOpts {
   viz: Viz;

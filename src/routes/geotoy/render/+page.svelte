@@ -27,8 +27,8 @@
     DefaultCameraTarget,
     DefaultCameraZoom,
     type MaterialOverrideMode,
-  } from 'src/viz/scenes/geoscriptPlayground/types';
-  import type { EvalRequest } from 'src/viz/scenes/geoscriptPlayground/evalResult';
+  } from 'src/geotoy/types';
+  import type { EvalRequest } from 'src/geotoy/modes/mesh/evalResult';
 
   interface TransientPayload {
     tree?: CompositionDoc;

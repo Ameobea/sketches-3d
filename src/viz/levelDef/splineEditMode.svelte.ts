@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { controlKey, splineControlPoints, type SplinePanelCtx } from 'src/geoscript/controlsUi';
 import type { RenderedControl } from 'src/geoscript/runner/types';
 import { SplineOverlay, type SplinePoint } from 'src/viz/gizmos/splineOverlay';
-import { composeInstance0World } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { composeInstance0World } from 'src/geotoy/modules/treeOps';
 
 import type { EditorMode } from './editorMode';
 import type { LevelEditor } from './LevelEditor.svelte';

@@ -5,7 +5,7 @@
   import { buildEditor } from 'src/geoscript/editor';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { logGeotoyEvent } from 'src/analytics';
-  import { GLOBALS_SELECTION_ID, type TreeState } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+  import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
   import type { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
   import type { GeoscriptExecution } from 'src/geotoy/modules/execution.svelte';
 

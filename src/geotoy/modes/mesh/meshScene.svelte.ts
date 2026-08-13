@@ -17,19 +17,16 @@ import {
   setProjection,
   toggleProjection as toggleProjectionCamera,
   untilOrbitControls,
-} from 'src/viz/scenes/geoscriptPlayground/cameraControls';
+} from 'src/geotoy/modes/mesh/cameraControls';
 import {
   buildLightHelpers,
   toggleLightHelpers as toggleLightHelpersImpl,
-} from 'src/viz/scenes/geoscriptPlayground/gizmos';
-import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
-import {
-  fetchAndSetTextures,
-  getReferencedTextureIDs,
-} from 'src/viz/scenes/geoscriptPlayground/materialLoading.svelte';
-import { applyGeoscriptSceneEnvironment } from 'src/viz/scenes/geoscriptPlayground/sceneEnvironment';
-import { buildParentMap, computeMeshCounts } from 'src/viz/scenes/geoscriptPlayground/treeOps';
-import type { TreeState } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+} from 'src/geotoy/modes/mesh/gizmos';
+import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
+import { fetchAndSetTextures, getReferencedTextureIDs } from 'src/geotoy/modules/materialLoading.svelte';
+import { applyGeoscriptSceneEnvironment } from 'src/geotoy/modes/mesh/sceneEnvironment';
+import { buildParentMap, computeMeshCounts } from 'src/geotoy/modules/treeOps';
+import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 
 interface MeshSceneDeps {
   viz: Viz;

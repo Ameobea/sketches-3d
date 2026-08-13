@@ -1,6 +1,6 @@
 // Focused tests for treeOps. Each case mirrors an end-user flow the tree UI will
 // exercise, not internal helpers. Run with:
-//   yarn tsx --test src/viz/scenes/geoscriptPlayground/treeOps.test.ts
+//   yarn tsx --test src/geotoy/modules/treeOps.test.ts
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { RunStats } from 'src/viz/scenes/geoscriptPlayground/types';
-  import { IntFormatter } from 'src/viz/scenes/geoscriptPlayground/types';
+  import type { RunStats } from 'src/geotoy/types';
+  import { IntFormatter } from 'src/geotoy/types';
 
   let { err, runStats }: { err: string | null; runStats: RunStats | null } = $props();
 </script>

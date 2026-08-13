@@ -3,8 +3,8 @@ import type * as THREE from 'three';
 import { buildMaterial, FallbackMat, HiddenMat, type MaterialDef } from 'src/geoscript/materials';
 import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
-import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
-import { referencedTextureIDsForDef } from 'src/viz/scenes/geoscriptPlayground/materialLoading.svelte';
+import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
+import { referencedTextureIDsForDef } from 'src/geotoy/modules/materialLoading.svelte';
 import type { Viz } from 'src/viz';
 
 export interface MaterialRuntimeEntry {

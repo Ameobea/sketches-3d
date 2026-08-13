@@ -7,7 +7,7 @@ import { GizmoGhosts, type GhostSpec } from 'src/viz/gizmos/gizmoGhosts';
 import { gizmoColorForIndex } from 'src/viz/gizmos/gizmoPalette';
 import type { HandleContext } from 'src/viz/gizmos/gizmoTypes';
 import { HandleTarget } from 'src/viz/gizmos/targets';
-import { composeInstance0World } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { composeInstance0World } from 'src/geotoy/modules/treeOps';
 
 import type { LevelEditor } from './LevelEditor.svelte';
 import type { GizmoHandleRowInfo } from './levelEditorPanelTypes';

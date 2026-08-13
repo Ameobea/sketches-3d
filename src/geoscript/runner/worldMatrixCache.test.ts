@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import type { NodeDef, Transform3, TreeDef } from '../geotoyAPIClient';
-import { buildParentMap } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { buildParentMap } from 'src/geotoy/modules/treeOps';
 import { buildWorldMatrixCache } from './worldMatrixCache';
 
 const at = (x: number, y: number, z: number): Transform3 => ({

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { get, writable, type Readable } from 'svelte/store';
 import type { Viz } from 'src/viz';
-import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
+import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
 import { logGeotoyEvent } from 'src/analytics';
 

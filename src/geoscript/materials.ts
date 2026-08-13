@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { buildMaterial as buildSharedMaterial } from 'src/viz/materials';
 import type { CustomShaderMatDef, CustomBasicShaderMatDef } from 'src/viz/materials/schema';
 import { loadTexture } from 'src/viz/textureLoading';
-import { Textures } from 'src/viz/scenes/geoscriptPlayground/materialEditor/state.svelte';
+import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { buildDefaultShaders, linearRgbToSrgbHex, type RGBColor } from './geotoyMaterialConvert';
 import type { TextureID } from './geotoyAPIClient';
 

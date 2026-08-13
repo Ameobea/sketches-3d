@@ -1,4 +1,4 @@
-import type { KeymapEntry } from 'src/viz/scenes/geoscriptPlayground/keymap';
+import type { KeymapEntry } from 'src/geotoy/modules/keymapTable';
 
 /**
  * DOM-level keyboard dispatch for the geotoy app, reproducing Viz's handling exactly:

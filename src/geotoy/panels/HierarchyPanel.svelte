@@ -3,8 +3,8 @@
 
   import 'src/viz/hierarchyPanel.css';
   import type { NodeDef, TreeDef } from 'src/geoscript/geotoyAPIClient';
-  import { findParentId, isAncestorOf } from 'src/viz/scenes/geoscriptPlayground/treeOps';
-  import { GLOBALS_SELECTION_ID } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+  import { findParentId, isAncestorOf } from 'src/geotoy/modules/treeOps';
+  import { GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
 
   interface Props {
     tree: TreeDef;

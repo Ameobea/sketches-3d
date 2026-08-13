@@ -209,7 +209,7 @@ export class PivotTarget implements GizmoTarget {
 
 import type { GizmoValue, Transform3 as ApiTransform3, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
-import { composeInstance0World, getNodeAncestorChain } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+import { composeInstance0World, getNodeAncestorChain } from 'src/geotoy/modules/treeOps';
 
 export interface InstanceTargetCallbacks {
   onChange?(phase: 'preview' | 'commit', nodeId: string, instanceId: string, transform: ApiTransform3): void;

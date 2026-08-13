@@ -13,8 +13,8 @@ import {
   type TreeDef,
   type ViewState,
 } from 'src/geoscript/geotoyAPIClient';
-import type { GeoscriptPlaygroundUserData } from './geoscriptPlayground.svelte';
-import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget, DefaultCameraZoom } from './types';
+import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
+import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget, DefaultCameraZoom } from 'src/geotoy/types';
 import { buildDefaultMaterialDefinitions, type MaterialDefinitions } from 'src/geoscript/materials';
 import type { Viz } from 'src/viz';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';

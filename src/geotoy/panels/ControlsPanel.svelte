@@ -9,7 +9,7 @@
     type SplinePanelCtx,
   } from 'src/geoscript/controlsUi';
   import type { ControlValue } from 'src/geoscript/geotoyAPIClient';
-  import type { TreeState } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
+  import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 
   let {
     controls,

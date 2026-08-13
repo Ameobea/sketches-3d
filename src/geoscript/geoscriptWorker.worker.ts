@@ -1,7 +1,7 @@
 import * as Comlink from 'comlink';
 
 import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
-import type { Light } from 'src/viz/scenes/geoscriptPlayground/lights';
+import type { Light } from 'src/geotoy/modes/mesh/lights';
 import type { GizmoValuesByModule } from './runner/types';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 

@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import type { Viz } from 'src/viz';
 import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
-import { buildEvalResultJson } from 'src/viz/scenes/geoscriptPlayground/evalResult';
+import { buildEvalResultJson } from 'src/geotoy/modes/mesh/evalResult';
 import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptExecution } from 'src/geotoy/modules/execution.svelte';
 import type { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';

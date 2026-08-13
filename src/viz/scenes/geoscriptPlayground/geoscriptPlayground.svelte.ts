@@ -7,10 +7,10 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import GeotoyApp from 'src/geotoy/GeotoyApp.svelte';
 import { buildMeshPipeline } from 'src/geotoy/modes/mesh/pipeline';
 import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
-import type { MaterialOverrideMode } from './types';
-import { buildGeotoyKeymap } from './keymap';
+import type { MaterialOverrideMode } from 'src/geotoy/types';
+import { buildGeotoyKeymap } from 'src/geotoy/modules/keymapTable';
 import { WorkerManager } from 'src/geoscript/workerManager';
-import type { EvalRequest } from './evalResult';
+import type { EvalRequest } from 'src/geotoy/modes/mesh/evalResult';
 
 const locations = {
   spawn: {

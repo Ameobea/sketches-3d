@@ -1,7 +1,7 @@
 <script lang="ts">
   import type * as THREE from 'three';
 
-  import { exportGLTF, exportOBJ } from 'src/viz/scenes/geoscriptPlayground/export';
+  import { exportGLTF, exportOBJ } from 'src/geotoy/modes/mesh/export';
   import { logGeotoyEvent } from 'src/analytics';
 
   let {

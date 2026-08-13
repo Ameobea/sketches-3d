@@ -15,8 +15,8 @@
   import ExportModal from 'src/geotoy/panels/ExportModal.svelte';
   import { GeoscriptExecution, type RunInput } from 'src/geotoy/modules/execution.svelte';
   import { HiddenMat, type MaterialDef } from 'src/geoscript/materials';
-  import MaterialEditor from 'src/viz/scenes/geoscriptPlayground/materialEditor/MaterialEditor.svelte';
-  import EnvironmentSettings from 'src/viz/scenes/geoscriptPlayground/EnvironmentSettings.svelte';
+  import MaterialEditor from 'src/geotoy/panels/materialEditor/MaterialEditor.svelte';
+  import EnvironmentSettings from 'src/geotoy/modes/mesh/EnvironmentSettings.svelte';
   import {
     cloneTransform3,
     type Composition,
@@ -26,11 +26,11 @@
   } from 'src/geoscript/geotoyAPIClient';
   import { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
-  import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/viz/scenes/geoscriptPlayground/keymap';
+  import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/geotoy/modules/keymapTable';
   import { compileTree, buildInjectedValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
-  import { TreeState, GLOBALS_SELECTION_ID } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
-  import { buildParentMap, findParentId } from 'src/viz/scenes/geoscriptPlayground/treeOps';
+  import { TreeState, GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
+  import { buildParentMap, findParentId } from 'src/geotoy/modules/treeOps';
   import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
   import NodeInspector from 'src/geotoy/panels/NodeInspector.svelte';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
@@ -40,9 +40,9 @@
   import { GizmoController } from 'src/geotoy/modes/mesh/gizmoController.svelte';
   import { SplineController } from 'src/geotoy/modes/mesh/splineController.svelte';
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
-  import { snapView, orbit, untilOrbitControls } from 'src/viz/scenes/geoscriptPlayground/cameraControls';
-  import { toggleAxisHelpers } from 'src/viz/scenes/geoscriptPlayground/gizmos';
-  import { useRecording } from 'src/viz/scenes/geoscriptPlayground/recording';
+  import { snapView, orbit, untilOrbitControls } from 'src/geotoy/modes/mesh/cameraControls';
+  import { toggleAxisHelpers } from 'src/geotoy/modes/mesh/gizmos';
+  import { useRecording } from 'src/geotoy/modes/mesh/recording';
   import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
   import { logGeotoyEvent } from 'src/analytics';
 

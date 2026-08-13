@@ -2,7 +2,7 @@ import type { RenderedObject } from 'src/geoscript/runner/types';
 import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { Viz } from 'src/viz';
 import * as THREE from 'three';
-import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget } from './types';
+import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget } from 'src/geotoy/types';
 import { focusCamera } from 'src/viz/util/focusCamera';
 
 const ORTHO_NEAR = 0.07;
