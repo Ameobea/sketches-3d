@@ -8,7 +8,7 @@
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import SaveControls from 'src/geotoy/panels/SaveControls.svelte';
   import { goto } from '$app/navigation';
-  import type { GeotoyRenderHarnessCtx } from 'src/viz/scenes/geoscriptPlayground/types';
+  import { startRenderHarness } from 'src/geotoy/renderHarness';
   import ReplOutput from 'src/geotoy/panels/ReplOutput.svelte';
   import ReplControls from 'src/geotoy/panels/ReplControls.svelte';
   import EditorPane from 'src/geotoy/panels/EditorPane.svelte';
@@ -29,7 +29,6 @@
   import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/viz/scenes/geoscriptPlayground/keymap';
   import { compileTree, buildInjectedValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
-  import { buildEvalResultJson } from 'src/viz/scenes/geoscriptPlayground/evalResult';
   import { TreeState, GLOBALS_SELECTION_ID } from 'src/viz/scenes/geoscriptPlayground/treeState.svelte';
   import { buildParentMap, findParentId } from 'src/viz/scenes/geoscriptPlayground/treeOps';
   import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
@@ -50,13 +49,11 @@
   let {
     viz,
     workerManager,
-    setHarnessCtx,
     userData: providedUserData,
     pipelineController,
   }: {
     viz: Viz;
     workerManager: WorkerManager;
-    setHarnessCtx: (ctx: GeotoyRenderHarnessCtx) => void;
     userData?: GeoscriptPlaygroundUserData;
     pipelineController: PostprocessingPipelineController | null;
   } = $props();
@@ -504,6 +501,20 @@
     },
   });
 
+  // Installed synchronously during init so its render override lands before the first
+  // frame, after the pipeline's own (constructed pre-mount; the resize-cb order and
+  // override-replacement order both depend on pipeline-first).
+  if (untrack(() => userData)?.renderMode) {
+    startRenderHarness({
+      viz: untrack(() => viz),
+      pipelineController: untrack(() => pipelineController)!,
+      userData: untrack(() => userData)!,
+      execution,
+      meshScene,
+      getTree: () => treeState.state.tree,
+    });
+  }
+
   const handleInstanceTransformChange = (nodeId: string, instanceId: string, transform: Transform3) => {
     const before = treeState.captureInstanceTransform(nodeId, instanceId);
     if (!before) return;
@@ -581,13 +592,6 @@
   const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
 
   onMount(() => {
-    if (userData?.renderMode) {
-      const stats = document.getElementById('viz-stats');
-      if (stats) {
-        stats.style.display = 'none';
-      }
-    }
-
     setTimeout(() => meshScene.setView(persistence.initial.view));
 
     if (!userData?.renderMode) {
@@ -674,27 +678,6 @@
     };
     keymap.setTable(buildGeotoyKeymap(() => actions));
     keymap.install();
-    setHarnessCtx({
-      getLastRunOutcome: () => execution.lastOutcome,
-      getAreAllMaterialsLoaded: () => meshScene.materialRuntime.allLoaded,
-      autoFrameForRender: () => {
-        meshScene.focus(null);
-      },
-      buildEvalResultJson: req => {
-        if (execution.ctxPtr === null) throw new Error('no geoscript context');
-        return buildEvalResultJson({
-          repl: execution.repl,
-          ctxPtr: execution.ctxPtr,
-          renderedObjects: meshScene.renderedObjects,
-          tree: treeState.state.tree,
-          stats: execution.runStats,
-          req,
-        });
-      },
-      toggleWireframe: meshScene.toggleWireframe,
-      toggleWireframeXray: meshScene.toggleWireframeXray,
-      toggleNormalMat: meshScene.toggleNormalMat,
-    });
 
     window.addEventListener('beforeunload', persistence.saveDraft);
 

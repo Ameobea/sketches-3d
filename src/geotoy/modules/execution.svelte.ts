@@ -110,19 +110,20 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.replBox = { repl: opts.workerManager.getWorker() };
   }
 
-  get lastOutcome(): { type: 'ok'; stats: RunStats } | { type: 'err'; err: string | null } | null {
-    if (this.err) {
-      return { type: 'err', err: this.err };
-    }
-    if (this.runStats) {
-      return { type: 'ok', stats: this.runStats };
-    }
-    return null;
-  }
-
   init = async () => {
     this.ctxPtr = await this.repl.init(getGeoscriptWorkerWasmURLs());
     this.ctxEpoch++;
+  };
+
+  /** Resolves with the next run settlement — the in-flight run's if one is executing,
+   *  else the next run to start (which adopts the queued deferred). Settles only after
+   *  `consume` has applied the result. */
+  nextSettled = (): Promise<RunOutcome<T>> => {
+    if (this.inFlightSettled) {
+      return this.inFlightSettled.promise;
+    }
+    this.queuedSettled ??= deferred();
+    return this.queuedSettled.promise;
   };
 
   private maybeRunPending() {

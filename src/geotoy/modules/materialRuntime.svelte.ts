@@ -32,6 +32,7 @@ export class MaterialRuntime {
 
   private builds = new Map<string, { hash: string; gen: number; cb?: (t: number) => void }>();
   private errors: Record<string, string> = {};
+  private loadWaiters: (() => void)[] = [];
 
   constructor(
     private readonly viz: Viz,
@@ -88,6 +89,25 @@ export class MaterialRuntime {
       this.entries = next;
     }
     this.reportErrors();
+    this.flushLoadWaiters();
+  }
+
+  /** Resolves once no build is in flight. Waiters are resolved at build-landing points
+   *  rather than reactively, so callers outside the effect graph (render harness) can await. */
+  untilAllLoaded(): Promise<void> {
+    if (this.allLoaded) {
+      return Promise.resolve();
+    }
+    return new Promise(r => this.loadWaiters.push(r));
+  }
+
+  private flushLoadWaiters() {
+    if (this.loadWaiters.length === 0 || !this.allLoaded) {
+      return;
+    }
+    const waiters = this.loadWaiters;
+    this.loadWaiters = [];
+    for (const w of waiters) w();
   }
 
   private land(id: string, def: MaterialDef, gen: number, mat: THREE.Material) {
@@ -115,6 +135,7 @@ export class MaterialRuntime {
       queueMicrotask(() => prevMat.dispose());
     }
     this.reportErrors();
+    this.flushLoadWaiters();
   }
 
   private setEntry(id: string, entry: MaterialRuntimeEntry) {
