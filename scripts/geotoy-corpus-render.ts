@@ -4,7 +4,11 @@
  * dev :4800). Used for before/after diff validation of migrations and refactors.
  *
  *   bun scripts/geotoy-corpus-render.ts --out <dir> [--db <path>] [--size <px>] [--only <id,id,...>]
+ *                                        [--concurrency <n>]   (default 6)
  *   bun scripts/geotoy-corpus-render.ts --out <dir> --eval [--expr <geoscript>] [--meshes <fmt>] [--only ...]
+ *
+ * `KNOWN_TIMEOUT_IDS` are excluded by default (`--include-timeouts` to keep them, or name
+ * one in `--only`); the other known-bad comps fail in milliseconds and stay in for signal.
  *
  * Eval envelopes are normalized (runtimeMs zeroed, keys sorted) so they diff stably.
  * Canonical eval-baseline invocations (see docs/geotoy-app-shell-refactor.md):
@@ -33,6 +37,19 @@ const only = optVal('--only')
 const evalMode = args.includes('--eval');
 const evalExpr = optVal('--expr');
 const evalMeshes = optVal('--meshes') ?? 'summary';
+
+/**
+ * Comps that burn the full `timeoutMs` every run (~2min of a ~6min capture) without
+ * producing a raster to diff. The other expected failures are syntax errors that fail
+ * instantly, so they stay in and keep their `_failures.json` entries as regression signal.
+ */
+const KNOWN_TIMEOUT_IDS = new Set([64, 123]);
+const includeTimeouts = args.includes('--include-timeouts');
+const concurrencyRaw = Number(optVal('--concurrency') ?? 6);
+// A NaN here silently renders nothing (`Array.from({length: NaN})` is empty) and still
+// reports success, which reads exactly like "everything was already present".
+if (!Number.isFinite(concurrencyRaw) || concurrencyRaw < 1) die('--concurrency must be a positive number');
+const concurrency = Math.floor(concurrencyRaw);
 
 const sortKeysDeep = (v: unknown): unknown => {
   if (Array.isArray(v)) return v.map(sortKeysDeep);
@@ -64,6 +81,8 @@ const token =
 
 mkdirSync(outDir, { recursive: true });
 
+const outPathFor = (id: number) => join(outDir, evalMode ? `${id}.eval.json` : `${id}.png`);
+
 interface Row {
   id: number;
   title: string;
@@ -83,14 +102,25 @@ const rows = new Database(dbPath, { readonly: true })
 const failures: { id: number; title: string; error: string }[] = [];
 let rendered = 0;
 let skipped = 0;
+const skippedTimeouts: number[] = [];
 
-for (const row of rows) {
-  if (only && !only.includes(row.id)) continue;
-  const outPath = join(outDir, evalMode ? `${row.id}.eval.json` : `${row.id}.png`);
-  if (existsSync(outPath)) {
+const pending = rows
+  .filter(row => {
+    if (only) return only.includes(row.id);
+    // Naming one in `--only` is an explicit request, so it wins over the default exclusion.
+    if (!includeTimeouts && KNOWN_TIMEOUT_IDS.has(row.id)) {
+      skippedTimeouts.push(row.id);
+      return false;
+    }
+    return true;
+  })
+  .filter(row => {
+    if (!existsSync(outPathFor(row.id))) return true;
     skipped += 1;
-    continue;
-  }
+    return false;
+  });
+
+const renderRow = async (row: Row) => {
   const tree = JSON.parse(row.tree);
   const metadata = JSON.parse(row.metadata);
   // Transient payloads carry a single `view`; map migrated per-tree views down to it.
@@ -120,9 +150,9 @@ for (const row of rows) {
       throw new Error(`${res.status}: ${text.slice(0, 300)}`);
     }
     if (evalMode) {
-      writeFileSync(outPath, normalizeEnvelope(await res.text()));
+      writeFileSync(outPathFor(row.id), normalizeEnvelope(await res.text()));
     } else {
-      writeFileSync(outPath, Buffer.from(await res.arrayBuffer()));
+      writeFileSync(outPathFor(row.id), Buffer.from(await res.arrayBuffer()));
     }
     rendered += 1;
     console.log(`✓ ${row.id} ${row.title} (${Date.now() - started}ms)`);
@@ -131,7 +161,24 @@ for (const row of rows) {
     failures.push({ id: row.id, title: row.title, error });
     console.log(`✗ ${row.id} ${row.title}: ${error.split('\n')[0]}`);
   }
-}
+};
 
+// Each render is served by its own short-lived browser (thumbnail_generator launches and
+// closes one per request) and both hops upstream are plain async handlers, so nothing
+// upstream serializes and workers only contend for CPU.
+let next = 0;
+await Promise.all(
+  Array.from({ length: Math.min(concurrency, pending.length) }, async () => {
+    while (next < pending.length) await renderRow(pending[next++]);
+  })
+);
+
+// Sorted so the file is byte-stable regardless of completion order under `--concurrency`.
+failures.sort((a, b) => a.id - b.id);
 writeFileSync(join(outDir, '_failures.json'), JSON.stringify(failures, null, 2));
-console.log(`\n${rendered} rendered, ${skipped} already present, ${failures.length} failed`);
+console.log(
+  `\n${rendered} rendered, ${skipped} already present, ${failures.length} failed` +
+    (skippedTimeouts.length > 0
+      ? `, ${skippedTimeouts.length} known-timeout skipped (${skippedTimeouts})`
+      : '')
+);

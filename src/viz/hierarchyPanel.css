@@ -1,6 +1,6 @@
 /* Shared row/chevron/badge styles for hierarchy/tree panels. Used by:
  *   src/viz/levelDef/HierarchyPanel.svelte
- *   src/viz/scenes/geoscriptPlayground/HierarchyPanel.svelte
+ *   src/geotoy/panels/HierarchyPanel.svelte
  * Each component layers its own scoped overrides on top (padding, drop-over
  * background, feature-specific badges, etc.). */
 

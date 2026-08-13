@@ -66,42 +66,35 @@ const tryInitAsyncDepFromErr = async (
   return true;
 };
 
-export const runGeoscript = async ({
-  code,
-  ctxPtr,
-  repl,
-  materials = {},
-  includePrelude,
-  materialOverride,
-  renderMode = false,
-  modules,
-  ambientSources,
-  gizmoValues,
-}: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
+export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
+  const {
+    code,
+    ctxPtr,
+    repl,
+    materials = {},
+    includePrelude,
+    materialOverride,
+    renderMode = false,
+    modules,
+    ambientSources,
+    gizmoValues,
+    rootModuleName,
+  } = opts;
   await repl.reset(ctxPtr);
 
-  if (modules && Object.keys(modules).length > 0) {
+  // Sent even when empty: `set_module_sources` is the only thing that clears the ctx's
+  // registered sources, so skipping it would leave a previous run's modules resolvable.
+  if (modules) {
     await repl.setModuleSources(ctxPtr, modules);
   }
 
   if (ambientSources !== undefined) {
     try {
-      await repl.setAmbientScope(ctxPtr, ambientSources);
+      await repl.setAmbientScope(ctxPtr, ambientSources, rootModuleName);
     } catch (err) {
       const errStr = err instanceof Error ? err.message : String(err);
       if (await tryInitAsyncDepFromErr(errStr, repl)) {
-        return runGeoscript({
-          code,
-          ctxPtr,
-          repl,
-          materials,
-          includePrelude,
-          materialOverride,
-          renderMode,
-          modules,
-          ambientSources,
-          gizmoValues,
-        });
+        return runGeoscript(opts);
       }
       return {
         objects: [],
@@ -118,7 +111,7 @@ export const runGeoscript = async ({
 
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
-    evalResult = await repl.eval(ctxPtr, code, includePrelude);
+    evalResult = await repl.eval(ctxPtr, code, includePrelude, rootModuleName);
   } catch (evalErr) {
     const errorMessage = `Error evaluating code: ${evalErr}`;
     console.error(errorMessage, evalErr);
@@ -136,18 +129,7 @@ export const runGeoscript = async ({
     // Safety net: if a dep wasn't pre-loaded, load it now and re-run.
     // text_to_path always goes through this path since its args are runtime values.
     if (await tryInitAsyncDepFromErr(err, repl)) {
-      return runGeoscript({
-        code,
-        ctxPtr,
-        repl,
-        materials,
-        includePrelude,
-        materialOverride,
-        renderMode,
-        modules,
-        ambientSources,
-        gizmoValues,
-      });
+      return runGeoscript(opts);
     }
     return {
       objects: [],
@@ -430,6 +412,14 @@ const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
 
 const _identityMatrix = new THREE.Matrix4();
 const _scratchFinal = new THREE.Matrix4();
+
+/** Release a run's geometry when nothing will adopt it — `populateScene` never ran, or ran
+ *  for a target that has since gone away. */
+export const disposeRunObjects = (result: GeoscriptRunResult) => {
+  for (const obj of result.objects) {
+    if ('geometry' in obj && obj.geometry) obj.geometry.dispose();
+  }
+};
 
 export const populateScene = (
   scene: THREE.Scene,

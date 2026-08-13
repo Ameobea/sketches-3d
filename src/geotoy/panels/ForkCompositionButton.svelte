@@ -8,9 +8,12 @@
   let {
     comp,
     onForked,
+    variant = 'button',
   }: {
     comp: Composition;
     onForked: (comp: Composition, version: CompositionVersion) => Promise<void>;
+    /** `link` is the 11px demoted form used inside the save popover. */
+    variant?: 'button' | 'link';
   } = $props();
 
   let isForking = $state(false);
@@ -40,16 +43,33 @@
   };
 </script>
 
-<button onclick={fork} disabled={isForking}>
+<button class={variant} onclick={fork} disabled={isForking}>
   {#if isForking}
     forking...
+  {:else if variant === 'link'}
+    fork
   {:else}
     fork composition
   {/if}
 </button>
 
 <style lang="css">
-  button {
+  button.link {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 11px;
+    font-family: inherit;
+    padding: 0;
+    cursor: pointer;
+    text-decoration: underline;
+  }
+
+  button.link:hover:not(:disabled) {
+    color: #ddd;
+  }
+
+  button.button {
     background-color: #2a2a2a;
     color: #eee;
     border: 1px solid #555;
@@ -59,16 +79,19 @@
     cursor: pointer;
   }
 
-  button:hover:not(:disabled) {
+  button.button:hover:not(:disabled) {
     background-color: #333;
     border-color: #777;
   }
 
   button:disabled {
-    background-color: #222;
     color: #666;
-    border-color: #444;
     cursor: not-allowed;
+  }
+
+  button.button:disabled {
+    background-color: #222;
+    border-color: #444;
   }
 
   @media (max-width: 600px) {

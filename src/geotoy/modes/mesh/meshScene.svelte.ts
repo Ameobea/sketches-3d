@@ -26,11 +26,24 @@ import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { fetchAndSetTextures, getReferencedTextureIDs } from 'src/geotoy/modules/materialLoading.svelte';
 import { applyGeoscriptSceneEnvironment } from 'src/geotoy/modes/mesh/sceneEnvironment';
 import { buildParentMap, computeMeshCounts } from 'src/geotoy/modules/treeOps';
-import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
+import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
+import type { GizmoEditorHooks } from 'src/geoscript/gizmoExtensions';
+import {
+  runtimeMetric,
+  type MenuSection,
+  type Mode,
+  type SceneMenuActions,
+  type StatusMetric,
+  type ViewMenuActions,
+} from 'src/geotoy/modes/mode';
+import { getView } from 'src/geotoy/modules/compositionStorage';
+import { IntFormatter } from 'src/geotoy/types';
+import type { RunStats } from 'src/geoscript/runner/runner';
 
 interface MeshSceneDeps {
   viz: Viz;
-  treeState: TreeState;
+  /** Read through a getter: the active tab's `TreeState` changes when tabs switch. */
+  getTreeState: () => TreeState;
   persistence: GeotoyPersistence;
   pipelineController: PostprocessingPipelineController | null;
   bootSignal: AbortSignal;
@@ -38,6 +51,8 @@ interface MeshSceneDeps {
   getLastRunTree: () => TreeDef | null;
   /** Spline-editor refresh hook, invoked once per consumed run. */
   onRunConsumed: (controls: RenderedControl[]) => void;
+  /** Gizmo affordances surfaced through the `Mode` contract; owned by GizmoController. */
+  getEditorHooks: () => GizmoEditorHooks;
 }
 
 const OverrideMats = { wireframe: WireframeMat, 'wireframe-xray': WireframeMat, normal: NormalMat };
@@ -65,7 +80,9 @@ const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
  * material assignment (incl. debug overrides), scene environment, light helpers, and
  * camera/view state.
  */
-export class MeshScene {
+export class MeshScene implements Mode {
+  readonly kind = 'mesh' as const;
+
   private readonly deps: MeshSceneDeps;
   private readonly loader = new THREE.ImageBitmapLoader();
   readonly materialRuntime: MaterialRuntime;
@@ -97,9 +114,9 @@ export class MeshScene {
     // Solo + disabled visibility. Membership uses the last-run tree; disabled flags
     // come from the live tree so toggles are instant.
     $effect(() => {
-      const soloId = deps.treeState.state.soloId;
+      const soloId = deps.getTreeState().state.soloId;
       const renderTree = deps.getLastRunTree();
-      const liveTree = deps.treeState.state.tree;
+      const liveTree = deps.getTreeState().state.tree;
       if (!renderTree) {
         for (const obj of this.renderedObjects) {
           if (obj instanceof THREE.Mesh) obj.visible = true;
@@ -227,10 +244,20 @@ export class MeshScene {
       this.removeRenderedObject(obj);
     }
     this.renderedObjects = [];
+    for (const helper of this.lightHelpers) {
+      this.deps.viz.scene.remove(helper);
+    }
+    this.lightHelpers = [];
+    this.meshCounts = new Map();
+    // Keyed by node id, which is per-tree — without this they accumulate an entry for every
+    // node of every tab visited (and every `clear local changes`, which re-ids the trees).
+    this.handleScanCache.clear();
+    this.controlScanCache.clear();
   };
 
   consume(result: RunResult, tree: TreeDef, moduleNameToNodeId: Record<string, string>) {
-    const { viz, treeState } = this.deps;
+    const { viz } = this.deps;
+    const treeState = this.deps.getTreeState();
     // Defer disposal until after populate so unchanged objects can be reused.
     const prevObjects = this.renderedObjects;
     const prevByReuseKey = new Map<string, RenderedObject>();
@@ -386,13 +413,102 @@ export class MeshScene {
 
   /** Frame the given subtree, or fit-all when null. */
   focus = (sel: string | null) => {
-    const { viz, treeState } = this.deps;
+    const { viz } = this.deps;
+    const treeState = this.deps.getTreeState();
     if (sel) {
       focusOnSubtree(viz, this.renderedObjects, treeState.state.tree, sel);
     } else {
       centerView(viz, this.renderedObjects);
     }
   };
+
+  get editorHooks(): GizmoEditorHooks {
+    return this.deps.getEditorHooks();
+  }
+
+  sceneMenu(a: SceneMenuActions): MenuSection[] {
+    return [
+      {
+        items: [
+          { label: 'edit materials…', action: a.openMaterialEditor },
+          { label: 'scene environment…', action: a.openEnvironment },
+          { label: 'export scene…', action: a.exportScene },
+          {
+            label: {
+              recording: 'stop recording',
+              initializing: 'initializing…',
+              'not-recording': 'record video',
+            }[a.recordingState],
+            disabled: a.recordingState === 'initializing',
+            action: a.toggleRecording,
+          },
+        ],
+      },
+    ];
+  }
+
+  viewSections(a: ViewMenuActions): MenuSection[] {
+    return [
+      {
+        header: 'display',
+        items: [
+          { label: 'axis helpers', shortcut: 'A', action: a.toggleAxisHelpers },
+          { label: 'light helpers', shortcut: '⇧L', action: this.toggleLightHelpers },
+          {
+            label: 'gizmo ghosts',
+            state: a.showGizmoGhosts ? 'on' : 'off',
+            disabled: !a.gizmosExist,
+            action: a.toggleGizmoGhosts,
+          },
+          { label: 'wireframe', shortcut: 'W', action: this.toggleWireframe },
+        ],
+      },
+      {
+        header: 'camera',
+        items: [
+          {
+            label: 'projection',
+            state: this.cameraProjection === 'orthographic' ? 'ortho' : 'persp',
+            shortcut: 'O',
+            action: a.toggleProjection,
+          },
+          {
+            label: 'center on selection',
+            shortcut: '.',
+            action: () => this.focus(this.selectedNodeId()),
+          },
+        ],
+      },
+    ];
+  }
+
+  statusMetrics(stats: RunStats): StatusMetric[] {
+    const metric = (label: string, n: number, one: string, many = `${one}s`): StatusMetric => ({
+      label,
+      value: IntFormatter.format(n),
+      short: `${IntFormatter.format(n)} ${n === 1 ? one : many}`,
+    });
+    const out: StatusMetric[] = [runtimeMetric(stats)];
+    if (stats.renderedMeshCount > 0 || stats.renderedPathCount === 0) {
+      out.push(metric('Rendered Meshes', stats.renderedMeshCount, 'mesh', 'meshes'));
+    }
+    if (stats.renderedPathCount > 0) {
+      out.push(metric('Rendered Paths', stats.renderedPathCount, 'path'));
+    }
+    out.push(metric('Total Vertices', stats.totalVtxCount, 'vert'));
+    out.push(metric('Total Faces', stats.totalFaceCount, 'face'));
+    return out;
+  }
+
+  /** `focus(null)` is the fit-all branch, so the selection has to be resolved explicitly. */
+  private selectedNodeId(): string | null {
+    const { selectedId, tree } = this.deps.getTreeState().state;
+    return selectedId && selectedId !== GLOBALS_SELECTION_ID && tree.nodes[selectedId] ? selectedId : null;
+  }
+
+  buildViewState = (): ViewState => getView(this.deps.viz);
+
+  restoreViewState = (view: ViewState) => void this.setView(view);
 
   setView = async (view: ViewState) => {
     const { viz } = this.deps;

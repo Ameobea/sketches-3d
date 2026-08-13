@@ -204,7 +204,7 @@
                     title="{nInst} instances — click to collapse/expand"
                     onclick={() => toggleRow(child.id)}
                   >
-                    ×{nInst}
+                    {nInst} inst
                     <span class="chev-sm">{expanded ? '▾' : '▸'}</span>
                   </button>
                 {:else}
@@ -340,6 +340,10 @@
   .row {
     display: flex;
     flex-direction: column;
+    /* Overrides the `align-items: center` that the shared (unscoped)
+     * hierarchyPanel.css `.row` leaks in; without it rows center instead of
+     * filling, so the right-packed counts never reach the edge. */
+    align-items: stretch;
     gap: 2px;
     padding: 3px 6px;
     border-bottom: 1px solid #232323;
@@ -390,37 +394,39 @@
   .inst-chip {
     display: inline-flex;
     align-items: center;
-    gap: 1px;
+    gap: 4px;
     margin-left: auto;
-    background: #2a2a2a;
-    border: 1px solid #383838;
-    color: #bbb;
+    background: none;
+    border: none;
+    border-bottom: 1px solid #4a4a4a;
+    color: #9a9a9a;
     cursor: pointer;
     font: inherit;
-    font-size: 10px;
-    padding: 0 3px;
+    font-size: 11px;
+    padding: 0 0 1px;
     flex-shrink: 0;
   }
 
   .inst-chip:hover {
-    background: #333;
-    color: #ddd;
+    color: #fff;
+    border-bottom-color: #9a9a9a;
   }
 
   .chev-sm {
-    color: #888;
+    color: #777;
     font-size: 8px;
   }
 
+  .inst-chip:hover .chev-sm {
+    color: #bbb;
+  }
+
+  /* Deliberately unadorned: the expander's underline is what signals "interactive". */
   .mesh-count {
-    color: #888;
-    font-size: 10px;
+    color: #6a6a6a;
+    font-size: 11px;
     margin-left: auto;
-    border: 1px solid #333;
-    padding: 0 4px;
     flex-shrink: 0;
-    min-width: 18px;
-    text-align: center;
   }
 
   .row-tforms {

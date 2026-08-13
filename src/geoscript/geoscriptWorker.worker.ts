@@ -235,19 +235,19 @@ const methods = {
    * base for every subsequent module evaluation. Pass an empty array to reset.
    * Throws if any source fails to evaluate.
    */
-  setAmbientScope: (ctxPtr: number, sources: string[]) => {
+  setAmbientScope: (ctxPtr: number, sources: string[], rootModuleName?: string) => {
     if (sources.length === 0) {
       Geoscript.geoscript_repl_clear_ambient_scope(ctxPtr);
       return;
     }
     lastWasmPanic = null;
     try {
-      Geoscript.geoscript_repl_set_ambient_scope_from_sources(ctxPtr, sources);
+      Geoscript.geoscript_repl_set_ambient_scope_from_sources(ctxPtr, sources, rootModuleName);
     } catch (err) {
       throw enrichWasmError(err);
     }
   },
-  eval: async (ctxPtr: number, code: string, includePrelude: boolean) => {
+  eval: async (ctxPtr: number, code: string, includePrelude: boolean, rootModuleName?: string) => {
     lastWasmPanic = null;
     try {
       Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
@@ -256,7 +256,7 @@ const methods = {
       }
 
       const start = performance.now();
-      Geoscript.geoscript_repl_eval(ctxPtr);
+      Geoscript.geoscript_repl_eval(ctxPtr, rootModuleName);
       const durationMs = performance.now() - start;
       const usedDepsBitmask = Geoscript.geoscript_repl_get_used_async_deps(ctxPtr);
       return { durationMs, usedDepsBitmask };

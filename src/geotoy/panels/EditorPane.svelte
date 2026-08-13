@@ -22,7 +22,8 @@
     treeState: TreeState;
     persistence: GeotoyPersistence;
     execution: GeoscriptExecution<any>;
-    gizmoEditorHooks: GizmoEditorHooks;
+    /** Absent for modes without gizmos (texture). */
+    gizmoEditorHooks?: GizmoEditorHooks;
     onRun: () => void;
     onCenterView: () => void;
     /** Armed gizmo handle to highlight in the editor (null = none). */
@@ -55,6 +56,7 @@
   // Editor dispatch channels, wired once the gizmo extensions install. `$state` is
   // load-bearing: the mirror effects below track them, so the install itself re-fires
   // the effects and seeds the editor with the current armed/readout state.
+  let applyGizmoExtensions: ((hooks?: GizmoEditorHooks) => void) | null = null;
   let dispatchArmed = $state<((handleId: string | null) => void) | null>(null);
   let dispatchValues = $state<((values: Map<string, GizmoReadout>) => void) | null>(null);
 
@@ -122,7 +124,8 @@
 
     import('src/geoscript/gizmoExtensions').then(
       ({ buildGizmoExtensions, pushGizmoArmed, pushGizmoValues }) => {
-        editor.setGizmoExtensions(buildGizmoExtensions(gizmoEditorHooks));
+        applyGizmoExtensions = hooks => editor.setGizmoExtensions(hooks ? buildGizmoExtensions(hooks) : []);
+        applyGizmoExtensions(gizmoEditorHooks);
         dispatchArmed = h => editorView && pushGizmoArmed(editorView, h);
         dispatchValues = m => editorView && pushGizmoValues(editorView, m);
       }
@@ -199,6 +202,13 @@
 
   /** Viewport mode → Ctrl-Z routes to the tree undo stack. */
   export const blur = () => editorView?.contentDOM.blur();
+
+  // Switching tabs doesn't recreate the editor, so the extensions have to follow the active
+  // mode's hooks — otherwise a mesh tab's gizmo chips stay live over a texture tab's nodes.
+  $effect(() => {
+    const hooks = gizmoEditorHooks;
+    applyGizmoExtensions?.(hooks);
+  });
 </script>
 
 <div bind:this={codemirrorContainer} class="codemirror-wrapper" style="flex: 1; background: #222;"></div>
@@ -223,5 +233,11 @@
 
   :global(.cm-content) {
     padding-top: 0 !important;
+  }
+
+  /* Set here rather than inherited from the panel root, so the editor's size is
+   * independent of the surrounding chrome's. */
+  :global(.cm-editor) {
+    font-size: 14.8px;
   }
 </style>

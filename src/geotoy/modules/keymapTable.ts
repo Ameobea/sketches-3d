@@ -30,6 +30,7 @@ export interface GeotoyKeymapActions {
   startRenameSelected: () => void;
   treeUndo: (event?: KeyboardEvent) => void;
   treeRedo: (event?: KeyboardEvent) => void;
+  toggleEditorCollapsed: () => void;
 }
 
 export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | undefined): KeymapEntry[] => [
@@ -37,6 +38,14 @@ export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | un
   { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
   { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
   { key: 'ctrl+enter', action: () => getCtx?.()?.run(), label: 'run code' },
+  {
+    key: 'ctrl+e',
+    action: e => {
+      getCtx?.()?.toggleEditorCollapsed();
+      e?.preventDefault();
+    },
+    label: 'show/hide editor panel',
+  },
   { key: 'shift+l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
   { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
 

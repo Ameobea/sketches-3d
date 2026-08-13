@@ -140,6 +140,12 @@ export interface RunGeoscriptOptions {
    * eval (the runner defaults to `{}`) so a prior run's values can't leak.
    */
   gizmoValues?: GizmoValuesByModule;
+  /**
+   * Module name to attribute the entry program to. Hosts that qualify their module keys
+   * (`<tabId>:<nodeName>`) must pass `<tabId>:_root` so the entry's own bare imports
+   * resolve within that tab. Defaults to the unqualified `_root`.
+   */
+  rootModuleName?: string;
 }
 
 export interface GeoscriptRunResult {

@@ -5,6 +5,7 @@
 use std::cell::UnsafeCell;
 use std::{
   any::Any,
+  borrow::Cow,
   cell::{Cell, RefCell},
   collections::HashMap,
   collections::VecDeque,
@@ -3611,7 +3612,35 @@ impl EvalCtx {
     Ok(scope)
   }
 
+  /// Hosts may register module sources under `<tabId>:<nodeName>` keys to keep several
+  /// trees isolated inside one program. A bare name in user source then resolves within
+  /// the importing module's own group, while a name already carrying a `:` is absolute.
+  /// Node names are validated to exclude `:`, so the split is unambiguous — and a host
+  /// that registers unqualified sources never grows a prefix to inherit.
+  fn qualify_module_name<'a>(&self, module_name: &'a str) -> Cow<'a, str> {
+    if module_name.contains(':') {
+      return Cow::Borrowed(module_name);
+    }
+    match self
+      .current_module
+      .borrow()
+      .as_deref()
+      .and_then(|importer| importer.split_once(':'))
+    {
+      Some((prefix, _)) => Cow::Owned(format!("{prefix}:{module_name}")),
+      None => Cow::Borrowed(module_name),
+    }
+  }
+
   fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+    let qualified = self.qualify_module_name(module_name);
+    // Diagnostics report the name as the user wrote it; the host's `<tabId>:` prefix is an
+    // internal key and appears nowhere in their source.
+    let as_written = module_name;
+    // Everything below is keyed by the qualified name — including `direct_imports`, which
+    // is why the recursive call in the cache-validation loop needs no further qualification.
+    let module_name: &str = &qualified;
+
     // Already replayed this run — skip side effects, just return exports.
     if self.replayed_this_run.borrow().contains(module_name) {
       if let Some(entry) = self.module_exports.borrow().get(module_name) {
@@ -3706,7 +3735,7 @@ impl EvalCtx {
     // imports itself would recurse until the stack overflowed.
     if self.modules_in_flight.borrow().contains(module_name) {
       return Err(ErrorStack::new(format!(
-        "Circular module import detected: module \"{module_name}\" is already being evaluated"
+        "Circular module import detected: module \"{as_written}\" is already being evaluated"
       )));
     }
 
@@ -3716,14 +3745,14 @@ impl EvalCtx {
       .borrow()
       .get(module_name)
       .cloned()
-      .ok_or_else(|| ErrorStack::new(format!("Unknown module \"{module_name}\"")))?;
+      .ok_or_else(|| ErrorStack::new(format!("Unknown module \"{as_written}\"")))?;
 
     self
       .modules_in_flight
       .borrow_mut()
       .insert(module_name.to_owned());
 
-    let result = self.resolve_module_inner(module_name, &source);
+    let result = self.resolve_module_inner(module_name, as_written, &source);
 
     self.modules_in_flight.borrow_mut().remove(module_name);
 
@@ -3750,6 +3779,7 @@ impl EvalCtx {
   fn resolve_module_inner(
     &self,
     module_name: &str,
+    as_written: &str,
     source: &str,
   ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
     // RAII guard: swaps in module context, restores on drop so every early
@@ -3808,9 +3838,9 @@ impl EvalCtx {
     self.source_map.borrow_mut().prelude_line_count = prev_offset;
 
     let mut ast =
-      parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{module_name}\"")))?;
+      parse_res.map_err(|err| err.wrap(&format!("Error parsing module \"{as_written}\"")))?;
     optimizer::optimize_ast(self, &mut ast)
-      .map_err(|err| err.wrap(&format!("Error optimizing module \"{module_name}\"")))?;
+      .map_err(|err| err.wrap(&format!("Error optimizing module \"{as_written}\"")))?;
 
     // Snapshot side-effect buffers; diffs become the cache entry's replay set.
     let renders_before = self.rendered_meshes.len();
@@ -7343,6 +7373,49 @@ pts | render
   assert_eq!(path[1].z, 0.0);
   assert_eq!(path[2].x, 1.0);
   assert_eq!(path[2].z, 1.0);
+}
+
+#[test]
+fn test_qualified_modules_resolve_relative_to_their_importer() {
+  // Two tabs each hold a node named `shapes`. A bare import inside a tab's module must
+  // find that tab's `shapes` and never the other's, without any source rewriting.
+  let ctx = EvalCtx::default();
+  {
+    let mut srcs = ctx.module_sources.borrow_mut();
+    srcs.insert("a:shapes".to_owned(), "export width = 10".to_owned());
+    srcs.insert("b:shapes".to_owned(), "export width = 99".to_owned());
+    srcs.insert(
+      "a:leaf".to_owned(),
+      "import { width } from \"shapes\"\nexport got = width".to_owned(),
+    );
+    srcs.insert(
+      "b:leaf".to_owned(),
+      "import { width } from \"shapes\"\nexport got = width".to_owned(),
+    );
+  }
+
+  let exports = ctx.resolve_module("a:leaf").unwrap();
+  assert_eq!(exports["got"].as_int().unwrap(), 10);
+  let exports = ctx.resolve_module("b:leaf").unwrap();
+  assert_eq!(exports["got"].as_int().unwrap(), 99);
+}
+
+#[test]
+fn test_unqualified_host_keeps_bare_module_names() {
+  // Hosts that register unqualified sources (level defs) must be untouched by
+  // qualification: with no prefix on the importer, a bare name stays bare.
+  let ctx = EvalCtx::default();
+  {
+    let mut srcs = ctx.module_sources.borrow_mut();
+    srcs.insert("shapes".to_owned(), "export width = 7".to_owned());
+    srcs.insert(
+      "leaf".to_owned(),
+      "import { width } from \"shapes\"\nexport got = width".to_owned(),
+    );
+  }
+
+  let exports = ctx.resolve_module("leaf").unwrap();
+  assert_eq!(exports["got"].as_int().unwrap(), 7);
 }
 
 #[test]

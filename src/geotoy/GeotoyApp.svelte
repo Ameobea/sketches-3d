@@ -7,10 +7,13 @@
   import type { WorkerManager } from 'src/geoscript/workerManager';
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import SaveControls from 'src/geotoy/panels/SaveControls.svelte';
+  import SavePopover from 'src/geotoy/panels/SavePopover.svelte';
   import { goto } from '$app/navigation';
   import { startRenderHarness } from 'src/geotoy/renderHarness';
-  import ReplOutput from 'src/geotoy/panels/ReplOutput.svelte';
-  import ReplControls from 'src/geotoy/panels/ReplControls.svelte';
+  import RunBar from 'src/geotoy/panels/RunBar.svelte';
+  import TabStrip from 'src/geotoy/panels/TabStrip.svelte';
+  import RunOutput from 'src/geotoy/panels/RunOutput.svelte';
+  import Menubar, { type Menu } from 'src/geotoy/panels/Menubar.svelte';
   import EditorPane from 'src/geotoy/panels/EditorPane.svelte';
   import ExportModal from 'src/geotoy/panels/ExportModal.svelte';
   import { GeoscriptExecution, type RunInput } from 'src/geotoy/modules/execution.svelte';
@@ -19,27 +22,42 @@
   import EnvironmentSettings from 'src/geotoy/modes/mesh/EnvironmentSettings.svelte';
   import {
     cloneTransform3,
+    ROOT_NODE_NAME,
     type Composition,
     type CompositionVersion,
     type Transform3,
     type TreeDef,
+    type TreeKind,
+    type ViewState,
   } from 'src/geoscript/geotoyAPIClient';
   import { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
   import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/geotoy/modules/keymapTable';
-  import { compileTree, buildInjectedValues, buildModuleNameToNodeId } from 'src/geoscript/treeCodegen';
+  import {
+    compileTree,
+    buildInjectedValues,
+    buildModuleNameToNodeId,
+    qualifyModuleName,
+  } from 'src/geoscript/treeCodegen';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
-  import { TreeState, GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
+  import { GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
+  import { GeotoyTabs } from 'src/geotoy/modules/tabs.svelte';
   import { buildParentMap, findParentId } from 'src/geotoy/modules/treeOps';
   import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
   import NodeInspector from 'src/geotoy/panels/NodeInspector.svelte';
   import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
-  import ReadOnlyCompositionDetails from 'src/geotoy/panels/ReadOnlyCompositionDetails.svelte';
-  import { buildWorldMatrixCache, instancePathKey } from 'src/geoscript/runner/geoscriptRunner';
+  import {
+    buildWorldMatrixCache,
+    disposeRunObjects,
+    instancePathKey,
+  } from 'src/geoscript/runner/geoscriptRunner';
   import type { RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
   import { GizmoController } from 'src/geotoy/modes/mesh/gizmoController.svelte';
   import { SplineController } from 'src/geotoy/modes/mesh/splineController.svelte';
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
+  import { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
+  import TexturePlaceholder from 'src/geotoy/modes/texture/TexturePlaceholder.svelte';
+  import type { Mode } from 'src/geotoy/modes/mode';
   import { snapView, orbit, untilOrbitControls } from 'src/geotoy/modes/mesh/cameraControls';
   import { toggleAxisHelpers } from 'src/geotoy/modes/mesh/gizmos';
   import { useRecording } from 'src/geotoy/modes/mesh/recording';
@@ -60,49 +78,63 @@
 
   let userData = $state<GeoscriptPlaygroundUserData | undefined>(untrack(() => providedUserData));
 
+  /** Full-width bottom bar: tab strip + run bar. */
+  const BOTTOM_BAR_HEIGHT = 32;
+
+  const storedPanelSize = (orientation: 'vertical' | 'horizontal'): number =>
+    orientation === 'horizontal'
+      ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
+      : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight);
+
+  let savePopoverOpen = $state(false);
+  let runOutputExpanded = $state(localStorage.getItem('geoscript-run-output-expanded') === 'true');
+  /** Transient force-open from an error; collapsing clears it without touching the pref. */
+  let runOutputForced = $state(false);
+  const toggleRunOutput = () => {
+    if (runOutputForced && !runOutputExpanded) {
+      runOutputForced = false;
+      return;
+    }
+    runOutputExpanded = !runOutputExpanded;
+    runOutputForced = false;
+    localStorage.setItem('geoscript-run-output-expanded', runOutputExpanded ? 'true' : 'false');
+  };
+
   const { toggleRecording, recordingState } = useRecording(
     untrack(() => viz),
     untrack(() => providedUserData)
   );
 
   let layoutOrientation = $state<'vertical' | 'horizontal'>(
-    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'vertical'
+    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal') || 'horizontal'
   );
   $effect(() => {
     localStorage.setItem('geoscriptLayoutOrientation', layoutOrientation);
   });
 
   const toggleLayoutOrientation = () => {
-    const newOrientation = layoutOrientation === 'vertical' ? 'horizontal' : 'vertical';
-    layoutOrientation = newOrientation;
-    if (newOrientation === 'horizontal') {
-      size = Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth);
-    } else {
-      size =
-        Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight);
-    }
+    layoutOrientation = layoutOrientation === 'vertical' ? 'horizontal' : 'vertical';
+    size = storedPanelSize(layoutOrientation);
     updateCanvasSize();
   };
 
   const persistence = new GeotoyPersistence({
     viz: untrack(() => viz),
     getUserData: () => userData,
-    serializeActiveTree: () => treeState.serialize(),
-    isTreeDirty: () => treeState.treeDirty,
+    serializeTabs: () => tabs.serialize(),
+    isTreeDirty: () => tabs.anyDirty,
+    tabShapeKey: () => tabs.shapeKey,
   });
   const keymap = new GeotoyKeymap();
   /** Aborts boot-time orbit-controls waiters if the component unmounts mid-boot. */
   const bootAbort = new AbortController();
-  const initialTree = persistence.initial.tree;
 
-  const serverDoc = untrack(() => userData?.initialComposition?.version.tree);
-  const treeState = new TreeState({
-    initial: initialTree,
-    savedBaseline: serverDoc
-      ? (serverDoc.trees.find(t => t.id === persistence.initial.activeTreeId)?.tree ?? initialTree)
-      : initialTree,
+  const tabs = new GeotoyTabs({
+    doc: persistence.initial.doc,
+    serverDoc: untrack(() => userData?.initialComposition?.version.tree) ?? null,
+    getActiveId: () => persistence.activeTreeId,
   });
-  treeState.setSelected(initialTree.rootId);
+  const treeState = $derived(tabs.active.treeState);
 
   const treePanelVisible = $derived(
     Object.keys(treeState.state.tree.nodes).length > 1 ||
@@ -127,6 +159,7 @@
   });
 
   let innerWidth = $state(window.innerWidth);
+  let innerHeight = $state(window.innerHeight);
   let isEditorCollapsed = $state(
     (() => {
       const raw = localStorage.getItem('geoscriptEditorCollapsed');
@@ -136,11 +169,16 @@
   $effect(() => {
     localStorage.setItem('geoscriptEditorCollapsed', isEditorCollapsed ? 'true' : 'false');
   });
+  // Only on an actual narrow→wide crossing; as a standing rule it would re-expand on every
+  // tick, making the panel impossible to collapse at desktop widths.
+  let wasNarrow = untrack(() => innerWidth) < 768;
   $effect(() => {
-    if (innerWidth >= 768 && isEditorCollapsed) {
+    const narrow = innerWidth < 768;
+    if (wasNarrow && !narrow && isEditorCollapsed) {
       isEditorCollapsed = false;
       updateCanvasSize();
     }
+    wasNarrow = narrow;
   });
 
   const handleForkedComposition = async (newComp: Composition, newVersion: CompositionVersion) => {
@@ -165,35 +203,45 @@
       newUserData
     );
     userData = newUserData;
-    treeState.markSaved();
+    tabs.markAllSaved();
     persistence.markClean();
   };
 
-  const initialLayoutOrientation =
-    (localStorage.getItem('geoscriptLayoutOrientation') as 'vertical' | 'horizontal' | null) || 'vertical';
-  let size = $state(
-    initialLayoutOrientation === 'horizontal'
-      ? Number(localStorage.getItem('geoscript-repl-width')) || Math.max(400, 0.35 * window.innerWidth)
-      : Number(localStorage.getItem('geoscript-repl-height')) || Math.max(250, 0.25 * window.innerHeight)
-  );
-  // Canvas fills the viewport minus the editor inset. Registered after the pipeline's
-  // own resize cb (pipeline is constructed before the app mounts), so its setSize wins.
+  let size = $state(storedPanelSize(untrack(() => layoutOrientation)));
+  /**
+   * The one place panel/bar geometry is derived. The run bar's width *is* `panelSize`, not a
+   * second copy of the clamp, so its left border can't drift off the panel's left edge.
+   * Collapsing goes to zero — the always-visible bar carries run, so there is no rail.
+   */
+  const layout = $derived.by(() => {
+    // Clamped to 90% of the viewport: the stored/default size predates the current window,
+    // and a 400px default exceeds a narrow phone entirely.
+    const horizontal = layoutOrientation === 'horizontal';
+    const panelSize = isEditorCollapsed ? 0 : Math.min(size, 0.9 * (horizontal ? innerWidth : innerHeight));
+    return {
+      orientation: layoutOrientation,
+      panelSize,
+      barHeight: BOTTOM_BAR_HEIGHT,
+      /** In vertical the run bar sizes to content instead. */
+      runBarWidth: horizontal && !isEditorCollapsed ? panelSize : null,
+      /** Run output anchors to the bar when it's panel-width, else to a readable default. */
+      runOutputWidth: horizontal && !isEditorCollapsed ? panelSize : 520,
+    };
+  });
+
+  // Canvas fills the viewport minus the panel inset and the bottom bar. Registered after
+  // the pipeline's own resize cb (constructed before the app mounts), so its setSize wins.
   const updateCanvasSize = () => {
     if (userData?.renderMode) {
       return;
     }
 
-    let canvasWidth: number;
-    let canvasHeight: number;
-    if (layoutOrientation === 'horizontal') {
-      const newWidth = isEditorCollapsed ? 36 : size;
-      canvasWidth = Math.max(window.innerWidth - newWidth, 0);
-      canvasHeight = window.innerHeight;
-    } else {
-      const newHeight = isEditorCollapsed ? 36 : size;
-      canvasWidth = window.innerWidth;
-      canvasHeight = Math.max(window.innerHeight - newHeight, 0);
-    }
+    const { orientation, panelSize, barHeight } = layout;
+    const canvasWidth = Math.max(window.innerWidth - (orientation === 'horizontal' ? panelSize : 0), 0);
+    const canvasHeight = Math.max(
+      window.innerHeight - barHeight - (orientation === 'vertical' ? panelSize : 0),
+      0
+    );
 
     if (pipelineController) {
       pipelineController.effectComposer.setSize(canvasWidth, canvasHeight, true);
@@ -226,7 +274,7 @@
 
   const splineController = new SplineController({
     viz: untrack(() => viz),
-    treeState,
+    getTreeState: () => treeState,
     getGizmo: () => gizmoController.gizmo,
     getModuleNameToNodeId: () => lastRun?.moduleNameToNodeId,
     nodeWorldMatrix: id => gizmoController.nodeWorldMatrix(id),
@@ -236,10 +284,11 @@
   });
   const gizmoController = new GizmoController({
     viz: untrack(() => viz),
-    treeState,
+    getTreeState: () => treeState,
     renderMode: () => userData?.renderMode ?? false,
     bootSignal: bootAbort.signal,
     getLastGizmos: () => lastRun?.gizmos,
+    getModuleNameToNodeId: () => lastRun?.moduleNameToNodeId,
     getRenderedObjects: () => meshScene.renderedObjects,
     runOrFast: () => runOrFast(),
     blurEditor: () => editorPane?.blur(),
@@ -248,13 +297,17 @@
   });
   const meshScene = new MeshScene({
     viz: untrack(() => viz),
-    treeState,
+    getTreeState: () => treeState,
     persistence,
     pipelineController: untrack(() => pipelineController),
     bootSignal: bootAbort.signal,
     getLastRunTree: () => lastRun?.tree ?? null,
     onRunConsumed: splineController.onRunConsumed,
+    getEditorHooks: () => gizmoController.editorHooks,
   });
+  const textureMode = new TextureMode();
+  const modesByKind: Record<TreeKind, Mode> = { mesh: meshScene, texture: textureMode };
+  const mode: Mode = $derived(modesByKind[tabs.active.kind]);
   /**
    * Snapshot of the last successful run: serialized tree, reported gizmos/controls, and
    * the module-name → node-id mapping. Written once per run; effects key on it as their
@@ -326,7 +379,10 @@
         size = newWidth;
         localStorage.setItem('geoscript-repl-width', `${newWidth}`);
       } else {
-        const newHeight = Math.min(window.innerHeight * 0.9, Math.max(100, window.innerHeight - e.clientY));
+        const newHeight = Math.min(
+          window.innerHeight * 0.9,
+          Math.max(100, window.innerHeight - BOTTOM_BAR_HEIGHT - e.clientY)
+        );
         size = newHeight;
         localStorage.setItem('geoscript-repl-height', `${newHeight}`);
       }
@@ -380,19 +436,25 @@
    * because UV-mapping fields drive JS-side UV unwrap during the per-mesh build.
    */
   const computeEvalInputsHash = (): string => {
-    const tree = treeState.state.tree;
-    const nodeKeys = Object.keys(tree.nodes).sort();
-    const parts: string[] = [`g:${tree.globalsSource}`];
-    for (const k of nodeKeys) {
-      const n = tree.nodes[k];
-      // `children` matters: reparenting changes `compileTree`'s emitted imports.
-      // `instances.length` (not the transforms) matters: add/remove changes the
-      // rendered-object set, so it must force a full re-run while drags stay fast.
-      // `handles`/`controls` matter: a gizmo or input-control value can change geometry, so
-      // either must force a full re-eval rather than the transform-only fast path.
-      parts.push(
-        `n:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}:${JSON.stringify(n.handles ?? null)}:${JSON.stringify(n.controls ?? null)}`
-      );
+    // Covers *every* tab, not just the active one: once a material can reference another
+    // tab's texture output, a change over there must move this hash too, or the fast path
+    // would skip the re-eval and leave the dependency stale on screen. Hashing all tabs is
+    // the conservative superset of the run set — at worst it costs an extra re-eval.
+    const parts: string[] = [`t:${tabs.active.id}`];
+    for (const tab of tabs.tabs) {
+      const tree = tab.treeState.state.tree;
+      parts.push(`g:${tab.id}:${tree.globalsSource}`);
+      for (const k of Object.keys(tree.nodes).sort()) {
+        const n = tree.nodes[k];
+        // `children` matters: reparenting changes `compileTree`'s emitted imports.
+        // `instances.length` (not the transforms) matters: add/remove changes the
+        // rendered-object set, so it must force a full re-run while drags stay fast.
+        // `handles`/`controls` matter: a gizmo or input-control value can change geometry, so
+        // either must force a full re-eval rather than the transform-only fast path.
+        parts.push(
+          `n:${tab.id}:${k}:${n.name}:${n.disabled ? 1 : 0}:${n.instances.length}:${n.source}:${n.children.join(',')}:${JSON.stringify(n.handles ?? null)}:${JSON.stringify(n.controls ?? null)}`
+        );
+      }
     }
     parts.push(`pe:${persistence.preludeEjected ? 1 : 0}`);
     const matIds = Object.keys(persistence.materialDefinitions.materials).sort();
@@ -455,6 +517,11 @@
 
   interface ReplRunInput extends RunInput {
     tree: TreeDef;
+    /** Which tab the run was built for; a switch mid-flight invalidates the result. */
+    tabId: string;
+    /** Bumped whenever the tree set is replaced wholesale; a switch alone can't catch that,
+     *  since a revert rebuilds the tabs under their original ids. */
+    docEpoch: number;
   }
 
   const execution = new GeoscriptExecution<ReplRunInput>({
@@ -476,7 +543,9 @@
       }
 
       const tree = treeState.serialize();
-      const compiled = compileTree(tree);
+      const tabId = tabs.active.id;
+      const runDocEpoch = docEpoch;
+      const compiled = compileTree(tree, tabId);
       return {
         code: compiled.rootSource,
         modules: compiled.modules,
@@ -485,18 +554,29 @@
         materials: matsByName,
         materialOverride: meshScene.materialOverride,
         renderMode: userData?.renderMode ?? false,
-        gizmoValues: buildInjectedValues(tree),
-        moduleNameToNodeId: buildModuleNameToNodeId(tree),
+        gizmoValues: buildInjectedValues(tree, tabId),
+        moduleNameToNodeId: buildModuleNameToNodeId(tree, tabId),
+        rootModuleName: qualifyModuleName(ROOT_NODE_NAME, tabId),
         tree,
+        tabId,
+        docEpoch: runDocEpoch,
         inputKey: computeEvalInputsHash(),
       };
     },
-    consume: (result, { tree, moduleNameToNodeId }) => {
+    consume: (result, { tree, moduleNameToNodeId, tabId, docEpoch: runDocEpoch }) => {
+      // A run started before a tab switch or a revert settles against state it wasn't built
+      // for; dropping it keeps its geometry out of the new scene, and — the reason this
+      // matters beyond a repaint — keeps its stale node list out of the handle/control GC
+      // below, which would prune live values off the tree that replaced it.
+      if (tabId !== tabs.active.id || runDocEpoch !== docEpoch) {
+        disposeRunObjects(result);
+        return false;
+      }
       lastRun = { tree, gizmos: result.gizmos, controls: result.controls, moduleNameToNodeId };
-      meshScene.consume(result, tree, moduleNameToNodeId);
+      mode.consume(result, tree, moduleNameToNodeId);
     },
     onCancelCleanup: () => {
-      meshScene.clearScene();
+      mode.clearScene();
       clearTimeout(controlRunTimer);
     },
   });
@@ -514,6 +594,89 @@
       getTree: () => treeState.state.tree,
     });
   }
+
+  /** Per-tab camera poses, seeded from the draft/server metadata and captured on switch. */
+  const viewsByTab: Record<string, ViewState> = { ...persistence.initial.views };
+
+  let docEpoch = 0;
+
+  /**
+   * Switching re-runs the newly-active tab's dependency closure — tabs are module groups in
+   * one program, not isolated scenes, so there is no persistent per-tab scene to swap to.
+   */
+  const switchTab = (id: string) => {
+    if (id === persistence.activeTreeId || !tabs.tabs.some(t => t.id === id)) return;
+    // Capture *and persist* the outgoing view before flipping the id: `saveDraft` records
+    // the live camera under `activeTreeId`, so flipping first files the old tab's pose under
+    // the new tab's id and loses the old one entirely.
+    const outgoing = tabs.tabs.some(t => t.id === persistence.activeTreeId) && mode.buildViewState();
+    if (outgoing) viewsByTab[persistence.activeTreeId] = outgoing;
+    persistence.saveDraft();
+
+    mode.clearScene();
+    lastRun = null;
+    persistence.activeTreeId = id;
+
+    const view = viewsByTab[id];
+    if (view) mode.restoreViewState(view);
+    execution.run();
+    logGeotoyEvent('editor', 'tab_switch');
+  };
+
+  const createTab = (kind: TreeKind) => {
+    const id = tabs.create(kind);
+    switchTab(id);
+    logGeotoyEvent('editor', 'tab_create', { kind });
+  };
+
+  const deleteTab = (id: string) => {
+    const tab = tabs.tabs.find(t => t.id === id);
+    if (!tab || !tabs.canDelete(id)) return;
+    // Tab lifecycle is outside the undo system, so deletion is irreversible.
+    const nodeCount = Object.keys(tab.treeState.state.tree.nodes).length;
+    const isEmpty =
+      nodeCount <= 1 && !tab.treeState.state.tree.nodes[tab.treeState.state.tree.rootId]?.source;
+    if (!isEmpty && !confirm(`Delete tab "${tab.name}"? This can't be undone.`)) return;
+
+    // Only the *active* tab's removal forces a switch; `remove` returns the deleted tab's
+    // neighbour either way, so comparing against it would yank the user off an unrelated tab.
+    const wasActive = id === persistence.activeTreeId;
+    // Tear down while the tab still exists: once it's removed, `activeTreeId` names nothing
+    // and `tabs.active` falls back to `tabs[0]`, so `mode` can resolve to a different kind
+    // whose `clearScene()` leaves this tab's output on screen.
+    if (wasActive) {
+      mode.clearScene();
+      lastRun = null;
+    }
+    const next = tabs.remove(id);
+    delete viewsByTab[id];
+    if (wasActive) switchTab(next);
+    persistence.saveDraft();
+    logGeotoyEvent('editor', 'tab_delete');
+  };
+
+  const compTitle = $derived(userData?.initialComposition?.comp.title || 'untitled');
+  /** Relocates into the run bar as a single `☰` when the panel is collapsed or too narrow —
+   *  otherwise collapsing strands the only affordance that can un-collapse it. */
+  const menubarInBar = $derived(
+    isEditorCollapsed || (layout.orientation === 'horizontal' && layout.panelSize < 360)
+  );
+  /** Mobile views one composition; the strip has no room and no job. */
+  const showTabStrip = $derived(innerWidth >= 768);
+
+  const runErr = $derived(execution.err ?? meshScene.materialRuntime.err);
+  const runMetrics = $derived(execution.runStats ? mode.statusMetrics(execution.runStats) : null);
+  /** An error force-opens the output without overwriting the user's preference; the
+   *  disclosure can still collapse it, so the control is never dead. */
+  const runOutputVisible = $derived(runOutputExpanded || runOutputForced);
+  let lastErrSeen: string | null = null;
+  $effect(() => {
+    const err = runErr;
+    // Only on a *change*, so collapsing a forced-open panel isn't undone while the same
+    // error stands; clearing the error releases the force back to the stored preference.
+    if (err !== lastErrSeen) runOutputForced = !!err;
+    lastErrSeen = err;
+  });
 
   const handleInstanceTransformChange = (nodeId: string, instanceId: string, transform: Transform3) => {
     const before = treeState.captureInstanceTransform(nodeId, instanceId);
@@ -577,14 +740,22 @@
     }
 
     logGeotoyEvent('editor', 'clear_local_changes');
+    // Discards the whole local changeset, not just the active tab's: the tab set itself is
+    // rebuilt from the saved snapshot, so locally added/removed tabs are undone too.
+    // Teardown precedes the revert — `revertToServer` reassigns `activeTreeId`, after which
+    // `mode` can resolve to a different kind whose `clearScene()` is a no-op.
+    mode.clearScene();
+    lastRun = null;
+    docEpoch += 1;
     const serverState = persistence.revertToServer();
+    tabs.resetFromDoc(serverState.doc);
+    // `revertToServer` re-baselines before the tab set is rebuilt, so the shape baseline it
+    // captured is the pre-revert one; re-baseline now that the tabs match the snapshot.
+    persistence.markClean();
+    for (const k of Object.keys(viewsByTab)) delete viewsByTab[k];
+    Object.assign(viewsByTab, serverState.views);
 
-    treeState.replaceTree(serverState.tree);
-    treeState.setSelected(serverState.tree.rootId);
-
-    if (serverState.view) {
-      meshScene.setView(serverState.view);
-    }
+    mode.restoreViewState(serverState.view);
 
     execution.run();
   };
@@ -592,7 +763,7 @@
   const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
 
   onMount(() => {
-    setTimeout(() => meshScene.setView(persistence.initial.view));
+    setTimeout(() => mode.restoreViewState(persistence.initial.view));
 
     if (!userData?.renderMode) {
       let loggedVizEngaged = false;
@@ -609,7 +780,7 @@
 
     const actions: GeotoyKeymapActions = {
       centerView: () => {
-        meshScene.focus(resolveSelectedNode()?.sel ?? null);
+        mode.focus(resolveSelectedNode()?.sel ?? null);
       },
       toggleWireframe: meshScene.toggleWireframe,
       toggleWireframeXray: meshScene.toggleWireframeXray,
@@ -617,6 +788,7 @@
       toggleLightHelpers: meshScene.toggleLightHelpers,
       toggleAxesHelper: wrappedToggleAxesHelpers,
       run: runManual,
+      toggleEditorCollapsed,
       snapView: axis => snapView(viz, axis),
       orbit: (axis, angle) => orbit(viz, axis, angle),
       toggleProjection: handleToggleProjection,
@@ -688,7 +860,7 @@
       execution.dispose();
       keymap.dispose();
 
-      meshScene.clearScene();
+      mode.clearScene();
 
       window.removeEventListener('beforeunload', persistence.saveDraft);
     };
@@ -707,9 +879,99 @@
 
     goto(resolve('/geotoy'));
   };
+
+  const viewMenuActions = $derived({
+    toggleAxisHelpers: wrappedToggleAxesHelpers,
+    toggleProjection: handleToggleProjection,
+    toggleGizmoGhosts: gizmoController.toggleGhosts,
+    showGizmoGhosts: gizmoController.showGhosts,
+    gizmosExist: hasAnyGizmos,
+  });
+
+  const sceneMenuActions = $derived({
+    openMaterialEditor: toggleMaterialEditorOpen,
+    openEnvironment: toggleEnvironmentSettingsOpen,
+    exportScene: onExport,
+    toggleRecording,
+    recordingState: $recordingState,
+  });
+
+  const menus: Menu[] = $derived([
+    {
+      title: 'view',
+      sections: [
+        ...mode.viewSections(viewMenuActions),
+        {
+          header: 'panels',
+          items: [
+            {
+              label: isEditorCollapsed ? 'show editor' : 'hide editor',
+              shortcut: '^E',
+              action: toggleEditorCollapsed,
+            },
+            { label: 'ui layout', state: layoutOrientation, action: toggleLayoutOrientation },
+          ],
+        },
+      ],
+    },
+    { title: 'scene', sections: mode.sceneMenu(sceneMenuActions) },
+    {
+      title: 'comp',
+      sections: [
+        {
+          items: [
+            { label: 'clear local changes', action: clearLocalChanges },
+            {
+              label: 'eject prelude',
+              state: persistence.preludeEjected ? 'ejected' : '',
+              disabled: tabs.tabs.length > 1 && !persistence.preludeEjected,
+              action: togglePreludeEjected,
+            },
+          ],
+        },
+        { items: [{ label: 'back to geotoy', action: goHome }] },
+      ],
+    },
+    {
+      title: 'help',
+      sections: [
+        {
+          items: [
+            { label: 'docs', action: () => void window.open(resolve('/geotoy/docs'), '_blank') },
+            {
+              label: 'report bug',
+              action: () => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank'),
+            },
+            { label: 'credits', action: () => void window.open(resolve('/geotoy/credits'), '_blank') },
+          ],
+        },
+      ],
+    },
+  ]);
 </script>
 
-<svelte:window bind:innerWidth />
+<svelte:window bind:innerWidth bind:innerHeight />
+
+{#snippet saveForm()}
+  <SaveControls
+    comp={userData?.initialComposition?.comp}
+    getCurrentDoc={persistence.currentDoc}
+    activeTreeId={persistence.activeTreeId}
+    materials={persistence.materialDefinitions}
+    {viz}
+    preludeEjected={persistence.preludeEjected}
+    environment={persistence.environment}
+    onSave={() => {
+      persistence.markClean();
+      tabs.markAllSaved();
+    }}
+    {userData}
+  />
+{/snippet}
+
+{#if mode.kind === 'texture' && !userData?.renderMode}
+  <TexturePlaceholder hasRun={textureMode.hasRun} />
+{/if}
 
 {#if hasAnyControls && !userData?.renderMode}
   <ControlsPanel
@@ -737,46 +999,10 @@
   me={userData?.me}
 />
 
-{#snippet replControls()}
-  <ReplControls
-    isRunning={execution.isRunning}
-    {isEditorCollapsed}
-    run={runManual}
-    cancel={execution.cancel}
-    {toggleEditorCollapsed}
-    {goHome}
-    err={execution.err}
-    {onExport}
-    {clearLocalChanges}
-    onRecord={toggleRecording}
-    recordingState={$recordingState}
-    toggleAxisHelpers={wrappedToggleAxesHelpers}
-    toggleLightHelpers={meshScene.toggleLightHelpers}
-    toggleGizmoGhosts={gizmoController.toggleGhosts}
-    showGizmoGhosts={gizmoController.showGhosts}
-    gizmosExist={hasAnyGizmos}
-    cameraProjection={meshScene.cameraProjection}
-    toggleProjection={handleToggleProjection}
-    isDirty={persistence.isDirty}
-    preludeEjected={persistence.preludeEjected}
-    {togglePreludeEjected}
-    {toggleMaterialEditorOpen}
-    {toggleEnvironmentSettingsOpen}
-    {toggleLayoutOrientation}
-  />
-{/snippet}
-
-{#if isEditorCollapsed}
-  <div
-    class={['root', 'collapsed', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
-    style={`${userData?.renderMode ? 'visibility: hidden; height: 0;' : ''} ${layoutOrientation === 'horizontal' ? 'width: 36px;' : 'height: 36px;'}`}
-  >
-    {@render replControls()}
-  </div>
-{:else}
+{#if !isEditorCollapsed}
   <div
     class={['root', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
-    style={`${userData?.renderMode ? 'visibility: hidden; height: 0; width: 0;' : ''} ${layoutOrientation === 'horizontal' ? `width: ${size}px;` : `height: ${size}px;`}`}
+    style={`${userData?.renderMode ? 'visibility: hidden; height: 0; width: 0;' : ''} bottom: ${BOTTOM_BAR_HEIGHT}px; ${layoutOrientation === 'horizontal' ? `width: ${layout.panelSize}px;` : `height: ${layout.panelSize}px;`}`}
   >
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -785,6 +1011,9 @@
       aria-orientation={layoutOrientation === 'horizontal' ? 'vertical' : 'horizontal'}
       onmousedown={handleMousedown}
     ></div>
+    {#if !menubarInBar}
+      <Menubar {menus} title={compTitle} barHeight={BOTTOM_BAR_HEIGHT} />
+    {/if}
     <div class={['editor-container', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
       {#if treePanelVisible}
         <div class={['tree-pane', layoutOrientation === 'horizontal' ? 'horizontal' : '']}>
@@ -872,55 +1101,78 @@
           {treeState}
           {persistence}
           {execution}
-          gizmoEditorHooks={gizmoController.editorHooks}
+          gizmoEditorHooks={mode.editorHooks}
           onRun={runManual}
-          onCenterView={() => meshScene.focus(null)}
+          onCenterView={() => mode.focus(null)}
           armedHandleId={gizmoController.armedRef?.kind === 'handle' ? gizmoController.armedRef.name : null}
           readouts={gizmoController.readouts}
         />
       </div>
-      <div class="controls">
-        <div class="output">
-          {@render replControls()}
-          <ReplOutput err={execution.err ?? meshScene.materialRuntime.err} runStats={execution.runStats} />
-        </div>
-        {#if userData?.me}
-          {#if !userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id}
-            <SaveControls
-              comp={userData.initialComposition?.comp}
-              getCurrentDoc={persistence.currentDoc}
-              activeTreeId={persistence.activeTreeId}
-              materials={persistence.materialDefinitions}
-              {viz}
-              preludeEjected={persistence.preludeEjected}
-              environment={persistence.environment}
-              onSave={() => {
-                persistence.markClean();
-                treeState.markSaved();
-              }}
-              onForked={handleForkedComposition}
-              {userData}
-            />
-          {:else}
-            <ReadOnlyCompositionDetails
-              comp={userData.initialComposition.comp}
-              onForked={handleForkedComposition}
-            />
-          {/if}
-        {:else}
-          {#if userData?.initialComposition}
-            <ReadOnlyCompositionDetails comp={userData.initialComposition.comp} showFork={false} />
-          {/if}
-          <div class="not-logged-in" style="border-top: 1px solid #333">
-            <span style="color: #ddd">you must be logged in to save/share compositions</span>
-            <div>
-              <a href={resolve('/geotoy/login')}>log in</a>
-              /
-              <a href={resolve('/geotoy/register')}>register</a>
-            </div>
-          </div>
-        {/if}
-      </div>
+    </div>
+  </div>
+{/if}
+
+{#if !userData?.renderMode}
+  {#if savePopoverOpen}
+    <div class="save-popover-anchor" style={`bottom: ${BOTTOM_BAR_HEIGHT}px;`}>
+      <SavePopover
+        comp={userData?.initialComposition?.comp ?? null}
+        isOwner={!!userData?.me &&
+          (!userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id)}
+        loggedIn={!!userData?.me}
+        onClose={() => (savePopoverOpen = false)}
+        onForked={handleForkedComposition}
+        form={saveForm}
+      />
+    </div>
+  {/if}
+  {#if runOutputVisible}
+    <div
+      class="run-output-anchor"
+      style={`bottom: ${BOTTOM_BAR_HEIGHT}px; width: ${layout.runOutputWidth}px;`}
+    >
+      <RunOutput err={runErr} metrics={runMetrics} />
+    </div>
+  {/if}
+  <div class="bottom-bar" style={`height: ${BOTTOM_BAR_HEIGHT}px;`}>
+    {#if showTabStrip}
+      <TabStrip
+        tabs={tabs.tabs}
+        activeId={persistence.activeTreeId}
+        barHeight={BOTTOM_BAR_HEIGHT}
+        canDelete={id => tabs.canDelete(id)}
+        onSelect={switchTab}
+        onCreate={createTab}
+        onRename={(id, name) => {
+          tabs.rename(id, name);
+          persistence.saveDraft();
+        }}
+        onDelete={deleteTab}
+      />
+    {:else}
+      <div class="strip-filler"></div>
+    {/if}
+    <div
+      class={['run-bar', layout.runBarWidth === null ? 'flexible' : '']}
+      style={layout.runBarWidth === null ? '' : `width: ${layout.runBarWidth}px;`}
+    >
+      {#if menubarInBar}
+        <Menubar {menus} title={compTitle} barHeight={BOTTOM_BAR_HEIGHT} compact />
+      {/if}
+      <RunBar
+        isRunning={execution.isRunning}
+        err={runErr}
+        metrics={runMetrics}
+        isDirty={persistence.isDirty}
+        expanded={runOutputVisible}
+        recordingState={$recordingState}
+        run={runManual}
+        cancel={execution.cancel}
+        onToggleExpanded={toggleRunOutput}
+        onToggleSave={() => (savePopoverOpen = !savePopoverOpen)}
+        saveOpen={savePopoverOpen}
+        compactMetrics={!showTabStrip}
+      />
     </div>
   </div>
 {/if}
@@ -931,7 +1183,6 @@
     position: absolute;
     max-width: 100vw;
     overflow-x: hidden;
-    bottom: 0;
     display: flex;
     flex-direction: column;
     color: #efefef;
@@ -941,22 +1192,72 @@
 
   .root.horizontal {
     width: auto;
-    height: 100%;
+    height: auto;
     max-width: none;
-    max-height: 100vh;
     overflow-x: auto;
     overflow-y: hidden;
-    bottom: 0;
     right: 0;
     left: auto;
     top: 0;
-    flex-direction: row;
+    flex-direction: column;
   }
 
-  .root.horizontal.collapsed {
-    flex-direction: column;
-    width: 36px;
+  /* Fixed-height bar: its content box is `height - border-top`, so clip rather than let a
+   * child spill and add a page scrollbar. */
+  .bottom-bar {
+    box-sizing: border-box;
     overflow: hidden;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: stretch;
+    background: #0d0d0d;
+    border-top: 1px solid #444;
+    color: #efefef;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+    z-index: 3;
+  }
+
+  .run-bar {
+    /* Its width is set to the panel's, so padding + border must stay inside it or the
+       bar's left edge drifts off the panel's. */
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 8px;
+    flex-shrink: 0;
+    min-width: 0;
+    border-left: 1px solid #444;
+  }
+
+  /* Without an explicit width the bar is content-sized, so nothing can give when the
+   * viewport is narrow and the tail (dirty + save) gets pushed off the edge. Let it take
+   * the remaining space instead; the metrics inside are what shrink. */
+  .run-bar.flexible {
+    flex: 1 1 auto;
+  }
+
+  .save-popover-anchor {
+    position: absolute;
+    right: 0;
+    z-index: 5;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+  }
+
+  .strip-filler {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .run-output-anchor {
+    position: absolute;
+    right: 0;
+    max-width: 100vw;
+    z-index: 4;
+    font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
   }
 
   .dragger {
@@ -988,15 +1289,6 @@
     flex-direction: column;
     min-height: 0;
     min-width: 0;
-  }
-
-  .output {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    padding: 8px;
-    overflow-y: auto;
-    min-height: 80px;
   }
 
   .tree-pane {
@@ -1077,49 +1369,9 @@
     border-color: #666;
   }
 
-  .controls {
-    display: flex;
-    flex-direction: column;
-    min-width: 200px;
-    flex: 0.4;
-    border-top: 1px solid #444;
-    overflow-y: auto;
-  }
-
-  .horizontal .controls {
-    border-top: none;
-    border-left: 1px solid #444;
-    flex: 0.5;
-    min-width: 180px;
-  }
-
-  .not-logged-in {
-    font-size: 13px;
-    padding: 8px;
-  }
-
   @media (max-width: 768px) {
     .editor-container {
       flex-direction: column;
-    }
-
-    .output {
-      padding: 4px;
-    }
-
-    .controls {
-      flex: 1;
-      border-top: none;
-      border-left: 1px solid #444;
-    }
-
-    .not-logged-in {
-      font-size: 12px;
-      padding: 4px;
-    }
-
-    .output {
-      overflow-x: hidden;
     }
   }
 </style>

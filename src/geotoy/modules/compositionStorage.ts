@@ -10,7 +10,6 @@ import {
   type CompositionDoc,
   type CompositionVersionMetadata,
   type EnvironmentConfig,
-  type TreeDef,
   type ViewState,
 } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
@@ -24,11 +23,11 @@ const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
 
 export interface PlaygroundState {
   doc: CompositionDoc;
-  /** Active tree core within `doc` (currently always the default mesh tree). */
-  tree: TreeDef;
   activeTreeId: string;
   materials: MaterialDefinitions;
   view: ViewState;
+  /** Draft-over-server per-tree views, so each tab can restore its own camera on switch. */
+  views: Record<string, ViewState>;
   lastRunWasSuccessful: boolean;
   preludeEjected: boolean;
   environment?: EnvironmentConfig;
@@ -126,7 +125,6 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
   const doc: CompositionDoc = savedDoc ?? serverDoc ?? buildDefaultDoc(DefaultCode);
   const savedActiveTreeId = localStorage.getItem(`${KEY_ACTIVE_TREE}${suffix}`);
   const activeTreeId = resolveActiveTreeId(doc, savedActiveTreeId ?? serverMeta?.activeTreeId);
-  const tree = doc.trees.find(t => t.id === activeTreeId)!.tree;
 
   let materials: MaterialDefinitions;
   if (savedMaterialsRaw) {
@@ -143,7 +141,8 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
     materials = serverMeta?.materials ?? buildDefaultMaterialDefinitions();
   }
 
-  const view = savedViews?.[activeTreeId] ?? serverMeta?.views?.[activeTreeId] ?? DefaultView;
+  const views = { ...serverMeta?.views, ...savedViews };
+  const view = views[activeTreeId] ?? DefaultView;
 
   const preludeEjected = savedPreludeEjected
     ? savedPreludeEjected === 'true'
@@ -158,7 +157,7 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
     }
   }
 
-  return { doc, tree, activeTreeId, materials, view, lastRunWasSuccessful, preludeEjected, environment };
+  return { doc, activeTreeId, materials, view, views, lastRunWasSuccessful, preludeEjected, environment };
 };
 
 export const getView = (viz: Viz): ViewState => ({
@@ -170,7 +169,8 @@ export const getView = (viz: Viz): ViewState => ({
 });
 
 export const saveState = (
-  state: Omit<PlaygroundState, 'lastRunWasSuccessful' | 'tree'>,
+  // `views` is merged from the stored record, not supplied whole.
+  state: Omit<PlaygroundState, 'lastRunWasSuccessful' | 'views'>,
   userData: GeoscriptPlaygroundUserData | undefined
 ) => {
   const suffix = getLocalStorageKeySuffix(userData);
@@ -183,8 +183,11 @@ export const saveState = (
   }
   localStorage.setItem(`${KEY_DOC}${suffix}`, docJson);
   localStorage.setItem(`${KEY_MATERIALS}${suffix}`, materialsJson);
-  const views = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`)) ?? {};
-  views[state.activeTreeId] = state.view;
+  // Merged so a switch away doesn't drop the other tabs' poses, then pruned to the live
+  // trees so deleting a tab doesn't leave its entry behind forever.
+  const stored = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`)) ?? {};
+  stored[state.activeTreeId] = state.view;
+  const views = Object.fromEntries(state.doc.trees.filter(t => stored[t.id]).map(t => [t.id, stored[t.id]]));
   localStorage.setItem(`${KEY_VIEWS}${suffix}`, JSON.stringify(views));
   localStorage.setItem(`${KEY_ACTIVE_TREE}${suffix}`, state.activeTreeId);
   localStorage.setItem(`${KEY_PRELUDE_EJECTED}${suffix}`, state.preludeEjected ? 'true' : 'false');
@@ -300,16 +303,16 @@ export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined
   const serverMeta = userData?.initialComposition?.version.metadata;
   const doc = userData?.initialComposition?.version.tree ?? buildDefaultDoc(DefaultCode);
   const activeTreeId = resolveActiveTreeId(doc, serverMeta?.activeTreeId);
-  const tree = doc.trees.find(t => t.id === activeTreeId)!.tree;
   const materials = serverMeta?.materials || buildDefaultMaterialDefinitions();
-  const view = serverMeta?.views?.[activeTreeId] || DefaultView;
+  const views = serverMeta?.views ?? {};
+  const view = views[activeTreeId] || DefaultView;
 
   return {
     doc,
-    tree,
     activeTreeId,
     materials,
     view,
+    views,
     lastRunWasSuccessful: true,
     preludeEjected: serverMeta?.preludeEjected || false,
     environment: serverMeta?.environment,

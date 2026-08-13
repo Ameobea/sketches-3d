@@ -10,7 +10,8 @@ import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 
 interface SplineControllerDeps {
   viz: Viz;
-  treeState: TreeState;
+  /** Read through a getter: the active tab's `TreeState` changes when tabs switch. */
+  getTreeState: () => TreeState;
   getGizmo: () => TransformGizmo | null;
   getModuleNameToNodeId: () => Record<string, string> | undefined;
   nodeWorldMatrix: (nodeId: string) => THREE.Matrix4;
@@ -64,7 +65,7 @@ export class SplineController {
 
     // Exit spline editing when the selection moves off the owning node.
     $effect(() => {
-      const sel = deps.treeState.state.selectedId;
+      const sel = deps.getTreeState().state.selectedId;
       if (this.edit && sel !== this.edit.nodeId) untrack(this.exit);
     });
   }
@@ -94,7 +95,7 @@ export class SplineController {
     const nodeId = c.sourceModule ? deps.getModuleNameToNodeId()?.[c.sourceModule] : undefined;
     const g = deps.getGizmo();
     if (!nodeId || !g) return;
-    deps.treeState.setSelected(nodeId);
+    deps.getTreeState().setSelected(nodeId);
     this.edit = { key: controlKey(c), nodeId, handleId: c.handleId };
     this.state.activeKey = this.edit.key;
     deps.armNone();
@@ -126,7 +127,7 @@ export class SplineController {
   };
 
   private commit(nodeId: string, handleId: string, points: SplinePoint[]) {
-    const { treeState } = this.deps;
+    const treeState = this.deps.getTreeState();
     const before = treeState.captureControl(nodeId, handleId);
     treeState.setControl(nodeId, handleId, { kind: 'spline', value: points });
     treeState.recordControlChange(nodeId, handleId, before, treeState.captureControl(nodeId, handleId));

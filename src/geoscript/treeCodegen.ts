@@ -27,24 +27,31 @@ export interface CompiledTree {
   rootSource: string;
 }
 
-export const compileTree = (tree: TreeDef): CompiledTree => {
+/** Namespaces a tree's modules so several can compile into one program without colliding;
+ *  omitting `tabId` keeps the bare keys single-tree hosts (level defs) rely on. `:` is safe
+ *  as the separator — `NAME_RE` can never match it. */
+export const qualifyModuleName = (name: string, tabId?: string): string =>
+  tabId ? `${tabId}:${name}` : name;
+
+export const compileTree = (tree: TreeDef, tabId?: string): CompiledTree => {
   const modules: Record<string, string> = {};
   for (const node of Object.values(tree.nodes)) {
     if (node.disabled) continue;
-    modules[node.name] = buildModuleSource(node, tree);
+    modules[qualifyModuleName(node.name, tabId)] = buildModuleSource(node, tree, tabId);
   }
 
-  const rootSource = modules[ROOT_NODE_NAME] ?? '';
-  delete modules[ROOT_NODE_NAME];
+  const rootKey = qualifyModuleName(ROOT_NODE_NAME, tabId);
+  const rootSource = modules[rootKey] ?? '';
+  delete modules[rootKey];
 
   return { modules, rootSource };
 };
 
 /** Map from compiled module name → node id, for resolving a rendered mesh's owning node. */
-export const buildModuleNameToNodeId = (tree: TreeDef): Record<string, string> => {
+export const buildModuleNameToNodeId = (tree: TreeDef, tabId?: string): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const node of Object.values(tree.nodes)) {
-    if (!node.disabled) out[node.name] = node.id;
+    if (!node.disabled) out[qualifyModuleName(node.name, tabId)] = node.id;
   }
   return out;
 };
@@ -58,14 +65,14 @@ const gizmoValueToWire = (v: GizmoValue): GizmoValueWire => {
   return { kind: 'transform', value: Array.from(m.elements) };
 };
 
-/** Tree handle values → per-module injection map keyed by node name (matches `compileTree`). */
-export const buildGizmoValues = (tree: TreeDef): GizmoValuesByModule => {
+/** Tree handle values → per-module injection map keyed by module name (matches `compileTree`). */
+export const buildGizmoValues = (tree: TreeDef, tabId?: string): GizmoValuesByModule => {
   const out: GizmoValuesByModule = {};
   for (const node of Object.values(tree.nodes)) {
     if (!node.handles) continue;
     const handles: Record<string, GizmoValueWire> = {};
     for (const [id, v] of Object.entries(node.handles)) handles[id] = gizmoValueToWire(v);
-    out[node.name] = handles;
+    out[qualifyModuleName(node.name, tabId)] = handles;
   }
   return out;
 };
@@ -90,22 +97,24 @@ export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
 };
 
 /** All host-injected handle values (gizmos + control inputs) merged per module name. */
-export const buildInjectedValues = (tree: TreeDef): GizmoValuesByModule => {
-  const out = buildGizmoValues(tree);
+export const buildInjectedValues = (tree: TreeDef, tabId?: string): GizmoValuesByModule => {
+  const out = buildGizmoValues(tree, tabId);
   for (const node of Object.values(tree.nodes)) {
     if (!node.controls) continue;
-    const bucket = (out[node.name] ??= {});
+    const bucket = (out[qualifyModuleName(node.name, tabId)] ??= {});
     for (const [id, v] of Object.entries(node.controls)) bucket[id] = controlValueToWire(v);
   }
   return out;
 };
 
-const buildModuleSource = (node: NodeDef, tree: TreeDef): string => {
+const buildModuleSource = (node: NodeDef, tree: TreeDef, tabId?: string): string => {
   const sideEffectImports: string[] = [];
   for (const cid of node.children) {
     const child = tree.nodes[cid];
     if (child && !child.disabled) {
-      sideEffectImports.push(`import { } from "${child.name}"`);
+      // Generated imports are emitted already-qualified; user source stays untouched and
+      // resolves bare names within its own tab.
+      sideEffectImports.push(`import { } from "${qualifyModuleName(child.name, tabId)}"`);
     }
   }
   if (sideEffectImports.length === 0) {

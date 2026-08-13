@@ -158,3 +158,40 @@ test('node body is preserved verbatim after the side-effect imports', () => {
   assert.equal(lines[1], 'import { thing } from "child"');
   assert.equal(lines[2], 'render(thing | scale(2))');
 });
+
+test('tab-qualified compile namespaces module keys but leaves user source verbatim', () => {
+  // Two tabs can hold a node of the same name without colliding in one program. The
+  // generated side-effect import is qualified; the user's own bare import is not
+  // touched, and resolves tab-relative in the interpreter.
+  const t = tree('r', [
+    node({
+      id: 'r',
+      name: '_root',
+      source: 'import { thing } from "child"\nrender(thing)',
+      children: ['c'],
+    }),
+    node({ id: 'c', name: 'child', source: 'export thing = box(1)' }),
+  ]);
+  const { modules, rootSource } = compileTree(t, 'tex');
+
+  assert.deepEqual(Object.keys(modules), ['tex:child']);
+  const lines = rootSource.split('\n');
+  assert.equal(lines[0], 'import { } from "tex:child"');
+  assert.equal(lines[1], 'import { thing } from "child"');
+  assert.equal(lines[2], 'render(thing)');
+});
+
+test('injected handle values are keyed by the same qualified module name', () => {
+  const t = tree('r', [
+    node({ id: 'r', name: '_root', children: ['a'] }),
+    node({
+      id: 'a',
+      name: 'a',
+      handles: { g: { kind: 'vec3', mode: 'delta', value: [1, 2, 3] } },
+      controls: { gain: { kind: 'float', value: 0.5 } },
+    }),
+  ]);
+
+  assert.deepEqual(Object.keys(buildInjectedValues(t, 'main')), ['main:a']);
+  assert.deepEqual(Object.keys(buildInjectedValues(t)), ['a']);
+});

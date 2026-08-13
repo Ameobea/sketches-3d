@@ -20,6 +20,7 @@ export interface RunInput {
   materialOverride: RunGeoscriptOptions['materialOverride'];
   renderMode: boolean;
   gizmoValues: RunGeoscriptOptions['gizmoValues'];
+  rootModuleName: RunGeoscriptOptions['rootModuleName'];
   moduleNameToNodeId: Record<string, string>;
   /**
    * Content hash of everything the eval depends on except per-node transforms, computed
@@ -54,9 +55,10 @@ interface ExecutionOpts<T extends RunInput> {
    * Applies a successful run to the scene. Module-invoked (trailing/debounced runs have
    * no awaiting caller) outside the eval error domain, so a failure here surfaces as
    * "Failed to apply run result" instead of masquerading as an eval error; `isCurrent`
-   * guards async continuations against a cancel mid-flight.
+   * guards async continuations against a cancel mid-flight. Return `false` to decline a
+   * result built for state that has since changed; the module then keeps no record of it.
    */
-  consume: (result: RunResult, input: T, isCurrent: () => boolean) => void;
+  consume: (result: RunResult, input: T, isCurrent: () => boolean) => boolean | void;
   /** Tear down rendered objects when a run is cancelled. */
   onCancelCleanup: () => void;
 }
@@ -175,10 +177,16 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     if (outcome.type === 'ok') {
       this.runStats = outcome.result.stats;
       try {
-        this.opts.consume(outcome.result, outcome.input, outcome.isCurrent);
-        // Recorded only after consume succeeds: a half-populated scene must not
-        // hash-match the fast path, else it never re-evals its way back to health.
-        this.lastOkInputKey = outcome.input.inputKey;
+        // `false` means the result was declined (built for state that has since changed), so
+        // nothing reached the scene: neither the stats nor the input key describe what's on
+        // screen. Recorded only once consume reports it applied — a half-populated scene must
+        // not hash-match the fast path either, else it never re-evals its way back to health.
+        if (this.opts.consume(outcome.result, outcome.input, outcome.isCurrent) === false) {
+          this.runStats = null;
+          this.lastOkInputKey = null;
+        } else {
+          this.lastOkInputKey = outcome.input.inputKey;
+        }
       } catch (e) {
         console.error('applying run result failed', e);
         this.err = `Failed to apply run result: ${e instanceof Error ? e.message : String(e)}`;
@@ -217,6 +225,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         materialOverride: input.materialOverride,
         renderMode: input.renderMode,
         gizmoValues: input.gizmoValues,
+        rootModuleName: input.rootModuleName,
       });
 
       if (myGen !== this.runGen) return null;

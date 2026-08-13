@@ -1,17 +1,8 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
-  import type { Composition, CompositionVersion } from 'src/geoscript/geotoyAPIClient';
-  import ForkCompositionButton from './ForkCompositionButton.svelte';
+  import type { Composition } from 'src/geoscript/geotoyAPIClient';
 
-  let {
-    comp,
-    onForked,
-    showFork = true,
-  }: {
-    comp: Composition;
-    onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
-    showFork?: boolean;
-  } = $props();
+  let { comp }: { comp: Composition } = $props();
 </script>
 
 <div class="root">
@@ -32,9 +23,6 @@
           <span class="chip">{tag}</span>
         {/each}
       </div>
-    {/if}
-    {#if showFork && onForked}
-      <ForkCompositionButton {comp} {onForked} />
     {/if}
   </div>
 </div>

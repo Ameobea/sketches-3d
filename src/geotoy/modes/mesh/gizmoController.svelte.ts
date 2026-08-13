@@ -18,11 +18,14 @@ import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeSta
 
 interface GizmoControllerDeps {
   viz: Viz;
-  treeState: TreeState;
+  /** Read through a getter: the active tab's `TreeState` changes when tabs switch. */
+  getTreeState: () => TreeState;
   renderMode: () => boolean;
   bootSignal: AbortSignal;
   /** Last run's reported gizmos; also the run-completed change token the sync/ghost effects key on. */
   getLastGizmos: () => RenderedGizmo[] | undefined;
+  /** Last run's module-name → node-id map; module names are host-qualified, node names aren't. */
+  getModuleNameToNodeId: () => Record<string, string> | undefined;
   getRenderedObjects: () => RenderedObject[];
   runOrFast: () => void;
   blurEditor: () => void;
@@ -71,11 +74,11 @@ export class GizmoController {
   // deleted) falls back automatically — no latch, no same-tick clobber window.
   private armedOverride = $state<{ sel: string | null; ref: GizmoTargetRef | null } | null>(null);
   readonly armedRef = $derived.by((): GizmoTargetRef | null => {
-    const sel = this.deps.treeState.state.selectedId;
+    const sel = this.deps.getTreeState().state.selectedId;
     if (this.armedOverride?.sel !== sel) return this.defaultArmFor(sel);
     const ref = this.armedOverride.ref;
     if (ref === null) return null;
-    const node = this.deps.treeState.state.tree.nodes[ref.nodeId];
+    const node = this.deps.getTreeState().state.tree.nodes[ref.nodeId];
     if (!node) return this.defaultArmFor(sel);
     if (ref.kind === 'instance' && !node.instances.some(i => i.id === ref.instanceId)) {
       return this.defaultArmFor(sel);
@@ -83,16 +86,20 @@ export class GizmoController {
     return ref;
   });
 
+  private gizmoNodeId(gz: RenderedGizmo): string | undefined {
+    return gz.sourceModule ? this.deps.getModuleNameToNodeId()?.[gz.sourceModule] : undefined;
+  }
+
   // Per-node readout map: last run's reported values, overridden by the locally-stored
   // (live-edited) handle value so a drag updates the inline readout before re-eval.
   readonly readouts = $derived.by((): Map<string, GizmoReadout> => {
     const map = new Map<string, GizmoReadout>();
-    const nodeId = this.deps.treeState.state.selectedId;
-    const node = nodeId ? this.deps.treeState.state.tree.nodes[nodeId] : null;
+    const nodeId = this.deps.getTreeState().state.selectedId;
+    const node = nodeId ? this.deps.getTreeState().state.tree.nodes[nodeId] : null;
     if (!node) return map;
     const axesByHandle = new Map<string, [boolean, boolean, boolean]>();
     for (const gz of this.deps.getLastGizmos() ?? []) {
-      if (gz.sourceModule !== node.name) continue;
+      if (this.gizmoNodeId(gz) !== node.id) continue;
       axesByHandle.set(gz.handleId, gz.axes);
       map.set(gz.handleId, channelReadout(gz));
     }
@@ -126,13 +133,13 @@ export class GizmoController {
       void this.armedRef;
       void deps.getLastGizmos();
       if (deps.isSplineActive()) return;
-      this.gizmo?.syncTo(this.armedRef, deps.treeState.state.tree);
+      this.gizmo?.syncTo(this.armedRef, deps.getTreeState().state.tree);
     });
 
     // Rebuild ghosts on discrete changes only (selection / arm / setting / each run); the
     // deep tree reads inside happen untracked so a drag's transform churn doesn't re-fire this.
     $effect(() => {
-      void deps.treeState.state.selectedId;
+      void deps.getTreeState().state.selectedId;
       void this.armedRef;
       void this.showGhosts;
       void deps.getLastGizmos();
@@ -158,7 +165,7 @@ export class GizmoController {
   };
 
   private defaultArmFor(sel: string | null): GizmoTargetRef | null {
-    const tree = this.deps.treeState.state.tree;
+    const tree = this.deps.getTreeState().state.tree;
     if (sel === null || sel === GLOBALS_SELECTION_ID || sel === tree.rootId) {
       return null;
     }
@@ -170,21 +177,21 @@ export class GizmoController {
   /** Arm a specific instance without disturbing selection (inspector / viewport click). */
   armInstance = (nodeId: string, instanceId: string) => {
     this.armedOverride = {
-      sel: this.deps.treeState.state.selectedId,
+      sel: this.deps.getTreeState().state.selectedId,
       ref: { kind: 'instance', nodeId, instanceId },
     };
   };
 
   /** Explicitly arm nothing for the current selection (overrides the default arm). */
   armNone = () => {
-    this.armedOverride = { sel: this.deps.treeState.state.selectedId, ref: null };
+    this.armedOverride = { sel: this.deps.getTreeState().state.selectedId, ref: null };
   };
 
   // World matrix of a node's representative (instance-0) copy, root → node inclusive — same
   // anchor `HandleTarget` uses, so a ghost sits exactly where its armed gizmo would.
   nodeWorldMatrix = (nodeId: string): THREE.Matrix4 => {
     _ghostWorld.identity();
-    composeInstance0World(this.deps.treeState.state.tree, nodeId, _ghostWorld, _ghostScratch);
+    composeInstance0World(this.deps.getTreeState().state.tree, nodeId, _ghostWorld, _ghostScratch);
     return _ghostWorld;
   };
 
@@ -192,7 +199,8 @@ export class GizmoController {
   // handle's own ghost is hidden (the real gizmo draws there instead).
   private rebuildGhosts = () => {
     if (!this.ghosts) return;
-    const { treeState, renderMode, getLastGizmos } = this.deps;
+    const { renderMode, getLastGizmos } = this.deps;
+    const treeState = this.deps.getTreeState();
     const sel = treeState.state.selectedId;
     const node = sel && sel !== GLOBALS_SELECTION_ID ? treeState.state.tree.nodes[sel] : null;
     if (renderMode() || !node) {
@@ -205,7 +213,7 @@ export class GizmoController {
     const world = this.nodeWorldMatrix(sel!);
     const specs: GhostSpec[] = [];
     for (const gz of getLastGizmos() ?? []) {
-      if (gz.sourceModule !== node.name || gz.handleId === armedHandle) continue;
+      if (this.gizmoNodeId(gz) !== node.id || gz.handleId === armedHandle) continue;
       if (!(gz.ghost ?? this.showGhosts)) continue;
       // transform handles report a 16-float matrix; its translation is `origin`.
       const lp =
@@ -228,7 +236,7 @@ export class GizmoController {
 
   readonly editorHooks: GizmoEditorHooks = {
     arm: (handleId, kind) => {
-      const { treeState } = this.deps;
+      const treeState = this.deps.getTreeState();
       const sel = treeState.state.selectedId;
       // Handles are valid on any real node, including `_root` (unlike instance arming).
       if (!sel || sel === GLOBALS_SELECTION_ID || !treeState.state.tree.nodes[sel]) return;
@@ -240,7 +248,7 @@ export class GizmoController {
       if (this.armedRef?.kind === 'handle') this.armedOverride = null;
     },
     resetHandle: handleId => {
-      const { treeState } = this.deps;
+      const treeState = this.deps.getTreeState();
       const sel = treeState.state.selectedId;
       const before = sel ? treeState.captureHandle(sel, handleId) : null;
       if (!sel || before === null) return; // already at default
@@ -249,7 +257,7 @@ export class GizmoController {
       this.deps.runOrFast();
     },
     setHandleVec3: (handleId, value) => {
-      const { treeState } = this.deps;
+      const treeState = this.deps.getTreeState();
       const sel = treeState.state.selectedId;
       if (!sel || !treeState.state.tree.nodes[sel]) return;
       const before = treeState.captureHandle(sel, handleId);
@@ -265,10 +273,12 @@ export class GizmoController {
     getArmedHandleId: () => (this.armedRef?.kind === 'handle' ? this.armedRef.name : null),
   };
 
-  /** Async gizmo/ghost/raycast setup once orbit controls exist; returns the teardown. */
+  /** Async gizmo/ghost/raycast setup once orbit controls exist; returns the teardown. Runs
+   *  once but its callbacks outlive tab switches, so every one resolves `getTreeState()` at
+   *  call time rather than capturing it here. */
   mount = () => {
     const { deps } = this;
-    const { viz, treeState } = deps;
+    const { viz } = deps;
     let cancelled = false;
     (async () => {
       const orbit = await untilOrbitControls(viz, deps.bootSignal).catch(() => null);
@@ -277,12 +287,13 @@ export class GizmoController {
         viz.camera,
         viz.renderer.domElement,
         viz.overlayScene,
-        () => treeState.state.tree,
+        () => deps.getTreeState().state.tree,
         {
           onDraggingChanged: dragging => {
             orbit.enabled = !dragging;
           },
           onDragStart: ref => {
+            const treeState = deps.getTreeState();
             if (ref.kind === 'handle') {
               this.dragStartHandle = treeState.captureHandle(ref.nodeId, ref.name);
               return;
@@ -293,15 +304,16 @@ export class GizmoController {
           },
           onTransformChange: (ref, transform) => {
             if (ref.kind !== 'instance') return;
-            treeState.setInstanceTransform(ref.nodeId, ref.instanceId, transform);
+            deps.getTreeState().setInstanceTransform(ref.nodeId, ref.instanceId, transform);
             deps.runOrFast();
           },
           onHandleChange: (nodeId, handleId, value) => {
             // Store + live readout per drag-tick, but defer the (geometry-changing) re-eval
             // to drag end — per-tick re-runs aren't smooth enough to be worth it.
-            treeState.setHandle(nodeId, handleId, value);
+            deps.getTreeState().setHandle(nodeId, handleId, value);
           },
           onDragEnd: ref => {
+            const treeState = deps.getTreeState();
             if (ref.kind === 'handle') {
               const after = treeState.captureHandle(ref.nodeId, ref.name);
               treeState.recordHandleChange(ref.nodeId, ref.name, this.dragStartHandle, after);
@@ -327,11 +339,11 @@ export class GizmoController {
       );
       // Resolve a handle's origin/kind/mode from the last run's channel + stored value.
       g.setHandleContextResolver((nodeId, handleId) => {
-        const node = treeState.state.tree.nodes[nodeId];
+        const node = deps.getTreeState().state.tree.nodes[nodeId];
         if (!node) return null;
         const reported = deps
           .getLastGizmos()
-          ?.find(gz => gz.sourceModule === node.name && gz.handleId === handleId);
+          ?.find(gz => this.gizmoNodeId(gz) === node.id && gz.handleId === handleId);
         const stored = node.handles?.[handleId];
         const kind = reported?.kind ?? stored?.kind ?? 'vec3';
         return {
@@ -369,6 +381,7 @@ export class GizmoController {
           return true;
         },
         onSelect: (id, instancePath) => {
+          const treeState = deps.getTreeState();
           if (id === null) {
             // Background click: deselect to root (whose default arm is none).
             treeState.setSelected(treeState.state.tree.rootId);

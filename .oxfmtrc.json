@@ -12,6 +12,7 @@
     "node_modules",
     "build",
     "dist",
+    "corpus_renders",
     ".svelte-kit",
     "public/build",
     "geoscript_backend",

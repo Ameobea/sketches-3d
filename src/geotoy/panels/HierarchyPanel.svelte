@@ -171,6 +171,10 @@
     {@render renderNode(tree.nodes[tree.rootId], 0)}
   {/if}
 
+  <div class="ambient-divider">
+    <span class="ambient-label">ambient</span>
+    <span class="ambient-rule"></span>
+  </div>
   <div
     class="globals-row"
     class:selected={selectedId === GLOBALS_SELECTION_ID}
@@ -182,7 +186,6 @@
     }}
   >
     <span class="node-id">_globals</span>
-    <span class="badge globals-badge">ambient</span>
   </div>
 </div>
 
@@ -257,28 +260,30 @@
     {/if}
 
     {#if !isRootNode}
-      <button
-        class="row-btn"
-        class:active={isSoloed}
-        title={isSoloed ? 'unsolo' : 'solo'}
-        onclick={e => {
-          e.stopPropagation();
-          onsoloToggle(node.id);
-        }}
-      >
-        S
-      </button>
-      <button
-        class="row-btn"
-        class:active={isDisabled}
-        title={isDisabled ? 'enable' : 'disable'}
-        onclick={e => {
-          e.stopPropagation();
-          onDisableToggle(node.id);
-        }}
-      >
-        D
-      </button>
+      <span class="sd-cluster">
+        <button
+          class="sd"
+          class:solo-on={isSoloed}
+          title={isSoloed ? 'unsolo' : 'solo'}
+          onclick={e => {
+            e.stopPropagation();
+            onsoloToggle(node.id);
+          }}
+        >
+          s
+        </button>
+        <button
+          class="sd"
+          class:disable-on={isDisabled}
+          title={isDisabled ? 'enable' : 'disable'}
+          onclick={e => {
+            e.stopPropagation();
+            onDisableToggle(node.id);
+          }}
+        >
+          d
+        </button>
+      </span>
     {/if}
   </div>
   {#if hasChildren && isExpanded(node.id)}
@@ -388,9 +393,10 @@
     border-color: #a44;
   }
 
-  .globals-badge {
-    color: #adf;
-    border: 1px solid #36a;
+  .group-badge {
+    color: #6a6a6a;
+    border: none;
+    padding: 0;
   }
 
   .row.root .node-id {
@@ -398,39 +404,80 @@
     color: #6af;
   }
 
-  .row-btn {
-    background: transparent;
-    color: #888;
-    border: 1px solid #333;
-    padding: 0 4px;
-    font-size: 10px;
-    cursor: pointer;
-    font-family: inherit;
-    line-height: 14px;
+  .sd-cluster {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 8px;
+    border-left: 1px solid #2e2e2e;
     flex-shrink: 0;
   }
 
-  .row-btn:hover {
-    background: #1f1f1f;
-    color: #ddd;
-    border-color: #555;
+  .sd {
+    background: none;
+    border: none;
+    color: #5a5a5a;
+    /* Widens the hit area of the bare glyph without changing its rendered box. */
+    padding: 0 2px;
+    margin: 0 -2px;
+    font-family: inherit;
+    font-size: 11px;
+    line-height: 14px;
+    cursor: pointer;
   }
 
-  .row-btn.active {
-    background: #2a2a1a;
+  .row:hover .sd,
+  .row.selected .sd {
+    color: #8a8a8a;
+  }
+
+  /* Ordering is load-bearing: each of these ties on specificity with the rule above,
+   * so the state colors must come last to survive a row hover. */
+  .row .sd:hover {
+    color: #ddd;
+  }
+
+  .row .sd.solo-on {
     color: #db5;
-    border-color: #864;
+  }
+
+  .row .sd.disable-on {
+    color: #8a8a8a;
+  }
+
+  .ambient-divider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    padding: 0 6px;
+    user-select: none;
+  }
+
+  .ambient-label {
+    font-size: 9px;
+    color: #5d5d5d;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  .ambient-rule {
+    flex: 1;
+    height: 1px;
+    background: #333;
   }
 
   .globals-row {
     display: flex;
     align-items: center;
     gap: 4px;
-    padding: 4px 6px;
-    margin-top: 8px;
-    border-top: 1px solid #333;
+    padding: 3px 6px;
     cursor: pointer;
     user-select: none;
+  }
+
+  .globals-row .node-id {
+    color: #999;
   }
 
   .globals-row:hover {

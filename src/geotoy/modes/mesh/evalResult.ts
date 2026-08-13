@@ -5,7 +5,7 @@ import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worke
 import type { RenderedObject } from 'src/geoscript/runner/types';
 import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { exportObjectsToData, type MeshExportFormat } from './export';
-import type { RunStats } from 'src/geotoy/types';
+import type { RunStats } from 'src/geoscript/runner/runner';
 
 type RMesh = THREE.Mesh<THREE.BufferGeometry, THREE.Material>;
 type RLine = THREE.Line<THREE.BufferGeometry, THREE.Material>;

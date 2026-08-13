@@ -13,7 +13,9 @@ import {
 } from 'src/geoscript/geotoyAPIClient';
 import { composeTransform3 } from 'src/geoscript/runner/worldMatrixCache';
 
-const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+/** Also gates tab ids: they enter the module namespace as `<tabId>:<nodeName>`, so they must
+ *  satisfy the same charset — in particular they can never contain `:`. */
+export const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 const RESERVED_NAMES: ReadonlySet<string> = new Set([ROOT_NODE_NAME, '_globals']);
 
 export { buildIdentityTransform };

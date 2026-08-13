@@ -207,8 +207,11 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   deps.serialize_json()
 }
 
+/// `root_module` names the entry program for module resolution and render attribution.
+/// Hosts that qualify their module keys pass `<tabId>:_root` so the entry's own bare
+/// imports resolve within that tab; omitting it keeps the unqualified `_root` default.
 #[wasm_bindgen]
-pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
+pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<String>) {
   let ctx = unsafe { &mut *ctx };
   #[cfg(target_arch = "wasm32")]
   geoscript::reset_async_dep_bits();
@@ -231,7 +234,7 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx) {
     .geo_ctx
     .current_module
     .borrow_mut()
-    .replace("_root".to_owned());
+    .replace(root_module.unwrap_or_else(|| "_root".to_owned()));
   let ambient = ctx.geo_ctx.ambient_scope.borrow().as_ref().map(Rc::clone);
   let base = match &ambient {
     Some(scope) => &**scope,
@@ -400,6 +403,7 @@ pub fn geoscript_repl_set_module_sources(
 pub fn geoscript_repl_set_ambient_scope_from_sources(
   ctx: *mut GeoscriptReplCtx,
   sources: Vec<String>,
+  root_module: Option<String>,
 ) -> Result<(), String> {
   let ctx = unsafe { &mut *ctx };
 
@@ -421,14 +425,28 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
     ctx.geo_ctx.invalidate_module_cache();
   }
 
+  // Ambient sources may `import` from registered modules, so they need the same module
+  // identity the entry program gets — otherwise a bare import inside `_globals` resolves
+  // unqualified and can't find a `<tabId>:`-keyed module.
+  let prev_module = ctx
+    .geo_ctx
+    .current_module
+    .borrow_mut()
+    .replace(root_module.unwrap_or_else(|| "_root".to_owned()));
+
   let mut scope = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
-  for source in sources {
-    ctx.geo_ctx.set_ambient_scope(scope.clone());
-    scope = ctx
-      .geo_ctx
-      .evaluate_module_to_scope(&source)
-      .map_err(|err| format!("{err}"))?;
-  }
+  let result: Result<(), String> = (|| {
+    for source in sources {
+      ctx.geo_ctx.set_ambient_scope(scope.clone());
+      scope = ctx
+        .geo_ctx
+        .evaluate_module_to_scope(&source)
+        .map_err(|err| format!("{err}"))?;
+    }
+    Ok(())
+  })();
+  *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
+  result?;
   ctx.geo_ctx.set_ambient_scope(scope);
 
   // Renders fired inside prelude / `_globals` aren't part of the user-visible
@@ -1030,9 +1048,9 @@ mod tests {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
 
-    geoscript_repl_set_ambient_scope_from_sources(p, vec!["base = 10".to_owned()]).unwrap();
+    geoscript_repl_set_ambient_scope_from_sources(p, vec!["base = 10".to_owned()], None).unwrap();
     geoscript_repl_parse_program(p, "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(), false);
-    geoscript_repl_eval(p);
+    geoscript_repl_eval(p, None);
     ctx.last_result.as_ref().unwrap();
 
     // Exactly the program's own bindings, in declaration order. `base` is included even

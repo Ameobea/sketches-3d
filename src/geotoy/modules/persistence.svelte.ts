@@ -1,10 +1,9 @@
 import type { Viz } from 'src/viz';
 import {
-  withTree,
   type Composition,
   type CompositionDoc,
   type EnvironmentConfig,
-  type TreeDef,
+  type TreeEntry,
 } from 'src/geoscript/geotoyAPIClient';
 import type { MaterialDefinitions } from 'src/geoscript/materials';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
@@ -19,15 +18,19 @@ import {
   type CompositionMeta,
   type PlaygroundState,
 } from 'src/geotoy/modules/compositionStorage';
+import { tabShapeKey } from 'src/geotoy/modules/tabs.svelte';
 
 interface PersistenceOpts {
   viz: Viz;
   /** Read live — forking swaps the userData (and with it the draft-key suffix). */
   getUserData: () => GeoscriptPlaygroundUserData | undefined;
-  /** Serializes the active tree's live editing state (tree content lives in TreeState). */
-  serializeActiveTree: () => TreeDef;
-  /** Reactive read of the active tree's dirty flag (latched + recomputed by TreeState). */
+  /** Serializes *every* live tab. A non-active tab's edits exist only in its `TreeState`,
+   *  so folding just the active tree would silently drop them on save. */
+  serializeTabs: () => TreeEntry[];
+  /** Reactive read of "any tab dirty" (each latched + recomputed by its TreeState). */
   isTreeDirty: () => boolean;
+  /** Cheap key of the tab set's shape; content-free so it can be read on every dirty check. */
+  tabShapeKey: () => string;
 }
 
 /** Sorted-key stringify so server-parsed vs live objects compare by content, not key order. */
@@ -55,13 +58,16 @@ export class GeotoyPersistence {
   environment: EnvironmentConfig | undefined = $state(undefined);
 
   /** Serialized server-version meta state; dirty = live content vs this. */
-  private metaBaselines = $state.raw({ mats: '', env: '', prelude: false });
+  private metaBaselines = $state.raw({ mats: '', env: '', prelude: false, tabShape: '' });
   /** Camera/view changes aren't content-baselined; explicit flag, cleared by markClean. */
   viewDirty = $state(false);
-  private readonly metaDirty = $derived(
-    stableJson($state.snapshot(this.materialDefinitions)) !== this.metaBaselines.mats ||
+  // `.by` (not bare `$derived`) so the `this.opts` read stays deferred past field init.
+  private readonly metaDirty = $derived.by(
+    () =>
+      stableJson($state.snapshot(this.materialDefinitions)) !== this.metaBaselines.mats ||
       stableJson(($state.snapshot(this.environment) as unknown) ?? null) !== this.metaBaselines.env ||
-      this.preludeEjected !== this.metaBaselines.prelude
+      this.preludeEjected !== this.metaBaselines.prelude ||
+      this.opts.tabShapeKey() !== this.metaBaselines.tabShape
   );
   readonly isDirty = $derived.by(() => this.metaDirty || this.viewDirty || this.opts.isTreeDirty());
 
@@ -78,6 +84,7 @@ export class GeotoyPersistence {
       mats: stableJson(server.materials),
       env: stableJson(server.environment ?? null),
       prelude: server.preludeEjected,
+      tabShape: tabShapeKey(server.doc.trees),
     };
   }
 
@@ -87,6 +94,7 @@ export class GeotoyPersistence {
       mats: stableJson($state.snapshot(this.materialDefinitions)),
       env: stableJson(($state.snapshot(this.environment) as unknown) ?? null),
       prelude: this.preludeEjected,
+      tabShape: this.opts.tabShapeKey(),
     };
     this.viewDirty = false;
   };
@@ -95,7 +103,7 @@ export class GeotoyPersistence {
     return this.opts.getUserData();
   }
 
-  currentDoc = (): CompositionDoc => withTree(this.doc, this.activeTreeId, this.opts.serializeActiveTree());
+  currentDoc = (): CompositionDoc => ({ ...this.doc, trees: this.opts.serializeTabs() });
 
   saveDraft = () =>
     saveState(
