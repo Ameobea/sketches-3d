@@ -18,22 +18,20 @@
     type CompositionDoc,
     type CompositionVersion,
     type CompositionVersionMetadata,
-    type ViewState,
+    COMPOSITION_METADATA_VERSION,
+    type TransientRenderMetadata,
   } from 'src/geoscript/geotoyAPIClient';
   import { buildDefaultMaterialDefinitions } from 'src/geoscript/materials';
-  import {
-    DefaultCameraFOV,
-    DefaultCameraPos,
-    DefaultCameraTarget,
-    DefaultCameraZoom,
-    type MaterialOverrideMode,
-  } from 'src/geotoy/types';
+  import { DefaultView, type MaterialOverrideMode } from 'src/geotoy/types';
   import type { EvalRequest } from 'src/geotoy/modes/mesh/evalResult';
 
   interface TransientPayload {
     tree?: CompositionDoc;
-    /** Transient metadata carries a single `view` — a transient render targets one tree. */
-    metadata?: Omit<Partial<CompositionVersionMetadata>, 'views' | 'activeTreeId'> & { view?: ViewState };
+    /**
+     * Either a full `CompositionVersionMetadata` (passed straight through — what a DB row
+     * already holds), or the flat single-tree form the CLI finds convenient to author.
+     */
+    metadata?: CompositionVersionMetadata | TransientRenderMetadata;
     materialOverride?: MaterialOverrideMode;
     eval?: EvalRequest;
   }
@@ -74,22 +72,27 @@
         });
       }
     }
-    const meta = payload.metadata ?? {};
-    const autoFrame = !meta.view;
-    const metadata: CompositionVersionMetadata = {
-      views: {
-        [entry.id]: meta.view ?? {
-          cameraPosition: [DefaultCameraPos.x, DefaultCameraPos.y, DefaultCameraPos.z],
-          target: [DefaultCameraTarget.x, DefaultCameraTarget.y, DefaultCameraTarget.z],
-          fov: DefaultCameraFOV,
-          zoom: DefaultCameraZoom,
-        },
-      },
-      activeTreeId: entry.id,
-      materials: meta.materials ?? buildDefaultMaterialDefinitions(),
-      preludeEjected: meta.preludeEjected ?? false,
-      environment: meta.environment,
-    };
+    const supplied = payload.metadata;
+    // A v1 blob is already exactly what the app expects; only the flat CLI form needs shaping.
+    const flat: TransientRenderMetadata =
+      supplied && 'version' in supplied ? {} : ((supplied ?? {}) as TransientRenderMetadata);
+    const autoFrame = supplied && 'version' in supplied ? false : !flat.view;
+    const metadata: CompositionVersionMetadata =
+      supplied && 'version' in supplied
+        ? supplied
+        : {
+            version: COMPOSITION_METADATA_VERSION,
+            tabs: {
+              [entry.id]: {
+                kind: 'mesh',
+                preludeEjected: flat.preludeEjected ?? false,
+                view: flat.view ?? DefaultView,
+                environment: flat.environment,
+              },
+            },
+            activeTreeId: entry.id,
+            materials: flat.materials ?? buildDefaultMaterialDefinitions(),
+          };
 
     const now = new Date().toISOString();
     const comp: Composition = {

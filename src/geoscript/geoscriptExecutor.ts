@@ -109,7 +109,8 @@ export class GeoscriptExecutor {
               code: job.code,
               ctxPtr,
               repl,
-              includePrelude: job.includePrelude,
+              // Level-def assets are mesh trees; their config stays a boolean.
+              preludeKind: job.includePrelude ? 'mesh' : undefined,
               modules: job.modules,
               ambientSources: job.ambientSources,
               gizmoValues: job.gizmoValues,
@@ -153,9 +154,9 @@ export class GeoscriptExecutor {
   }
 
   /** The standard geoscript prelude source — for building a composition run's ambient scope. */
-  async getPrelude(): Promise<string> {
+  async getPrelude(kind: string): Promise<string> {
     await this.ctxPtrPromise;
-    return this.workerManager.getWorker().getPrelude();
+    return this.workerManager.getWorker().getPrelude(kind);
   }
 
   terminate(): void {

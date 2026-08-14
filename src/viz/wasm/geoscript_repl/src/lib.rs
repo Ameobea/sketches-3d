@@ -5,9 +5,9 @@ use geoscript::{
   eval_resolved_program,
   materials::Material,
   optimizer::optimize_ast,
-  parse_program_maybe_with_prelude, parse_program_src, traverse_fn_calls,
+  parse_program_src, parse_program_with_prefix, prelude_for_kind, traverse_fn_calls,
   value_json::{serialize_bindings_to_json, serialize_value_to_json},
-  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, Value, PRELUDE,
+  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, Value,
 };
 use mesh::{
   linked_mesh::{mesh_flags, Vec3},
@@ -137,13 +137,16 @@ pub fn geoscript_repl_init() -> *mut GeoscriptReplCtx {
 }
 
 #[wasm_bindgen]
+/// `prelude_kind` names the tree kind whose prelude to prepend; `None` when the entry tab has
+/// ejected it.
 pub fn geoscript_repl_parse_program(
   ctx: *mut GeoscriptReplCtx,
   src: String,
-  include_prelude: bool,
+  prelude_kind: Option<String>,
 ) {
   let ctx = unsafe { &mut *ctx };
-  ctx.last_program = parse_program_maybe_with_prelude(&ctx.geo_ctx, src, include_prelude);
+  let prelude = prelude_kind.as_deref().map(prelude_for_kind).unwrap_or("");
+  ctx.last_program = parse_program_with_prefix(&ctx.geo_ctx, src, prelude);
   ctx.last_result = Ok(());
 }
 
@@ -975,8 +978,8 @@ pub fn geoscript_set_materials(
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_get_prelude() -> String {
-  PRELUDE.to_owned()
+pub fn geoscript_repl_get_prelude(kind: String) -> String {
+  prelude_for_kind(&kind).to_owned()
 }
 
 // TODO: in a perfect world, this would live in a dedicated tiny lightweight wasm module, but I
@@ -1049,7 +1052,7 @@ mod tests {
     let p: *mut GeoscriptReplCtx = &mut ctx;
 
     geoscript_repl_set_ambient_scope_from_sources(p, vec!["base = 10".to_owned()], None).unwrap();
-    geoscript_repl_parse_program(p, "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(), false);
+    geoscript_repl_parse_program(p, "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(), None);
     geoscript_repl_eval(p, None);
     ctx.last_result.as_ref().unwrap();
 

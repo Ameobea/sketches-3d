@@ -70,10 +70,11 @@ const svelteMachineArgs = [
 if (useTsgo) {
   svelteMachineArgs.push('--tsgo');
 }
-const [svelteResult, formatResult, lintResult] = await Promise.all([
+const [svelteResult, formatResult, lintResult, ctrlResult] = await Promise.all([
   run(process.execPath, svelteMachineArgs),
   run(process.execPath, [cliPath('oxfmt', 'bin', 'oxfmt'), '--list-different']),
   run(process.execPath, [cliPath('oxlint', 'bin', 'oxlint'), '--format', 'unix', '--deny-warnings']),
+  run(process.execPath, [join(process.cwd(), 'scripts', 'lint-control-chars.mjs')]),
 ]);
 
 if (svelteResult.error) {
@@ -112,6 +113,13 @@ if (lintResult.error) {
 }
 if (lintResult.status !== 0) {
   fail('lint', `${lintResult.stdout}${lintResult.stderr}`, lintResult.status);
+}
+
+if (ctrlResult.error) {
+  fail('control-chars', ctrlResult.error.message);
+}
+if (ctrlResult.status !== 0) {
+  fail('control-chars', `${ctrlResult.stdout}${ctrlResult.stderr}`, ctrlResult.status);
 }
 
 if (autoFormattedFiles.length > 0) {

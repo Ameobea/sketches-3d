@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { untrack } from 'svelte';
 
 import { scanControlHandleIds, scanGizmoHandleIds } from 'src/geoscript/gizmoScan';
-import type { EnvironmentConfig, TreeDef, ViewState } from 'src/geoscript/geotoyAPIClient';
+import type { EnvironmentConfig, MeshTabView, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { FallbackMat, HiddenMat, NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
 import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
 import type { RunResult } from 'src/geoscript/runner/runner';
@@ -37,7 +37,7 @@ import {
   type ViewMenuActions,
 } from 'src/geotoy/modes/mode';
 import { getView } from 'src/geotoy/modules/compositionStorage';
-import { IntFormatter } from 'src/geotoy/types';
+import { DefaultView, IntFormatter } from 'src/geotoy/types';
 import type { RunStats } from 'src/geoscript/runner/runner';
 
 interface MeshSceneDeps {
@@ -53,6 +53,8 @@ interface MeshSceneDeps {
   onRunConsumed: (controls: RenderedControl[]) => void;
   /** Gizmo affordances surfaced through the `Mode` contract; owned by GizmoController. */
   getEditorHooks: () => GizmoEditorHooks;
+  /** Scene environment of the *active* tab; per-tab and mesh-only. */
+  getEnvironment: () => EnvironmentConfig | undefined;
 }
 
 const OverrideMats = { wireframe: WireframeMat, 'wireframe-xray': WireframeMat, normal: NormalMat };
@@ -102,7 +104,7 @@ export class MeshScene implements Mode {
    *  edits don't re-fire the fetch effect. */
   private readonly referencedTextureIDsKey = $derived.by(() => {
     const ids = new Set(getReferencedTextureIDs(this.deps.persistence.materialDefinitions.materials));
-    const env = this.deps.persistence.environment;
+    const env = this.deps.getEnvironment();
     if (env?.kind === 'equirect' && env.textureId >= 0) ids.add(env.textureId);
     return [...ids].sort((a, b) => a - b).join(',');
   });
@@ -172,7 +174,7 @@ export class MeshScene implements Mode {
     // cached, so double-applies are cheap and idempotent.
     $effect(() => {
       void Textures.textures;
-      void $state.snapshot(deps.persistence.environment);
+      void $state.snapshot(deps.getEnvironment());
       untrack(this.applyEnv);
     });
 
@@ -209,7 +211,7 @@ export class MeshScene implements Mode {
     void applyGeoscriptSceneEnvironment(
       this.deps.viz,
       this.loader,
-      $state.snapshot(this.deps.persistence.environment) as EnvironmentConfig | undefined,
+      $state.snapshot(this.deps.getEnvironment()) as EnvironmentConfig | undefined,
       id => Textures.textures[id]?.url
     );
 
@@ -506,34 +508,47 @@ export class MeshScene implements Mode {
     return selectedId && selectedId !== GLOBALS_SELECTION_ID && tree.nodes[selectedId] ? selectedId : null;
   }
 
-  buildViewState = (): ViewState => getView(this.deps.viz);
+  /** Null when the live camera doesn't describe this tab yet — mid-restore (`setView` is
+   *  async, so the pose still belongs to the previous tab) or pre-orbit-controls (`getView`
+   *  would pair a live position with a default target). The caller keeps what it had. */
+  buildViewState = (): MeshTabView | null =>
+    this.restoresInFlight > 0 || !this.deps.viz.orbitControls ? null : getView(this.deps.viz);
 
-  restoreViewState = (view: ViewState) => void this.setView(view);
+  restoreViewState = (view: MeshTabView | null) => void this.setView(view ?? DefaultView);
 
-  setView = async (view: ViewState) => {
+  /** Counted, not a flag: overlapping restores (rapid switching before orbit controls
+   *  resolve) would otherwise let the first one to finish reopen the window. */
+  private restoresInFlight = 0;
+
+  setView = async (view: MeshTabView) => {
     const { viz } = this.deps;
-    const orbitControls = await untilOrbitControls(viz, this.deps.bootSignal).catch(() => null);
-    if (!orbitControls) return;
+    this.restoresInFlight += 1;
+    try {
+      const orbitControls = await untilOrbitControls(viz, this.deps.bootSignal).catch(() => null);
+      if (!orbitControls) return;
 
-    if (view.cameraPosition) {
-      viz.camera.position.set(...view.cameraPosition);
+      if (view.cameraPosition) {
+        viz.camera.position.set(...view.cameraPosition);
+      }
+      if (view.target) {
+        orbitControls.target.set(...view.target);
+      }
+      // Position/target are set first so the ortho frustum is sized from the correct distance.
+      this.cameraProjection = view.projection;
+      setProjection(viz, this.cameraProjection);
+      if (viz.camera instanceof THREE.PerspectiveCamera && view.fov !== undefined) {
+        viz.camera.fov = view.fov;
+        viz.camera.updateProjectionMatrix();
+      }
+      if (viz.camera instanceof THREE.OrthographicCamera && view.zoom !== undefined) {
+        viz.camera.zoom = view.zoom;
+        viz.camera.updateProjectionMatrix();
+      }
+      viz.camera.lookAt(orbitControls.target);
+      orbitControls.update();
+    } finally {
+      this.restoresInFlight -= 1;
     }
-    if (view.target) {
-      orbitControls.target.set(...view.target);
-    }
-    // Position/target are set first so the ortho frustum is sized from the correct distance.
-    this.cameraProjection = view.projection ?? 'perspective';
-    setProjection(viz, this.cameraProjection);
-    if (viz.camera instanceof THREE.PerspectiveCamera && view.fov !== undefined) {
-      viz.camera.fov = view.fov;
-      viz.camera.updateProjectionMatrix();
-    }
-    if (viz.camera instanceof THREE.OrthographicCamera && view.zoom !== undefined) {
-      viz.camera.zoom = view.zoom;
-      viz.camera.updateProjectionMatrix();
-    }
-    viz.camera.lookAt(orbitControls.target);
-    orbitControls.update();
   };
 
   toggleProjection = () => {

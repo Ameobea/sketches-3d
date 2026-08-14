@@ -1,5 +1,6 @@
 import type * as Comlink from 'comlink';
 
+import type { TreeKind } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
 import type { WorkerManager } from 'src/geoscript/workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
@@ -15,7 +16,8 @@ export interface RunInput {
   modules: Record<string, string>;
   /** Ambient scope sources beyond the prelude (globals source etc.). */
   extraAmbientSources: string[];
-  includePrelude: boolean;
+  /** Tree kind whose prelude applies, or `undefined` when the active tab ejected it. */
+  preludeKind: TreeKind | undefined;
   materials: NonNullable<RunGeoscriptOptions['materials']>;
   materialOverride: RunGeoscriptOptions['materialOverride'];
   renderMode: boolean;
@@ -111,6 +113,17 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.opts = opts;
     this.replBox = { repl: opts.workerManager.getWorker() };
   }
+
+  /** The prelude is an `include_str!` constant, so one fetch per kind is enough. Caches the
+   *  resolved value (never the promise) so a worker terminated mid-fetch can't poison it. */
+  private readonly preludeByKind = new Map<TreeKind, string>();
+  getPrelude = async (kind: TreeKind): Promise<string> => {
+    const hit = this.preludeByKind.get(kind);
+    if (hit !== undefined) return hit;
+    const src = await this.repl.getPrelude(kind);
+    this.preludeByKind.set(kind, src);
+    return src;
+  };
 
   init = async () => {
     this.ctxPtr = await this.repl.init(getGeoscriptWorkerWasmURLs());
@@ -208,8 +221,9 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
   private evalRun = async (input: T, myGen: number): Promise<RunOutcome<T> | null> => {
     try {
       const ambientSources: string[] = [];
-      if (input.includePrelude) {
-        ambientSources.push(await this.repl.getPrelude());
+      if (input.preludeKind !== undefined) {
+        const prelude = await this.getPrelude(input.preludeKind);
+        if (prelude) ambientSources.push(prelude);
       }
       ambientSources.push(...input.extraAmbientSources);
 
@@ -221,7 +235,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         ctxPtr: this.ctxPtr!,
         repl: this.repl,
         materials: input.materials,
-        includePrelude: input.includePrelude,
+        preludeKind: input.preludeKind,
         materialOverride: input.materialOverride,
         renderMode: input.renderMode,
         gizmoValues: input.gizmoValues,

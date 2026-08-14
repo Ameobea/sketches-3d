@@ -987,7 +987,7 @@ export const loadLevelDef = (
       return;
     }
 
-    const prelude = await sharedExecutor.getPrelude();
+    const prelude = await sharedExecutor.getPrelude('mesh');
 
     const jobs: GeoscriptJob[] = compIds.map(id => {
       const def = assetDefs[id] as GeotoyCompositionAssetDef;

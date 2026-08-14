@@ -316,7 +316,7 @@ export class CsgPreviewScene {
         if (generation !== this.configGeneration || !this.isActive || !this.editGroup) return null;
         const { repl, ctxPtrPromise } = this.runtime.getPreviewRuntime();
         const ctxPtr = await ctxPtrPromise;
-        return runGeoscript({ code: renderWrapper, ctxPtr, repl, includePrelude: false, modules });
+        return runGeoscript({ code: renderWrapper, ctxPtr, repl, preludeKind: undefined, modules });
       });
     } catch (error) {
       console.error(`[CsgPreviewScene] Subtree resolve failed for "${path}":`, error);
@@ -380,7 +380,7 @@ export class CsgPreviewScene {
         if (generation !== this.configGeneration || !this.isActive || !this.editGroup) return null;
         const { repl, ctxPtrPromise } = this.runtime.getPreviewRuntime();
         const ctxPtr = await ctxPtrPromise;
-        return runGeoscript({ code: renderWrapper, ctxPtr, repl, includePrelude: false, modules });
+        return runGeoscript({ code: renderWrapper, ctxPtr, repl, preludeKind: undefined, modules });
       });
     } catch (error) {
       console.error(`[CsgPreviewScene] Complement resolve failed:`, error);

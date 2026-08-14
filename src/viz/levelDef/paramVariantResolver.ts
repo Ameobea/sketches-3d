@@ -127,7 +127,7 @@ export class ParamVariantResolver {
       code: BAKED_RENDER_WRAPPER,
       ctxPtr,
       repl,
-      includePrelude: assetDef.includePrelude ?? true,
+      preludeKind: (assetDef.includePrelude ?? true) ? 'mesh' : undefined,
       modules: { code: assetDef.code },
       gizmoValues: injectInputs({}, merged, ['code']),
     });
@@ -159,7 +159,7 @@ export class ParamVariantResolver {
     const compiled = compileTree(def.tree);
     const preludeEjected = def.preludeEjected ?? false;
     const ambientSources: string[] = [];
-    if (!preludeEjected) ambientSources.push(await repl.getPrelude());
+    if (!preludeEjected) ambientSources.push(await repl.getPrelude('mesh'));
     if (def.tree.globalsSource.trim().length > 0) ambientSources.push(def.tree.globalsSource);
     await repl.setMaterials(ctxPtr, def.defaultMaterialName ?? null, def.materialNames ?? []);
 
@@ -167,7 +167,7 @@ export class ParamVariantResolver {
       code: compiled.rootSource,
       ctxPtr,
       repl,
-      includePrelude: !preludeEjected,
+      preludeKind: preludeEjected ? undefined : 'mesh',
       modules: compiled.modules,
       ambientSources,
       gizmoValues: injectInputs(buildInjectedValues(def.tree), merged, [

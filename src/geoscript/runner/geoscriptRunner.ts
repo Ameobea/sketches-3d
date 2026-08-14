@@ -72,7 +72,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     ctxPtr,
     repl,
     materials = {},
-    includePrelude,
+    preludeKind,
     materialOverride,
     renderMode = false,
     modules,
@@ -111,7 +111,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
 
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
-    evalResult = await repl.eval(ctxPtr, code, includePrelude, rootModuleName);
+    evalResult = await repl.eval(ctxPtr, code, preludeKind, rootModuleName);
   } catch (evalErr) {
     const errorMessage = `Error evaluating code: ${evalErr}`;
     console.error(errorMessage, evalErr);

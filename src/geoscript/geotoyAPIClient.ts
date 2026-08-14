@@ -58,22 +58,73 @@ export type EnvironmentConfig =
       setBackground?: boolean;
     };
 
-export interface ViewState {
+export interface MeshTabView {
   cameraPosition: [number, number, number];
   target: [number, number, number];
   fov?: number; // for `PerspectiveCamera`
   zoom?: number; // for `OrthographicCamera`
-  projection?: 'perspective' | 'orthographic'; // defaults to perspective when absent
+  projection: 'perspective' | 'orthographic';
 }
 
+/**
+ * Per-tab state that isn't tree content. Tagged by the tab's kind so mesh-only state (camera,
+ * scene environment) can't exist on a texture tab. `kind` duplicates `TreeEntry.kind`
+ * deliberately: the blob is self-describing, and writes derive it from the live tab so the two
+ * can't diverge — a mismatched read trusts `TreeEntry.kind` and ignores the entry.
+ */
+export type TabMetadata =
+  | {
+      kind: 'mesh';
+      preludeEjected: boolean;
+      view?: MeshTabView;
+      environment?: EnvironmentConfig;
+    }
+  | { kind: 'texture'; preludeEjected: boolean };
+
+/** Bumped only by a migration; an unexpected value is a hard load error, never a fallback. */
+export const COMPOSITION_METADATA_VERSION = 1;
+
 export interface CompositionVersionMetadata {
-  /** Per-tree view state keyed by tree id. */
-  views?: Record<string, ViewState>;
-  activeTreeId?: string;
+  version: typeof COMPOSITION_METADATA_VERSION;
+  /** Keyed by tree id; rebuilt from the live tab set on every write, so it never holds an
+   *  entry for a tree that no longer exists. */
+  tabs: Record<string, TabMetadata>;
+  activeTreeId: string;
+  /** Composition-wide: one palette, referenced by name from any tree, one editor. */
+  materials?: MaterialDefinitions;
+}
+
+/**
+ * Metadata for a loaded version, or `undefined` when the row carries none (the column defaults
+ * to `{}`). Throws on metadata that exists but isn't this version — an unmigrated or future
+ * row must not be silently reinterpreted, and every consumer needs the same answer.
+ */
+export const readVersionMetadata = (
+  metadata: CompositionVersionMetadata | undefined
+): CompositionVersionMetadata | undefined => {
+  if (!metadata || Object.keys(metadata).length === 0) return undefined;
+  if (metadata.version !== COMPOSITION_METADATA_VERSION) {
+    throw new Error(
+      `composition metadata is version ${metadata.version}, expected ${COMPOSITION_METADATA_VERSION}; ` +
+        'the database migration has not been applied'
+    );
+  }
+  return metadata;
+};
+
+/**
+ * Flat single-tree metadata for transient renders. Not the stored shape — it exists so a CLI
+ * caller can say "here's some geoscript, maybe a camera" without spelling out a `tabs` record.
+ */
+export interface TransientRenderMetadata {
+  view?: MeshTabView;
   materials?: MaterialDefinitions;
   preludeEjected?: boolean;
   environment?: EnvironmentConfig;
 }
+
+export const defaultTabMetadata = (kind: TreeKind): TabMetadata =>
+  kind === 'mesh' ? { kind: 'mesh', preludeEjected: false } : { kind: 'texture', preludeEjected: false };
 
 export interface Transform3 {
   pos: [number, number, number];
@@ -128,6 +179,12 @@ export const isTreeDefV1 = (raw: unknown): raw is TreeDef => {
 
 export type TreeKind = 'mesh' | 'texture';
 
+/**
+ * Charset for node names *and* tree ids. Load-bearing: ids enter the geoscript module
+ * namespace as `<tabId>:<nodeName>`, so neither half may contain `:`.
+ */
+export const NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+
 export interface TreeEntry {
   id: string;
   kind: TreeKind;
@@ -148,7 +205,18 @@ export const isCompositionDocV2 = (raw: unknown): raw is CompositionDoc => {
     d.version === 2 &&
     Array.isArray(d.trees) &&
     d.trees.length > 0 &&
-    d.trees.every(t => !!t && typeof t.id === 'string' && typeof t.name === 'string' && isTreeDefV1(t.tree))
+    d.trees.every(
+      t =>
+        !!t &&
+        typeof t.id === 'string' &&
+        // Enforced here rather than only where ids are generated: an id with a `:` would
+        // silently break every import in the composition with an `Unknown module` cascade.
+        NAME_RE.test(t.id) &&
+        // An unknown `kind` resolves to no mode at all.
+        (t.kind === 'mesh' || t.kind === 'texture') &&
+        typeof t.name === 'string' &&
+        isTreeDefV1(t.tree)
+    )
   );
 };
 

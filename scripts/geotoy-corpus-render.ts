@@ -122,14 +122,12 @@ const pending = rows
 
 const renderRow = async (row: Row) => {
   const tree = JSON.parse(row.tree);
+  // Verbatim: the render page accepts a stored v1 blob, so no downgrade can drift here.
   const metadata = JSON.parse(row.metadata);
-  // Transient payloads carry a single `view`; map migrated per-tree views down to it.
-  if (metadata.views) {
-    const activeId = metadata.activeTreeId ?? tree.trees?.[0]?.id;
-    const view = metadata.views[activeId];
-    delete metadata.views;
-    delete metadata.activeTreeId;
-    if (view) metadata.view = view;
+  if (metadata.version !== 1) {
+    throw new Error(
+      `composition ${row.id}: metadata is not v1 — run the backend once so its migrations apply.`
+    );
   }
   const payload = {
     tree,

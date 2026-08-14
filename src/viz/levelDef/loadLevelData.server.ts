@@ -26,6 +26,7 @@ import {
   getCompositionVersion,
   getGeotoyAPIBaseURL,
   isCompositionDocV2,
+  readVersionMetadata,
 } from 'src/geoscript/geotoyAPIClient';
 
 /**
@@ -124,9 +125,12 @@ const resolveCompositionAsset = async (
     );
   }
   const resolved: GeotoyCompositionAssetDef = { ...def, tree: meshEntry.tree };
-  if (version.metadata?.preludeEjected) resolved.preludeEjected = true;
+  // Per-tab now; this path binds the default mesh tree, so read that tab's flag. Validated
+  // rather than optional-chained: baking with the wrong prelude changes the geometry.
+  const versionMeta = readVersionMetadata(version.metadata);
+  if (versionMeta?.tabs?.[meshEntry.id]?.preludeEjected) resolved.preludeEjected = true;
 
-  const palette = version.metadata?.materials;
+  const palette = versionMeta?.materials;
   if (palette) {
     const defId = palette.defaultMaterialID;
     if (defId != null) resolved.defaultMaterialName = palette.materials[defId]?.name;

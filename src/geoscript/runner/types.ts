@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import type * as Comlink from 'comlink';
 import type { GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import type { MaterialDef } from '../materials';
+import type { TreeKind } from '../geotoyAPIClient';
 
 export interface RunStats {
   runtimeMs: number;
@@ -122,7 +123,8 @@ export interface RunGeoscriptOptions {
    * Defaults to `{}` when omitted.
    */
   materials?: Record<string, { def: MaterialDef; mat: MatEntry | THREE.Material }>;
-  includePrelude: boolean;
+  /** Tree kind whose prelude to prepend; `undefined` when the entry tree ejected it. */
+  preludeKind: TreeKind | undefined;
   materialOverride?: 'wireframe' | 'wireframe-xray' | 'normal' | null;
   onStart?: () => void;
   onError?: (error: string) => void;

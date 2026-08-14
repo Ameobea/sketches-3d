@@ -28,7 +28,6 @@
     type Transform3,
     type TreeDef,
     type TreeKind,
-    type ViewState,
   } from 'src/geoscript/geotoyAPIClient';
   import { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
@@ -42,6 +41,7 @@
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
   import { GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
   import { GeotoyTabs } from 'src/geotoy/modules/tabs.svelte';
+  import { togglePreludeEjected as togglePrelude } from 'src/geotoy/modules/preludeEject';
   import { buildParentMap, findParentId } from 'src/geotoy/modules/treeOps';
   import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
   import NodeInspector from 'src/geotoy/panels/NodeInspector.svelte';
@@ -118,12 +118,26 @@
     updateCanvasSize();
   };
 
+  /**
+   * The single live-capture point for camera state: refresh the active tab from its mode, then
+   * hand back the whole record. Resolved by id, not through `tabs.active` — its `tabs[0]`
+   * fallback would file the outgoing camera onto an unrelated tab in the window where the
+   * active id names a tab that was just removed.
+   */
+  const collectTabMeta = () => {
+    const active = tabs.tabs.find(t => t.id === persistence.activeTreeId);
+    const view = active && mode.buildViewState();
+    if (active && view) active.view = view;
+    return tabs.metaRecord();
+  };
+
   const persistence = new GeotoyPersistence({
-    viz: untrack(() => viz),
     getUserData: () => userData,
     serializeTabs: () => tabs.serialize(),
     isTreeDirty: () => tabs.anyDirty,
     tabShapeKey: () => tabs.shapeKey,
+    collectTabMeta,
+    peekTabMeta: () => tabs.metaRecord(),
   });
   const keymap = new GeotoyKeymap();
   /** Aborts boot-time orbit-controls waiters if the component unmounts mid-boot. */
@@ -131,6 +145,7 @@
 
   const tabs = new GeotoyTabs({
     doc: persistence.initial.doc,
+    tabMeta: persistence.initial.tabMeta,
     serverDoc: untrack(() => userData?.initialComposition?.version.tree) ?? null,
     getActiveId: () => persistence.activeTreeId,
   });
@@ -304,6 +319,7 @@
     getLastRunTree: () => lastRun?.tree ?? null,
     onRunConsumed: splineController.onRunConsumed,
     getEditorHooks: () => gizmoController.editorHooks,
+    getEnvironment: () => tabs.active.environment,
   });
   const textureMode = new TextureMode();
   const modesByKind: Record<TreeKind, Mode> = { mesh: meshScene, texture: textureMode };
@@ -338,7 +354,6 @@
 
   let editorPane = $state<{
     blur: () => void;
-    togglePreludeEjected: () => Promise<void>;
   } | null>(null);
 
   onMount(() => {
@@ -456,7 +471,7 @@
         );
       }
     }
-    parts.push(`pe:${persistence.preludeEjected ? 1 : 0}`);
+    for (const tab of tabs.tabs) parts.push(`pe:${tab.id}:${tab.preludeEjected ? 1 : 0}`);
     const matIds = Object.keys(persistence.materialDefinitions.materials).sort();
     for (const id of matIds) {
       parts.push(`m:${id}:${JSON.stringify(persistence.materialDefinitions.materials[id])}`);
@@ -550,7 +565,7 @@
         code: compiled.rootSource,
         modules: compiled.modules,
         extraAmbientSources: tree.globalsSource.trim().length > 0 ? [tree.globalsSource] : [],
-        includePrelude: !persistence.preludeEjected,
+        preludeKind: tabs.active.preludeEjected ? undefined : tabs.active.kind,
         materials: matsByName,
         materialOverride: meshScene.materialOverride,
         renderMode: userData?.renderMode ?? false,
@@ -595,9 +610,6 @@
     });
   }
 
-  /** Per-tab camera poses, seeded from the draft/server metadata and captured on switch. */
-  const viewsByTab: Record<string, ViewState> = { ...persistence.initial.views };
-
   let docEpoch = 0;
 
   /**
@@ -606,19 +618,18 @@
    */
   const switchTab = (id: string) => {
     if (id === persistence.activeTreeId || !tabs.tabs.some(t => t.id === id)) return;
-    // Capture *and persist* the outgoing view before flipping the id: `saveDraft` records
-    // the live camera under `activeTreeId`, so flipping first files the old tab's pose under
-    // the new tab's id and loses the old one entirely.
-    const outgoing = tabs.tabs.some(t => t.id === persistence.activeTreeId) && mode.buildViewState();
-    if (outgoing) viewsByTab[persistence.activeTreeId] = outgoing;
+    // Before the id flips, so `collectTabMeta` files the live camera under the tab it
+    // actually belongs to.
     persistence.saveDraft();
 
     mode.clearScene();
     lastRun = null;
+    // Bound to the active tab, so it can't follow a switch — and a texture tab would drop
+    // any edit made through it.
+    environmentSettingsOpen = false;
     persistence.activeTreeId = id;
 
-    const view = viewsByTab[id];
-    if (view) mode.restoreViewState(view);
+    mode.restoreViewState(tabs.active.view);
     execution.run();
     logGeotoyEvent('editor', 'tab_switch');
   };
@@ -649,7 +660,6 @@
       lastRun = null;
     }
     const next = tabs.remove(id);
-    delete viewsByTab[id];
     if (wasActive) switchTab(next);
     persistence.saveDraft();
     logGeotoyEvent('editor', 'tab_delete');
@@ -720,7 +730,18 @@
     updateCanvasSize();
   };
 
-  const togglePreludeEjected = () => void editorPane?.togglePreludeEjected();
+  const togglePreludeEjected = async () => {
+    const tab = tabs.active;
+    await togglePrelude({
+      treeState,
+      getPrelude: execution.getPrelude,
+      kind: tab.kind,
+      ejected: tab.preludeEjected,
+      setEjected: ejected => tabs.setPreludeEjected(tab.id, ejected),
+    });
+    logGeotoyEvent('editor', 'prelude_toggle', { ejected: !tab.preludeEjected });
+    execution.run();
+  };
 
   let exportDialog = $state<HTMLDialogElement | null>(null);
   const onExport = () => {
@@ -748,14 +769,12 @@
     lastRun = null;
     docEpoch += 1;
     const serverState = persistence.revertToServer();
-    tabs.resetFromDoc(serverState.doc);
+    tabs.resetFromDoc(serverState.doc, serverState.tabMeta);
     // `revertToServer` re-baselines before the tab set is rebuilt, so the shape baseline it
     // captured is the pre-revert one; re-baseline now that the tabs match the snapshot.
     persistence.markClean();
-    for (const k of Object.keys(viewsByTab)) delete viewsByTab[k];
-    Object.assign(viewsByTab, serverState.views);
 
-    mode.restoreViewState(serverState.view);
+    mode.restoreViewState(tabs.active.view);
 
     execution.run();
   };
@@ -763,7 +782,7 @@
   const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
 
   onMount(() => {
-    setTimeout(() => mode.restoreViewState(persistence.initial.view));
+    setTimeout(() => mode.restoreViewState(tabs.active.view));
 
     if (!userData?.renderMode) {
       let loggedVizEngaged = false;
@@ -923,8 +942,9 @@
             { label: 'clear local changes', action: clearLocalChanges },
             {
               label: 'eject prelude',
-              state: persistence.preludeEjected ? 'ejected' : '',
-              disabled: tabs.tabs.length > 1 && !persistence.preludeEjected,
+              state: tabs.active.preludeEjected ? 'ejected' : '',
+              // Only mesh trees have a prelude to eject.
+              disabled: tabs.active.kind !== 'mesh',
               action: togglePreludeEjected,
             },
           ],
@@ -958,9 +978,7 @@
     getCurrentDoc={persistence.currentDoc}
     activeTreeId={persistence.activeTreeId}
     materials={persistence.materialDefinitions}
-    {viz}
-    preludeEjected={persistence.preludeEjected}
-    environment={persistence.environment}
+    {collectTabMeta}
     onSave={() => {
       persistence.markClean();
       tabs.markAllSaved();
@@ -995,7 +1013,7 @@
 
 <EnvironmentSettings
   bind:isOpen={environmentSettingsOpen}
-  bind:environment={persistence.environment}
+  bind:environment={() => tabs.active.environment, env => tabs.setEnvironment(tabs.active.id, env)}
   me={userData?.me}
 />
 
@@ -1100,7 +1118,7 @@
           bind:this={editorPane}
           {treeState}
           {persistence}
-          {execution}
+          analysisPrelude={tabs.active.kind === 'mesh' && !tabs.active.preludeEjected}
           gizmoEditorHooks={mode.editorHooks}
           onRun={runManual}
           onCenterView={() => mode.focus(null)}

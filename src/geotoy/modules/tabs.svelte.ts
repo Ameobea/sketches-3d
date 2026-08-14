@@ -7,12 +7,16 @@
 
 import {
   buildEmptyTree,
+  defaultTabMetadata,
+  NAME_RE,
   type CompositionDoc,
+  type EnvironmentConfig,
+  type MeshTabView,
+  type TabMetadata,
   type TreeEntry,
   type TreeKind,
 } from 'src/geoscript/geotoyAPIClient';
 import { TreeState } from './treeState.svelte';
-import { NAME_RE } from './treeOps';
 
 const DEFAULT_BASE: Record<TreeKind, string> = { mesh: 'scene', texture: 'texture' };
 
@@ -21,6 +25,11 @@ export interface GeotoyTab {
   readonly kind: TreeKind;
   name: string;
   readonly treeState: TreeState;
+  /** Mesh tabs only. Mutated in place rather than through `patch`: it changes on every
+   *  switch and nothing renders from it. */
+  view: MeshTabView | null;
+  readonly preludeEjected: boolean;
+  readonly environment?: EnvironmentConfig;
 }
 
 /**
@@ -33,20 +42,35 @@ export const tabShapeKey = (entries: readonly { id: string; kind: string; name: 
 
 interface GeotoyTabsOpts {
   doc: CompositionDoc;
+  /** Per-tab metadata for `doc`, already resolved draft-over-server. */
+  tabMeta: Record<string, TabMetadata>;
   /** Server doc when one exists: per-tab dirty baselines come from it, so a draft restored
    *  from localStorage compares against the upstream version rather than against itself. */
   serverDoc: CompositionDoc | null;
   getActiveId: () => string;
 }
 
-const buildTabs = (doc: CompositionDoc, serverDoc: CompositionDoc | null): GeotoyTab[] =>
+const buildTabs = (
+  doc: CompositionDoc,
+  tabMeta: Record<string, TabMetadata>,
+  serverDoc: CompositionDoc | null
+): GeotoyTab[] =>
   doc.trees.map(entry => {
     const treeState = new TreeState({
       initial: entry.tree,
       savedBaseline: serverDoc?.trees.find(t => t.id === entry.id)?.tree ?? entry.tree,
     });
     treeState.setSelected(entry.tree.rootId);
-    return { id: entry.id, kind: entry.kind, name: entry.name, treeState };
+    const meta = tabMeta[entry.id];
+    return {
+      id: entry.id,
+      kind: entry.kind,
+      name: entry.name,
+      treeState,
+      view: meta.kind === 'mesh' ? (meta.view ?? null) : null,
+      preludeEjected: meta.preludeEjected,
+      environment: meta.kind === 'mesh' ? meta.environment : undefined,
+    };
   });
 
 export class GeotoyTabs {
@@ -55,7 +79,7 @@ export class GeotoyTabs {
 
   constructor(opts: GeotoyTabsOpts) {
     this.getActiveId = opts.getActiveId;
-    this.tabs = buildTabs(opts.doc, opts.serverDoc);
+    this.tabs = buildTabs(opts.doc, opts.tabMeta, opts.serverDoc);
   }
 
   /** Falls back to the first tab so a stale/missing active id can never leave this null. */
@@ -63,6 +87,25 @@ export class GeotoyTabs {
 
   serialize = (): TreeEntry[] =>
     this.tabs.map(t => ({ id: t.id, kind: t.kind, name: t.name, tree: t.treeState.serialize() }));
+
+  /**
+   * Per-tab metadata for the *live* tab set. Rebuilt on every call rather than merged into a
+   * stored record, so a deleted tab's entry can't survive anywhere.
+   */
+  metaRecord = (): Record<string, TabMetadata> =>
+    Object.fromEntries(
+      this.tabs.map(t => [
+        t.id,
+        t.kind === 'mesh'
+          ? {
+              kind: 'mesh' as const,
+              preludeEjected: t.preludeEjected,
+              view: t.view ?? undefined,
+              environment: t.environment,
+            }
+          : { kind: 'texture' as const, preludeEjected: t.preludeEjected },
+      ])
+    );
 
   get shapeKey(): string {
     return tabShapeKey(this.tabs);
@@ -74,6 +117,19 @@ export class GeotoyTabs {
 
   markAllSaved(): void {
     for (const t of this.tabs) t.treeState.markSaved();
+  }
+
+  /** Reassigns the array so menus, the eval hash and the dirty check see the change. */
+  private patch(id: string, fields: Partial<GeotoyTab>): void {
+    this.tabs = this.tabs.map(t => (t.id === id ? { ...t, ...fields } : t));
+  }
+
+  setPreludeEjected(id: string, ejected: boolean): void {
+    this.patch(id, { preludeEjected: ejected });
+  }
+
+  setEnvironment(id: string, environment: EnvironmentConfig | undefined): void {
+    this.patch(id, { environment });
   }
 
   /**
@@ -91,7 +147,7 @@ export class GeotoyTabs {
     const tree = buildEmptyTree();
     const treeState = new TreeState({ initial: tree });
     treeState.setSelected(tree.rootId);
-    this.tabs = [...this.tabs, { id, kind, name: id, treeState }];
+    this.tabs = [...this.tabs, { id, name: id, treeState, view: null, ...defaultTabMetadata(kind) }];
     return id;
   }
 
@@ -112,16 +168,16 @@ export class GeotoyTabs {
   rename(id: string, name: string): void {
     const trimmed = name.trim();
     if (!trimmed) return;
-    this.tabs = this.tabs.map(t => (t.id === id ? { ...t, name: trimmed } : t));
+    this.patch(id, { name: trimmed });
   }
 
   /**
    * Discard the entire local changeset and rebuild from `doc`. Rebuilds the tab *set*, not
    * just each tree's content — locally-created tabs disappear and locally-deleted ones come
-   * back, which patching by id could never do. Undo stacks go with them, which is correct
-   * for a revert.
+   * back, which patching by id could never do. Undo stacks and per-tab metadata go with them,
+   * which is correct for a revert.
    */
-  resetFromDoc(doc: CompositionDoc): void {
-    this.tabs = buildTabs(doc, doc);
+  resetFromDoc(doc: CompositionDoc, tabMeta: Record<string, TabMetadata>): void {
+    this.tabs = buildTabs(doc, tabMeta, doc);
   }
 }

@@ -8,15 +8,17 @@ import {
   updateComposition,
   type Composition,
   type CompositionDoc,
+  COMPOSITION_METADATA_VERSION,
+  defaultTabMetadata,
+  readVersionMetadata,
   type CompositionVersionMetadata,
-  type EnvironmentConfig,
-  type ViewState,
+  type MeshTabView,
+  type TabMetadata,
 } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
-import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget, DefaultCameraZoom } from 'src/geotoy/types';
+import { DefaultCameraTarget } from 'src/geotoy/types';
 import { buildDefaultMaterialDefinitions, type MaterialDefinitions } from 'src/geoscript/materials';
 import type { Viz } from 'src/viz';
-import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { OrthographicCamera, PerspectiveCamera } from 'three';
 
 const DefaultCode = 'box(8) | (box(8) + vec3(4, 4, -4)) | render';
@@ -25,21 +27,16 @@ export interface PlaygroundState {
   doc: CompositionDoc;
   activeTreeId: string;
   materials: MaterialDefinitions;
-  view: ViewState;
-  /** Draft-over-server per-tree views, so each tab can restore its own camera on switch. */
-  views: Record<string, ViewState>;
+  /** Per-tab view/prelude/environment, draft merged over server. Keyed by tree id. */
+  tabMeta: Record<string, TabMetadata>;
   lastRunWasSuccessful: boolean;
-  preludeEjected: boolean;
-  environment?: EnvironmentConfig;
 }
 
 // v2-container draft keys; the prefix bump deliberately orphans all v1 drafts.
 const KEY_DOC = 'geotoy2:doc';
 const KEY_MATERIALS = 'geotoy2:materials';
-const KEY_VIEWS = 'geotoy2:views';
+const KEY_TAB_META = 'geotoy2:tabMeta';
 const KEY_ACTIVE_TREE = 'geotoy2:activeTreeId';
-const KEY_PRELUDE_EJECTED = 'geotoy2:preludeEjected';
-const KEY_ENVIRONMENT = 'geotoy2:environment';
 const KEY_LAST_RUN_COMPLETED = 'geotoy2:lastRunCompleted';
 
 const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefined): string => {
@@ -48,14 +45,6 @@ const getLocalStorageKeySuffix = (userData: GeoscriptPlaygroundUserData | undefi
     return '';
   }
   return `-${initComposition.comp.id}-${initComposition.version.id}`;
-};
-
-const DefaultView: ViewState = {
-  cameraPosition: [DefaultCameraPos.x, DefaultCameraPos.y, DefaultCameraPos.z],
-  target: [DefaultCameraTarget.x, DefaultCameraTarget.y, DefaultCameraTarget.z],
-  fov: DefaultCameraFOV,
-  zoom: DefaultCameraZoom,
-  projection: 'perspective',
 };
 
 const parseDocOrNull = (raw: string | null): CompositionDoc | null => {
@@ -81,15 +70,34 @@ const parseDocOrNull = (raw: string | null): CompositionDoc | null => {
   return parsed;
 };
 
-const parseViewsOrNull = (raw: string | null): Record<string, ViewState> | null => {
+const parseTabMetaOrNull = (raw: string | null): Record<string, TabMetadata> | null => {
   if (!raw) return null;
   try {
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? (parsed as Record<string, ViewState>) : null;
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, TabMetadata>) : null;
   } catch (err) {
-    console.warn('Error parsing saved view metadata:', err);
+    console.warn('Error parsing saved tab metadata:', err);
     return null;
   }
+};
+
+/**
+ * Per-tab metadata for every live tree: draft over server, defaulted for trees neither knows
+ * about, and pruned to the doc. An entry whose `kind` disagrees with the tree's is discarded —
+ * `TreeEntry.kind` is the authority.
+ */
+const resolveTabMeta = (
+  doc: CompositionDoc,
+  serverTabs: Record<string, TabMetadata> | undefined,
+  draftTabs: Record<string, TabMetadata> | null
+): Record<string, TabMetadata> => {
+  const merged = { ...serverTabs, ...draftTabs };
+  return Object.fromEntries(
+    doc.trees.map(entry => {
+      const found = merged[entry.id];
+      return [entry.id, found?.kind === entry.kind ? found : defaultTabMetadata(entry.kind)];
+    })
+  );
 };
 
 /** Server-side doc from the loaded composition, or null if there's no initial composition. */
@@ -113,13 +121,11 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
 
   const savedDoc = parseDocOrNull(localStorage.getItem(`${KEY_DOC}${suffix}`));
   const savedMaterialsRaw = localStorage.getItem(`${KEY_MATERIALS}${suffix}`);
-  const savedViews = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`));
-  const savedPreludeEjected = localStorage.getItem(`${KEY_PRELUDE_EJECTED}${suffix}`);
-  const savedEnvironment = localStorage.getItem(`${KEY_ENVIRONMENT}${suffix}`);
+  const savedTabMeta = parseTabMetaOrNull(localStorage.getItem(`${KEY_TAB_META}${suffix}`));
 
   const lastRunWasSuccessful = localStorage.getItem(`${KEY_LAST_RUN_COMPLETED}${suffix}`) !== 'false';
 
-  const serverMeta = userData?.initialComposition?.version.metadata;
+  const serverMeta = readVersionMetadata(userData?.initialComposition?.version.metadata);
   const serverDoc = userData?.initialComposition?.version.tree;
 
   const doc: CompositionDoc = savedDoc ?? serverDoc ?? buildDefaultDoc(DefaultCode);
@@ -141,26 +147,12 @@ export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): Pl
     materials = serverMeta?.materials ?? buildDefaultMaterialDefinitions();
   }
 
-  const views = { ...serverMeta?.views, ...savedViews };
-  const view = views[activeTreeId] ?? DefaultView;
+  const tabMeta = resolveTabMeta(doc, serverMeta?.tabs, savedTabMeta);
 
-  const preludeEjected = savedPreludeEjected
-    ? savedPreludeEjected === 'true'
-    : (serverMeta?.preludeEjected ?? false);
-
-  let environment: EnvironmentConfig | undefined = serverMeta?.environment;
-  if (savedEnvironment !== null) {
-    try {
-      environment = savedEnvironment === '' ? undefined : JSON.parse(savedEnvironment);
-    } catch (err) {
-      console.warn('Error parsing saved environment metadata:', err);
-    }
-  }
-
-  return { doc, activeTreeId, materials, view, views, lastRunWasSuccessful, preludeEjected, environment };
+  return { doc, activeTreeId, materials, tabMeta, lastRunWasSuccessful };
 };
 
-export const getView = (viz: Viz): ViewState => ({
+export const getView = (viz: Viz): MeshTabView => ({
   cameraPosition: viz.camera.position.toArray(),
   target: viz.orbitControls?.target.toArray() || DefaultCameraTarget.toArray(),
   fov: viz.camera instanceof PerspectiveCamera ? viz.camera.fov : undefined,
@@ -169,8 +161,7 @@ export const getView = (viz: Viz): ViewState => ({
 });
 
 export const saveState = (
-  // `views` is merged from the stored record, not supplied whole.
-  state: Omit<PlaygroundState, 'lastRunWasSuccessful' | 'views'>,
+  state: Omit<PlaygroundState, 'lastRunWasSuccessful'>,
   userData: GeoscriptPlaygroundUserData | undefined
 ) => {
   const suffix = getLocalStorageKeySuffix(userData);
@@ -183,55 +174,23 @@ export const saveState = (
   }
   localStorage.setItem(`${KEY_DOC}${suffix}`, docJson);
   localStorage.setItem(`${KEY_MATERIALS}${suffix}`, materialsJson);
-  // Merged so a switch away doesn't drop the other tabs' poses, then pruned to the live
-  // trees so deleting a tab doesn't leave its entry behind forever.
-  const stored = parseViewsOrNull(localStorage.getItem(`${KEY_VIEWS}${suffix}`)) ?? {};
-  stored[state.activeTreeId] = state.view;
-  const views = Object.fromEntries(state.doc.trees.filter(t => stored[t.id]).map(t => [t.id, stored[t.id]]));
-  localStorage.setItem(`${KEY_VIEWS}${suffix}`, JSON.stringify(views));
+  // Written whole: the caller derives it from the live tab set, so a deleted tab's entry
+  // disappears rather than lingering in a merge.
+  localStorage.setItem(`${KEY_TAB_META}${suffix}`, JSON.stringify(state.tabMeta));
   localStorage.setItem(`${KEY_ACTIVE_TREE}${suffix}`, state.activeTreeId);
-  localStorage.setItem(`${KEY_PRELUDE_EJECTED}${suffix}`, state.preludeEjected ? 'true' : 'false');
-  // Persist '' to mean "explicitly no environment" so it overrides a server default.
-  localStorage.setItem(
-    `${KEY_ENVIRONMENT}${suffix}`,
-    state.environment ? JSON.stringify(state.environment) : ''
-  );
 };
 
+/** The version snapshot; `tabMeta` is supplied whole by the caller, already live-captured. */
 export const buildCompositionVersionMetadata = (
-  viz: Viz,
   activeTreeId: string,
   materials: MaterialDefinitions,
-  preludeEjected: boolean,
-  environment: EnvironmentConfig | undefined,
-  /** Prior per-tree views to merge under, so saving one tree can't drop the others'. */
-  baseViews?: Record<string, ViewState>
-): { type: 'ok'; metadata: CompositionVersionMetadata } | { type: 'error'; msg: string } => {
-  const controls: OrbitControls | null = viz.orbitControls;
-  if (!controls) {
-    return { type: 'error', msg: 'missing orbit controls; app not yet initialized?' };
-  }
-  const view: ViewState = {
-    cameraPosition: [viz.camera.position.x, viz.camera.position.y, viz.camera.position.z],
-    target: [controls.target.x, controls.target.y, controls.target.z],
-    projection: viz.camera instanceof OrthographicCamera ? 'orthographic' : 'perspective',
-  };
-  if (viz.camera instanceof PerspectiveCamera) {
-    view.fov = viz.camera.fov;
-  }
-  if (viz.camera instanceof OrthographicCamera) {
-    view.zoom = viz.camera.zoom;
-  }
-  const metadata: CompositionVersionMetadata = {
-    views: { ...baseViews, [activeTreeId]: view },
-    activeTreeId,
-    materials,
-    preludeEjected,
-    environment,
-  };
-
-  return { type: 'ok', metadata };
-};
+  tabMeta: Record<string, TabMetadata>
+): CompositionVersionMetadata => ({
+  version: COMPOSITION_METADATA_VERSION,
+  tabs: tabMeta,
+  activeTreeId,
+  materials,
+});
 
 export interface CompositionMeta {
   title: string;
@@ -244,27 +203,13 @@ export const saveNewVersion = async (
   comp: Composition,
   currentDoc: CompositionDoc,
   activeTreeId: string,
-  viz: Viz,
   materials: MaterialDefinitions,
-  preludeEjected: boolean,
-  environment: EnvironmentConfig | undefined,
+  tabMeta: Record<string, TabMetadata>,
   { title, description, isShared, tags }: CompositionMeta,
   userData?: GeoscriptPlaygroundUserData
 ): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
   try {
-    const metadataRes = buildCompositionVersionMetadata(
-      viz,
-      activeTreeId,
-      materials,
-      preludeEjected,
-      environment,
-      userData?.initialComposition?.version.metadata?.views
-    );
-    if (metadataRes.type === 'error') {
-      return metadataRes;
-    }
-    const metadata = metadataRes.metadata;
-
+    const metadata = buildCompositionVersionMetadata(activeTreeId, materials, tabMeta);
     await Promise.all([
       createCompositionVersion(comp.id, { tree: currentDoc, metadata }),
       updateComposition(comp.id, ['title', 'description', 'is_shared', 'tags'], {
@@ -274,17 +219,7 @@ export const saveNewVersion = async (
         tags,
       }),
     ]);
-    saveState(
-      {
-        doc: currentDoc,
-        activeTreeId,
-        materials,
-        view: metadata.views![activeTreeId],
-        preludeEjected,
-        environment,
-      },
-      userData
-    );
+    saveState({ doc: currentDoc, activeTreeId, materials, tabMeta }, userData);
     return { type: 'ok' };
   } catch (error) {
     console.error('Error saving changes:', error);
@@ -300,35 +235,20 @@ export const saveNewVersion = async (
  * Not an efficient function; shouldn't be called frequently.
  */
 export const getServerState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
-  const serverMeta = userData?.initialComposition?.version.metadata;
+  const serverMeta = readVersionMetadata(userData?.initialComposition?.version.metadata);
   const doc = userData?.initialComposition?.version.tree ?? buildDefaultDoc(DefaultCode);
-  const activeTreeId = resolveActiveTreeId(doc, serverMeta?.activeTreeId);
-  const materials = serverMeta?.materials || buildDefaultMaterialDefinitions();
-  const views = serverMeta?.views ?? {};
-  const view = views[activeTreeId] || DefaultView;
-
   return {
     doc,
-    activeTreeId,
-    materials,
-    view,
-    views,
+    activeTreeId: resolveActiveTreeId(doc, serverMeta?.activeTreeId),
+    materials: serverMeta?.materials || buildDefaultMaterialDefinitions(),
+    tabMeta: resolveTabMeta(doc, serverMeta?.tabs, null),
     lastRunWasSuccessful: true,
-    preludeEjected: serverMeta?.preludeEjected || false,
-    environment: serverMeta?.environment,
   };
 };
 
 export const clearSavedState = (userData: GeoscriptPlaygroundUserData | undefined) => {
   const suffix = getLocalStorageKeySuffix(userData);
-  for (const key of [
-    KEY_DOC,
-    KEY_MATERIALS,
-    KEY_VIEWS,
-    KEY_ACTIVE_TREE,
-    KEY_PRELUDE_EJECTED,
-    KEY_ENVIRONMENT,
-  ]) {
+  for (const key of [KEY_DOC, KEY_MATERIALS, KEY_TAB_META, KEY_ACTIVE_TREE]) {
     localStorage.removeItem(`${key}${suffix}`);
   }
 };

@@ -47,7 +47,11 @@ export const compileTree = (tree: TreeDef, tabId?: string): CompiledTree => {
   return { modules, rootSource };
 };
 
-/** Map from compiled module name → node id, for resolving a rendered mesh's owning node. */
+/**
+ * Map from compiled module name → node id, for resolving a rendered mesh's owning node.
+ * Covers one tree, so a failure inside a dependency tab's module resolves to nothing — widen
+ * it across the run set when cross-tab dependencies land (D20).
+ */
 export const buildModuleNameToNodeId = (tree: TreeDef, tabId?: string): Record<string, string> => {
   const out: Record<string, string> = {};
   for (const node of Object.values(tree.nodes)) {

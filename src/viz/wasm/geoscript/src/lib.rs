@@ -73,6 +73,18 @@ pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_
 
 pub const PRELUDE: &str = include_str!("prelude.geo");
 
+/// Per-tree-kind prelude source. The prelude is prepended to the *entry* program, which is the
+/// active tab's root — so which one applies is a property of that tab, not of the composition.
+/// Texture programs render no lights and so have nothing to prepend yet.
+pub fn prelude_for_kind(kind: &str) -> &'static str {
+  match kind {
+    "mesh" => PRELUDE,
+    // Fails closed: an unknown kind gets no prelude rather than a mesh one injected into a
+    // program that can't use it.
+    _ => "",
+  }
+}
+
 pub const DEP_BIT_GEODESICS: u32 = 1 << 0;
 pub const DEP_BIT_CGAL: u32 = 1 << 1;
 pub const DEP_BIT_CLIPPER2: u32 = 1 << 2;
@@ -4157,7 +4169,17 @@ pub fn parse_program_maybe_with_prelude(
   src: String,
   include_prelude: bool,
 ) -> Result<Program, ErrorStack> {
-  parse_program_maybe_with_prelude_and_ambient(ctx, src, include_prelude, "")
+  parse_program_with_prefix(ctx, src, if include_prelude { PRELUDE } else { "" })
+}
+
+/// Like the above, but the caller picks the prelude text — hosts with more than one tree kind
+/// resolve it per entry program rather than through a single global flag.
+pub fn parse_program_with_prefix(
+  ctx: &EvalCtx,
+  src: String,
+  prelude: &str,
+) -> Result<Program, ErrorStack> {
+  parse_program_with_prefix_and_ambient(ctx, src, prelude, "")
 }
 
 /// Like `parse_program_maybe_with_prelude`, but also prepends an `ambient_src` block (e.g. a
@@ -4170,9 +4192,23 @@ pub fn parse_program_maybe_with_prelude_and_ambient(
   include_prelude: bool,
   ambient_src: &str,
 ) -> Result<Program, ErrorStack> {
+  parse_program_with_prefix_and_ambient(
+    ctx,
+    src,
+    if include_prelude { PRELUDE } else { "" },
+    ambient_src,
+  )
+}
+
+pub fn parse_program_with_prefix_and_ambient(
+  ctx: &EvalCtx,
+  src: String,
+  prelude: &str,
+  ambient_src: &str,
+) -> Result<Program, ErrorStack> {
   let mut prefix = String::new();
-  if include_prelude {
-    prefix.push_str(PRELUDE);
+  if !prelude.is_empty() {
+    prefix.push_str(prelude);
     prefix.push('\n');
   }
   if !ambient_src.is_empty() {

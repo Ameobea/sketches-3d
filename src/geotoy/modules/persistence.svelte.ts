@@ -1,8 +1,7 @@
-import type { Viz } from 'src/viz';
 import {
   type Composition,
   type CompositionDoc,
-  type EnvironmentConfig,
+  type TabMetadata,
   type TreeEntry,
 } from 'src/geoscript/geotoyAPIClient';
 import type { MaterialDefinitions } from 'src/geoscript/materials';
@@ -10,7 +9,6 @@ import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlaygr
 import {
   clearSavedState,
   getServerState,
-  getView,
   loadState,
   saveNewVersion,
   saveState,
@@ -21,7 +19,6 @@ import {
 import { tabShapeKey } from 'src/geotoy/modules/tabs.svelte';
 
 interface PersistenceOpts {
-  viz: Viz;
   /** Read live — forking swaps the userData (and with it the draft-key suffix). */
   getUserData: () => GeoscriptPlaygroundUserData | undefined;
   /** Serializes *every* live tab. A non-active tab's edits exist only in its `TreeState`,
@@ -31,6 +28,14 @@ interface PersistenceOpts {
   isTreeDirty: () => boolean;
   /** Cheap key of the tab set's shape; content-free so it can be read on every dirty check. */
   tabShapeKey: () => string;
+  /**
+   * Per-tab metadata for the live tab set, with the active tab's view refreshed from its mode
+   * first. The single capture point: both draft and version snapshots go through it, so a
+   * saved version can't miss poses collected during the session.
+   */
+  collectTabMeta: () => Record<string, TabMetadata>;
+  /** Same record without the live-capture side effect; safe to read from a derived. */
+  peekTabMeta: () => Record<string, TabMetadata>;
 }
 
 /** Sorted-key stringify so server-parsed vs live objects compare by content, not key order. */
@@ -41,10 +46,14 @@ const stableJson = (v: unknown): string =>
       : val
   );
 
+/** Sorted-key stringify of the per-tab record minus camera poses: orbiting must not dirty
+ *  the composition, but ejecting the prelude or editing the environment must. */
+const tabMetaKey = (meta: Record<string, TabMetadata>): string =>
+  stableJson(Object.fromEntries(Object.entries(meta).map(([id, m]) => [id, { ...m, view: undefined }])));
+
 /**
- * Owns the draftable composition state (container doc, materials, prelude flag,
- * environment) + the dirty flag, and is the single assembler of draft/version
- * snapshots.
+ * Owns the draftable composition state (container doc + materials) and the dirty flag, and is
+ * the single assembler of draft/version snapshots. Per-tab state lives on `GeotoyTabs`.
  */
 export class GeotoyPersistence {
   private readonly opts: PersistenceOpts;
@@ -54,19 +63,16 @@ export class GeotoyPersistence {
   doc = $state() as CompositionDoc;
   activeTreeId = $state('');
   materialDefinitions = $state() as MaterialDefinitions;
-  preludeEjected = $state(false);
-  environment: EnvironmentConfig | undefined = $state(undefined);
 
   /** Serialized server-version meta state; dirty = live content vs this. */
-  private metaBaselines = $state.raw({ mats: '', env: '', prelude: false, tabShape: '' });
+  private metaBaselines = $state.raw({ mats: '', tabMeta: '', tabShape: '' });
   /** Camera/view changes aren't content-baselined; explicit flag, cleared by markClean. */
   viewDirty = $state(false);
   // `.by` (not bare `$derived`) so the `this.opts` read stays deferred past field init.
   private readonly metaDirty = $derived.by(
     () =>
       stableJson($state.snapshot(this.materialDefinitions)) !== this.metaBaselines.mats ||
-      stableJson(($state.snapshot(this.environment) as unknown) ?? null) !== this.metaBaselines.env ||
-      this.preludeEjected !== this.metaBaselines.prelude ||
+      tabMetaKey(this.opts.peekTabMeta()) !== this.metaBaselines.tabMeta ||
       this.opts.tabShapeKey() !== this.metaBaselines.tabShape
   );
   readonly isDirty = $derived.by(() => this.metaDirty || this.viewDirty || this.opts.isTreeDirty());
@@ -77,13 +83,10 @@ export class GeotoyPersistence {
     this.doc = this.initial.doc;
     this.activeTreeId = this.initial.activeTreeId;
     this.materialDefinitions = this.initial.materials;
-    this.preludeEjected = this.initial.preludeEjected;
-    this.environment = this.initial.environment;
     const server = getServerState(opts.getUserData());
     this.metaBaselines = {
       mats: stableJson(server.materials),
-      env: stableJson(server.environment ?? null),
-      prelude: server.preludeEjected,
+      tabMeta: tabMetaKey(server.tabMeta),
       tabShape: tabShapeKey(server.doc.trees),
     };
   }
@@ -92,8 +95,7 @@ export class GeotoyPersistence {
   markClean = () => {
     this.metaBaselines = {
       mats: stableJson($state.snapshot(this.materialDefinitions)),
-      env: stableJson(($state.snapshot(this.environment) as unknown) ?? null),
-      prelude: this.preludeEjected,
+      tabMeta: tabMetaKey(this.opts.peekTabMeta()),
       tabShape: this.opts.tabShapeKey(),
     };
     this.viewDirty = false;
@@ -111,9 +113,7 @@ export class GeotoyPersistence {
         doc: this.currentDoc(),
         activeTreeId: this.activeTreeId,
         materials: this.materialDefinitions,
-        view: getView(this.opts.viz),
-        preludeEjected: this.preludeEjected,
-        environment: this.environment,
+        tabMeta: this.opts.collectTabMeta(),
       },
       this.userData
     );
@@ -123,10 +123,8 @@ export class GeotoyPersistence {
       comp,
       this.currentDoc(),
       this.activeTreeId,
-      this.opts.viz,
       this.materialDefinitions,
-      this.preludeEjected,
-      this.environment,
+      this.opts.collectTabMeta(),
       meta,
       userData
     );
@@ -134,8 +132,8 @@ export class GeotoyPersistence {
   setLastRunWasSuccessful = (wasSuccessful: boolean) => setLastRunWasSuccessful(wasSuccessful, this.userData);
 
   /**
-   * Drop drafts, reset owned state to the server version, and re-seed the draft from
-   * it. The caller re-swaps tree content / textures / camera from the returned state.
+   * Drop drafts, reset owned state to the server version, and re-seed the draft from it.
+   * The caller rebuilds the tab set (and with it every tab's metadata) from the return value.
    */
   revertToServer = (): PlaygroundState => {
     clearSavedState(this.userData);
@@ -143,16 +141,12 @@ export class GeotoyPersistence {
     this.doc = server.doc;
     this.activeTreeId = server.activeTreeId;
     this.materialDefinitions = server.materials;
-    this.preludeEjected = server.preludeEjected;
-    this.environment = server.environment;
     saveState(
       {
         doc: server.doc,
         activeTreeId: server.activeTreeId,
         materials: server.materials,
-        view: server.view,
-        preludeEjected: server.preludeEjected,
-        environment: server.environment,
+        tabMeta: server.tabMeta,
       },
       this.userData
     );

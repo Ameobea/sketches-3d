@@ -89,7 +89,7 @@ export class CsgAssetResolver {
         code: renderWrapper,
         ctxPtr,
         repl,
-        includePrelude: false,
+        preludeKind: undefined,
         modules,
       });
     } catch (error) {

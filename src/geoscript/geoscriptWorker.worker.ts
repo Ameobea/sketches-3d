@@ -247,10 +247,10 @@ const methods = {
       throw enrichWasmError(err);
     }
   },
-  eval: async (ctxPtr: number, code: string, includePrelude: boolean, rootModuleName?: string) => {
+  eval: async (ctxPtr: number, code: string, preludeKind: string | undefined, rootModuleName?: string) => {
     lastWasmPanic = null;
     try {
-      Geoscript.geoscript_repl_parse_program(ctxPtr, code, includePrelude);
+      Geoscript.geoscript_repl_parse_program(ctxPtr, code, preludeKind);
       if (Geoscript.geoscript_repl_has_err(ctxPtr)) {
         return { durationMs: 0, usedDepsBitmask: 0 };
       }
@@ -343,7 +343,7 @@ const methods = {
     Geoscript.geoscript_set_default_material(ctxPtr, defaultMaterialID ?? undefined);
     Geoscript.geoscript_set_materials(ctxPtr, availableMaterials);
   },
-  getPrelude: () => Geoscript.geoscript_repl_get_prelude(),
+  getPrelude: (kind: string) => Geoscript.geoscript_repl_get_prelude(kind),
   /**
    * Compute the convex hull of `verts` (flat xyz Float32Array, asset-local space) using
    * Manifold and return the resulting triangle mesh data.  Manifold and the geoscript wasm

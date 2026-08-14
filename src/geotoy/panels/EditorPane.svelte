@@ -7,12 +7,11 @@
   import { logGeotoyEvent } from 'src/analytics';
   import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
   import type { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
-  import type { GeoscriptExecution } from 'src/geotoy/modules/execution.svelte';
 
   let {
     treeState,
     persistence,
-    execution,
+    analysisPrelude,
     gizmoEditorHooks,
     onRun,
     onCenterView,
@@ -21,7 +20,9 @@
   }: {
     treeState: TreeState;
     persistence: GeotoyPersistence;
-    execution: GeoscriptExecution<any>;
+    /** Whether analysis should resolve names against the prelude — must match what the run
+     *  actually prepends, or diagnostics accept names the eval rejects. */
+    analysisPrelude: boolean;
     /** Absent for modes without gizmos (texture). */
     gizmoEditorHooks?: GizmoEditorHooks;
     onRun: () => void;
@@ -117,9 +118,7 @@
       // nodes; '' while editing `_globals` itself so it's analyzed directly.
       const getAmbientSource = () =>
         treeState.state.selectedId === GLOBALS_SELECTION_ID ? '' : treeState.state.tree.globalsSource;
-      editor.setAnalysisExtensions(
-        buildAnalysisExtensions(() => !persistence.preludeEjected, getAmbientSource)
-      );
+      editor.setAnalysisExtensions(buildAnalysisExtensions(() => analysisPrelude, getAmbientSource));
     });
 
     import('src/geoscript/gizmoExtensions').then(
@@ -163,42 +162,6 @@
       resetEditorHistory?.();
     });
   });
-
-  const ejectPrelude = async (editorView: EditorView) => {
-    const prelude = await execution.repl.getPrelude();
-    editorView.dispatch({
-      changes: { from: 0, insert: prelude + '\n//-- end prelude\n\n' },
-    });
-  };
-
-  // Tree mode: the prelude is render-only (default lights), and renders fired in `_globals`
-  // (ambient scope) are dropped — so it has to land in a real scene-eval'd node. The root is
-  // that node; dump it there and focus it so it's clear where the code went.
-  const ejectPreludeIntoRoot = async () => {
-    const prelude = await execution.repl.getPrelude();
-    const rootId = treeState.state.tree.rootId;
-    const cur = treeState.state.tree.nodes[rootId]?.source ?? '';
-    treeState.rewriteSource(rootId, prelude + '\n//-- end prelude\n\n' + cur);
-    treeState.setSelected(rootId);
-  };
-
-  export const togglePreludeEjected = async () => {
-    if (!editorView) {
-      return;
-    }
-
-    if (!persistence.preludeEjected) {
-      if (Object.keys(treeState.state.tree.nodes).length > 1) {
-        await ejectPreludeIntoRoot();
-      } else {
-        await ejectPrelude(editorView);
-      }
-    }
-    persistence.preludeEjected = !persistence.preludeEjected;
-    logGeotoyEvent('editor', 'prelude_toggle', { ejected: persistence.preludeEjected });
-
-    execution.run();
-  };
 
   /** Viewport mode → Ctrl-Z routes to the tree undo stack. */
   export const blur = () => editorView?.contentDOM.blur();

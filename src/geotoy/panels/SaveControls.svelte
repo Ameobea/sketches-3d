@@ -6,10 +6,9 @@
     type Composition,
     type CompositionVersion,
     type CompositionDoc,
-    type EnvironmentConfig,
+    type TabMetadata,
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
-  import type { Viz } from 'src/viz';
   import { buildCompositionVersionMetadata, saveNewVersion } from 'src/geotoy/modules/compositionStorage';
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
@@ -19,25 +18,22 @@
   import { logGeotoyEvent } from 'src/analytics';
 
   let {
-    viz,
     comp,
     materials,
     getCurrentDoc,
     activeTreeId,
     onSave,
-    preludeEjected,
-    environment,
+    collectTabMeta,
     userData,
     onForked,
   }: {
-    viz: Viz;
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
     getCurrentDoc: () => CompositionDoc;
     activeTreeId: string;
     onSave: () => void;
-    preludeEjected: boolean;
-    environment: EnvironmentConfig | undefined;
+    /** Live-captures the active tab's view, then returns every tab's metadata. */
+    collectTabMeta: () => Record<string, TabMetadata>;
     userData: GeoscriptPlaygroundUserData | undefined;
     onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
   } = $props();
@@ -54,22 +50,11 @@
   const createNewComposition = async (): Promise<
     { type: 'ok'; comp: Composition } | { type: 'error'; msg: string }
   > => {
-    const metadataRes = buildCompositionVersionMetadata(
-      viz,
-      activeTreeId,
-      materials,
-      preludeEjected,
-      environment,
-      userData?.initialComposition?.version.metadata?.views
-    );
-    if (metadataRes.type === 'error') {
-      return metadataRes;
-    }
     try {
       const comp = await createComposition({
         title,
         description,
-        metadata: metadataRes.metadata,
+        metadata: buildCompositionVersionMetadata(activeTreeId, materials, collectTabMeta()),
         tree: getCurrentDoc(),
         is_shared: isShared,
         tags,
@@ -95,10 +80,8 @@
           comp,
           getCurrentDoc(),
           activeTreeId,
-          viz,
           materials,
-          preludeEjected,
-          environment,
+          collectTabMeta(),
           { title, description, isShared, tags },
           userData
         );
