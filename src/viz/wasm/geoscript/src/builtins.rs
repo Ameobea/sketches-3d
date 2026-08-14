@@ -1,5 +1,4 @@
 use mesh::triangle_intersection::TriTriIntersectionType;
-use noise::RangeFunction;
 use paste::paste;
 use rand_pcg::Pcg32;
 use std::cmp::Reverse;
@@ -36,8 +35,8 @@ use crate::mesh_ops::mesh_ops::{
 use crate::mesh_ops::tessellate_polygon::GuardEval;
 use crate::mesh_ops::voxels::sample_voxels;
 use crate::noise::{
-  curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, ridged_2d, ridged_3d, worley_noise_2d,
-  worley_noise_3d, WorleyReturnType,
+  curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, fbm_2d_tileable, ridged_2d, ridged_3d,
+  worley_noise_2d, worley_noise_3d, RangeFunction, WorleyReturnType,
 };
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
@@ -1467,6 +1466,23 @@ fn call_impl(
   }
 }
 
+/// `tileable` arg → tiling period in `pos` units: `false` → None, `true` → 1.
+fn resolve_tile_period(val: &Value) -> Result<Option<f32>, ErrorStack> {
+  match val {
+    Value::Bool(false) => Ok(None),
+    Value::Bool(true) => Ok(Some(1.)),
+    v => {
+      let period = v.as_float().unwrap();
+      if period <= 0. {
+        return Err(ErrorStack::new(format!(
+          "`tileable` period must be positive, found: {period}"
+        )));
+      }
+      Ok(Some(period))
+    }
+  }
+}
+
 fn fbm_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
@@ -1504,7 +1520,11 @@ fn fbm_impl(
     }
     2 => {
       let pos = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Float(fbm_2d(0, 4, 1., 0.5, 2., *pos)))
+      let out = match resolve_tile_period(arg_refs[1].resolve(args, kwargs))? {
+        Some(period) => fbm_2d_tileable(0, 4, 1., 0.5, 2., period, *pos),
+        None => fbm_2d(0, 4, 1., 0.5, 2., *pos),
+      };
+      Ok(Value::Float(out))
     }
     3 => {
       let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
@@ -1520,6 +1540,17 @@ fn fbm_impl(
       let lacunarity = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
       let persistence = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
       let pos = arg_refs[5].resolve(args, kwargs).as_vec2().unwrap();
+      if let Some(period) = resolve_tile_period(arg_refs[6].resolve(args, kwargs))? {
+        return Ok(Value::Float(fbm_2d_tileable(
+          seed,
+          octaves,
+          frequency,
+          persistence,
+          lacunarity,
+          period,
+          *pos,
+        )));
+      }
 
       Ok(Value::Float(fbm_2d(
         seed,

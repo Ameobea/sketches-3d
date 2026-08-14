@@ -15,7 +15,6 @@ nalgebra = "0.34"
 log = "0.4"
 rand = { version = "0.10", default-features = false }
 rand_pcg = "0.10"
-noise = "0.4"
 nanoserde = { version = "0.2", default-features = false, features = ["std", "json"], git = "https://github.com/ameobea/nanoserde", branch = "all-fixes" }
 smallvec = "1.15"
 parry3d = "0.25"

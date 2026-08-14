@@ -9,6 +9,7 @@ export interface RunStats {
   renderedMeshCount: number;
   renderedPathCount: number;
   renderedLightCount: number;
+  renderedTextureCount: number;
   totalVtxCount: number;
   totalFaceCount: number;
   /** Async dep names actually used during the eval (from the Rust bitmask). */
@@ -52,7 +53,27 @@ export interface GeneratedLight {
   lightId: number;
 }
 
-export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight;
+/** Semantic role of a rendered texture output; drives colorspace handling and 3D-preview
+ *  auto-binding. Mirrors the Rust `TextureUsage` enum. */
+export type TextureUsage = 'albedo' | 'normal' | 'roughness' | 'height' | 'metalness' | 'ao' | 'mask';
+
+export interface GeneratedTexture {
+  type: 'texture';
+  /** Output channel name (`render_texture(name=…)`); the stable reference key. */
+  name: string;
+  usage: TextureUsage | null;
+  wrap: 'repeat' | 'clamp' | 'mirror';
+  width: number;
+  height: number;
+  channels: number;
+  /** Row-major interleaved f32, len = width·height·channels. */
+  data: Float32Array;
+  sourceModule: string;
+  /** Stable across runs for unchanged textures (cache replay preserves it). */
+  textureId: number;
+}
+
+export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight | GeneratedTexture;
 
 /** A handle value the host injects per-run, keyed `moduleName → handleId`. Covers both
  *  draggable gizmos and control-panel inputs (they share the injection store). `value`

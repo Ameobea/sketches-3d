@@ -4,8 +4,9 @@
 
 <div class="placeholder">
   <span class="title">texture mode</span>
-  <span class="sub">2D preview not implemented yet</span>
-  <span class="state">{hasRun ? 'tree evaluated — outputs not yet readable from JS' : 'no run yet'}</span>
+  <span class="state">
+    {hasRun ? 'tree evaluated — no `render_texture` outputs' : 'no run yet'}
+  </span>
 </div>
 
 <style>
@@ -29,13 +30,8 @@
     color: #0ff;
   }
 
-  .sub {
-    font-size: 11px;
-    color: #8a8a8a;
-  }
-
   .state {
-    font-size: 9px;
+    font-size: 10px;
     color: #5d5d5d;
   }
 </style>

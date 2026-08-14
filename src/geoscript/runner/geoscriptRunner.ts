@@ -5,6 +5,7 @@ import type {
   GeoscriptRunResult,
   RunStats,
   GeneratedObject,
+  GeneratedTexture,
   MatEntry,
   RenderedGizmo,
   RenderedControl,
@@ -27,6 +28,7 @@ const buildEmptyRunStats = (): RunStats => ({
   renderedMeshCount: 0,
   renderedPathCount: 0,
   renderedLightCount: 0,
+  renderedTextureCount: 0,
   totalVtxCount: 0,
   totalFaceCount: 0,
   asyncDeps: [],
@@ -311,6 +313,23 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     });
   }
 
+  stats.renderedTextureCount = await repl.getRenderedTextureCount(ctxPtr);
+  for (let i = 0; i < stats.renderedTextureCount; i += 1) {
+    const t = await repl.getRenderedTexture(ctxPtr, i);
+    renderedObjects.push({
+      type: 'texture',
+      name: t.name,
+      usage: (t.usage || null) as GeneratedTexture['usage'],
+      wrap: t.wrap as GeneratedTexture['wrap'],
+      width: t.width,
+      height: t.height,
+      channels: t.channels,
+      data: t.pixels,
+      sourceModule: t.sourceModule,
+      textureId: t.textureId,
+    });
+  }
+
   // Gizmos are interactive overlay state, not scene meshes — kept off `objects`.
   const gizmos: RenderedGizmo[] = [];
   const gizmoCount = await repl.getRenderedGizmoCount(ctxPtr);
@@ -536,6 +555,8 @@ export const populateScene = (
       obj.light.userData.reuseKey = reuseKey;
       scene.add(obj.light);
       newRenderedObjects.push(obj.light);
+    } else if (obj.type === 'texture') {
+      // Not a scene object; consumed by texture mode and material texture uploads.
     } else {
       obj satisfies never;
       console.error('Unhandled rendered object type', obj);

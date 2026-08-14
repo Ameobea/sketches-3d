@@ -320,6 +320,20 @@ const methods = {
     const lightId = Geoscript.geoscript_get_rendered_light_id(ctxPtr, lightIx);
     return Comlink.transfer({ light, lightId }, []);
   },
+  getRenderedTextureCount: (ctxPtr: number) => Geoscript.geoscript_get_rendered_texture_count(ctxPtr),
+  getRenderedTexture: (ctxPtr: number, texIx: number) => {
+    const [width, height, channels] = Geoscript.geoscript_get_rendered_texture_dims(ctxPtr, texIx);
+    const pixels = Geoscript.geoscript_get_rendered_texture_pixels(ctxPtr, texIx);
+    const name = Geoscript.geoscript_get_rendered_texture_name(ctxPtr, texIx);
+    /** Empty string when no usage was declared. */
+    const usage = Geoscript.geoscript_get_rendered_texture_usage(ctxPtr, texIx);
+    const wrap = Geoscript.geoscript_get_rendered_texture_wrap(ctxPtr, texIx);
+    const sourceModule = Geoscript.geoscript_get_rendered_texture_source_module(ctxPtr, texIx);
+    const textureId = Geoscript.geoscript_get_rendered_texture_id(ctxPtr, texIx);
+    return Comlink.transfer({ width, height, channels, pixels, name, usage, wrap, sourceModule, textureId }, [
+      pixels.buffer,
+    ]);
+  },
   setGizmoValues: (ctxPtr: number, valuesByModule: GizmoValuesByModule) => {
     const modules: string[] = [];
     const handles: string[] = [];

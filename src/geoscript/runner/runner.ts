@@ -7,4 +7,6 @@ export type {
   GeneratedMesh,
   GeneratedPath,
   GeneratedLight,
+  GeneratedTexture,
+  TextureUsage,
 } from './types';

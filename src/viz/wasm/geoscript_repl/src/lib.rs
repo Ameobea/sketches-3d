@@ -7,7 +7,7 @@ use geoscript::{
   optimizer::optimize_ast,
   parse_program_src, parse_program_with_prefix, prelude_for_kind, traverse_fn_calls,
   value_json::{serialize_bindings_to_json, serialize_value_to_json},
-  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, Value,
+  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, TextureWrap, Value,
 };
 use mesh::{
   linked_mesh::{mesh_flags, Vec3},
@@ -224,6 +224,16 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<Strin
     ));
     return;
   };
+  // Static rejection beats the runtime in-flight guard: the error names the whole chain
+  // and fires deterministically instead of at whichever import happens to run first.
+  if let Some(chain) = ctx.geo_ctx.detect_import_cycle() {
+    ctx.last_result = Err(ErrorStack::new(format!(
+      "Circular import detected in module \"{}\": {}",
+      chain[0],
+      chain.join(" -> ")
+    )));
+    return;
+  }
   if let Err(err) = optimize_ast(&ctx.geo_ctx, program) {
     ctx.last_result = Err(err);
     return;
@@ -700,6 +710,35 @@ pub fn geoscript_get_rendered_texture_name(ctx: *const GeoscriptReplCtx, tex_ix:
   ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
     .name
     .clone()
+}
+
+/// Empty string when no usage was declared.
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_usage(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .usage
+    .map(|u| u.as_str().to_owned())
+    .unwrap_or_default()
+}
+
+/// "repeat" | "clamp" | "mirror"
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_wrap(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  let wrap = ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix].texture.wrap;
+  match wrap {
+    TextureWrap::Repeat => "repeat",
+    TextureWrap::Clamp => "clamp",
+    TextureWrap::Mirror => "mirror",
+  }
+  .to_owned()
 }
 
 #[wasm_bindgen]

@@ -719,6 +719,47 @@ impl TextureWrap {
   }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextureUsage {
+  Albedo,
+  Normal,
+  Roughness,
+  Height,
+  Metalness,
+  Ao,
+  Mask,
+}
+
+impl TextureUsage {
+  pub fn from_name(s: &str) -> Result<Self, ErrorStack> {
+    match s {
+      "albedo" => Ok(TextureUsage::Albedo),
+      "normal" => Ok(TextureUsage::Normal),
+      "roughness" => Ok(TextureUsage::Roughness),
+      "height" => Ok(TextureUsage::Height),
+      "metalness" => Ok(TextureUsage::Metalness),
+      "ao" => Ok(TextureUsage::Ao),
+      "mask" => Ok(TextureUsage::Mask),
+      _ => Err(ErrorStack::new(format!(
+        "Invalid texture usage: \"{s}\"; expected one of \"albedo\", \"normal\", \"roughness\", \
+         \"height\", \"metalness\", \"ao\", \"mask\""
+      ))),
+    }
+  }
+
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      TextureUsage::Albedo => "albedo",
+      TextureUsage::Normal => "normal",
+      TextureUsage::Roughness => "roughness",
+      TextureUsage::Height => "height",
+      TextureUsage::Metalness => "metalness",
+      TextureUsage::Ao => "ao",
+      TextureUsage::Mask => "mask",
+    }
+  }
+}
+
 pub struct TextureHandle {
   /// Row-major interleaved f32; len = width * height * channels. Row y maps to
   /// v = (y + 0.5) / height.
@@ -1690,6 +1731,7 @@ pub struct RenderedPath {
 pub struct RenderedTexture {
   pub texture: Rc<TextureHandle>,
   pub name: String,
+  pub usage: Option<TextureUsage>,
   pub source_module: Option<String>,
   pub texture_id: u32,
 }
@@ -3644,6 +3686,81 @@ impl EvalCtx {
     }
   }
 
+  /// Statically detects an import cycle among the registered module sources before any
+  /// evaluation: parses each source, extracts its import targets (qualified relative to
+  /// the importing key, mirroring `qualify_module_name`), and DFSes for a back edge.
+  /// Returns the first cycle found as a qualified-key chain ending where it starts.
+  /// Unparseable sources are skipped — they fail at eval time with proper line mapping.
+  pub fn detect_import_cycle(&self) -> Option<Vec<String>> {
+    let sources = self.module_sources.borrow();
+    let mut edges: FxHashMap<&str, Vec<String>> = FxHashMap::default();
+    for (key, source) in sources.iter() {
+      if !source.contains("import") {
+        continue;
+      }
+      let Ok(ast) = parse_program_src(self, source) else {
+        continue;
+      };
+      let prefix = key.split_once(':').map(|(p, _)| p);
+      let targets = ast
+        .statements
+        .iter()
+        .filter_map(|stmt| {
+          let TopLevelStatement::Import { module_name, .. } = stmt else {
+            return None;
+          };
+          let qualified = match (module_name.contains(':'), prefix) {
+            (false, Some(p)) => format!("{p}:{module_name}"),
+            _ => module_name.clone(),
+          };
+          sources.contains_key(&qualified).then_some(qualified)
+        })
+        .collect();
+      edges.insert(key.as_str(), targets);
+    }
+
+    fn dfs<'a>(
+      node: &'a str,
+      edges: &'a FxHashMap<&str, Vec<String>>,
+      open: &mut FxHashSet<&'a str>,
+      done: &mut FxHashSet<&'a str>,
+      path: &mut Vec<&'a str>,
+    ) -> Option<Vec<String>> {
+      open.insert(node);
+      path.push(node);
+      for tgt in edges.get(node).map(|v| v.as_slice()).unwrap_or(&[]) {
+        if done.contains(tgt.as_str()) {
+          continue;
+        }
+        if open.contains(tgt.as_str()) {
+          let start = path.iter().position(|n| *n == tgt).unwrap();
+          let mut chain: Vec<String> = path[start..].iter().map(|s| s.to_string()).collect();
+          chain.push(tgt.clone());
+          return Some(chain);
+        }
+        if let Some(chain) = dfs(tgt, edges, open, done, path) {
+          return Some(chain);
+        }
+      }
+      path.pop();
+      open.remove(node);
+      done.insert(node);
+      None
+    }
+
+    let mut keys: Vec<&str> = edges.keys().copied().collect();
+    keys.sort_unstable();
+    let (mut open, mut done, mut path) = (FxHashSet::default(), FxHashSet::default(), Vec::new());
+    for key in keys {
+      if !done.contains(key) {
+        if let Some(chain) = dfs(key, &edges, &mut open, &mut done, &mut path) {
+          return Some(chain);
+        }
+      }
+    }
+    None
+  }
+
   fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
     let qualified = self.qualify_module_name(module_name);
     // Diagnostics report the name as the user wrote it; the host's `<tabId>:` prefix is an
@@ -3665,6 +3782,16 @@ impl EvalCtx {
       }
     }
 
+    // Circular-import guard, checked before both the cache-validation walk and the eval
+    // path: either would recurse until the stack overflowed on a cycle. (An in-flight
+    // module never has a cache entry — it was evicted or never existed — so hoisting the
+    // check above the cache path doesn't change the hit path.)
+    if self.modules_in_flight.borrow().contains(module_name) {
+      return Err(ErrorStack::new(format!(
+        "Circular module import detected: module \"{as_written}\" is already being evaluated"
+      )));
+    }
+
     let cache_entry = self.module_exports.borrow().get(module_name).cloned();
     if let Some(entry) = cache_entry {
       // Walk direct deps before validating: recursion reaches each transitive
@@ -3672,19 +3799,27 @@ impl EvalCtx {
       // (advancing RNG to its own end-state), no-ops if already replayed, or
       // re-evals. After this loop the deps' side effects have fired exactly once
       // and RNG reflects exactly the path the cached body originally saw.
-      let mut stale = false;
-      for (dep_name, expected_hash) in &entry.direct_imports {
-        self.resolve_module(dep_name)?;
-        let actual = self
-          .module_exports
-          .borrow()
-          .get(dep_name)
-          .map(|e| e.source_hash);
-        if actual != Some(*expected_hash) {
-          stale = true;
-          break;
+      // In-flight during the walk so a cycle among cached entries errors too.
+      self
+        .modules_in_flight
+        .borrow_mut()
+        .insert(module_name.to_owned());
+      let walk_res = (|| {
+        for (dep_name, expected_hash) in &entry.direct_imports {
+          self.resolve_module(dep_name)?;
+          let actual = self
+            .module_exports
+            .borrow()
+            .get(dep_name)
+            .map(|e| e.source_hash);
+          if actual != Some(*expected_hash) {
+            return Ok(true);
+          }
         }
-      }
+        Ok(false)
+      })();
+      self.modules_in_flight.borrow_mut().remove(module_name);
+      let stale: bool = walk_res?;
 
       // RNG-free bodies cache-hit unconditionally; RNG-using ones require the
       // current state to match what our body originally observed.
@@ -3741,14 +3876,6 @@ impl EvalCtx {
       }
 
       self.evict_module(module_name);
-    }
-
-    // Circular-import guard. Without this, importing a module that (transitively)
-    // imports itself would recurse until the stack overflowed.
-    if self.modules_in_flight.borrow().contains(module_name) {
-      return Err(ErrorStack::new(format!(
-        "Circular module import detected: module \"{as_written}\" is already being evaluated"
-      )));
     }
 
     // Get source code
@@ -8257,6 +8384,77 @@ export x = y"#
   assert!(
     err.contains("Circular module import"),
     "error should mention circular import, got: {err}"
+  );
+}
+
+#[test]
+fn test_static_cycle_detection() {
+  let ctx = EvalCtx::default();
+
+  // Diamond (x -> {y, z} -> w): no cycle.
+  let mut srcs = ctx.module_sources.borrow_mut();
+  srcs.insert("x".into(), "import { a } from \"y\"\nimport { b } from \"z\"".into());
+  srcs.insert("y".into(), "import { c } from \"w\"\nexport a = c".into());
+  srcs.insert("z".into(), "import { c } from \"w\"\nexport b = c".into());
+  srcs.insert("w".into(), "export c = 1".into());
+  drop(srcs);
+  assert_eq!(ctx.detect_import_cycle(), None);
+
+  // Bare imports inside a qualified tab group resolve tab-relative and close a cycle.
+  let mut srcs = ctx.module_sources.borrow_mut();
+  srcs.insert("t:m".into(), "import { a } from \"n\"\nexport b = a".into());
+  srcs.insert("t:n".into(), "import { b } from \"m\"\nexport a = b".into());
+  drop(srcs);
+  let chain = ctx.detect_import_cycle().unwrap();
+  assert_eq!(chain, vec!["t:m", "t:n", "t:m"]);
+}
+
+/// A cycle among *cached* entries must error out of the validation walk, not recurse to a
+/// stack overflow (the walk runs before the eval path's in-flight insert).
+#[test]
+fn test_cached_cycle_validation_walk_errors() {
+  let ctx = EvalCtx::default();
+  ctx.reset_rng_to_default();
+
+  let src_a = "import { x } from \"b\"\nexport y = x";
+  let src_b = "import { y } from \"a\"\nexport x = y";
+  ctx.module_sources.borrow_mut().insert("a".into(), src_a.into());
+  ctx.module_sources.borrow_mut().insert("b".into(), src_b.into());
+
+  let rng = ctx.rng_state();
+  let entry = |src: &str, dep: (&str, u64)| {
+    Rc::new(ModuleExportsCacheEntry {
+      source_hash: EvalCtx::compute_source_hash(src),
+      exports: Rc::new(FxHashMap::default()),
+      own_renders: Vec::new(),
+      own_lights: Vec::new(),
+      own_paths: Vec::new(),
+      own_textures: Vec::new(),
+      own_gizmos: Vec::new(),
+      own_controls: Vec::new(),
+      rng_state_at_start: rng.clone(),
+      rng_state_at_end: rng.clone(),
+      settings_at_start: (45.8366, 1.0),
+      settings_at_end: (45.8366, 1.0),
+      read_settings: false,
+      direct_imports: vec![(dep.0.to_owned(), dep.1)],
+      gizmo_reads: Vec::new(),
+      own_async_deps_bitmask: 0,
+    })
+  };
+  let mut exports = ctx.module_exports.borrow_mut();
+  exports.insert("a".into(), entry(src_a, ("b", EvalCtx::compute_source_hash(src_b))));
+  exports.insert("b".into(), entry(src_b, ("a", EvalCtx::compute_source_hash(src_a))));
+  drop(exports);
+  let mut lru = ctx.module_exports_lru.borrow_mut();
+  lru.push_back("a".into());
+  lru.push_back("b".into());
+  drop(lru);
+
+  let err = format!("{}", ctx.resolve_module("a").unwrap_err());
+  assert!(
+    err.contains("Circular module import"),
+    "expected circular error from validation walk, got: {err}"
   );
 }
 

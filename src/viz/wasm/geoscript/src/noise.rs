@@ -2,30 +2,154 @@ use std::{f32::consts::FRAC_1_SQRT_2, ops::Mul};
 
 use mesh::linked_mesh::Vec3;
 use nalgebra::{Vector2, Vector3};
-use noise::RangeFunction;
 
 use crate::Vec2;
 
-#[allow(deprecated)]
-type PermTable = noise::PermutationTable;
+/// Worley distance metric (local port of the dropped `noise` crate's `RangeFunction`).
+pub enum RangeFunction {
+  Euclidean,
+  EuclideanSquared,
+  Manhattan,
+  Chebyshev,
+  Quadratic,
+}
 
-const PERLIN_PERM_TABLE: PermTable = unsafe {
-  std::mem::transmute::<[u8; _], _>([
-    246, 24, 167, 112, 231, 134, 42, 88, 182, 251, 121, 236, 125, 149, 31, 68, 62, 210, 113, 12,
-    85, 96, 27, 18, 25, 191, 26, 173, 89, 225, 249, 101, 81, 32, 218, 205, 206, 207, 174, 192, 80,
-    232, 226, 6, 30, 127, 74, 201, 2, 245, 184, 241, 223, 19, 144, 248, 48, 255, 146, 165, 102,
-    109, 238, 235, 75, 53, 237, 76, 47, 214, 180, 129, 148, 70, 39, 254, 16, 138, 197, 29, 41, 150,
-    0, 122, 242, 73, 161, 213, 87, 35, 115, 215, 11, 166, 98, 216, 37, 65, 56, 142, 9, 229, 93,
-    195, 103, 178, 140, 136, 172, 247, 22, 155, 34, 154, 243, 224, 105, 253, 78, 94, 162, 193, 160,
-    187, 55, 3, 49, 233, 86, 114, 5, 227, 36, 183, 118, 159, 230, 200, 61, 46, 38, 143, 7, 217, 83,
-    119, 84, 28, 23, 104, 79, 8, 99, 66, 69, 239, 64, 133, 59, 58, 153, 17, 124, 240, 170, 40, 108,
-    107, 219, 147, 185, 188, 52, 33, 158, 196, 176, 163, 151, 111, 135, 92, 10, 177, 169, 21, 228,
-    117, 4, 175, 209, 198, 20, 120, 1, 43, 220, 106, 54, 186, 244, 44, 63, 130, 131, 199, 67, 110,
-    71, 123, 189, 234, 157, 222, 45, 194, 128, 95, 252, 212, 204, 60, 152, 82, 116, 202, 156, 14,
-    50, 190, 145, 179, 203, 139, 164, 77, 91, 221, 208, 171, 181, 137, 72, 57, 211, 97, 13, 126,
-    141, 132, 100, 51, 250, 168, 90, 15,
-  ])
-};
+const PERLIN_PERM_TABLE: [u8; 256] = [
+  246, 24, 167, 112, 231, 134, 42, 88, 182, 251, 121, 236, 125, 149, 31, 68, 62, 210, 113, 12, 85,
+  96, 27, 18, 25, 191, 26, 173, 89, 225, 249, 101, 81, 32, 218, 205, 206, 207, 174, 192, 80, 232,
+  226, 6, 30, 127, 74, 201, 2, 245, 184, 241, 223, 19, 144, 248, 48, 255, 146, 165, 102, 109, 238,
+  235, 75, 53, 237, 76, 47, 214, 180, 129, 148, 70, 39, 254, 16, 138, 197, 29, 41, 150, 0, 122,
+  242, 73, 161, 213, 87, 35, 115, 215, 11, 166, 98, 216, 37, 65, 56, 142, 9, 229, 93, 195, 103,
+  178, 140, 136, 172, 247, 22, 155, 34, 154, 243, 224, 105, 253, 78, 94, 162, 193, 160, 187, 55,
+  3, 49, 233, 86, 114, 5, 227, 36, 183, 118, 159, 230, 200, 61, 46, 38, 143, 7, 217, 83, 119, 84,
+  28, 23, 104, 79, 8, 99, 66, 69, 239, 64, 133, 59, 58, 153, 17, 124, 240, 170, 40, 108, 107, 219,
+  147, 185, 188, 52, 33, 158, 196, 176, 163, 151, 111, 135, 92, 10, 177, 169, 21, 228, 117, 4,
+  175, 209, 198, 20, 120, 1, 43, 220, 106, 54, 186, 244, 44, 63, 130, 131, 199, 67, 110, 71, 123,
+  189, 234, 157, 222, 45, 194, 128, 95, 252, 212, 204, 60, 152, 82, 116, 202, 156, 14, 50, 190,
+  145, 179, 203, 139, 164, 77, 91, 221, 208, 171, 181, 137, 72, 57, 211, 97, 13, 126, 141, 132,
+  100, 51, 250, 168, 90, 15,
+];
+
+// Byte-exact port of `noise` 0.4.1's surflet perlin (perlin2/perlin3 + PermutationTable
+// hashing + gradient tables), kept f32-native — the reason the old crate was pinned.
+
+#[inline(always)]
+fn perm1(x: isize) -> usize {
+  PERLIN_PERM_TABLE[(x & 0xff) as usize] as usize
+}
+
+#[inline(always)]
+fn perm2(x: isize, y: isize) -> usize {
+  PERLIN_PERM_TABLE[perm1(x) ^ ((y & 0xff) as usize)] as usize
+}
+
+#[inline(always)]
+fn perm3(x: isize, y: isize, z: isize) -> usize {
+  PERLIN_PERM_TABLE[perm2(x, y) ^ ((z & 0xff) as usize)] as usize
+}
+
+#[inline(always)]
+fn grad2(index: usize) -> [f32; 2] {
+  const NORM: f32 = 0.7071067811865475f64 as f32;
+  match index % 8 {
+    0 => [1., 0.],
+    1 => [-1., 0.],
+    2 => [0., 1.],
+    3 => [0., -1.],
+    4 => [NORM, NORM],
+    5 => [-NORM, NORM],
+    6 => [NORM, -NORM],
+    7 => [-NORM, -NORM],
+    _ => unreachable!(),
+  }
+}
+
+#[inline(always)]
+fn grad3(index: usize) -> [f32; 3] {
+  const N: f32 = 0.7071067811865475f64 as f32;
+  const N2: f32 = 0.5773502691896258f64 as f32;
+  match index % 32 {
+    // 12 edges repeated twice then 8 corners
+    0 | 12 => [N, N, 0.],
+    1 | 13 => [-N, N, 0.],
+    2 | 14 => [N, -N, 0.],
+    3 | 15 => [-N, -N, 0.],
+    4 | 16 => [N, 0., N],
+    5 | 17 => [-N, 0., N],
+    6 | 18 => [N, 0., -N],
+    7 | 19 => [-N, 0., -N],
+    8 | 20 => [0., N, N],
+    9 | 21 => [0., -N, N],
+    10 | 22 => [0., N, -N],
+    11 | 23 => [0., -N, -N],
+    24 => [N2, N2, N2],
+    25 => [-N2, N2, N2],
+    26 => [N2, -N2, N2],
+    27 => [-N2, -N2, N2],
+    28 => [N2, N2, -N2],
+    29 => [-N2, N2, -N2],
+    30 => [N2, -N2, -N2],
+    31 => [-N2, -N2, -N2],
+    _ => unreachable!(),
+  }
+}
+
+#[inline(always)]
+fn surflet2(corner_hash: usize, dx: f32, dy: f32) -> f32 {
+  let attn = 1. - (dx * dx + dy * dy);
+  if attn > 0. {
+    let g = grad2(corner_hash);
+    (attn * attn * attn * attn) * (dx * g[0] + dy * g[1])
+  } else {
+    0.
+  }
+}
+
+#[inline(always)]
+fn surflet3(corner_hash: usize, dx: f32, dy: f32, dz: f32) -> f32 {
+  let attn = 1. - (dx * dx + dy * dy + dz * dz);
+  if attn > 0. {
+    let g = grad3(corner_hash);
+    (attn * attn * attn * attn) * (dx * g[0] + dy * g[1] + dz * g[2])
+  } else {
+    0.
+  }
+}
+
+const PERLIN2_SCALE: f32 = 3.1604938271604937f64 as f32;
+const PERLIN3_SCALE: f32 = 3.8898553255531074f64 as f32;
+
+fn perlin2(x: f32, y: f32) -> f32 {
+  let (fx, fy) = (x.floor(), y.floor());
+  let (nx, ny) = (fx as isize, fy as isize);
+  let (dx, dy) = (x - fx, y - fy);
+  let (fdx, fdy) = (dx - 1., dy - 1.);
+
+  let f00 = surflet2(perm2(nx, ny), dx, dy);
+  let f10 = surflet2(perm2(nx + 1, ny), fdx, dy);
+  let f01 = surflet2(perm2(nx, ny + 1), dx, fdy);
+  let f11 = surflet2(perm2(nx + 1, ny + 1), fdx, fdy);
+
+  (f00 + f10 + f01 + f11) * PERLIN2_SCALE
+}
+
+fn perlin3(x: f32, y: f32, z: f32) -> f32 {
+  let (fx, fy, fz) = (x.floor(), y.floor(), z.floor());
+  let (nx, ny, nz) = (fx as isize, fy as isize, fz as isize);
+  let (dx, dy, dz) = (x - fx, y - fy, z - fz);
+  let (fdx, fdy, fdz) = (dx - 1., dy - 1., dz - 1.);
+
+  let f000 = surflet3(perm3(nx, ny, nz), dx, dy, dz);
+  let f100 = surflet3(perm3(nx + 1, ny, nz), fdx, dy, dz);
+  let f010 = surflet3(perm3(nx, ny + 1, nz), dx, fdy, dz);
+  let f110 = surflet3(perm3(nx + 1, ny + 1, nz), fdx, fdy, dz);
+  let f001 = surflet3(perm3(nx, ny, nz + 1), dx, dy, fdz);
+  let f101 = surflet3(perm3(nx + 1, ny, nz + 1), fdx, dy, fdz);
+  let f011 = surflet3(perm3(nx, ny + 1, nz + 1), dx, fdy, fdz);
+  let f111 = surflet3(perm3(nx + 1, ny + 1, nz + 1), fdx, fdy, fdz);
+
+  (f000 + f100 + f010 + f110 + f001 + f101 + f011 + f111) * PERLIN3_SCALE
+}
 
 fn seed_offset_3d(seed: u32) -> Vec3 {
   let h1 = seed.wrapping_mul(0x9E3779B1);
@@ -51,16 +175,62 @@ fn seed_offset_2d(seed: u32) -> Vec2 {
 
 pub fn perlin_noise_3d(seed: u32, pos: Vec3) -> f32 {
   let pos = pos + seed_offset_3d(seed);
-
-  #[allow(deprecated)]
-  noise::perlin3(&PERLIN_PERM_TABLE, &[pos.x, pos.y, pos.z])
+  perlin3(pos.x, pos.y, pos.z)
 }
 
 pub fn perlin_noise_2d(seed: u32, pos: Vec2) -> f32 {
   let pos = pos + seed_offset_2d(seed);
+  perlin2(pos.x, pos.y)
+}
 
-  #[allow(deprecated)]
-  noise::perlin2(&PERLIN_PERM_TABLE, &[pos.x, pos.y])
+/// Exact-tiling perlin: corner indices wrap `mod period` before hashing, so the noise
+/// repeats every `period` lattice cells. The fractional seed offset survives this — it
+/// translates uniformly and cell indices advance by exactly `period` per tile.
+fn periodic_perlin2(x: f32, y: f32, period: isize) -> f32 {
+  let (fx, fy) = (x.floor(), y.floor());
+  let (nx, ny) = (fx as isize, fy as isize);
+  let (dx, dy) = (x - fx, y - fy);
+  let (fdx, fdy) = (dx - 1., dy - 1.);
+  let w = |c: isize| c.rem_euclid(period);
+
+  let f00 = surflet2(perm2(w(nx), w(ny)), dx, dy);
+  let f10 = surflet2(perm2(w(nx + 1), w(ny)), fdx, dy);
+  let f01 = surflet2(perm2(w(nx), w(ny + 1)), dx, fdy);
+  let f11 = surflet2(perm2(w(nx + 1), w(ny + 1)), fdx, fdy);
+
+  (f00 + f10 + f01 + f11) * PERLIN2_SCALE
+}
+
+pub fn periodic_perlin_noise_2d(seed: u32, period: isize, pos: Vec2) -> f32 {
+  let pos = pos + seed_offset_2d(seed);
+  periodic_perlin2(pos.x, pos.y, period)
+}
+
+/// Seamlessly tiling fbm: `pos` spans `[0, period)` per tile. Each octave's frequency is
+/// snapped so a whole number of lattice cells fits the period — that quantization is what
+/// makes the tiling exact (a no-op for integer `period * frequency`).
+pub fn fbm_2d_tileable(
+  seed: u32,
+  octaves: usize,
+  frequency: f32,
+  persistence: f32,
+  lacunarity: f32,
+  period: f32,
+  pos: Vec2,
+) -> f32 {
+  let mut value = 0.;
+  let mut freq = frequency;
+  let mut amp = 1.;
+
+  for octave_ix in 0..octaves {
+    let cells = (period * freq).round().max(1.);
+    value += periodic_perlin_noise_2d(seed + octave_ix as u32, cells as isize, pos * (cells / period))
+      * amp;
+    freq *= lacunarity;
+    amp *= persistence;
+  }
+
+  value
 }
 
 fn fbm_generic<P: Copy + Mul<f32, Output = P>>(
@@ -265,9 +435,7 @@ impl WorleyReturnType {
   }
 }
 
-fn hash_permtable(table: &PermTable, to_hash: &[isize]) -> usize {
-  let table: &[u8; 256] = unsafe { std::mem::transmute(&table) };
-
+fn hash_permtable(table: &[u8; 256], to_hash: &[isize]) -> usize {
   let index = to_hash
     .iter()
     .map(|&a| (a & 0xff) as usize)
@@ -498,4 +666,75 @@ pub fn worley_noise_3d(
 ) -> f32 {
   let pos = pos + seed_offset_3d(seed);
   worley_3d(get_range_fn_impl_3d(&range_fn), return_type, pos)
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  /// Golden values captured from `noise` 0.4.1 before the dep was dropped; the port was
+  /// proven bit-identical over a dense grid at that point. These pin it forever.
+  #[test]
+  fn perlin_port_matches_noise_crate_goldens() {
+    for (x, y, bits) in [
+      (0.113f32, 300.7f32, 0xbe236298u32),
+      (-7.31, 12.9, 0xbf00ad06),
+      (251.77, -0.4, 0xbf45146b),
+      (33.3, 77.7, 0x3f1b324a),
+    ] {
+      assert_eq!(perlin2(x, y).to_bits(), bits, "perlin2({x}, {y})");
+    }
+    for (x, y, z, bits) in [
+      (0.05f32, -3.9f32, 251.3f32, 0x3f0c15b7u32),
+      (-9.99, 8.1, 0.77, 0x3e259b35),
+      (100.5, 200.25, -50.125, 0x3eb40057),
+    ] {
+      assert_eq!(perlin3(x, y, z).to_bits(), bits, "perlin3({x}, {y}, {z})");
+    }
+  }
+
+  #[test]
+  fn fbm_tileable_arg_dispatch() {
+    let ctx = crate::parse_and_eval_program(
+      r#"
+a = fbm(pos=vec2(0., 0.3), tileable=true)
+b = fbm(pos=vec2(1., 0.3), tileable=true)
+c = fbm(seed=3, octaves=5, frequency=4., pos=vec2(0.2, 0.), tileable=2.5)
+d = fbm(seed=3, octaves=5, frequency=4., pos=vec2(0.2, 2.5), tileable=2.5)
+plain = fbm(pos=vec2(0.4, 0.7))
+"#,
+    )
+    .unwrap();
+    let getf = |name: &str| {
+      ctx
+        .globals
+        .get(ctx.interned_symbols.intern(name))
+        .unwrap()
+        .as_float()
+        .unwrap()
+    };
+    assert_eq!(getf("a").to_bits(), getf("b").to_bits());
+    assert_eq!(getf("c").to_bits(), getf("d").to_bits());
+    assert_eq!(getf("plain").to_bits(), fbm_2d(0, 4, 1., 0.5, 2., Vec2::new(0.4, 0.7)).to_bits());
+
+    let err = crate::parse_and_eval_program("fbm(pos=vec2(0., 0.), tileable=-1.)").unwrap_err();
+    assert!(err.to_string().contains("must be positive"));
+  }
+
+  #[test]
+  fn tileable_fbm_is_exactly_periodic() {
+    for period in [1., 2.5] {
+      for i in 0..64 {
+        let t = i as f32 / 64. * period;
+        for (a, b) in [
+          (Vec2::new(0., t), Vec2::new(period, t)),
+          (Vec2::new(t, 0.), Vec2::new(t, period)),
+        ] {
+          let va = fbm_2d_tileable(7, 5, 3., 0.5, 2., period, a);
+          let vb = fbm_2d_tileable(7, 5, 3., 0.5, 2., period, b);
+          assert_eq!(va.to_bits(), vb.to_bits(), "period {period} at {a:?} vs {b:?}");
+        }
+      }
+    }
+  }
 }

@@ -537,7 +537,6 @@ dependencies = [
  "mesh",
  "nalgebra",
  "nanoserde",
- "noise",
  "parry3d",
  "paste",
  "pest",

@@ -3,8 +3,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use crate::{
-  ArgRef, ErrorStack, EvalCtx, RenderedTexture, Sym, TextureHandle, TextureWrap, Value, Vec2,
-  EMPTY_KWARGS,
+  ArgRef, ErrorStack, EvalCtx, RenderedTexture, Sym, TextureHandle, TextureUsage, TextureWrap,
+  Value, Vec2, EMPTY_KWARGS,
 };
 
 const MAX_TEXTURE_DIM: i64 = 8192;
@@ -219,9 +219,14 @@ pub(crate) fn render_texture_impl(
 ) -> Result<Value, ErrorStack> {
   let tex = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
   let name = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+  let usage = match arg_refs[2].resolve(args, kwargs) {
+    Value::Nil => None,
+    v => Some(TextureUsage::from_name(v.as_str().unwrap())?),
+  };
   ctx.rendered_textures.push(RenderedTexture {
     texture: Rc::clone(tex),
     name: name.to_owned(),
+    usage,
     source_module: ctx.current_module.borrow().clone(),
     texture_id: ctx.next_render_id(),
   });
@@ -237,12 +242,19 @@ mod tests {
 
   #[test]
   fn texture_generator_and_render() {
-    let ctx = parse_and_eval_program(r#"texture(4, 2, |uv| uv.x) | render_texture(name="height")"#)
-      .unwrap();
+    let ctx = parse_and_eval_program(
+      r#"texture(4, 2, |uv| uv.x) | render_texture(name="height", usage="height")"#,
+    )
+    .unwrap();
     let rendered = ctx.rendered_textures.into_inner();
     assert_eq!(rendered.len(), 1);
     let t = &rendered[0];
     assert_eq!(t.name, "height");
+    assert_eq!(t.usage, Some(crate::TextureUsage::Height));
+
+    let err = parse_and_eval_program(r#"texture(1, 1, |uv| 0.) | render_texture(usage="bogus")"#)
+      .unwrap_err();
+    assert!(err.to_string().contains("Invalid texture usage"));
     let tex = &t.texture;
     assert_eq!((tex.width, tex.height, tex.channels), (4, 2, 1));
     assert_eq!(tex.pixels.len(), 8);

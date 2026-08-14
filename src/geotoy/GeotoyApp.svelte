@@ -57,6 +57,7 @@
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
   import { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import TexturePlaceholder from 'src/geotoy/modes/texture/TexturePlaceholder.svelte';
+  import TexturePreview from 'src/geotoy/modes/texture/TexturePreview.svelte';
   import type { Mode } from 'src/geotoy/modes/mode';
   import { snapView, orbit, untilOrbitControls } from 'src/geotoy/modes/mesh/cameraControls';
   import { toggleAxisHelpers } from 'src/geotoy/modes/mesh/gizmos';
@@ -321,7 +322,7 @@
     getEditorHooks: () => gizmoController.editorHooks,
     getEnvironment: () => tabs.active.environment,
   });
-  const textureMode = new TextureMode();
+  const textureMode = new TextureMode({ getTreeState: () => treeState });
   const modesByKind: Record<TreeKind, Mode> = { mesh: meshScene, texture: textureMode };
   const mode: Mode = $derived(modesByKind[tabs.active.kind]);
   /**
@@ -594,6 +595,16 @@
       mode.clearScene();
       clearTimeout(controlRunTimer);
     },
+  });
+
+  // The FPS widget's top-left slot belongs to the texture HUD in texture mode (design §9).
+  $effect(() => {
+    const stats = document.getElementById('viz-stats');
+    if (!stats || mode.kind !== 'texture') return;
+    stats.style.display = 'none';
+    return () => {
+      stats.style.display = '';
+    };
   });
 
   // Installed synchronously during init so its render override lands before the first
@@ -988,7 +999,18 @@
 {/snippet}
 
 {#if mode.kind === 'texture' && !userData?.renderMode}
-  <TexturePlaceholder hasRun={textureMode.hasRun} />
+  {#if textureMode.textures.length > 0}
+    <TexturePreview
+      mode={textureMode}
+      width={Math.max(innerWidth - (layout.orientation === 'horizontal' ? layout.panelSize : 0), 0)}
+      height={Math.max(
+        innerHeight - layout.barHeight - (layout.orientation === 'vertical' ? layout.panelSize : 0),
+        0
+      )}
+    />
+  {:else}
+    <TexturePlaceholder hasRun={textureMode.hasRun} />
+  {/if}
 {/if}
 
 {#if hasAnyControls && !userData?.renderMode}

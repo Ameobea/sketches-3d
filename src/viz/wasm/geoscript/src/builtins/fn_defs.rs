@@ -8774,6 +8774,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "tileable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "`true` tiles seamlessly with period 1 in `pos` units; a number tiles with that period. Each octave's frequency is snapped so a whole number of noise cells fits the period."
+          },
         ],
         description: "Samples 2D fractal Brownian motion (FBM) at a given position using default parameters",
         return_type: &[ArgType::Float],
@@ -8821,6 +8828,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
+          },
+          ArgDef {
+            name: "tileable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "`true` tiles seamlessly with period 1 in `pos` units; a number tiles with that period. Each octave's frequency is snapped so a whole number of noise cells fits the period."
           },
         ],
         description: "Samples 2D fractal Brownian motion (FBM) at a given position using the specified parameters",
@@ -11866,6 +11880,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("default".to_owned())),
             description: "Output channel name this texture is published under"
+          },
+          ArgDef {
+            name: "usage",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Semantic role of this output: one of \"albedo\", \"normal\", \"roughness\", \"height\", \"metalness\", \"ao\", \"mask\". Drives colorspace handling and preview auto-binding in consumers."
           },
         ],
         description: "Registers a texture as a named output of the composition, symmetric to `render` for meshes",

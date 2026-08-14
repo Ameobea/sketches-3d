@@ -5,7 +5,7 @@
 // mesh-specific (wireframe, projection, light helpers, material runtime) stays on
 // `MeshScene` and is reached through the mode's own menu once the menubar exists.
 
-import type { MeshTabView, TreeDef, TreeKind } from 'src/geoscript/geotoyAPIClient';
+import type { TabView, TreeDef, TreeKind } from 'src/geoscript/geotoyAPIClient';
 import type { GizmoEditorHooks } from 'src/geoscript/gizmoExtensions';
 import type { RunResult } from 'src/geoscript/runner/runner';
 import type { RunStats } from 'src/geoscript/runner/runner';
@@ -69,9 +69,9 @@ export interface Mode {
   /** Frame the selected subtree; `null` frames the whole output. */
   focus(nodeId: string | null): void;
   /** Per-tab view captured on switch; `null` for modes with nothing to restore. */
-  buildViewState(): MeshTabView | null;
+  buildViewState(): TabView | null;
   /** `null` when the tab has no saved view — the mode supplies its own default. */
-  restoreViewState(view: MeshTabView | null): void;
+  restoreViewState(view: TabView | null): void;
   /** What the run-status readout shows — mesh and texture report different things. */
   statusMetrics(stats: RunStats): StatusMetric[];
   /** Contents of the menubar's mode-owned `scene` menu. */

@@ -6,13 +6,15 @@
 // `CompositionDoc.trees`.
 
 import {
-  buildEmptyTree,
+  buildLegacyRootTree,
   defaultTabMetadata,
   NAME_RE,
   type CompositionDoc,
   type EnvironmentConfig,
   type MeshTabView,
   type TabMetadata,
+  type TabView,
+  type TextureTabView,
   type TreeEntry,
   type TreeKind,
 } from 'src/geoscript/geotoyAPIClient';
@@ -20,14 +22,28 @@ import { TreeState } from './treeState.svelte';
 
 const DEFAULT_BASE: Record<TreeKind, string> = { mesh: 'scene', texture: 'texture' };
 
+/** Fresh-tab root source, the texture analog of `DefaultCode`'s start cube. */
+const STARTER_SOURCE: Record<TreeKind, string> = {
+  mesh: '',
+  texture: `n = 256
+
+diffuse = texture(n, n, |uv| {
+  v = 0.5 + 0.5 * fbm(octaves=5, frequency=3., pos=uv, tileable=true)
+  mix(v, vec3(0.25, 0.22, 0.19), vec3(0.78, 0.72, 0.63))
+}) | blur(0.8)
+
+diffuse | render_texture(name="diffuse", usage="albedo")
+`,
+};
+
 export interface GeotoyTab {
   readonly id: string;
   readonly kind: TreeKind;
   name: string;
   readonly treeState: TreeState;
-  /** Mesh tabs only. Mutated in place rather than through `patch`: it changes on every
-   *  switch and nothing renders from it. */
-  view: MeshTabView | null;
+  /** Kind-matched to the tab (mesh camera / texture pan-zoom). Mutated in place rather
+   *  than through `patch`: it changes on every switch and nothing renders from it. */
+  view: TabView | null;
   readonly preludeEjected: boolean;
   readonly environment?: EnvironmentConfig;
 }
@@ -67,7 +83,7 @@ const buildTabs = (
       kind: entry.kind,
       name: entry.name,
       treeState,
-      view: meta.kind === 'mesh' ? (meta.view ?? null) : null,
+      view: meta.view ?? null,
       preludeEjected: meta.preludeEjected,
       environment: meta.kind === 'mesh' ? meta.environment : undefined,
     };
@@ -100,10 +116,14 @@ export class GeotoyTabs {
           ? {
               kind: 'mesh' as const,
               preludeEjected: t.preludeEjected,
-              view: t.view ?? undefined,
+              view: (t.view as MeshTabView | null) ?? undefined,
               environment: t.environment,
             }
-          : { kind: 'texture' as const, preludeEjected: t.preludeEjected },
+          : {
+              kind: 'texture' as const,
+              preludeEjected: t.preludeEjected,
+              view: (t.view as TextureTabView | null) ?? undefined,
+            },
       ])
     );
 
@@ -144,7 +164,7 @@ export class GeotoyTabs {
     for (let n = 2; taken.has(id); n += 1) id = `${base}_${n}`;
     if (!NAME_RE.test(id)) throw new Error(`generated tab id is not a valid module prefix: ${id}`);
 
-    const tree = buildEmptyTree();
+    const tree = buildLegacyRootTree(STARTER_SOURCE[kind]);
     const treeState = new TreeState({ initial: tree });
     treeState.setSelected(tree.rootId);
     this.tabs = [...this.tabs, { id, name: id, treeState, view: null, ...defaultTabMetadata(kind) }];

@@ -61,6 +61,23 @@ export const buildParentMap = (tree: TreeDef): Map<string, string> => {
   return out;
 };
 
+export const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
+  const out = new Set<string>([rootId]);
+  const queue = [rootId];
+  while (queue.length > 0) {
+    const id = queue.pop()!;
+    const node = tree.nodes[id];
+    if (!node) continue;
+    for (const cid of node.children) {
+      if (!out.has(cid)) {
+        out.add(cid);
+        queue.push(cid);
+      }
+    }
+  }
+  return out;
+};
+
 /** Returns the id of the parent of `id`, or null if `id` is the root or absent. */
 export const findParentId = (tree: TreeDef, id: string): string | null => {
   for (const node of Object.values(tree.nodes)) {

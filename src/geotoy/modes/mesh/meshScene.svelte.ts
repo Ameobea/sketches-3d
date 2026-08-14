@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { untrack } from 'svelte';
 
 import { scanControlHandleIds, scanGizmoHandleIds } from 'src/geoscript/gizmoScan';
-import type { EnvironmentConfig, MeshTabView, TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { EnvironmentConfig, MeshTabView, TabView, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import { FallbackMat, HiddenMat, NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
 import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
 import type { RunResult } from 'src/geoscript/runner/runner';
@@ -25,7 +25,7 @@ import {
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { fetchAndSetTextures, getReferencedTextureIDs } from 'src/geotoy/modules/materialLoading.svelte';
 import { applyGeoscriptSceneEnvironment } from 'src/geotoy/modes/mesh/sceneEnvironment';
-import { buildParentMap, computeMeshCounts } from 'src/geotoy/modules/treeOps';
+import { buildParentMap, collectDescendants, computeMeshCounts } from 'src/geotoy/modules/treeOps';
 import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
 import type { GizmoEditorHooks } from 'src/geoscript/gizmoExtensions';
 import {
@@ -58,23 +58,6 @@ interface MeshSceneDeps {
 }
 
 const OverrideMats = { wireframe: WireframeMat, 'wireframe-xray': WireframeMat, normal: NormalMat };
-
-const collectDescendants = (tree: TreeDef, rootId: string): Set<string> => {
-  const out = new Set<string>([rootId]);
-  const queue = [rootId];
-  while (queue.length > 0) {
-    const id = queue.pop()!;
-    const node = tree.nodes[id];
-    if (!node) continue;
-    for (const cid of node.children) {
-      if (!out.has(cid)) {
-        out.add(cid);
-        queue.push(cid);
-      }
-    }
-  }
-  return out;
-};
 
 /**
  * Owns the 3D side of a run's output: scene population + object reuse/disposal, mesh
@@ -514,7 +497,7 @@ export class MeshScene implements Mode {
   buildViewState = (): MeshTabView | null =>
     this.restoresInFlight > 0 || !this.deps.viz.orbitControls ? null : getView(this.deps.viz);
 
-  restoreViewState = (view: MeshTabView | null) => void this.setView(view ?? DefaultView);
+  restoreViewState = (view: TabView | null) => void this.setView((view as MeshTabView | null) ?? DefaultView);
 
   /** Counted, not a flag: overlapping restores (rapid switching before orbit controls
    *  resolve) would otherwise let the first one to finish reopen the window. */

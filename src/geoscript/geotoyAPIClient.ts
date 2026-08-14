@@ -66,6 +66,24 @@ export interface MeshTabView {
   projection: 'perspective' | 'orthographic';
 }
 
+export type TextureChannel = 'rgb' | 'r' | 'g' | 'b';
+
+export interface TextureTabView {
+  /** UV-space point at the viewport center. */
+  center: [number, number];
+  /** Screen px per texel of the selected output. */
+  zoom: number;
+  /** Selected output name; falls back to the first output when absent or stale. */
+  output?: string;
+  channel?: TextureChannel;
+  tiled?: boolean;
+  /** Explicit sRGB-display override; unset defers to the output's usage (albedo → on). */
+  srgb?: boolean;
+}
+
+/** Capture and restore are paired through the same mode, so each mode narrows by its kind. */
+export type TabView = MeshTabView | TextureTabView;
+
 /**
  * Per-tab state that isn't tree content. Tagged by the tab's kind so mesh-only state (camera,
  * scene environment) can't exist on a texture tab. `kind` duplicates `TreeEntry.kind`
@@ -79,7 +97,7 @@ export type TabMetadata =
       view?: MeshTabView;
       environment?: EnvironmentConfig;
     }
-  | { kind: 'texture'; preludeEjected: boolean };
+  | { kind: 'texture'; preludeEjected: boolean; view?: TextureTabView };
 
 /** Bumped only by a migration; an unexpected value is a hard load error, never a fallback. */
 export const COMPOSITION_METADATA_VERSION = 1;
