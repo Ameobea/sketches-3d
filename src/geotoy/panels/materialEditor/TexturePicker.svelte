@@ -55,14 +55,23 @@
     onselectInner(id);
   };
 
+  const SECTIONS = [
+    {
+      label: 'local composition',
+      emptyText: 'no texture outputs yet; `render_texture` from a texture tab and run it',
+    },
+    { label: 'texture library' },
+  ];
+
   const pickerItems = $derived([
     ...proceduralOptions.map(o => ({
       id: o.handle,
       name: o.label,
-      description: 'procedural output from this composition',
+      description: 'procedural output from texture tabs in the local composition',
       tags: ['procedural', ...(o.usage ? [o.usage] : [])],
+      section: 'local composition',
     })),
-    ...textures,
+    ...textures.map(t => ({ ...t, section: 'texture library' })),
   ]);
 </script>
 
@@ -85,7 +94,14 @@
     }}
   />
 {:else}
-  <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={pickerItems} {onclose}>
+  <ItemPicker
+    title="Select Texture"
+    selectedId={selectedTextureId}
+    {onselect}
+    items={pickerItems}
+    sections={SECTIONS}
+    {onclose}
+  >
     {#snippet previewActions(item)}
       {#if me && textures.find(t => t.id === item.id)?.ownerId === me.id}
         <button

@@ -754,6 +754,21 @@ y = x
       "expected `seq` type for mapping over a sequence, got: {}",
       hover.content
     );
+
+    let hover = ctx
+      .hover(
+        "t = texture(4, 4, |uv| uv.x)\nt2 = t -> |val| val * 2.",
+        2,
+        1,
+        false,
+        "",
+      )
+      .expect("hover for `t2`");
+    assert!(
+      hover.content.contains("texture"),
+      "expected `texture` type for the per-pixel texture map, got: {}",
+      hover.content
+    );
   }
 
   #[test]

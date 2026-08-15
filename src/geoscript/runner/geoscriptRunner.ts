@@ -81,6 +81,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     ambientSources,
     tabAmbients,
     gizmoValues,
+    textureParams,
     rootModuleName,
   } = opts;
   await repl.reset(ctxPtr);
@@ -130,8 +131,9 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     }
   }
 
-  // Always sent (default `{}`) so a previous run's handle values can't leak in.
+  // Always sent (default `{}`/`[]`) so a previous run's handle values can't leak in.
   await repl.setGizmoValues(ctxPtr, gizmoValues ?? {});
+  await repl.setTextureParams(ctxPtr, textureParams ?? []);
 
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
@@ -349,6 +351,9 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       data: t.pixels,
       sourceModule: t.sourceModule,
       textureId: t.textureId,
+      minFilter: t.minFilter || null,
+      magFilter: t.magFilter || null,
+      format: t.format || null,
     });
   }
 

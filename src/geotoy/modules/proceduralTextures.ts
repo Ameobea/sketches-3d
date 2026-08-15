@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import type { MaterialDef } from 'src/geoscript/materials';
-import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { TextureOutputMeta } from 'src/geoscript/geotoyAPIClient';
 import type { GeneratedTexture } from 'src/geoscript/runner/types';
 
 /**
@@ -11,8 +11,10 @@ import type { GeneratedTexture } from 'src/geoscript/runner/types';
  * `DataTexture`: materials capture it at build time and every run's outputs are uploaded
  * into it in place, so material builds and texture evals never need ordering.
  *
- * Pixels are stored as linear (non-sRGB) 8-bit RGBA — the geoscript values themselves,
- * matching what the 2D preview shows before its sRGB display transform.
+ * Pixels are stored linear (non-sRGB) in the output's materialization format — `rgba8`
+ * unless overridden per output (see `formatOptionsForChannels`). The values are the
+ * geoscript f32s themselves, matching what the 2D preview shows before its sRGB display
+ * transform; u8 formats quantize with a [0,1] clamp at upload.
  */
 export const PROCEDURAL_HANDLE_PREFIX = 'procedural:';
 
@@ -37,19 +39,116 @@ const WRAP: Record<GeneratedTexture['wrap'], THREE.Wrapping> = {
   mirror: THREE.MirroredRepeatWrapping,
 };
 
+const FILTERS: Record<string, THREE.TextureFilter> = {
+  nearest: THREE.NearestFilter,
+  linear: THREE.LinearFilter,
+  nearest_mipmap_nearest: THREE.NearestMipmapNearestFilter,
+  nearest_mipmap_linear: THREE.NearestMipmapLinearFilter,
+  linear_mipmap_nearest: THREE.LinearMipmapNearestFilter,
+  linear_mipmap_linear: THREE.LinearMipmapLinearFilter,
+};
+
+/** Unset filters fall back to the app-wide `loadTexture` defaults. */
+export const DEFAULT_MIN_FILTER = 'nearest_mipmap_linear';
+export const DEFAULT_MAG_FILTER = 'nearest';
+export const DEFAULT_FORMAT = 'rgba8';
+
+/** Format options valid for a given synthesis channel count, default first. `rgba8`
+ *  replicates 1-channel gray into RGB (so grayscale works in color slots) and zero-fills a
+ *  missing B; tight/float variants upload exactly the channels named. */
+export const formatOptionsForChannels = (channels: number): string[] => {
+  switch (channels) {
+    case 1:
+      return ['rgba8', 'r8', 'r32f'];
+    case 2:
+      return ['rgba8', 'rg8', 'rg32f'];
+    default:
+      return ['rgba8', 'rgba32f'];
+  }
+};
+
+/** Float targets can't have mipmaps generated for them; strip the mip stage. */
+const clampMinFilterForFloat = (name: string): string =>
+  name.includes('mipmap') ? name.split('_')[0] : name;
+
 /** Stable per-handle texture; starts as a 1×1 mid-gray placeholder until a run uploads. */
 export const getProceduralTexture = (handle: string): THREE.DataTexture => {
   let tex = registry.get(handle);
   if (!tex) {
     tex = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.magFilter = THREE.LinearFilter;
-    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.magFilter = FILTERS[DEFAULT_MAG_FILTER] as THREE.MagnificationTextureFilter;
+    tex.minFilter = FILTERS[DEFAULT_MIN_FILTER];
     tex.generateMipmaps = true;
     tex.needsUpdate = true;
     registry.set(handle, tex);
   }
   return tex;
+};
+
+const to8 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255));
+
+/** Encode a run output's f32 pixels for its materialization format. */
+const encodePixels = (
+  t: GeneratedTexture,
+  format: string
+): { data: Uint8Array | Float32Array; glFormat: THREE.PixelFormat; type: THREE.TextureDataType } => {
+  const n = t.width * t.height;
+  const px = t.data;
+  const c = t.channels;
+  switch (format) {
+    case 'r8': {
+      const out = new Uint8Array(n);
+      for (let i = 0; i < n; i += 1) out[i] = to8(px[i * c]);
+      return { data: out, glFormat: THREE.RedFormat, type: THREE.UnsignedByteType };
+    }
+    case 'rg8': {
+      const out = new Uint8Array(n * 2);
+      for (let i = 0; i < n; i += 1) {
+        out[i * 2] = to8(px[i * c]);
+        out[i * 2 + 1] = to8(px[i * c + 1]);
+      }
+      return { data: out, glFormat: THREE.RGFormat, type: THREE.UnsignedByteType };
+    }
+    case 'r32f': {
+      const out = c === 1 ? px : new Float32Array(n).map((_, i) => px[i * c]);
+      return { data: out, glFormat: THREE.RedFormat, type: THREE.FloatType };
+    }
+    case 'rg32f': {
+      let out = px;
+      if (c !== 2) {
+        out = new Float32Array(n * 2);
+        for (let i = 0; i < n; i += 1) {
+          out[i * 2] = px[i * c];
+          out[i * 2 + 1] = px[i * c + 1];
+        }
+      }
+      return { data: out, glFormat: THREE.RGFormat, type: THREE.FloatType };
+    }
+    case 'rgba32f': {
+      const out = new Float32Array(n * 4);
+      for (let i = 0; i < n; i += 1) {
+        const b = i * c;
+        out[i * 4] = px[b];
+        out[i * 4 + 1] = c >= 2 ? px[b + 1] : px[b];
+        out[i * 4 + 2] = c >= 3 ? px[b + 2] : c === 1 ? px[b] : 0;
+        out[i * 4 + 3] = c === 4 ? px[b + 3] : 1;
+      }
+      return { data: out, glFormat: THREE.RGBAFormat, type: THREE.FloatType };
+    }
+    // rgba8
+    default: {
+      const out = new Uint8Array(n * 4);
+      for (let i = 0; i < n; i += 1) {
+        const b = i * c;
+        out[i * 4] = to8(px[b]);
+        out[i * 4 + 1] = to8(c >= 2 ? px[b + 1] : px[b]);
+        out[i * 4 + 2] = to8(c >= 3 ? px[b + 2] : c === 1 ? px[b] : 0);
+        out[i * 4 + 3] = c === 4 ? to8(px[b + 3]) : 255;
+      }
+      return { data: out, glFormat: THREE.RGBAFormat, type: THREE.UnsignedByteType };
+    }
+  }
 };
 
 /** In-place upload of a run's outputs into any matching placeholder textures. */
@@ -60,22 +159,34 @@ export const uploadProceduralTextures = (textures: GeneratedTexture[]) => {
     const tex = registry.get(buildProceduralHandle(t.sourceModule.slice(0, sep), t.name));
     if (!tex) continue;
 
-    const n = t.width * t.height;
-    const out = new Uint8Array(n * 4);
-    const px = t.data;
-    const c = t.channels;
-    const to8 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255));
-    for (let i = 0; i < n; i += 1) {
-      const b = i * c;
-      out[i * 4] = to8(px[b]);
-      out[i * 4 + 1] = to8(px[c >= 3 ? b + 1 : b]);
-      out[i * 4 + 2] = to8(px[c >= 3 ? b + 2 : b]);
-      out[i * 4 + 3] = c === 4 ? to8(px[b + 3]) : 255;
+    const format = t.format ?? DEFAULT_FORMAT;
+    const isFloat = format.endsWith('32f');
+    let minName = t.minFilter ?? DEFAULT_MIN_FILTER;
+    if (isFloat) minName = clampMinFilterForFloat(minName);
+    const genMips = !isFloat && minName.includes('mipmap');
+    const { data, glFormat, type } = encodePixels(t, format);
+
+    // GL storage is immutable (texStorage2D): a dimension/format/mip-count change needs a
+    // fresh GL texture, which dispose() forces while keeping this JS instance (and every
+    // material holding it).
+    if (
+      tex.image.width !== t.width ||
+      tex.image.height !== t.height ||
+      tex.format !== glFormat ||
+      tex.type !== type ||
+      tex.generateMipmaps !== genMips
+    ) {
+      tex.dispose();
     }
-    // GL storage is immutable (texStorage2D): a dimension change needs a fresh GL texture,
-    // which dispose() forces while keeping this JS instance (and every material holding it).
-    if (tex.image.width !== t.width || tex.image.height !== t.height) tex.dispose();
-    tex.image = { data: out, width: t.width, height: t.height } as THREE.DataTexture['image'];
+    tex.image = { data, width: t.width, height: t.height } as THREE.DataTexture['image'];
+    tex.format = glFormat;
+    tex.type = type;
+    tex.generateMipmaps = genMips;
+    // Tightly-packed u8 rows aren't 4-byte multiples in general.
+    tex.unpackAlignment = format === 'r8' || format === 'rg8' ? 1 : 4;
+    tex.minFilter = FILTERS[minName] ?? FILTERS[DEFAULT_MIN_FILTER];
+    tex.magFilter = (FILTERS[t.magFilter ?? DEFAULT_MAG_FILTER] ??
+      FILTERS[DEFAULT_MAG_FILTER]) as THREE.MagnificationTextureFilter;
     tex.wrapS = tex.wrapT = WRAP[t.wrap];
     tex.needsUpdate = true;
   }
@@ -104,28 +215,33 @@ export interface ProceduralTextureOption {
   usage: string | null;
 }
 
-/** Static scan of texture tabs' node sources for `render_texture` output names + usage.
- *  Regex-level — misses dynamically-computed names; those still work as hand-typed refs. */
-export const scanProceduralOutputs = (
-  textureTabs: { id: string; tree: TreeDef }[]
-): ProceduralTextureOption[] => {
-  const out: ProceduralTextureOption[] = [];
-  const seen = new Set<string>();
-  for (const { id, tree } of textureTabs) {
-    for (const node of Object.values(tree.nodes)) {
-      if (node.disabled) continue;
-      for (const m of node.source.matchAll(/render_texture\s*\(([^)]*)/g)) {
-        const args = m[1];
-        const name = args.match(/name\s*=\s*"([^"]+)"/)?.[1] ?? args.match(/^\s*"([^"]+)"/)?.[1];
-        if (!name) continue;
-        const handle = buildProceduralHandle(id, name);
-        if (seen.has(handle)) continue;
-        seen.add(handle);
-        out.push({ handle, label: `${id}:${name}`, usage: args.match(/usage\s*=\s*"([^"]+)"/)?.[1] ?? null });
-      }
-    }
+/** Picker options from each texture tab's last-known outputs (indexed from runs, persisted
+ *  in tab metadata so never-yet-run tabs still list after a fresh load). */
+export const proceduralOutputOptions = (
+  tabs: readonly { id: string; name: string; kind: string; textureOutputs: readonly TextureOutputMeta[] }[]
+): ProceduralTextureOption[] =>
+  tabs
+    .filter(t => t.kind === 'texture')
+    .flatMap(t =>
+      t.textureOutputs.map(o => ({
+        handle: buildProceduralHandle(t.id, o.name),
+        label: `${t.name}:${o.name}`,
+        usage: o.usage ?? null,
+      }))
+    );
+
+/** Group a run's texture outputs by source tab, deduped by output name. */
+export const textureOutputsByTab = (textures: GeneratedTexture[]): Map<string, TextureOutputMeta[]> => {
+  const byTab = new Map<string, TextureOutputMeta[]>();
+  for (const t of textures) {
+    const sep = t.sourceModule.indexOf(':');
+    if (sep <= 0) continue;
+    const tabId = t.sourceModule.slice(0, sep);
+    let list = byTab.get(tabId);
+    if (!list) byTab.set(tabId, (list = []));
+    if (!list.some(o => o.name === t.name)) list.push({ name: t.name, usage: t.usage ?? undefined });
   }
-  return out;
+  return byTab;
 };
 
 /** Dispose + drop registry textures no material references anymore; without this the

@@ -21,18 +21,6 @@ const config = {
       precompress: true,
     }),
   },
-  viteOptions: {
-    experimental: {
-      prebundleSvelteLibraries: true,
-    },
-  },
-  build: {
-    rollupOptions: {
-      output: {
-        format: 'esm',
-      },
-    },
-  },
 };
 
 export default config;

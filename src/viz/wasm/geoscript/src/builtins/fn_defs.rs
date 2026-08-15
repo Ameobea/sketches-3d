@@ -4171,6 +4171,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies a function to each vertex in a mesh and returns a new mesh with the transformed vertices.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "fn",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Callable with signature `|val: float|vec2|vec3, uv: vec2, x_ix: int, y_ix: int|: float | vec2 | vec3`, invoked once per pixel.  `val`'s type matches the input's channel count; the return type sets the output's channel count."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Applies a function to each pixel of a texture and returns a new texture with the same dimensions and wrap mode.",
+        return_type: &[ArgType::Texture],
       }
     ],
   },
@@ -11998,7 +12018,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable of signature `|uv: vec2|: float | vec3`, invoked once per pixel at the pixel's center UV.  A float return produces a 1-channel texture, vec3 a 3-channel one."
+            description: "Callable of signature `|uv: vec2|: float | vec2 | vec3`, invoked once per pixel at the pixel's center UV.  The return type sets the channel count (float -> 1, vec2 -> 2, vec3 -> 3)."
           },
           ArgDef {
             name: "wrap",

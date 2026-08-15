@@ -7,7 +7,8 @@ use geoscript::{
   optimizer::optimize_ast,
   parse_program_src, parse_program_with_prefix, prelude_for_kind, traverse_fn_calls,
   value_json::{serialize_bindings_to_json, serialize_value_to_json},
-  ErrorStack, EvalCtx, GizmoKind, Mat4, Program, Scope, Sym, TextureWrap, Value,
+  ErrorStack, EvalCtx, GizmoKind, InjectedTextureParams, Mat4, Program, Scope, Sym, TextureFilter,
+  TextureFormat, TextureWrap, Value,
 };
 use mesh::{
   linked_mesh::{mesh_flags, Vec3},
@@ -264,6 +265,7 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<Strin
     Err(err) => Err(err),
   };
   *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
+  ctx.geo_ctx.apply_injected_texture_params();
   ctx.convert_rendered_meshes();
 }
 
@@ -356,6 +358,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.current_module_read_settings.set(false);
   // Gizmo inputs are eval-scoped host state; the runner re-pushes them each run.
   ctx.geo_ctx.gizmo_values.borrow_mut().clear();
+  ctx.geo_ctx.injected_texture_params.borrow_mut().clear();
   ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
 
   ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
@@ -499,10 +502,8 @@ pub fn geoscript_repl_set_tab_ambient_scopes(
   let geo = &ctx.geo_ctx;
 
   for i in 0..tab_ids.len() {
-    let hash = EvalCtx::compute_source_hash(&format!(
-      "{}\u{0}{}",
-      prelude_kinds[i], globals_sources[i]
-    ));
+    let hash =
+      EvalCtx::compute_source_hash(&format!("{}\u{0}{}", prelude_kinds[i], globals_sources[i]));
     if geo.note_tab_ambient_hash(&tab_ids[i], hash) {
       geo.evict_modules_with_prefix(&tab_ids[i]);
     }
@@ -774,7 +775,10 @@ pub fn geoscript_get_rendered_texture_count(ctx: *const GeoscriptReplCtx) -> usi
 
 /// `[width, height, channels]`
 #[wasm_bindgen]
-pub fn geoscript_get_rendered_texture_dims(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> Vec<usize> {
+pub fn geoscript_get_rendered_texture_dims(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<usize> {
   let ctx = unsafe { &*ctx };
   let tex = &ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix].texture;
   vec![tex.width, tex.height, tex.channels]
@@ -790,10 +794,7 @@ pub fn geoscript_get_rendered_texture_name(ctx: *const GeoscriptReplCtx, tex_ix:
 
 /// Empty string when no usage was declared.
 #[wasm_bindgen]
-pub fn geoscript_get_rendered_texture_usage(
-  ctx: *const GeoscriptReplCtx,
-  tex_ix: usize,
-) -> String {
+pub fn geoscript_get_rendered_texture_usage(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> String {
   let ctx = unsafe { &*ctx };
   ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
     .usage
@@ -803,12 +804,11 @@ pub fn geoscript_get_rendered_texture_usage(
 
 /// "repeat" | "clamp" | "mirror"
 #[wasm_bindgen]
-pub fn geoscript_get_rendered_texture_wrap(
-  ctx: *const GeoscriptReplCtx,
-  tex_ix: usize,
-) -> String {
+pub fn geoscript_get_rendered_texture_wrap(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> String {
   let ctx = unsafe { &*ctx };
-  let wrap = ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix].texture.wrap;
+  let wrap = ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .texture
+    .wrap;
   match wrap {
     TextureWrap::Repeat => "repeat",
     TextureWrap::Clamp => "clamp",
@@ -936,6 +936,66 @@ pub fn geoscript_repl_set_gizmo_values(
       .insert(handle.clone(), value);
   }
   *ctx.geo_ctx.gizmo_values.borrow_mut() = map;
+}
+
+/// Replace the full per-output texture GPU param map. Parallel arrays: entry i applies to
+/// output `names[i]` of tab `tab_ids[i]`; empty strings mean unset. Called before `eval`,
+/// like `geoscript_repl_set_gizmo_values`.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_texture_params(
+  ctx: *mut GeoscriptReplCtx,
+  tab_ids: Vec<String>,
+  names: Vec<String>,
+  min_filters: Vec<String>,
+  mag_filters: Vec<String>,
+  formats: Vec<String>,
+) {
+  let ctx = unsafe { &mut *ctx };
+  let mut map: FxHashMap<String, InjectedTextureParams> = FxHashMap::default();
+  for i in 0..tab_ids.len() {
+    let parse_filter = |s: &str| {
+      (!s.is_empty())
+        .then(|| TextureFilter::from_name(s).ok())
+        .flatten()
+    };
+    let params = InjectedTextureParams {
+      min_filter: parse_filter(&min_filters[i]),
+      // GL mag filters can't have mipmap modes; drop anything else rather than erroring.
+      mag_filter: parse_filter(&mag_filters[i])
+        .filter(|f| matches!(f, TextureFilter::Nearest | TextureFilter::Linear)),
+      format: (!formats[i].is_empty())
+        .then(|| TextureFormat::from_name(&formats[i]).ok())
+        .flatten(),
+    };
+    map.insert(format!("{}\0{}", tab_ids[i], names[i]), params);
+  }
+  *ctx.geo_ctx.injected_texture_params.borrow_mut() = map;
+}
+
+/// `[min_filter, mag_filter, format]` for a rendered texture; empty strings mean unset
+/// (consumer defaults apply).
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_gpu_params(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<String> {
+  let ctx = unsafe { &*ctx };
+  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+  let tex = &textures[tex_ix].texture;
+  vec![
+    tex
+      .min_filter
+      .map(|f| f.as_str().to_owned())
+      .unwrap_or_default(),
+    tex
+      .mag_filter
+      .map(|f| f.as_str().to_owned())
+      .unwrap_or_default(),
+    tex
+      .format
+      .map(|f| f.as_str().to_owned())
+      .unwrap_or_default(),
+  ]
 }
 
 #[wasm_bindgen]
@@ -1194,7 +1254,11 @@ mod tests {
     let p: *mut GeoscriptReplCtx = &mut ctx;
 
     geoscript_repl_set_ambient_scope_from_sources(p, vec!["base = 10".to_owned()], None).unwrap();
-    geoscript_repl_parse_program(p, "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(), None);
+    geoscript_repl_parse_program(
+      p,
+      "z = base + 1\na = z * 2\nbase = 99\na + z".to_owned(),
+      None,
+    );
     geoscript_repl_eval(p, None);
     ctx.last_result.as_ref().unwrap();
 
@@ -1245,7 +1309,10 @@ mod tests {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
 
-    set_modules(p, &[("t1:m", "export v1 = base"), ("t2:m", "export v2 = base")]);
+    set_modules(
+      p,
+      &[("t1:m", "export v1 = base"), ("t2:m", "export v2 = base")],
+    );
     set_tab_ambients(p, &[("t2", "base = 2"), ("t1", "base = 1")]);
 
     // The bare import resolves within the entry's own tab; the qualified one crosses tabs,
@@ -1273,10 +1340,13 @@ mod tests {
     let with_earlier_dep = {
       let mut ctx = GeoscriptReplCtx::default();
       let p: *mut GeoscriptReplCtx = &mut ctx;
-      set_modules(p, &[
-        ("t2:_root", "export x = randf()"),
-        ("t3:_root", "y = randf()"),
-      ]);
+      set_modules(
+        p,
+        &[
+          ("t2:_root", "export x = randf()"),
+          ("t3:_root", "y = randf()"),
+        ],
+      );
       set_tab_ambients(p, &[("t3", ""), ("t2", ""), ("t1", "")]);
       eval_last_value(
         p,
@@ -1369,7 +1439,9 @@ mod tests {
   fn input_ramp_warm_runs_hit_const_cache() {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
-    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | render_texture(name=\"d\")";
+    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., \
+               vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | \
+               render_texture(name=\"d\")";
 
     let run = |p: *mut GeoscriptReplCtx| -> usize {
       geoscript_repl_reset(p);
@@ -1391,7 +1463,9 @@ mod tests {
   fn input_ramp_injected_change_invalidates_and_rewarms() {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
-    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | render_texture(name=\"d\")";
+    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., \
+               vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | \
+               render_texture(name=\"d\")";
 
     let run = |p: *mut GeoscriptReplCtx, inject: Option<&str>| -> (usize, f32) {
       geoscript_repl_reset(p);
@@ -1426,6 +1500,49 @@ mod tests {
   }
 
   #[test]
+  fn texture_params_apply_and_survive_cache_replay() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let module_src = "texture(2, 2, |uv| uv.x) | render_texture(name=\"d\")";
+    let entry = "import { } from \"child\"";
+
+    let run = |p: *mut GeoscriptReplCtx, params: Option<(&str, &str)>| -> (Vec<String>, usize) {
+      geoscript_repl_reset(p);
+      geoscript_repl_set_module_sources(p, vec!["t:child".to_owned()], vec![module_src.to_owned()]);
+      if let Some((min, format)) = params {
+        geoscript_repl_set_texture_params(
+          p,
+          vec!["t".to_owned()],
+          vec!["d".to_owned()],
+          vec![min.to_owned()],
+          vec!["nearest".to_owned()],
+          vec![format.to_owned()],
+        );
+      }
+      geoscript_repl_parse_program(p, entry.to_owned(), None);
+      geoscript_repl_eval(p, Some("t:_root".to_owned()));
+      let ctx = unsafe { &*p };
+      ctx.last_result.as_ref().unwrap();
+      let pixels_ptr = Rc::as_ptr(
+        &ctx.geo_ctx.rendered_textures.inner.borrow()[0]
+          .texture
+          .pixels,
+      ) as usize;
+      (geoscript_get_rendered_texture_gpu_params(p, 0), pixels_ptr)
+    };
+
+    let (params1, px1) = run(p, Some(("nearest", "r8")));
+    assert_eq!(params1, ["nearest", "nearest", "r8"]);
+    // Warm cache hit with different params: the replayed push must get re-baked.
+    let (params2, px2) = run(p, Some(("linear_mipmap_linear", "r32f")));
+    assert_eq!(params2, ["linear_mipmap_linear", "nearest", "r32f"]);
+    assert_eq!(px1, px2, "pixels must replay from cache, not re-synthesize");
+    // No injection: fields come back unset.
+    let (params3, _) = run(p, None);
+    assert_eq!(params3, ["", "", ""]);
+  }
+
+  #[test]
   fn module_controls_replay_on_warm_cache_hit() {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
@@ -1453,16 +1570,13 @@ mod tests {
   fn module_cache_not_stale_on_ramp_control_edit() {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
-    let module_src = "r = input_color_ramp(\"s\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nexport v = r(0.5)";
+    let module_src =
+      "r = input_color_ramp(\"s\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nexport v = r(0.5)";
     let entry = "import { v } from \"child\"\nv";
 
     let run = |p: *mut GeoscriptReplCtx, spec: &str| -> String {
       geoscript_repl_reset(p);
-      geoscript_repl_set_module_sources(
-        p,
-        vec!["t:child".to_owned()],
-        vec![module_src.to_owned()],
-      );
+      geoscript_repl_set_module_sources(p, vec!["t:child".to_owned()], vec![module_src.to_owned()]);
       geoscript_repl_set_gizmo_values(
         p,
         vec!["t:child".to_owned()],
@@ -1489,7 +1603,8 @@ mod tests {
   fn input_color_ramp_control_wire_roundtrip() {
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
-    let src = "shade = input_color_ramp(\"shade\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nshade(0.5)";
+    let src =
+      "shade = input_color_ramp(\"shade\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nshade(0.5)";
     geoscript_repl_parse_program(p, src.to_owned(), None);
     geoscript_repl_eval(p, None);
     unsafe { (*p).last_result.as_ref().unwrap() };

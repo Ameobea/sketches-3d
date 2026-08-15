@@ -84,6 +84,25 @@ export interface TextureTabView {
 /** Capture and restore are paired through the same mode, so each mode narrows by its kind. */
 export type TabView = MeshTabView | TextureTabView;
 
+/** One `render_texture` output as observed on the tab's last completed run. The persisted
+ *  list lets the material editor offer a never-yet-run tab's outputs on a fresh load; it
+ *  re-syncs on every run of the tab. */
+export interface TextureOutputMeta {
+  name: string;
+  usage?: string;
+}
+
+/** UI-owned GPU materialization params for one texture output. These have no geoscript
+ *  source-code surface: the editor writes them here, they're injected into each run and
+ *  baked onto the rendered handle, and consumers (material upload, HUD) read them off the
+ *  run output. Omitted fields mean "consumer default". `wrap` is deliberately absent — it
+ *  affects synthesis-side sampling, so it stays code-owned on `texture()`. */
+export interface TextureOutputGpuParams {
+  minFilter?: string;
+  magFilter?: string;
+  format?: string;
+}
+
 /**
  * Per-tab state that isn't tree content. Tagged by the tab's kind so mesh-only state (camera,
  * scene environment) can't exist on a texture tab. `kind` duplicates `TreeEntry.kind`
@@ -97,7 +116,15 @@ export type TabMetadata =
       view?: MeshTabView;
       environment?: EnvironmentConfig;
     }
-  | { kind: 'texture'; preludeEjected: boolean; view?: TextureTabView };
+  | {
+      kind: 'texture';
+      preludeEjected: boolean;
+      view?: TextureTabView;
+      textureOutputs?: TextureOutputMeta[];
+      /** Keyed by output name. Unlike `textureOutputs` (a derived index), these are user
+       *  content: edits dirty the composition and re-run the composition. */
+      textureParams?: Record<string, TextureOutputGpuParams>;
+    };
 
 /** Bumped only by a migration; an unexpected value is a hard load error, never a fallback. */
 export const COMPOSITION_METADATA_VERSION = 1;

@@ -691,6 +691,12 @@ pub(crate) fn map_impl(
       &[fn_value.clone(), seq.clone()],
       EMPTY_KWARGS,
     ),
+    // map(fn, texture): per-pixel map
+    2 => texture::map_texture_impl(
+      ctx,
+      fn_value.as_callable().unwrap(),
+      seq.as_texture().unwrap(),
+    ),
     _ => unimplemented!(),
   }
 }

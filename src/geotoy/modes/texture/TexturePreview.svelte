@@ -1,9 +1,52 @@
 <script lang="ts">
-  import type { TextureChannel } from 'src/geoscript/geotoyAPIClient';
+  import type { TextureChannel, TextureOutputGpuParams } from 'src/geoscript/geotoyAPIClient';
   import type { GeneratedTexture } from 'src/geoscript/runner/runner';
   import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
+  import {
+    DEFAULT_FORMAT,
+    DEFAULT_MAG_FILTER,
+    DEFAULT_MIN_FILTER,
+    formatOptionsForChannels,
+  } from 'src/geotoy/modules/proceduralTextures';
 
-  let { mode, width, height }: { mode: TextureMode; width: number; height: number } = $props();
+  let {
+    mode,
+    width,
+    height,
+    onSetTextureParams,
+  }: {
+    mode: TextureMode;
+    width: number;
+    height: number;
+    /** Persist a GPU-param edit for an output and rerun; empty-string fields clear. */
+    onSetTextureParams?: (
+      sourceModule: string,
+      output: string,
+      patch: Partial<TextureOutputGpuParams>
+    ) => void;
+  } = $props();
+
+  const MIN_FILTERS = [
+    'nearest',
+    'linear',
+    'nearest_mipmap_nearest',
+    'nearest_mipmap_linear',
+    'linear_mipmap_nearest',
+    'linear_mipmap_linear',
+  ];
+  const MAG_FILTERS = ['nearest', 'linear'];
+  const PARAM_DEFAULTS = {
+    minFilter: DEFAULT_MIN_FILTER,
+    magFilter: DEFAULT_MAG_FILTER,
+    format: DEFAULT_FORMAT,
+  };
+
+  const setParam = (key: keyof TextureOutputGpuParams, value: string) => {
+    const sel = mode.selected;
+    if (!sel) return;
+    // Selecting the default clears the stored override rather than pinning it.
+    onSetTextureParams?.(sel.sourceModule, sel.name, { [key]: value === PARAM_DEFAULTS[key] ? '' : value });
+  };
 
   const CHANNELS: TextureChannel[] = ['rgb', 'r', 'g', 'b'];
   const CHANNEL_IX: Record<TextureChannel, number> = { rgb: 0, r: 1, g: 2, b: 3 };
@@ -278,19 +321,44 @@ void main() {
   </div>
   {#if mode.selected}
     {@const sel = mode.selected}
+    {@const fmt = sel.format ?? DEFAULT_FORMAT}
     <div class="info panel">
       <span class="label">output</span>
       <span class="value accent">{sel.name}</span>
       <span class="label">size</span>
-      <span class="value">{sel.width}×{sel.height}</span>
-      <span class="label">format</span>
-      <span class="value">{sel.channels === 1 ? 'r32f' : 'rgb32f'}</span>
+      <span class="value">{sel.width}×{sel.height} · {sel.channels}ch f32</span>
       {#if sel.usage}
         <span class="label">usage</span>
         <span class="value">{sel.usage}</span>
       {/if}
       <span class="label">wrap</span>
       <span class="value">{sel.wrap}</span>
+      <span class="label">format</span>
+      <select class="value" value={fmt} onchange={e => setParam('format', e.currentTarget.value)}>
+        {#each formatOptionsForChannels(sel.channels) as f (f)}
+          <option value={f}>{f}</option>
+        {/each}
+      </select>
+      <span class="label">min filter</span>
+      <select
+        class="value"
+        value={sel.minFilter ?? DEFAULT_MIN_FILTER}
+        onchange={e => setParam('minFilter', e.currentTarget.value)}
+      >
+        {#each MIN_FILTERS as f (f)}
+          <option value={f} disabled={fmt.endsWith('32f') && f.includes('mipmap')}>{f}</option>
+        {/each}
+      </select>
+      <span class="label">mag filter</span>
+      <select
+        class="value"
+        value={sel.magFilter ?? DEFAULT_MAG_FILTER}
+        onchange={e => setParam('magFilter', e.currentTarget.value)}
+      >
+        {#each MAG_FILTERS as f (f)}
+          <option value={f}>{f}</option>
+        {/each}
+      </select>
       <span class="label">outputs</span>
       <span class="value">{mode.visibleTextures.length}</span>
     </div>
@@ -393,6 +461,21 @@ void main() {
 
   .value.accent {
     color: #0ff;
+  }
+
+  select.value {
+    appearance: none;
+    background: #1c1c1c;
+    border: 1px solid #3a3a3a;
+    color: #ddd;
+    font: inherit;
+    padding: 1px 3px;
+    margin: -2px 0;
+    cursor: pointer;
+    justify-self: start;
+  }
+  select.value:hover {
+    border-color: #555;
   }
 
   .zoom {

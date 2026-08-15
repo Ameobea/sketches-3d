@@ -732,6 +732,89 @@ impl TextureWrap {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextureFilter {
+  Nearest,
+  Linear,
+  NearestMipmapNearest,
+  NearestMipmapLinear,
+  LinearMipmapNearest,
+  LinearMipmapLinear,
+}
+
+impl TextureFilter {
+  pub fn from_name(s: &str) -> Result<Self, ErrorStack> {
+    match s {
+      "nearest" => Ok(Self::Nearest),
+      "linear" => Ok(Self::Linear),
+      "nearest_mipmap_nearest" => Ok(Self::NearestMipmapNearest),
+      "nearest_mipmap_linear" => Ok(Self::NearestMipmapLinear),
+      "linear_mipmap_nearest" => Ok(Self::LinearMipmapNearest),
+      "linear_mipmap_linear" => Ok(Self::LinearMipmapLinear),
+      _ => Err(ErrorStack::new(format!("Invalid texture filter: \"{s}\""))),
+    }
+  }
+
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Nearest => "nearest",
+      Self::Linear => "linear",
+      Self::NearestMipmapNearest => "nearest_mipmap_nearest",
+      Self::NearestMipmapLinear => "nearest_mipmap_linear",
+      Self::LinearMipmapNearest => "linear_mipmap_nearest",
+      Self::LinearMipmapLinear => "linear_mipmap_linear",
+    }
+  }
+}
+
+/// GPU materialization format for a rendered texture. Also encodes channel layout: `Rgba8`
+/// replicates 1-channel gray into RGB and zero-fills a missing B (future 4-channel data
+/// fills real alpha); the tight/float variants upload exactly the channels named.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TextureFormat {
+  Rgba8,
+  R8,
+  Rg8,
+  R32F,
+  Rg32F,
+  Rgba32F,
+}
+
+impl TextureFormat {
+  pub fn from_name(s: &str) -> Result<Self, ErrorStack> {
+    match s {
+      "rgba8" => Ok(Self::Rgba8),
+      "r8" => Ok(Self::R8),
+      "rg8" => Ok(Self::Rg8),
+      "r32f" => Ok(Self::R32F),
+      "rg32f" => Ok(Self::Rg32F),
+      "rgba32f" => Ok(Self::Rgba32F),
+      _ => Err(ErrorStack::new(format!("Invalid texture format: \"{s}\""))),
+    }
+  }
+
+  pub fn as_str(&self) -> &'static str {
+    match self {
+      Self::Rgba8 => "rgba8",
+      Self::R8 => "r8",
+      Self::Rg8 => "rg8",
+      Self::R32F => "r32f",
+      Self::Rg32F => "rg32f",
+      Self::Rgba32F => "rgba32f",
+    }
+  }
+}
+
+/// Host-injected per-output GPU params, applied to the handle at `render_texture` time.
+/// These are UI-owned (no geoscript surface sets them); `wrap` stays code-owned on
+/// `texture()` since it affects synthesis-side sampling.
+#[derive(Clone, Copy, Default)]
+pub struct InjectedTextureParams {
+  pub min_filter: Option<TextureFilter>,
+  pub mag_filter: Option<TextureFilter>,
+  pub format: Option<TextureFormat>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TextureUsage {
   Albedo,
   Normal,
@@ -772,6 +855,7 @@ impl TextureUsage {
   }
 }
 
+#[derive(Clone)]
 pub struct TextureHandle {
   /// Row-major interleaved f32; len = width * height * channels. Row y maps to
   /// v = (y + 0.5) / height.
@@ -780,6 +864,13 @@ pub struct TextureHandle {
   pub height: usize,
   pub channels: usize,
   pub wrap: TextureWrap,
+  /// Materialization intent only: pixels are always f32 and every geoscript op reads/writes
+  /// them as such; these declare how consumers encode the texture when uploading it to the
+  /// GPU (`None` = consumer default). Set from host-injected per-output params at
+  /// `render_texture` time — geoscript code has no way to set them.
+  pub min_filter: Option<TextureFilter>,
+  pub mag_filter: Option<TextureFilter>,
+  pub format: Option<TextureFormat>,
 }
 
 impl Debug for TextureHandle {
@@ -2210,6 +2301,10 @@ pub struct EvalCtx {
   /// Replaces the entire map per run (set via the wasm boundary before eval); a
   /// missing entry means the call falls back to its `default`/zero.
   pub gizmo_values: RefCell<FxHashMap<String, FxHashMap<String, Value>>>,
+  /// Host-injected per-output texture GPU params, keyed `"{tab}\0{output name}"` where
+  /// `tab` is the module-name prefix before the first `:`. Replaced wholesale per run
+  /// alongside `gizmo_values`; consulted by `render_texture`.
+  pub injected_texture_params: RefCell<FxHashMap<String, InjectedTextureParams>>,
   /// Handle ids read by the currently-evaluating module body, accumulated for the
   /// cache entry's `gizmo_reads`. `None` outside module eval.
   pub current_module_gizmo_reads: RefCell<Option<FxHashSet<String>>>,
@@ -2279,6 +2374,7 @@ impl Default for EvalCtx {
       last_ambient_hash: RefCell::new(None),
       next_render_id: Cell::new(1),
       gizmo_values: RefCell::new(FxHashMap::default()),
+      injected_texture_params: RefCell::new(FxHashMap::default()),
       current_module_gizmo_reads: RefCell::new(None),
       current_module_read_settings: Cell::new(false),
       current_module_unnamed_gizmo_count: Cell::new(0),
@@ -3658,6 +3754,33 @@ impl EvalCtx {
   /// Content hash of the injected value a module would see for `handle_id`, used to
   /// validate gizmo-read cache entries. A missing value hashes to a stable sentinel
   /// (the call fell back to its source default, which `source_hash` already covers).
+  /// Bakes host-injected per-output GPU params onto the rendered texture handles. Runs
+  /// after eval rather than inside `render_texture` because cache-replayed modules re-push
+  /// their recorded `RenderedTexture`s without running the builtin; baking here means a
+  /// param edit updates every output on the next run without invalidating the module cache
+  /// (params never affect pixels, so re-synthesis would be pure waste).
+  pub fn apply_injected_texture_params(&self) {
+    let params = self.injected_texture_params.borrow();
+    if params.is_empty() {
+      return;
+    }
+    for rt in self.rendered_textures.inner.borrow_mut().iter_mut() {
+      let Some(module) = rt.source_module.as_deref() else {
+        continue;
+      };
+      let tab = module.split(':').next().unwrap_or(module);
+      let Some(p) = params.get(&format!("{tab}\0{}", rt.name)) else {
+        continue;
+      };
+      rt.texture = Rc::new(TextureHandle {
+        min_filter: p.min_filter,
+        mag_filter: p.mag_filter,
+        format: p.format,
+        ..(*rt.texture).clone()
+      });
+    }
+  }
+
   pub fn gizmo_value_hash(&self, module_name: &str, handle_id: &str) -> u64 {
     use std::hash::Hasher;
     let mut hasher = FxHasher64::default();
@@ -8531,7 +8654,10 @@ fn test_static_cycle_detection() {
 
   // Diamond (x -> {y, z} -> w): no cycle.
   let mut srcs = ctx.module_sources.borrow_mut();
-  srcs.insert("x".into(), "import { a } from \"y\"\nimport { b } from \"z\"".into());
+  srcs.insert(
+    "x".into(),
+    "import { a } from \"y\"\nimport { b } from \"z\"".into(),
+  );
   srcs.insert("y".into(), "import { c } from \"w\"\nexport a = c".into());
   srcs.insert("z".into(), "import { c } from \"w\"\nexport b = c".into());
   srcs.insert("w".into(), "export c = 1".into());
@@ -8556,8 +8682,14 @@ fn test_cached_cycle_validation_walk_errors() {
 
   let src_a = "import { x } from \"b\"\nexport y = x";
   let src_b = "import { y } from \"a\"\nexport x = y";
-  ctx.module_sources.borrow_mut().insert("a".into(), src_a.into());
-  ctx.module_sources.borrow_mut().insert("b".into(), src_b.into());
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("a".into(), src_a.into());
+  ctx
+    .module_sources
+    .borrow_mut()
+    .insert("b".into(), src_b.into());
 
   let rng = ctx.rng_state();
   let entry = |src: &str, dep: (&str, u64)| {
@@ -8581,8 +8713,14 @@ fn test_cached_cycle_validation_walk_errors() {
     })
   };
   let mut exports = ctx.module_exports.borrow_mut();
-  exports.insert("a".into(), entry(src_a, ("b", EvalCtx::compute_source_hash(src_b))));
-  exports.insert("b".into(), entry(src_b, ("a", EvalCtx::compute_source_hash(src_a))));
+  exports.insert(
+    "a".into(),
+    entry(src_a, ("b", EvalCtx::compute_source_hash(src_b))),
+  );
+  exports.insert(
+    "b".into(),
+    entry(src_b, ("a", EvalCtx::compute_source_hash(src_a))),
+  );
   drop(exports);
   let mut lru = ctx.module_exports_lru.borrow_mut();
   lru.push_back("a".into());

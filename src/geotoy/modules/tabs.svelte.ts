@@ -14,6 +14,8 @@ import {
   type MeshTabView,
   type TabMetadata,
   type TabView,
+  type TextureOutputGpuParams,
+  type TextureOutputMeta,
   type TextureTabView,
   type TreeEntry,
   type TreeKind,
@@ -45,6 +47,12 @@ export interface GeotoyTab {
   view: TabView | null;
   readonly preludeEjected: boolean;
   readonly environment?: EnvironmentConfig;
+  /** Texture tabs: `render_texture` outputs from the tab's last run (persisted in tab
+   *  metadata so a fresh load can offer them before the tab has executed). */
+  readonly textureOutputs: readonly TextureOutputMeta[];
+  /** Texture tabs: UI-owned per-output GPU params, keyed by output name. User content —
+   *  edits dirty the composition and join the eval input hash. */
+  readonly textureParams: Readonly<Record<string, TextureOutputGpuParams>>;
 }
 
 /**
@@ -85,6 +93,8 @@ const buildTabs = (
       view: meta.view ?? null,
       preludeEjected: meta.preludeEjected,
       environment: meta.kind === 'mesh' ? meta.environment : undefined,
+      textureOutputs: (meta.kind === 'texture' ? meta.textureOutputs : undefined) ?? [],
+      textureParams: (meta.kind === 'texture' ? meta.textureParams : undefined) ?? {},
     };
   });
 
@@ -122,6 +132,8 @@ export class GeotoyTabs {
               kind: 'texture' as const,
               preludeEjected: t.preludeEjected,
               view: (t.view as TextureTabView | null) ?? undefined,
+              textureOutputs: t.textureOutputs.length ? [...t.textureOutputs] : undefined,
+              textureParams: Object.keys(t.textureParams).length ? { ...t.textureParams } : undefined,
             },
       ])
     );
@@ -151,6 +163,37 @@ export class GeotoyTabs {
     this.patch(id, { environment });
   }
 
+  /** Sync a texture tab's output index from a completed run; no-op when unchanged so
+   *  routine reruns don't churn the tabs array. Also prunes params for vanished outputs. */
+  setTextureOutputs(id: string, outputs: TextureOutputMeta[]): void {
+    const tab = this.tabs.find(t => t.id === id);
+    if (!tab) return;
+    const live = new Set(outputs.map(o => o.name));
+    const params = Object.fromEntries(Object.entries(tab.textureParams).filter(([name]) => live.has(name)));
+    const outputsChanged = JSON.stringify(tab.textureOutputs) !== JSON.stringify(outputs);
+    const paramsChanged = Object.keys(params).length !== Object.keys(tab.textureParams).length;
+    if (!outputsChanged && !paramsChanged) return;
+    this.patch(id, {
+      ...(outputsChanged ? { textureOutputs: outputs } : {}),
+      ...(paramsChanged ? { textureParams: params } : {}),
+    });
+  }
+
+  /** Merge a partial params edit for one output; empty-string/undefined fields clear. */
+  setTextureParams(id: string, output: string, patch: Partial<TextureOutputGpuParams>): void {
+    const tab = this.tabs.find(t => t.id === id);
+    if (!tab) return;
+    const merged: TextureOutputGpuParams = { ...tab.textureParams[output] };
+    for (const [k, v] of Object.entries(patch) as [keyof TextureOutputGpuParams, string | undefined][]) {
+      if (v) merged[k] = v;
+      else delete merged[k];
+    }
+    const params = { ...tab.textureParams };
+    if (Object.keys(merged).length) params[output] = merged;
+    else delete params[output];
+    this.patch(id, { textureParams: params });
+  }
+
   /**
    * Appends a tab and returns its id. The id is a slug derived from the initial name and is
    * **stable across renames** — changing it would churn every module key and invalidate the
@@ -166,7 +209,18 @@ export class GeotoyTabs {
     const tree = buildLegacyRootTree(STARTER_SOURCE[kind]);
     const treeState = new TreeState({ initial: tree });
     treeState.setSelected(tree.rootId);
-    this.tabs = [...this.tabs, { id, name: id, treeState, view: null, ...defaultTabMetadata(kind) }];
+    this.tabs = [
+      ...this.tabs,
+      {
+        id,
+        name: id,
+        treeState,
+        view: null,
+        textureOutputs: [],
+        textureParams: {},
+        ...defaultTabMetadata(kind),
+      },
+    ];
     return id;
   }
 

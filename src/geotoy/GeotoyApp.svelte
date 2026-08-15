@@ -41,9 +41,10 @@
     referencedTabIds,
   } from 'src/geoscript/treeCodegen';
   import {
+    proceduralOutputOptions,
     proceduralRefTabIds,
     pruneProceduralTextures,
-    scanProceduralOutputs,
+    textureOutputsByTab,
     uploadProceduralTextures,
   } from 'src/geotoy/modules/proceduralTextures';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
@@ -59,7 +60,12 @@
     disposeRunObjects,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
-  import type { GeneratedTexture, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
+  import type {
+    GeneratedTexture,
+    RenderedGizmo,
+    RenderedControl,
+    TextureParamsEntry,
+  } from 'src/geoscript/runner/types';
   import { GizmoController } from 'src/geotoy/modes/mesh/gizmoController.svelte';
   import { SplineController } from 'src/geotoy/modes/mesh/splineController.svelte';
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
@@ -481,6 +487,11 @@
       }
     }
     for (const tab of tabs.tabs) parts.push(`pe:${tab.id}:${tab.preludeEjected ? 1 : 0}`);
+    for (const tab of tabs.tabs) {
+      for (const [name, p] of Object.entries(tab.textureParams).sort(([a], [b]) => (a < b ? -1 : 1))) {
+        parts.push(`txp:${tab.id}:${name}:${p.minFilter ?? ''}|${p.magFilter ?? ''}|${p.format ?? ''}`);
+      }
+    }
     const matIds = Object.keys(persistence.materialDefinitions.materials).sort();
     for (const id of matIds) {
       parts.push(`m:${id}:${JSON.stringify(persistence.materialDefinitions.materials[id])}`);
@@ -546,6 +557,8 @@
     /** Bumped whenever the tree set is replaced wholesale; a switch alone can't catch that,
      *  since a revert rebuilds the tabs under their original ids. */
     docEpoch: number;
+    /** Every tab the run evaluated; their texture-output indexes sync from the result. */
+    runTabIds: string[];
   }
 
   const execution = new GeoscriptExecution<ReplRunInput>({
@@ -616,6 +629,14 @@
         renderDeps.map(id => `import { } from "${qualifyModuleName(ROOT_NODE_NAME, id)}"\n`).join('') +
         compiled.rootSource;
 
+      const textureParams: TextureParamsEntry[] = [];
+      for (const id of runSet) {
+        const t = tabById.get(id)!;
+        for (const [name, p] of Object.entries(t.textureParams)) {
+          textureParams.push({ tabId: id, name, ...p });
+        }
+      }
+
       // Active tab last: its ambient construction ends the RNG stream the entry continues.
       const tabAmbients = [...runSet.slice(1), tabId].map(id => {
         const t = tabById.get(id)!;
@@ -635,15 +656,17 @@
         materialOverride: meshScene.materialOverride,
         renderMode: userData?.renderMode ?? false,
         gizmoValues,
+        textureParams,
         moduleNameToNodeId,
         rootModuleName: qualifyModuleName(ROOT_NODE_NAME, tabId),
         tree,
         tabId,
         docEpoch: runDocEpoch,
+        runTabIds: runSet,
         inputKey: computeEvalInputsHash(),
       };
     },
-    consume: (result, { tree, moduleNameToNodeId, tabId, docEpoch: runDocEpoch }) => {
+    consume: (result, { tree, moduleNameToNodeId, tabId, docEpoch: runDocEpoch, runTabIds }) => {
       // A run started before a tab switch or a revert settles against state it wasn't built
       // for; dropping it keeps its geometry out of the new scene, and — the reason this
       // matters beyond a repaint — keeps its stale node list out of the handle/control GC
@@ -655,7 +678,16 @@
       // Every run's texture outputs land in any material-referenced placeholder textures —
       // including texture-mode runs, which is what makes editing a texture tab live-update
       // meshes that consume it.
-      uploadProceduralTextures(result.objects.filter((o): o is GeneratedTexture => o.type === 'texture'));
+      const texOutputs = result.objects.filter((o): o is GeneratedTexture => o.type === 'texture');
+      uploadProceduralTextures(texOutputs);
+      // Sync each evaluated texture tab's output index — including to empty, so a removed
+      // `render_texture` call drops out of the material editor's picker.
+      const outputsByTab = textureOutputsByTab(texOutputs);
+      for (const runTabId of runTabIds) {
+        if (tabs.tabs.find(t => t.id === runTabId)?.kind === 'texture') {
+          tabs.setTextureOutputs(runTabId, outputsByTab.get(runTabId) ?? []);
+        }
+      }
       lastRun = { tree, gizmos: result.gizmos, controls: result.controls, moduleNameToNodeId };
       mode.consume(result, tree, moduleNameToNodeId);
     },
@@ -1070,6 +1102,12 @@
   {#if textureMode.textures.length > 0}
     <TexturePreview
       mode={textureMode}
+      onSetTextureParams={(sourceModule, output, patch) => {
+        const sep = sourceModule.indexOf(':');
+        if (sep <= 0) return;
+        tabs.setTextureParams(sourceModule.slice(0, sep), output, patch);
+        void execution.run();
+      }}
       width={Math.max(innerWidth - (layout.orientation === 'horizontal' ? layout.panelSize : 0), 0)}
       height={Math.max(
         innerHeight - layout.barHeight - (layout.orientation === 'vertical' ? layout.panelSize : 0),
@@ -1103,9 +1141,7 @@
   repl={execution.repl}
   ctxPtr={execution.ctxPtr}
   me={userData?.me}
-  proceduralTextureOptions={scanProceduralOutputs(
-    tabs.tabs.filter(t => t.kind === 'texture').map(t => ({ id: t.id, tree: t.treeState.state.tree }))
-  )}
+  proceduralTextureOptions={proceduralOutputOptions(tabs.tabs)}
 />
 
 <EnvironmentSettings

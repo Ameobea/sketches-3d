@@ -8,6 +8,8 @@
     tags?: string[];
     thumbnailUrl?: string | null;
     url?: string | null;
+    /** Groups the item under the matching `sections` entry; ignored when no sections are declared. */
+    section?: string;
   };
 
   let {
@@ -17,6 +19,7 @@
     onclose = () => {},
     title = 'Select an item',
     showNoneOption = true,
+    sections = [],
     footerStart,
     footerEnd,
     previewActions,
@@ -27,6 +30,10 @@
     onclose: () => void;
     title: string;
     showNoneOption?: boolean;
+    /** When declared, the list renders as labeled groups in this order (items matched by
+     *  `item.section`; unmatched items trail headerless). `emptyText` shows for a section
+     *  with no items at all — filtered-to-empty sections show just the header. */
+    sections?: { label: string; emptyText?: string }[];
     footerStart?: Snippet;
     footerEnd?: Snippet;
     previewActions?: Snippet<[Item]>;
@@ -61,6 +68,20 @@
     onselect(item ? item.id : null);
     selectedItemForPreview = item;
   };
+
+  const groups = $derived.by((): { label: string | null; emptyText?: string; items: Item[] }[] => {
+    if (!sections.length) {
+      return [{ label: null, items: filteredItems }];
+    }
+    const declared = sections.map(s => ({
+      label: s.label,
+      emptyText: items.some(it => it.section === s.label) ? undefined : s.emptyText,
+      items: filteredItems.filter(it => it.section === s.label),
+    }));
+    const known = new Set(sections.map(s => s.label));
+    const rest = filteredItems.filter(it => it.section == null || !known.has(it.section));
+    return rest.length ? [...declared, { label: null, items: rest }] : declared;
+  });
 </script>
 
 <div class="item-picker">
@@ -87,26 +108,34 @@
           <span style="font-style: italic; color: #aaa">none</span>
         </div>
       {/if}
-      {#each filteredItems as item (item.id)}
-        <div
-          class="item"
-          class:selected={selectedId === item.id}
-          onclick={() => handleSelect(item)}
-          role="button"
-          tabindex="0"
-          onkeypress={e => {
-            if (e.key === 'Enter' || e.key === ' ') {
-              handleSelect(item);
-            }
-          }}
-        >
-          {#if item.thumbnailUrl}
-            <img src={item.thumbnailUrl} alt={item.name} crossorigin="anonymous" loading="lazy" />
-          {:else}
-            <div class="no-item"></div>
-          {/if}
-          <span>{item.name}</span>
-        </div>
+      {#each groups as group (group.label ?? '')}
+        {#if group.label !== null}
+          <div class="section-header">{group.label}</div>
+        {/if}
+        {#if group.emptyText && !group.items.length}
+          <div class="section-empty">{group.emptyText}</div>
+        {/if}
+        {#each group.items as item (item.id)}
+          <div
+            class="item"
+            class:selected={selectedId === item.id}
+            onclick={() => handleSelect(item)}
+            role="button"
+            tabindex="0"
+            onkeypress={e => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                handleSelect(item);
+              }
+            }}
+          >
+            {#if item.thumbnailUrl}
+              <img src={item.thumbnailUrl} alt={item.name} crossorigin="anonymous" loading="lazy" />
+            {:else}
+              <div class="no-item"></div>
+            {/if}
+            <span>{item.name}</span>
+          </div>
+        {/each}
       {/each}
     </div>
     <div class="preview-pane">
@@ -192,6 +221,25 @@
     width: 40px;
     background: #222
       repeating-linear-gradient(-45deg, transparent, transparent 9px, #181818 9px, #181818 18px);
+  }
+  .section-header {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 5px 8px 4px;
+    font-size: 11px;
+    text-transform: lowercase;
+    letter-spacing: 0.06em;
+    color: #9a9a9a;
+    background: #232323;
+    border-bottom: 1px solid #3a3a3a;
+  }
+  .section-empty {
+    padding: 8px;
+    font-size: 11px;
+    font-style: italic;
+    color: #888;
+    border-bottom: 1px solid #333;
   }
   .item {
     display: flex;

@@ -19,7 +19,7 @@ build:
   just build-wasm
   just opt-wasm
   just copy-wasm
-  bun run build
+  UV_THREADPOOL_SIZE=$(nproc) bun run build
 
 upwasm:
   just build-wasm

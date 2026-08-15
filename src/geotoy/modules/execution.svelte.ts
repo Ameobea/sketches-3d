@@ -22,6 +22,7 @@ export interface RunInput {
   materialOverride: RunGeoscriptOptions['materialOverride'];
   renderMode: boolean;
   gizmoValues: RunGeoscriptOptions['gizmoValues'];
+  textureParams: RunGeoscriptOptions['textureParams'];
   rootModuleName: RunGeoscriptOptions['rootModuleName'];
   moduleNameToNodeId: Record<string, string>;
   /**
@@ -232,6 +233,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         materialOverride: input.materialOverride,
         renderMode: input.renderMode,
         gizmoValues: input.gizmoValues,
+        textureParams: input.textureParams,
         rootModuleName: input.rootModuleName,
       });
 

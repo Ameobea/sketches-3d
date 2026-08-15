@@ -2,7 +2,7 @@ import * as Comlink from 'comlink';
 
 import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
 import type { Light } from 'src/geotoy/modes/mesh/lights';
-import type { GizmoValuesByModule } from './runner/types';
+import type { GizmoValuesByModule, TextureParamsEntry } from './runner/types';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 
 /** Raw shape of `geoscript_repl_get_rendered_gizmo`'s JSON (snake_case from Rust). */
@@ -347,9 +347,35 @@ const methods = {
     const wrap = Geoscript.geoscript_get_rendered_texture_wrap(ctxPtr, texIx);
     const sourceModule = Geoscript.geoscript_get_rendered_texture_source_module(ctxPtr, texIx);
     const textureId = Geoscript.geoscript_get_rendered_texture_id(ctxPtr, texIx);
-    return Comlink.transfer({ width, height, channels, pixels, name, usage, wrap, sourceModule, textureId }, [
-      pixels.buffer,
-    ]);
+    /** Empty strings mean unset. */
+    const [minFilter, magFilter, format] = Geoscript.geoscript_get_rendered_texture_gpu_params(ctxPtr, texIx);
+    return Comlink.transfer(
+      {
+        width,
+        height,
+        channels,
+        pixels,
+        name,
+        usage,
+        wrap,
+        sourceModule,
+        textureId,
+        minFilter,
+        magFilter,
+        format,
+      },
+      [pixels.buffer]
+    );
+  },
+  setTextureParams: (ctxPtr: number, entries: TextureParamsEntry[]) => {
+    Geoscript.geoscript_repl_set_texture_params(
+      ctxPtr,
+      entries.map(e => e.tabId),
+      entries.map(e => e.name),
+      entries.map(e => e.minFilter ?? ''),
+      entries.map(e => e.magFilter ?? ''),
+      entries.map(e => e.format ?? '')
+    );
   },
   setGizmoValues: (ctxPtr: number, valuesByModule: GizmoValuesByModule) => {
     const modules: string[] = [];

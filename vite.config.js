@@ -1,5 +1,3 @@
-import wasm from 'vite-plugin-wasm';
-
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
@@ -13,7 +11,6 @@ const config = defineConfig({
     // Must run before `sveltekit()` so its `config()` hook writes the
     // `src/routes/(generated)/` tree before SvelteKit walks the routes dir.
     generatedScenesPlugin(),
-    wasm(),
     sveltekit(),
     devtoolsJson(),
     crossOriginIsolation(),
@@ -40,7 +37,6 @@ const config = defineConfig({
   optimizeDeps: {
     exclude: ['codemirror'],
   },
-  ssr: {},
   build: {
     sourcemap: true,
     target: 'esnext',

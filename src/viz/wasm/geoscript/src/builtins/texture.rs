@@ -3,8 +3,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use crate::{
-  ArgRef, ErrorStack, EvalCtx, RenderedTexture, Sym, TextureHandle, TextureUsage, TextureWrap,
-  Value, Vec2, EMPTY_KWARGS,
+  ArgRef, Callable, ErrorStack, EvalCtx, RenderedTexture, Sym, TextureHandle, TextureUsage,
+  TextureWrap, Value, Vec2, Vec3, EMPTY_KWARGS,
 };
 
 const MAX_TEXTURE_DIM: i64 = 8192;
@@ -30,6 +30,14 @@ impl TextureHandle {
     let x = self.wrap_coord(x, self.width);
     let y = self.wrap_coord(y, self.height);
     self.pixels[(y * self.width + x) * self.channels + chan]
+  }
+}
+
+fn pixel_from_value(v: &Value) -> Option<([f32; 3], usize)> {
+  match v {
+    Value::Vec2(v) => Some(([v.x, v.y, 0.], 2)),
+    Value::Vec3(v) => Some(([v.x, v.y, v.z], 3)),
+    v => v.as_float().map(|f| ([f, 0., 0.], 1)),
   }
 }
 
@@ -61,30 +69,17 @@ pub(crate) fn texture_impl(
         .map_err(|err| {
           err.wrap("Error produced by user-supplied `generator` callable in `texture`")
         })?;
-      let px: [f32; 3];
-      let n = match &out {
-        Value::Vec3(v) => {
-          px = [v.x, v.y, v.z];
-          3
-        }
-        v => match v.as_float() {
-          Some(f) => {
-            px = [f, 0., 0.];
-            1
-          }
-          None => {
-            return Err(ErrorStack::new(format!(
-              "Expected float or vec3 from `generator` callable in `texture`, found: {out:?}"
-            )))
-          }
-        },
-      };
+      let (px, n) = pixel_from_value(&out).ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Expected float, vec2, or vec3 from `generator` callable in `texture`, found: {out:?}"
+        ))
+      })?;
       if channels == 0 {
         channels = n;
         pixels.reserve_exact(w * h * n);
       } else if n != channels {
         return Err(ErrorStack::new(
-          "`generator` callable in `texture` returned a mix of float and vec3 values",
+          "`generator` callable in `texture` returned a mix of float/vec2/vec3 values",
         ));
       }
       pixels.extend_from_slice(&px[..n]);
@@ -97,6 +92,64 @@ pub(crate) fn texture_impl(
     height: h,
     channels,
     wrap,
+    min_filter: None,
+    mag_filter: None,
+    format: None,
+  })))
+}
+
+pub(crate) fn map_texture_impl(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  tex: &TextureHandle,
+) -> Result<Value, ErrorStack> {
+  let (w, h, ch) = (tex.width, tex.height, tex.channels);
+  let src: &[f32] = &tex.pixels;
+  let mut out: Vec<f32> = Vec::new();
+  let mut out_ch = 0usize;
+  for y in 0..h {
+    for x in 0..w {
+      let base = (y * w + x) * ch;
+      let val = match ch {
+        1 => Value::Float(src[base]),
+        2 => Value::Vec2(Vec2::new(src[base], src[base + 1])),
+        _ => Value::Vec3(Vec3::new(src[base], src[base + 1], src[base + 2])),
+      };
+      let uv = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
+      let res = ctx
+        .invoke_callable(
+          cb,
+          &[
+            val,
+            Value::Vec2(uv),
+            Value::Int(x as i64),
+            Value::Int(y as i64),
+          ],
+          EMPTY_KWARGS,
+        )
+        .map_err(|err| err.wrap("Error produced by callable passed to `map` over texture"))?;
+      let (px, n) = pixel_from_value(&res).ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Expected float, vec2, or vec3 from callable passed to `map` over texture, found: \
+           {res:?}"
+        ))
+      })?;
+      if out_ch == 0 {
+        out_ch = n;
+        out.reserve_exact(w * h * n);
+      } else if n != out_ch {
+        return Err(ErrorStack::new(
+          "callable passed to `map` over texture returned a mix of float/vec2/vec3 values",
+        ));
+      }
+      out.extend_from_slice(&px[..n]);
+    }
+  }
+
+  Ok(Value::Texture(Rc::new(TextureHandle {
+    channels: out_ch,
+    pixels: Rc::new(out),
+    ..tex.clone()
   })))
 }
 
@@ -160,10 +213,7 @@ pub(crate) fn blur_impl(
 
   let mid = TextureHandle {
     pixels: Rc::new(pass(tex, 1, 0)),
-    width: w,
-    height: h,
-    channels: ch,
-    wrap: tex.wrap,
+    ..(**tex).clone()
   };
   Ok(Value::Texture(Rc::new(TextureHandle {
     pixels: Rc::new(pass(&mid, 0, 1)),
@@ -203,11 +253,9 @@ pub(crate) fn height_to_normal_impl(
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(out),
-    width: w,
-    height: h,
     channels: 3,
-    wrap: tex.wrap,
+    pixels: Rc::new(out),
+    ..(**tex).clone()
   })))
 }
 
@@ -263,6 +311,35 @@ mod tests {
         assert_eq!(tex.pixels[y * 4 + x], (x as f32 + 0.5) / 4.);
       }
     }
+  }
+
+  #[test]
+  fn texture_pixel_map() {
+    let ctx = parse_and_eval_program(
+      r#"
+t = texture(4, 2, |uv| uv.x)
+(t -> |val, uv, x_ix, y_ix| v3(val, uv.y, x_ix + y_ix)) | render_texture(name="rgb")
+(t -> |val| val * 2.) | render_texture(name="doubled")
+"#,
+    )
+    .unwrap();
+    let rendered = ctx.rendered_textures.into_inner();
+    assert_eq!(rendered.len(), 2);
+
+    let rgb = &rendered[0].texture;
+    assert_eq!((rgb.width, rgb.height, rgb.channels), (4, 2, 3));
+    for y in 0..2 {
+      for x in 0..4 {
+        let base = (y * 4 + x) * 3;
+        assert_eq!(rgb.pixels[base], (x as f32 + 0.5) / 4.);
+        assert_eq!(rgb.pixels[base + 1], (y as f32 + 0.5) / 2.);
+        assert_eq!(rgb.pixels[base + 2], (x + y) as f32);
+      }
+    }
+
+    let doubled = &rendered[1].texture;
+    assert_eq!(doubled.channels, 1);
+    assert_eq!(doubled.pixels[1], 2. * (1.5 / 4.));
   }
 
   #[test]

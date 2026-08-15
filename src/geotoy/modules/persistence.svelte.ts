@@ -46,10 +46,15 @@ const stableJson = (v: unknown): string =>
       : val
   );
 
-/** Sorted-key stringify of the per-tab record minus camera poses: orbiting must not dirty
- *  the composition, but ejecting the prelude or editing the environment must. */
+/** Sorted-key stringify of the per-tab record minus camera poses and the run-derived
+ *  texture-output index: orbiting or completing a run must not dirty the composition, but
+ *  ejecting the prelude or editing the environment must. */
 const tabMetaKey = (meta: Record<string, TabMetadata>): string =>
-  stableJson(Object.fromEntries(Object.entries(meta).map(([id, m]) => [id, { ...m, view: undefined }])));
+  stableJson(
+    Object.fromEntries(
+      Object.entries(meta).map(([id, m]) => [id, { ...m, view: undefined, textureOutputs: undefined }])
+    )
+  );
 
 /**
  * Owns the draftable composition state (container doc + materials) and the dirty flag, and is

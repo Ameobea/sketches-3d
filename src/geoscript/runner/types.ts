@@ -63,6 +63,12 @@ export interface GeneratedTexture {
   name: string;
   usage: TextureUsage | null;
   wrap: 'repeat' | 'clamp' | 'mirror';
+  /** UI-owned GPU sampler/format params baked onto the handle at render time; null =
+   *  unset (consumer defaults apply). Pixels stay f32 regardless — `format` only declares
+   *  the GPU materialization encoding. */
+  minFilter: string | null;
+  magFilter: string | null;
+  format: string | null;
   width: number;
   height: number;
   channels: number;
@@ -74,6 +80,15 @@ export interface GeneratedTexture {
 }
 
 export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight | GeneratedTexture;
+
+/** One output's injected GPU params; omitted fields mean unset. */
+export interface TextureParamsEntry {
+  tabId: string;
+  name: string;
+  minFilter?: string;
+  magFilter?: string;
+  format?: string;
+}
 
 /** A handle value the host injects per-run, keyed `moduleName → handleId`. Covers both
  *  draggable gizmos and control-panel inputs (they share the injection store). `value`
@@ -169,6 +184,11 @@ export interface RunGeoscriptOptions {
    * eval (the runner defaults to `{}`) so a prior run's values can't leak.
    */
   gizmoValues?: GizmoValuesByModule;
+  /**
+   * Per-output texture GPU params to inject (UI-owned; applied to rendered handles after
+   * eval). Always sent (the runner defaults to `[]`) so a prior run's params can't leak.
+   */
+  textureParams?: TextureParamsEntry[];
   /**
    * Module name to attribute the entry program to. Hosts that qualify their module keys
    * (`<tabId>:<nodeName>`) must pass `<tabId>:_root` so the entry's own bare imports
