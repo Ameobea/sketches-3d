@@ -1,7 +1,9 @@
 <script lang="ts">
   import { ControlPanel, type ControlPanelState } from 'src/viz/UI/ControlPanel';
+  import RampControlsSection from 'src/viz/UI/RampControlsSection.svelte';
   import SplineControlsSection from 'src/viz/UI/SplineControlsSection.svelte';
   import type { RenderedControl } from 'src/geoscript/runner/types';
+  import type { RampSpecJson } from 'src/geoscript/geotoyAPIClient';
   import {
     controlCurrentValue,
     controlKey,
@@ -90,14 +92,28 @@
       case 'spline':
         // Splines never route through the ControlPanel; edits flow via the viewport overlay.
         return { kind: 'spline', value: value as [number, number, number][] };
+      case 'ramp':
+        return { kind: 'ramp', value: value as RampSpecJson };
     }
   }
+
+  // Ramp edits bypass the ControlPanel's bind, so mirror them into panelState so the
+  // gradient bar re-renders optimistically between runs.
+  const onRampChange = (key: string, spec: RampSpecJson) => {
+    panelState = { ...panelState, [key]: spec };
+    handleChange(key, spec);
+  };
 </script>
 
 <div class="controls-panel">
   {#if settings.length > 0}
     <ControlPanel {settings} bind:state={panelState} onChange={handleChange} title="inputs" width={260} />
   {/if}
+  <RampControlsSection
+    {controls}
+    getSpec={key => (panelState[key] as RampSpecJson | undefined) ?? null}
+    onChange={onRampChange}
+  />
   {#if spline}
     <SplineControlsSection {controls} {spline} />
   {/if}

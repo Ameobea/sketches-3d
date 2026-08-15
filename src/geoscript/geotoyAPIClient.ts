@@ -162,10 +162,25 @@ export interface GizmoValue {
   value: [number, number, number] | Transform3;
 }
 
+export interface RampStopJson {
+  pos: number;
+  /** 1 element for scalar ramps, 3 (linear RGB) for color ramps. */
+  value: number[];
+  ease: 'linear' | 'smooth' | 'smoother' | 'step';
+}
+
+/** Serialized `input_ramp`/`input_color_ramp` spec; mirrors the wasm-side `RampSpecWire`. */
+export interface RampSpecJson {
+  scalar: boolean;
+  stops: RampStopJson[];
+  extend: 'clamp' | 'repeat' | 'mirror';
+  space: 'linear' | 'oklab' | 'oklch' | 'srgb';
+}
+
 /** An `input_*(...)` control value keyed by handleId; sparse. Written by the control panel. */
 export interface ControlValue {
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
-  value: number | boolean | [number, number, number] | string | [number, number, number][];
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp';
+  value: number | boolean | [number, number, number] | string | [number, number, number][] | RampSpecJson;
 }
 
 export interface NodeDef {

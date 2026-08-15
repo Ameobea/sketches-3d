@@ -247,6 +247,23 @@ const methods = {
       throw enrichWasmError(err);
     }
   },
+  /**
+   * Per-tab ambient scopes for multi-tab runs; one (tabId, preludeKind, globalsSource)
+   * triple per run-set tab, active tab last. Preludes are resolved wasm-side from the kind.
+   */
+  setTabAmbientScopes: (
+    ctxPtr: number,
+    tabIds: string[],
+    preludeKinds: string[],
+    globalsSources: string[]
+  ) => {
+    lastWasmPanic = null;
+    try {
+      Geoscript.geoscript_repl_set_tab_ambient_scopes(ctxPtr, tabIds, preludeKinds, globalsSources);
+    } catch (err) {
+      throw enrichWasmError(err);
+    }
+  },
   eval: async (ctxPtr: number, code: string, preludeKind: string | undefined, rootModuleName?: string) => {
     lastWasmPanic = null;
     try {

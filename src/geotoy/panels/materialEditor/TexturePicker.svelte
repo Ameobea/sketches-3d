@@ -5,6 +5,7 @@
     type TextureID,
     type User,
   } from 'src/geoscript/geotoyAPIClient';
+  import type { ProceduralTextureOption } from 'src/geotoy/modules/proceduralTextures';
   import { untrack } from 'svelte';
   import ItemPicker from './ItemPicker.svelte';
   import TextureUploader from './TextureUploader.svelte';
@@ -16,12 +17,16 @@
     onclose = () => {},
     onupload = () => {},
     me,
+    proceduralOptions = [],
   }: {
-    selectedTextureId: TextureID | null | undefined;
-    onselect: (id: TextureID | null) => void;
+    /** Numeric library texture id, or a `procedural:` handle string. */
+    selectedTextureId: TextureID | string | null | undefined;
+    onselect: (id: TextureID | string | null) => void;
     onclose: () => void;
     onupload: () => void;
     me: User | null | undefined;
+    /** Composition texture-tab outputs, selectable alongside library textures. */
+    proceduralOptions?: ProceduralTextureOption[];
   } = $props();
 
   const origSelectedTextureId = untrack(() => selectedTextureId);
@@ -47,11 +52,18 @@
   });
 
   const onselect = (id: TextureID | null | string) => {
-    if (typeof id === 'string') {
-      throw new Error('unreachable; id should not be a string');
-    }
     onselectInner(id);
   };
+
+  const pickerItems = $derived([
+    ...proceduralOptions.map(o => ({
+      id: o.handle,
+      name: o.label,
+      description: 'procedural output from this composition',
+      tags: ['procedural', ...(o.usage ? [o.usage] : [])],
+    })),
+    ...textures,
+  ]);
 </script>
 
 {#if isLoading}
@@ -73,7 +85,7 @@
     }}
   />
 {:else}
-  <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={textures} {onclose}>
+  <ItemPicker title="Select Texture" selectedId={selectedTextureId} {onselect} items={pickerItems} {onclose}>
     {#snippet previewActions(item)}
       {#if me && textures.find(t => t.id === item.id)?.ownerId === me.id}
         <button

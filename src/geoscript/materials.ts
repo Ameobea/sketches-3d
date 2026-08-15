@@ -5,6 +5,7 @@ import type { CustomShaderMatDef, CustomBasicShaderMatDef } from 'src/viz/materi
 import { loadTexture } from 'src/viz/textureLoading';
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { buildDefaultShaders, linearRgbToSrgbHex, type RGBColor } from './geotoyMaterialConvert';
+import { getProceduralTexture, isProceduralHandle } from 'src/geotoy/modules/proceduralTextures';
 import type { TextureID } from './geotoyAPIClient';
 
 export { buildDefaultShaders };
@@ -51,6 +52,9 @@ const maybeLoadTexture = (
   if (handle == null) {
     return undefined;
   }
+  if (isProceduralHandle(handle)) {
+    return getProceduralTexture(handle);
+  }
   const id = Number(handle);
   const cached = LoadedTextures.get(id);
   if (cached) {
@@ -72,6 +76,9 @@ const maybeLoadPomHeightTexture = (
 ): Promise<THREE.Texture> | THREE.Texture | undefined => {
   if (handle == null) {
     return undefined;
+  }
+  if (isProceduralHandle(handle)) {
+    return getProceduralTexture(handle);
   }
   const cached = LoadedPomHeightTextures.get(handle);
   if (cached) {
@@ -159,7 +166,8 @@ export const buildMaterial = (
     const textures = new Map<string, THREE.Texture>();
     const put = (handle: string | undefined, tex: Tex, srgb = false) => {
       if (handle != null && tex) {
-        if (srgb) tex.colorSpace = THREE.SRGBColorSpace;
+        // Procedural textures hold linear geoscript values, never sRGB-encoded bytes.
+        if (srgb && !isProceduralHandle(handle)) tex.colorSpace = THREE.SRGBColorSpace;
         textures.set(handle, tex);
       }
     };

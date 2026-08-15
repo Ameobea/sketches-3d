@@ -37,11 +37,21 @@ export const inlineGeotoyMaterialTextures = async (
 
   const props: Record<string, unknown> = { ...(def.props ?? {}) };
   const slotRefs: { slot: string; texId: number; cfg: Partial<TextureDef> }[] = [];
+  let droppedProcedural = false;
   for (const [slot, cfg] of Object.entries(GEOTOY_TEXTURE_SLOTS)) {
     const handle = props[slot];
-    if (typeof handle === 'string' && handle !== '') slotRefs.push({ slot, texId: Number(handle), cfg });
+    if (typeof handle === 'string' && handle !== '') {
+      // Procedural refs (`procedural:<tab>:<output>`) have no library texture to inline;
+      // drop the slot until level-def synth support (phase 6) rather than NaN-fetching.
+      if (!Number.isFinite(Number(handle))) {
+        delete props[slot];
+        droppedProcedural = true;
+        continue;
+      }
+      slotRefs.push({ slot, texId: Number(handle), cfg });
+    }
   }
-  if (slotRefs.length === 0) return def;
+  if (slotRefs.length === 0) return droppedProcedural ? ({ ...def, props } as MaterialDef) : def;
 
   const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
   const baseUrl = getGeotoyAPIBaseURL();

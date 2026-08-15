@@ -128,6 +128,8 @@ const INPUT_CALLEES = new Set([
   'input_color',
   'input_select',
   'input_spline',
+  'input_ramp',
+  'input_color_ramp',
 ]);
 
 /** Static `input_*` control handle ids in a node's source; used for orphaned-control GC. */

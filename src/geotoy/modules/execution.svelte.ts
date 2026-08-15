@@ -14,8 +14,8 @@ import {
 export interface RunInput {
   code: string;
   modules: Record<string, string>;
-  /** Ambient scope sources beyond the prelude (globals source etc.). */
-  extraAmbientSources: string[];
+  /** Per-tab ambient scopes for the run set, active tab last. */
+  tabAmbients: { tabId: string; preludeKind: TreeKind | ''; globalsSource: string }[];
   /** Tree kind whose prelude applies, or `undefined` when the active tab ejected it. */
   preludeKind: TreeKind | undefined;
   materials: NonNullable<RunGeoscriptOptions['materials']>;
@@ -220,18 +220,11 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
   /** Eval error domain only — shell-side consumption failures must not land here. */
   private evalRun = async (input: T, myGen: number): Promise<RunOutcome<T> | null> => {
     try {
-      const ambientSources: string[] = [];
-      if (input.preludeKind !== undefined) {
-        const prelude = await this.getPrelude(input.preludeKind);
-        if (prelude) ambientSources.push(prelude);
-      }
-      ambientSources.push(...input.extraAmbientSources);
-
       this.opts.setLastRunWasSuccessful(false);
       const result = await runGeoscript({
         code: input.code,
         modules: input.modules,
-        ambientSources,
+        tabAmbients: input.tabAmbients,
         ctxPtr: this.ctxPtr!,
         repl: this.repl,
         materials: input.materials,

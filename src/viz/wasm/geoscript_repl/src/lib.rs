@@ -234,21 +234,23 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<Strin
     )));
     return;
   }
+  // The entry-point program is `_root`'s emitted source; tag its renders accordingly
+  // so JS-side ancestor-transform composition can find the source node. Set BEFORE
+  // `optimize_ast` so the const-folder seeds from the entry tab's own ambient scope.
+  let prev_module = ctx
+    .geo_ctx
+    .current_module
+    .borrow_mut()
+    .replace(root_module.unwrap_or_else(|| "_root".to_owned()));
   if let Err(err) = optimize_ast(&ctx.geo_ctx, program) {
+    *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
     ctx.last_result = Err(err);
     return;
   }
   ctx.geo_ctx.prints.borrow_mut().clear();
   ctx.last_root_bindings = None;
   ctx.last_value = None;
-  // The entry-point program is `_root`'s emitted source; tag its renders accordingly
-  // so JS-side ancestor-transform composition can find the source node.
-  let prev_module = ctx
-    .geo_ctx
-    .current_module
-    .borrow_mut()
-    .replace(root_module.unwrap_or_else(|| "_root".to_owned()));
-  let ambient = ctx.geo_ctx.ambient_scope.borrow().as_ref().map(Rc::clone);
+  let ambient = ctx.geo_ctx.ambient_scope_for_current();
   let base = match &ambient {
     Some(scope) => &**scope,
     None => &ctx.geo_ctx.globals,
@@ -358,6 +360,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
 
   ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
   *ctx.geo_ctx.ambient_scope.borrow_mut() = None;
+  ctx.geo_ctx.clear_tab_ambient_scopes();
 
   ctx.geo_ctx.reset_rng_to_default();
   #[cfg(target_arch = "wasm32")]
@@ -475,6 +478,79 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   *ctx.geo_ctx.last_ambient_hash.borrow_mut() = Some(new_hash);
 
   Ok(())
+}
+
+/// Per-tab ambient scopes for multi-tab runs: one (prelude kind, `_globals` source) triple
+/// per run-set tab, **active tab last** — the RNG is left where the last tab's construction
+/// ended, so the entry program continues the active tab's stream exactly as the single-scope
+/// path did. Each tab's scope is built on a freshly-reset RNG and the post-construction
+/// state is recorded for tab-root stream resets. A tab's cached modules (plus transitive
+/// importers) are evicted only when that tab's own ambient content changed.
+///
+/// Module sources must be registered first, as with `set_ambient_scope_from_sources`.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_tab_ambient_scopes(
+  ctx: *mut GeoscriptReplCtx,
+  tab_ids: Vec<String>,
+  prelude_kinds: Vec<String>,
+  globals_sources: Vec<String>,
+) -> Result<(), String> {
+  let ctx = unsafe { &mut *ctx };
+  let geo = &ctx.geo_ctx;
+
+  for i in 0..tab_ids.len() {
+    let hash = EvalCtx::compute_source_hash(&format!(
+      "{}\u{0}{}",
+      prelude_kinds[i], globals_sources[i]
+    ));
+    if geo.note_tab_ambient_hash(&tab_ids[i], hash) {
+      geo.evict_modules_with_prefix(&tab_ids[i]);
+    }
+  }
+
+  let prev_single = geo.ambient_scope.borrow().clone();
+  let result: Result<(), String> = (|| {
+    for i in 0..tab_ids.len() {
+      let tab_id = &tab_ids[i];
+      geo.reset_rng_to_default();
+      let prev_module = geo
+        .current_module
+        .borrow_mut()
+        .replace(format!("{tab_id}:_root"));
+      let mut scope = Scope::default_globals(&geo.interned_symbols);
+      let build: Result<(), String> = (|| {
+        for source in [prelude_for_kind(&prelude_kinds[i]), &globals_sources[i]] {
+          if source.is_empty() {
+            continue;
+          }
+          // Transient stacking base, same mechanism as the single-scope path: the second
+          // source sees the first's bindings via `fresh_module_scope`.
+          geo.set_ambient_scope(scope.clone());
+          scope = geo
+            .evaluate_module_to_scope(source)
+            .map_err(|err| format!("{err}"))?;
+        }
+        Ok(())
+      })();
+      *geo.current_module.borrow_mut() = prev_module;
+      build?;
+      geo.install_tab_ambient(tab_id, scope);
+    }
+    Ok(())
+  })();
+  *geo.ambient_scope.borrow_mut() = prev_single;
+
+  // Prelude/`_globals` renders aren't part of the user-visible composition; drop them and
+  // let replayed side effects fire again during the eval proper.
+  geo.rendered_meshes.inner.borrow_mut().clear();
+  geo.rendered_lights.inner.borrow_mut().clear();
+  geo.rendered_paths.inner.borrow_mut().clear();
+  geo.rendered_textures.inner.borrow_mut().clear();
+  geo.rendered_gizmos.inner.borrow_mut().clear();
+  geo.rendered_controls.inner.borrow_mut().clear();
+  geo.replayed_this_run.borrow_mut().clear();
+
+  result
 }
 
 #[wasm_bindgen]
@@ -842,6 +918,16 @@ pub fn geoscript_repl_set_gizmo_values(
         Some(s) => Value::String(s),
         None => continue,
       },
+      // Ramp controls carry their spec as JSON; the ramp value (incl. LUT bake) is built
+      // here so the builtin just hands it back.
+      "ramp" => match wire
+        .str_value
+        .as_deref()
+        .map(|s| geoscript::ramp_value_from_wire_json(s, &ctx.geo_ctx))
+      {
+        Some(Ok(v)) => v,
+        _ => continue,
+      },
       _ => continue,
     };
     map
@@ -944,8 +1030,25 @@ pub fn geoscript_repl_get_rendered_control(
     geoscript::ControlKind::Color => "color",
     geoscript::ControlKind::Select => "select",
     geoscript::ControlKind::Spline => "spline",
+    geoscript::ControlKind::Ramp => "ramp",
   }
   .to_owned();
+  if matches!(c.kind, geoscript::ControlKind::Ramp) {
+    return RenderedControlWire {
+      source_module: c.source_module.clone(),
+      handle_id: c.handle_id.clone(),
+      kind,
+      label: c.label.clone(),
+      value: Vec::new(),
+      str_value: geoscript::ramp_control_value_json(&c.current_value),
+      min: None,
+      max: None,
+      step: None,
+      style: None,
+      options: Vec::new(),
+    }
+    .serialize_json();
+  }
   let (value, str_value): (Vec<f32>, Option<String>) = match &c.current_value {
     Value::Float(f) => (vec![*f], None),
     Value::Int(i) => (vec![*i as f32], None),
@@ -1110,5 +1213,331 @@ mod tests {
 
     // Last-statement value: a + z = 22 + 11.
     assert!(geoscript_repl_get_last_value_json(p, 4).contains("33"));
+  }
+
+  fn set_modules(p: *mut GeoscriptReplCtx, modules: &[(&str, &str)]) {
+    geoscript_repl_set_module_sources(
+      p,
+      modules.iter().map(|(n, _)| n.to_string()).collect(),
+      modules.iter().map(|(_, s)| s.to_string()).collect(),
+    );
+  }
+
+  fn set_tab_ambients(p: *mut GeoscriptReplCtx, tabs: &[(&str, &str)]) {
+    geoscript_repl_set_tab_ambient_scopes(
+      p,
+      tabs.iter().map(|(id, _)| id.to_string()).collect(),
+      tabs.iter().map(|_| String::new()).collect(),
+      tabs.iter().map(|(_, g)| g.to_string()).collect(),
+    )
+    .unwrap();
+  }
+
+  fn eval_last_value(p: *mut GeoscriptReplCtx, src: &str, root_module: &str) -> String {
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, Some(root_module.to_owned()));
+    unsafe { (*p).last_result.as_ref().unwrap() };
+    geoscript_repl_get_last_value_json(p, 4)
+  }
+
+  #[test]
+  fn per_tab_ambient_scopes_isolate_tabs() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+
+    set_modules(p, &[("t1:m", "export v1 = base"), ("t2:m", "export v2 = base")]);
+    set_tab_ambients(p, &[("t2", "base = 2"), ("t1", "base = 1")]);
+
+    // The bare import resolves within the entry's own tab; the qualified one crosses tabs,
+    // and each module must see its own tab's `_globals`.
+    let json = eval_last_value(
+      p,
+      "import { v1 } from \"m\"\nimport { v2 } from \"t2:m\"\nv1 * 100 + v2",
+      "t1:_root",
+    );
+    assert!(json.contains("102"), "{json}");
+  }
+
+  #[test]
+  fn tab_root_rng_stream_is_run_set_independent() {
+    // Fresh ctx per run so this pins the eval path, not cache replay. t2's exported draw
+    // must not depend on whether another rng-drawing tab evaluated before it.
+    let solo = {
+      let mut ctx = GeoscriptReplCtx::default();
+      let p: *mut GeoscriptReplCtx = &mut ctx;
+      set_modules(p, &[("t2:_root", "export x = randf()")]);
+      set_tab_ambients(p, &[("t2", ""), ("t1", "")]);
+      eval_last_value(p, "import { x } from \"t2:_root\"\nx", "t1:_root")
+    };
+
+    let with_earlier_dep = {
+      let mut ctx = GeoscriptReplCtx::default();
+      let p: *mut GeoscriptReplCtx = &mut ctx;
+      set_modules(p, &[
+        ("t2:_root", "export x = randf()"),
+        ("t3:_root", "y = randf()"),
+      ]);
+      set_tab_ambients(p, &[("t3", ""), ("t2", ""), ("t1", "")]);
+      eval_last_value(
+        p,
+        "import { } from \"t3:_root\"\nimport { x } from \"t2:_root\"\nx",
+        "t1:_root",
+      )
+    };
+
+    assert_eq!(solo, with_earlier_dep);
+    assert!(solo.contains("float"), "{solo}");
+  }
+
+  #[test]
+  fn tab_ambient_change_reevaluates_cached_importers() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+
+    let modules: &[(&str, &str)] = &[
+      ("ta:m", "export v = base"),
+      ("tb:n", "import { v } from \"ta:m\"\nexport w = v + 1"),
+    ];
+    set_modules(p, modules);
+    set_tab_ambients(p, &[("ta", "base = 5"), ("tb", "")]);
+    let json = eval_last_value(p, "import { w } from \"n\"\nw", "tb:_root");
+    assert!(json.contains("6"), "{json}");
+
+    // Only ta's ambient changes; tb:n's source hash and tb's ambient are untouched, so a
+    // stale cache would replay w = 6. The prefix eviction must cascade to importers.
+    geoscript_repl_reset(p);
+    set_modules(p, modules);
+    set_tab_ambients(p, &[("ta", "base = 50"), ("tb", "")]);
+    let json = eval_last_value(p, "import { w } from \"n\"\nw", "tb:_root");
+    assert!(json.contains("51"), "{json}");
+  }
+
+  #[test]
+  fn legacy_vs_tab_ambient_stream_parity() {
+    // A single-tab run through the new per-tab path must draw the same stream the legacy
+    // single-scope path did — the corpus gate depends on this byte-for-byte.
+    let legacy = {
+      let mut ctx = GeoscriptReplCtx::default();
+      let p: *mut GeoscriptReplCtx = &mut ctx;
+      geoscript_repl_reset(p);
+      set_modules(p, &[("scene:child", "export c = randf()")]);
+      geoscript_repl_set_ambient_scope_from_sources(
+        p,
+        vec![prelude_for_kind("mesh").to_owned(), "g = 1".to_owned()],
+        Some("scene:_root".to_owned()),
+      )
+      .unwrap();
+      eval_last_value(p, "import { c } from \"child\"\nc + randf()", "scene:_root")
+    };
+    let per_tab = {
+      let mut ctx = GeoscriptReplCtx::default();
+      let p: *mut GeoscriptReplCtx = &mut ctx;
+      geoscript_repl_reset(p);
+      set_modules(p, &[("scene:child", "export c = randf()")]);
+      geoscript_repl_set_tab_ambient_scopes(
+        p,
+        vec!["scene".to_owned()],
+        vec!["mesh".to_owned()],
+        vec!["g = 1".to_owned()],
+      )
+      .unwrap();
+      eval_last_value(p, "import { c } from \"child\"\nc + randf()", "scene:_root")
+    };
+    assert_eq!(legacy, per_tab);
+  }
+
+  fn ramp_wire(spec: &str) -> String {
+    #[derive(SerJson)]
+    struct W {
+      kind: String,
+      str_value: String,
+    }
+    W {
+      kind: "ramp".to_owned(),
+      str_value: spec.to_owned(),
+    }
+    .serialize_json()
+  }
+
+  fn const_ramp_spec(v: f32) -> String {
+    format!(
+      r#"{{"scalar":false,"stops":[{{"pos":0.0,"value":[{v},{v},{v}],"ease":"linear"}},{{"pos":1.0,"value":[{v},{v},{v}],"ease":"linear"}}],"extend":"clamp","space":"linear"}}"#
+    )
+  }
+
+  #[test]
+  fn input_ramp_warm_runs_hit_const_cache() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | render_texture(name=\"d\")";
+
+    let run = |p: *mut GeoscriptReplCtx| -> usize {
+      geoscript_repl_reset(p);
+      geoscript_repl_parse_program(p, src.to_owned(), None);
+      geoscript_repl_eval(p, None);
+      let ctx = unsafe { &*p };
+      ctx.last_result.as_ref().unwrap();
+      // The control must register every run even when the whole chain cache-hits.
+      assert_eq!(ctx.geo_ctx.rendered_controls.len(), 1);
+      Rc::as_ptr(&ctx.geo_ctx.rendered_textures.inner.borrow()[0].texture) as usize
+    };
+
+    let first = run(p);
+    let second = run(p);
+    assert_eq!(first, second, "warm run must replay the cached texture");
+  }
+
+  #[test]
+  fn input_ramp_injected_change_invalidates_and_rewarms() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let src = "n = 32\nshade = input_color_ramp(\"s\", default=[[-1., vec3(0.1, 0.1, 0.1)], [1., vec3(0.9, 0.9, 0.9)]])\nt = texture(n, n, |uv| fbm(pos=uv) | shade)\nt | render_texture(name=\"d\")";
+
+    let run = |p: *mut GeoscriptReplCtx, inject: Option<&str>| -> (usize, f32) {
+      geoscript_repl_reset(p);
+      if let Some(spec) = inject {
+        geoscript_repl_set_gizmo_values(
+          p,
+          vec!["_root".to_owned()],
+          vec!["s".to_owned()],
+          vec![ramp_wire(spec)],
+        );
+      }
+      geoscript_repl_parse_program(p, src.to_owned(), None);
+      geoscript_repl_eval(p, None);
+      let ctx = unsafe { &*p };
+      ctx.last_result.as_ref().unwrap();
+      let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+      (
+        Rc::as_ptr(&textures[0].texture) as usize,
+        textures[0].texture.pixels[0],
+      )
+    };
+
+    let (default_ptr, _) = run(p, None);
+    let (a_ptr, a_px) = run(p, Some(&const_ramp_spec(0.25)));
+    assert_ne!(default_ptr, a_ptr, "injected value must invalidate");
+    assert!((a_px - 0.25).abs() < 1e-4, "{a_px}");
+    let (a2_ptr, _) = run(p, Some(&const_ramp_spec(0.25)));
+    assert_eq!(a_ptr, a2_ptr, "same injected value must re-warm");
+    let (b_ptr, b_px) = run(p, Some(&const_ramp_spec(0.75)));
+    assert_ne!(a_ptr, b_ptr, "changed injected value must recompute");
+    assert!((b_px - 0.75).abs() < 1e-4, "{b_px}");
+  }
+
+  #[test]
+  fn module_controls_replay_on_warm_cache_hit() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let module_src =
+      "r = input_color_ramp(\"s\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nexport v = r(0.5)";
+    let entry = "import { v } from \"child\"\nv";
+
+    // Run 2 replays `t:child` from the module cache; its fold-time-registered control
+    // must be in the replay set, not just the fresh-eval side-effect diff.
+    for run in 0..2 {
+      geoscript_repl_reset(p);
+      geoscript_repl_set_module_sources(p, vec!["t:child".to_owned()], vec![module_src.to_owned()]);
+      geoscript_repl_parse_program(p, entry.to_owned(), None);
+      geoscript_repl_eval(p, Some("t:_root".to_owned()));
+      unsafe { (*p).last_result.as_ref().unwrap() };
+      assert_eq!(
+        geoscript_repl_get_rendered_control_count(p),
+        1,
+        "control missing on run {run}"
+      );
+    }
+  }
+
+  #[test]
+  fn module_cache_not_stale_on_ramp_control_edit() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let module_src = "r = input_color_ramp(\"s\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nexport v = r(0.5)";
+    let entry = "import { v } from \"child\"\nv";
+
+    let run = |p: *mut GeoscriptReplCtx, spec: &str| -> String {
+      geoscript_repl_reset(p);
+      geoscript_repl_set_module_sources(
+        p,
+        vec!["t:child".to_owned()],
+        vec![module_src.to_owned()],
+      );
+      geoscript_repl_set_gizmo_values(
+        p,
+        vec!["t:child".to_owned()],
+        vec!["s".to_owned()],
+        vec![ramp_wire(spec)],
+      );
+      geoscript_repl_parse_program(p, entry.to_owned(), None);
+      geoscript_repl_eval(p, Some("t:_root".to_owned()));
+      unsafe { (*p).last_result.as_ref().unwrap() };
+      geoscript_repl_get_last_value_json(p, 4)
+    };
+
+    let a = run(p, &const_ramp_spec(0.25));
+    assert!(a.contains("0.25"), "{a}");
+    // Same spec: the module may replay from cache, but the value must stay right.
+    let a2 = run(p, &const_ramp_spec(0.25));
+    assert!(a2.contains("0.25"), "{a2}");
+    // Edited spec: a stale sentinel-hashed gizmo read would replay 0.25 here.
+    let b = run(p, &const_ramp_spec(0.75));
+    assert!(b.contains("0.75"), "{b}");
+  }
+
+  #[test]
+  fn input_color_ramp_control_wire_roundtrip() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let src = "shade = input_color_ramp(\"shade\", default=[[0., vec3(0.)], [1., vec3(1.)]])\nshade(0.5)";
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, None);
+    unsafe { (*p).last_result.as_ref().unwrap() };
+
+    // Default flows out as an editable spec.
+    assert_eq!(geoscript_repl_get_rendered_control_count(p), 1);
+    let wire = geoscript_repl_get_rendered_control(p, 0);
+    assert!(wire.contains("ramp") && wire.contains("oklab"), "{wire}");
+
+    // Inject an edited spec (constant color, linear space for exactness) and re-eval:
+    // the injected value must override the default.
+    #[derive(SerJson)]
+    struct W {
+      kind: String,
+      str_value: String,
+    }
+    let spec = r#"{"scalar":false,"stops":[{"pos":0.0,"value":[0.25,0.5,0.75],"ease":"linear"},{"pos":1.0,"value":[0.25,0.5,0.75],"ease":"linear"}],"extend":"clamp","space":"linear"}"#;
+    geoscript_repl_set_gizmo_values(
+      p,
+      vec!["_root".to_owned()],
+      vec!["shade".to_owned()],
+      vec![W {
+        kind: "ramp".to_owned(),
+        str_value: spec.to_owned(),
+      }
+      .serialize_json()],
+    );
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, None);
+    unsafe { (*p).last_result.as_ref().unwrap() };
+    let json = geoscript_repl_get_last_value_json(p, 4);
+    assert!(
+      json.contains("0.25") && json.contains("0.5") && json.contains("0.75"),
+      "{json}"
+    );
+  }
+
+  #[test]
+  fn entry_const_fold_seeds_from_entry_tab_ambient() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+
+    // Conflicting single-scope fallback: if `current_module` weren't set before
+    // `optimize_ast`, the const-folder would seed `k = 1` from it and fold the wrong value.
+    geoscript_repl_set_ambient_scope_from_sources(p, vec!["k = 1".to_owned()], None).unwrap();
+    set_modules(p, &[]);
+    set_tab_ambients(p, &[("t", "k = 3")]);
+    let json = eval_last_value(p, "k * 2", "t:_root");
+    assert!(json.contains("6"), "{json}");
   }
 }

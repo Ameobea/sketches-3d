@@ -80,7 +80,7 @@ export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight | G
  *  carries the numeric payload (3 for `vec3`/`color`, 16 col-major for `transform`, 1 for
  *  `float`/`int`/`bool`, 3·N for `spline`); `str_value` carries the `string`/`select` payload. */
 export interface GizmoValueWire {
-  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select' | 'spline';
+  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select' | 'spline' | 'ramp';
   value?: number[];
   str_value?: string;
 }
@@ -90,12 +90,12 @@ export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>
 export interface RenderedControl {
   sourceModule: string | null;
   handleId: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp';
   /** Display label override; falls back to `handleId` when null. */
   label: string | null;
   /** Numeric payload (float/int: 1 num; color: 3 rgb; spline: 3·N points). Empty for select. */
   value: number[];
-  /** Chosen option for `select`; null otherwise. */
+  /** Chosen option for `select`; serialized `RampSpecJson` for `ramp`; null otherwise. */
   str_value: string | null;
   min: number | null;
   max: number | null;
@@ -158,6 +158,12 @@ export interface RunGeoscriptOptions {
    * clearing it via a prior `reset()`).
    */
   ambientSources?: string[];
+  /**
+   * Per-tab ambient scopes for multi-tab runs, active tab LAST (its ambient construction
+   * ends the RNG stream the entry program continues). Takes precedence over
+   * `ambientSources`; preludes are resolved wasm-side from `preludeKind`.
+   */
+  tabAmbients?: { tabId: string; preludeKind: TreeKind | ''; globalsSource: string }[];
   /**
    * Gizmo handle values to inject, keyed `moduleName → handleId`. Always sent before
    * eval (the runner defaults to `{}`) so a prior run's values can't leak.

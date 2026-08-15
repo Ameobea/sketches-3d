@@ -33,18 +33,38 @@ export interface CompiledTree {
 export const qualifyModuleName = (name: string, tabId?: string): string =>
   tabId ? `${tabId}:${name}` : name;
 
-export const compileTree = (tree: TreeDef, tabId?: string): CompiledTree => {
+/** All of a tree's modules including `_root` — the shape a *dependency* tab contributes
+ *  to a multi-tab run (its root is imported, not inlined). */
+export const compileTreeModules = (tree: TreeDef, tabId?: string): Record<string, string> => {
   const modules: Record<string, string> = {};
   for (const node of Object.values(tree.nodes)) {
     if (node.disabled) continue;
     modules[qualifyModuleName(node.name, tabId)] = buildModuleSource(node, tree, tabId);
   }
+  return modules;
+};
 
+export const compileTree = (tree: TreeDef, tabId?: string): CompiledTree => {
+  const modules = compileTreeModules(tree, tabId);
   const rootKey = qualifyModuleName(ROOT_NODE_NAME, tabId);
   const rootSource = modules[rootKey] ?? '';
   delete modules[rootKey];
 
   return { modules, rootSource };
+};
+
+/** Tab ids referenced by qualified imports (`from "<tabId>:…"`) in the tree's enabled node
+ *  sources + `_globals`. Regex-level scan: a false positive only widens the run set. */
+export const referencedTabIds = (tree: TreeDef): Set<string> => {
+  const out = new Set<string>();
+  const scan = (src: string) => {
+    for (const m of src.matchAll(/from\s+"([^":]+):/g)) out.add(m[1]);
+  };
+  for (const node of Object.values(tree.nodes)) {
+    if (!node.disabled) scan(node.source);
+  }
+  scan(tree.globalsSource);
+  return out;
 };
 
 /**
@@ -97,6 +117,8 @@ export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
       return { kind: 'select', str_value: v.value as string };
     case 'spline':
       return { kind: 'spline', value: (v.value as [number, number, number][]).flat() };
+    case 'ramp':
+      return { kind: 'ramp', str_value: JSON.stringify(v.value) };
   }
 };
 

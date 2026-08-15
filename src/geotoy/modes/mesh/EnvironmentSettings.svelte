@@ -74,7 +74,7 @@
         <TexturePicker
           selectedTextureId={equirect?.textureId}
           onselect={id => {
-            if (environment?.kind === 'equirect' && id !== null) {
+            if (environment?.kind === 'equirect' && typeof id === 'number') {
               environment = { ...environment, textureId: id };
             }
           }}

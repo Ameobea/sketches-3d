@@ -50,7 +50,7 @@
     "lezer-glsl": "^0.6.0",
     "manifold-3d": "^3.3.2",
     "n8ao": "Ameobea/n8ao#fix-halfres-background-black",
-    "postprocessing": "^6.38.3",
+    "postprocessing": "6.39.4",
     "rand-seed": "^2.1.7",
     "svelte": "^5.55.0",
     "three": "^0.165.0",

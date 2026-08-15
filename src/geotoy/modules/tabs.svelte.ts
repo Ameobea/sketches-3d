@@ -27,10 +27,9 @@ const STARTER_SOURCE: Record<TreeKind, string> = {
   mesh: '',
   texture: `n = 256
 
-diffuse = texture(n, n, |uv| {
-  v = 0.5 + 0.5 * fbm(octaves=5, frequency=3., pos=uv, tileable=true)
-  mix(v, vec3(0.25, 0.22, 0.19), vec3(0.78, 0.72, 0.63))
-}) | blur(0.8)
+shade = input_color_ramp("shade", default=[[-1., srgb(0x89847B)], [0.2, srgb(0xB59F82)], [1., srgb(0xE6DED1)]])
+
+diffuse = texture(n, n, |uv| fbm(octaves=5, frequency=3., pos=uv, tileable=true) | shade) | blur(0.8)
 
 diffuse | render_texture(name="diffuse", usage="albedo")
 `,

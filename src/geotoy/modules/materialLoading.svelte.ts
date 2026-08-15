@@ -73,7 +73,8 @@ export const referencedTextureIDsForDef = (mat: MaterialDef): TextureID[] => {
     p.clearcoatNormalMap,
     p.pomHeightMap,
   ]) {
-    if (handle != null) {
+    // Non-numeric handles (procedural refs) aren't library textures and have no metadata.
+    if (handle != null && Number.isFinite(Number(handle))) {
       textureIDs.push(Number(handle));
     }
   }

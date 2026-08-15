@@ -1,4 +1,5 @@
 import type { ControlPanelSetting } from 'src/viz/UI/ControlPanel';
+import type { RampSpecJson } from './geotoyAPIClient';
 import type { RenderedControl } from './runner/types';
 
 /** Panel key for a control site: handleIds are unique only per module, so join both.
@@ -26,6 +27,16 @@ export const splineControlPoints = (c: RenderedControl): [number, number, number
   return out;
 };
 
+/** A ramp control's reported spec, parsed. Null when the wire payload is absent/corrupt. */
+export const rampControlSpec = (c: RenderedControl): RampSpecJson | null => {
+  if (!c.str_value) return null;
+  try {
+    return JSON.parse(c.str_value) as RampSpecJson;
+  } catch {
+    return null;
+  }
+};
+
 /** The control's current value as reported by the last eval, in ControlPanel state form. */
 export const controlCurrentValue = (c: RenderedControl): any => {
   switch (c.kind) {
@@ -40,6 +51,8 @@ export const controlCurrentValue = (c: RenderedControl): any => {
       return c.str_value ?? c.options[0] ?? '';
     case 'spline':
       return splineControlPoints(c);
+    case 'ramp':
+      return rampControlSpec(c);
   }
 };
 
@@ -49,6 +62,8 @@ export const controlToSetting = (c: RenderedControl, key: string): ControlPanelS
   const label = c.label ?? c.handleId;
   switch (c.kind) {
     case 'spline':
+    case 'ramp':
+      // Edited in dedicated sections, not the generic panel.
       return null;
     case 'bool':
       return { type: 'checkbox', key, label };

@@ -75,6 +75,7 @@ pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
+pub(crate) mod ramp;
 pub(crate) mod texture;
 pub(crate) mod trace_path;
 
@@ -9923,6 +9924,18 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "is_manifold" => builtin_fn!(is_manifold, |def_ix, arg_refs, args, kwargs, _ctx| {
     is_manifold_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "ramp" => builtin_fn!(ramp, |def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::ramp_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "color_ramp" => builtin_fn!(color_ramp, |def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::color_ramp_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "remap" => builtin_fn!(remap, |def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::remap_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "srgb" => builtin_fn!(srgb, |def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::srgb_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "catmull_rom" => builtin_fn!(catmull_rom, |def_ix, arg_refs, args, kwargs, ctx| {
     catmull_rom::catmull_rom_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -10265,6 +10278,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "input_spline" => builtin_fn!(input_spline, |_def_ix, arg_refs, args, kwargs, ctx| {
     input_spline_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "input_ramp" => builtin_fn!(input_ramp, |_def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::input_ramp_impl(ctx, arg_refs, args, kwargs, false)
+  }),
+  "input_color_ramp" => builtin_fn!(input_color_ramp, |_def_ix, arg_refs, args, kwargs, ctx| {
+    ramp::input_ramp_impl(ctx, arg_refs, args, kwargs, true)
   }),
   "input_select" => builtin_fn!(input_select, |_def_ix, arg_refs, args, kwargs, ctx| {
     input_select_impl(ctx, arg_refs, args, kwargs)

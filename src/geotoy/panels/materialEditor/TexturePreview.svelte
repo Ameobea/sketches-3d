@@ -3,9 +3,12 @@
 
   let {
     texture = undefined,
+    proceduralLabel = undefined,
     onclick = () => {},
   }: {
     texture?: TextureDescriptor;
+    /** `tab:output` of a procedural ref; rendered as a labeled chip (no thumbnail exists). */
+    proceduralLabel?: string;
     onclick?: () => void;
   } = $props();
 </script>
@@ -13,6 +16,8 @@
 <button class="texture-preview" {onclick}>
   {#if texture}
     <img src={texture.thumbnailUrl} alt={texture.name} crossorigin="anonymous" title={texture.name} />
+  {:else if proceduralLabel}
+    <div class="procedural" title={proceduralLabel}>fx</div>
   {:else}
     <div class="none">-</div>
   {/if}
@@ -41,5 +46,10 @@
   .none {
     font-size: 20px;
     color: #888;
+  }
+  .procedural {
+    font-size: 13px;
+    font-style: italic;
+    color: #0ff;
   }
 </style>

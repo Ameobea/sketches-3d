@@ -79,6 +79,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     renderMode = false,
     modules,
     ambientSources,
+    tabAmbients,
     gizmoValues,
     rootModuleName,
   } = opts;
@@ -90,7 +91,28 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     await repl.setModuleSources(ctxPtr, modules);
   }
 
-  if (ambientSources !== undefined) {
+  if (tabAmbients !== undefined) {
+    try {
+      await repl.setTabAmbientScopes(
+        ctxPtr,
+        tabAmbients.map(t => t.tabId),
+        tabAmbients.map(t => t.preludeKind),
+        tabAmbients.map(t => t.globalsSource)
+      );
+    } catch (err) {
+      const errStr = err instanceof Error ? err.message : String(err);
+      if (await tryInitAsyncDepFromErr(errStr, repl)) {
+        return runGeoscript(opts);
+      }
+      return {
+        objects: [],
+        stats: buildEmptyRunStats(),
+        error: `Error building ambient scope: ${err}`,
+        gizmos: [],
+        controls: [],
+      };
+    }
+  } else if (ambientSources !== undefined) {
     try {
       await repl.setAmbientScope(ctxPtr, ambientSources, rootModuleName);
     } catch (err) {

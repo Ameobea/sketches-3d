@@ -54,6 +54,7 @@ use crate::{
 pub mod ast;
 pub mod autodiff;
 pub mod builtins;
+pub mod color;
 mod guards;
 pub mod lights;
 pub mod materials;
@@ -70,6 +71,7 @@ pub mod value_json;
 
 pub use self::ast::{traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
+pub use self::builtins::ramp::{ramp_control_value_json, ramp_value_from_wire_json};
 
 pub const PRELUDE: &str = include_str!("prelude.geo");
 
@@ -354,6 +356,14 @@ pub trait DynamicCallable {
   /// Despite being called a hint, this _MUST_ be correct if provided.  This is used for type
   /// inference and optimization and will cause big problems if incorrectly specified.
   fn get_return_type_hint(&self) -> Option<ArgType>;
+
+  /// Stable content hash for cache keys (const-eval, gizmo-value validation). `None` — the
+  /// default — falls back to identity (pointer) hashing, which is only cross-run-stable for
+  /// values minted by cached folds; implementations MUST write nothing before returning None.
+  fn content_hash(&self, hasher: &mut dyn std::hash::Hasher) -> Option<()> {
+    let _ = hasher;
+    None
+  }
 }
 
 pub enum Callable {
@@ -457,6 +467,8 @@ impl Callable {
             | "input_color"
             | "input_select"
             | "input_spline"
+            | "input_ramp"
+            | "input_color_ramp"
         )
       }
       Callable::PartiallyAppliedFn(paf) => {
@@ -1777,6 +1789,7 @@ pub enum ControlKind {
   Color,
   Select,
   Spline,
+  Ramp,
 }
 
 /// An `input_*(...)` value site reported to the host so it can render a control-panel
@@ -2118,6 +2131,13 @@ pub struct ModuleExportsCacheEntry {
 
 const MODULE_CACHE_MAX_ENTRIES: usize = 200;
 
+pub struct TabAmbient {
+  pub scope: Rc<Scope>,
+  /// RNG state after this tab's ambient sources evaluated; the start-of-stream for the
+  /// tab's root module.
+  pub rng_after: Pcg32,
+}
+
 pub struct EvalCtx {
   pub globals: Scope,
   pub interned_symbols: SymbolInterner,
@@ -2161,6 +2181,14 @@ pub struct EvalCtx {
   /// Built externally (typically from prelude + globals sources) and installed
   /// via `set_ambient_scope`.
   pub ambient_scope: RefCell<Option<Rc<Scope>>>,
+  /// Per-tab ambient scopes for multi-tab hosts, keyed by the `<tabId>:` module-key
+  /// prefix. Consulted before the single `ambient_scope` fallback; also carries the
+  /// RNG state each tab's ambient construction ended on, which tab-root module
+  /// evaluation resets to (per-tab RNG streams).
+  pub ambient_scopes: RefCell<FxHashMap<String, TabAmbient>>,
+  /// Per-tab ambient content hashes from the previous install; a changed hash evicts
+  /// that tab's cached modules (plus transitive importers). Survives `reset`.
+  pub tab_ambient_hashes: RefCell<FxHashMap<String, u64>>,
   /// Set of module names currently being resolved. Used to detect circular imports.
   pub modules_in_flight: RefCell<FxHashSet<String>>,
   /// Name of the module whose body is currently being evaluated, used to tag each
@@ -2243,6 +2271,8 @@ impl Default for EvalCtx {
       current_module_exports: RefCell::new(None),
       current_module_imports: RefCell::new(None),
       ambient_scope: RefCell::new(None),
+      ambient_scopes: RefCell::new(FxHashMap::default()),
+      tab_ambient_hashes: RefCell::new(FxHashMap::default()),
       modules_in_flight: RefCell::new(FxHashSet::default()),
       current_module: RefCell::new(None),
       replayed_this_run: RefCell::new(FxHashSet::default()),
@@ -3491,10 +3521,24 @@ impl EvalCtx {
   /// Returns the base scope for a fresh module evaluation: a clone of the ambient
   /// scope if one is installed, otherwise the default `pi`/`tau`-only globals.
   pub fn fresh_module_scope(&self) -> Scope {
-    match self.ambient_scope.borrow().as_ref() {
-      Some(scope) => (**scope).clone(),
+    match self.ambient_scope_for_current() {
+      Some(scope) => (*scope).clone(),
       None => Scope::default_globals(&self.interned_symbols),
     }
+  }
+
+  /// The ambient scope for the currently-evaluating module: the per-tab scope matching
+  /// `current_module`'s `<tabId>:` prefix when registered, else the single host-wide scope.
+  pub fn ambient_scope_for_current(&self) -> Option<Rc<Scope>> {
+    {
+      let cur = self.current_module.borrow();
+      if let Some((prefix, _)) = cur.as_deref().and_then(|m| m.split_once(':')) {
+        if let Some(amb) = self.ambient_scopes.borrow().get(prefix) {
+          return Some(Rc::clone(&amb.scope));
+        }
+      }
+    }
+    self.ambient_scope.borrow().as_ref().map(Rc::clone)
   }
 
   pub fn set_ambient_scope(&self, scope: Scope) {
@@ -3503,6 +3547,65 @@ impl EvalCtx {
 
   pub fn clear_ambient_scope(&self) {
     *self.ambient_scope.borrow_mut() = None;
+  }
+
+  /// Records the tab's ambient scope along with the RNG state its construction ended on.
+  pub fn install_tab_ambient(&self, tab_id: &str, scope: Scope) {
+    self.ambient_scopes.borrow_mut().insert(
+      tab_id.to_owned(),
+      TabAmbient {
+        scope: Rc::new(scope),
+        rng_after: self.rng_state(),
+      },
+    );
+  }
+
+  pub fn clear_tab_ambient_scopes(&self) {
+    self.ambient_scopes.borrow_mut().clear();
+  }
+
+  /// Returns true when `hash` differs from the tab's previously-noted ambient hash.
+  pub fn note_tab_ambient_hash(&self, tab_id: &str, hash: u64) -> bool {
+    self
+      .tab_ambient_hashes
+      .borrow_mut()
+      .insert(tab_id.to_owned(), hash)
+      != Some(hash)
+  }
+
+  /// Evicts a tab's cached modules plus (transitively) every cached importer of them:
+  /// an importer's exports captured values from the evicted modules, and source-hash
+  /// validation can't see an ambient-driven change.
+  pub fn evict_modules_with_prefix(&self, tab_id: &str) {
+    let prefix = format!("{tab_id}:");
+    let mut exports = self.module_exports.borrow_mut();
+    let mut removed: Vec<String> = exports
+      .keys()
+      .filter(|k| k.starts_with(&prefix))
+      .cloned()
+      .collect();
+    for k in &removed {
+      exports.remove(k);
+    }
+    while !removed.is_empty() {
+      let doomed: Vec<String> = exports
+        .iter()
+        .filter(|(_, e)| {
+          e.direct_imports
+            .iter()
+            .any(|(d, _)| removed.iter().any(|r| r == d))
+        })
+        .map(|(k, _)| k.clone())
+        .collect();
+      for k in &doomed {
+        exports.remove(k);
+      }
+      removed = doomed;
+    }
+    self
+      .module_exports_lru
+      .borrow_mut()
+      .retain(|n| exports.contains_key(n));
   }
 
   pub fn invalidate_module_cache(&self) {
@@ -3601,6 +3704,16 @@ impl EvalCtx {
             }
             _ => hasher.write_u8(0),
           }
+        }
+      }
+      // Injected ramps: by spec content — the host rebuilds the value (fresh Rc) every
+      // run, so anything identity-based here would either always-invalidate or (via the
+      // constant sentinel below) NEVER invalidate and replay stale modules on ramp edits.
+      Some(Value::Callable(cb)) => {
+        hasher.write_u8(8);
+        match &**cb {
+          Callable::Dynamic { inner, .. } if inner.content_hash(&mut hasher).is_some() => {}
+          _ => hasher.write_u8(0),
         }
       }
       _ => hasher.write_u8(0),
@@ -3770,6 +3883,29 @@ impl EvalCtx {
     // is why the recursive call in the cache-validation loop needs no further qualification.
     let module_name: &str = &qualified;
 
+    // Tab-root modules run on their own tab's RNG stream (the state its ambient
+    // construction ended on) and restore the importer's stream afterward, so a tab's
+    // draws are independent of which other tabs the run happens to include.
+    let saved_rng = module_name.strip_suffix(":_root").map(|prefix| {
+      let saved = self.rng_state();
+      match self.ambient_scopes.borrow().get(prefix) {
+        Some(amb) => self.set_rng_state(amb.rng_after.clone()),
+        None => self.reset_rng_to_default(),
+      }
+      saved
+    });
+    let result = self.resolve_qualified_module(module_name, as_written);
+    if let Some(saved) = saved_rng {
+      self.set_rng_state(saved);
+    }
+    result
+  }
+
+  fn resolve_qualified_module(
+    &self,
+    module_name: &str,
+    as_written: &str,
+  ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
     // Already replayed this run — skip side effects, just return exports.
     if self.replayed_this_run.borrow().contains(module_name) {
       if let Some(entry) = self.module_exports.borrow().get(module_name) {
@@ -3970,6 +4106,18 @@ impl EvalCtx {
     let rng_at_start = self.rng_state();
     let settings_at_start = self.ambient_settings();
 
+    // Snapshot side-effect buffers BEFORE optimize: fold-time-executed `input_*`
+    // statements push their controls during `optimize_ast`, and those must land in the
+    // cache entry's replay set or warm hits would replay zero controls.
+    let renders_before = self.rendered_meshes.len();
+    let lights_before = self.rendered_lights.len();
+    let paths_before = self.rendered_paths.len();
+    let textures_before = self.rendered_textures.len();
+    let gizmos_before = self.rendered_gizmos.len();
+    let controls_before = self.rendered_controls.len();
+    #[cfg(target_arch = "wasm32")]
+    let async_before = get_async_dep_bits();
+
     // Module sources do not include the prelude; suppress any inherited offset around the parse.
     let prev_offset = self.source_map.borrow().prelude_line_count;
     self.source_map.borrow_mut().prelude_line_count = 0;
@@ -3981,19 +4129,9 @@ impl EvalCtx {
     optimizer::optimize_ast(self, &mut ast)
       .map_err(|err| err.wrap(&format!("Error optimizing module \"{as_written}\"")))?;
 
-    // Snapshot side-effect buffers; diffs become the cache entry's replay set.
-    let renders_before = self.rendered_meshes.len();
-    let lights_before = self.rendered_lights.len();
-    let paths_before = self.rendered_paths.len();
-    let textures_before = self.rendered_textures.len();
-    let gizmos_before = self.rendered_gizmos.len();
-    let controls_before = self.rendered_controls.len();
-    #[cfg(target_arch = "wasm32")]
-    let async_before = get_async_dep_bits();
-
     // Module bodies materialize their captures straight from the ambient scope (or the
     // default globals); their own bindings are discarded — exports were recorded by name.
-    let ambient = self.ambient_scope.borrow().as_ref().map(Rc::clone);
+    let ambient = self.ambient_scope_for_current();
     let default_base;
     let base = match &ambient {
       Some(scope) => &**scope,
@@ -4359,7 +4497,7 @@ pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorSt
   // With an ambient scope installed the root program's bindings are discarded so they don't
   // leak into the long-lived `globals`; otherwise they flush into `globals` so top-level
   // bindings persist for later `get_global` reads and follow-up programs on the same ctx.
-  let ambient = ctx.ambient_scope.borrow().as_ref().map(Rc::clone);
+  let ambient = ctx.ambient_scope_for_current();
   match ambient {
     Some(ambient) => eval_resolved_program(ctx, ast, &ambient).map(|_| ()),
     None => eval_program_into_scope(ctx, ast, &ctx.globals).map(|_| ()),

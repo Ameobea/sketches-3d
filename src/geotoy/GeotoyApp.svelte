@@ -34,10 +34,18 @@
   import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/geotoy/modules/keymapTable';
   import {
     compileTree,
+    compileTreeModules,
     buildInjectedValues,
     buildModuleNameToNodeId,
     qualifyModuleName,
+    referencedTabIds,
   } from 'src/geoscript/treeCodegen';
+  import {
+    proceduralRefTabIds,
+    pruneProceduralTextures,
+    scanProceduralOutputs,
+    uploadProceduralTextures,
+  } from 'src/geotoy/modules/proceduralTextures';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
   import { GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
   import { GeotoyTabs } from 'src/geotoy/modules/tabs.svelte';
@@ -51,7 +59,7 @@
     disposeRunObjects,
     instancePathKey,
   } from 'src/geoscript/runner/geoscriptRunner';
-  import type { RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
+  import type { GeneratedTexture, RenderedGizmo, RenderedControl } from 'src/geoscript/runner/types';
   import { GizmoController } from 'src/geotoy/modes/mesh/gizmoController.svelte';
   import { SplineController } from 'src/geotoy/modes/mesh/splineController.svelte';
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
@@ -546,6 +554,7 @@
     setLastRunWasSuccessful: persistence.setLastRunWasSuccessful,
     buildRunInput: () => {
       const defs = $state.snapshot(persistence.materialDefinitions.materials) as Record<string, MaterialDef>;
+      pruneProceduralTextures(defs);
       // Seed texture fetches before the sync below: a run triggered in the same task as a
       // def swap (clear-local-changes) builds before the fetch effect flushes, and a build
       // that misses the placeholders silently drops its maps.
@@ -561,17 +570,72 @@
       const tree = treeState.serialize();
       const tabId = tabs.active.id;
       const runDocEpoch = docEpoch;
+
+      const tabById = new Map(tabs.tabs.map(t => [t.id, t]));
+      const treeCache = new Map<string, TreeDef>([[tabId, tree]]);
+      const treeFor = (id: string): TreeDef => {
+        let t = treeCache.get(id);
+        if (!t) {
+          t = tabById.get(id)!.treeState.serialize();
+          treeCache.set(id, t);
+        }
+        return t;
+      };
+
+      // Run set: active tab, plus texture tabs referenced by procedural material textures
+      // (their rendered outputs feed the mesh scene → prepended root imports), plus tabs
+      // referenced by qualified imports anywhere in the set (transitively; the user's own
+      // import drives their evaluation, so no prepend).
+      const runSet: string[] = [tabId];
+      const renderDeps: string[] = [];
+      if (tabs.active.kind === 'mesh') {
+        for (const dep of proceduralRefTabIds(defs)) {
+          if (tabById.has(dep) && dep !== tabId) {
+            runSet.push(dep);
+            renderDeps.push(dep);
+          }
+        }
+      }
+      for (let i = 0; i < runSet.length; i += 1) {
+        for (const ref of referencedTabIds(treeFor(runSet[i]))) {
+          if (tabById.has(ref) && !runSet.includes(ref)) runSet.push(ref);
+        }
+      }
+
       const compiled = compileTree(tree, tabId);
+      const modules = compiled.modules;
+      const moduleNameToNodeId = buildModuleNameToNodeId(tree, tabId);
+      const gizmoValues = buildInjectedValues(tree, tabId);
+      for (const depId of runSet.slice(1)) {
+        const depTree = treeFor(depId);
+        Object.assign(modules, compileTreeModules(depTree, depId));
+        Object.assign(moduleNameToNodeId, buildModuleNameToNodeId(depTree, depId));
+        Object.assign(gizmoValues, buildInjectedValues(depTree, depId));
+      }
+      const code =
+        renderDeps.map(id => `import { } from "${qualifyModuleName(ROOT_NODE_NAME, id)}"\n`).join('') +
+        compiled.rootSource;
+
+      // Active tab last: its ambient construction ends the RNG stream the entry continues.
+      const tabAmbients = [...runSet.slice(1), tabId].map(id => {
+        const t = tabById.get(id)!;
+        return {
+          tabId: id,
+          preludeKind: t.preludeEjected ? ('' as const) : t.kind,
+          globalsSource: treeFor(id).globalsSource,
+        };
+      });
+
       return {
-        code: compiled.rootSource,
-        modules: compiled.modules,
-        extraAmbientSources: tree.globalsSource.trim().length > 0 ? [tree.globalsSource] : [],
+        code,
+        modules,
+        tabAmbients,
         preludeKind: tabs.active.preludeEjected ? undefined : tabs.active.kind,
         materials: matsByName,
         materialOverride: meshScene.materialOverride,
         renderMode: userData?.renderMode ?? false,
-        gizmoValues: buildInjectedValues(tree, tabId),
-        moduleNameToNodeId: buildModuleNameToNodeId(tree, tabId),
+        gizmoValues,
+        moduleNameToNodeId,
         rootModuleName: qualifyModuleName(ROOT_NODE_NAME, tabId),
         tree,
         tabId,
@@ -588,6 +652,10 @@
         disposeRunObjects(result);
         return false;
       }
+      // Every run's texture outputs land in any material-referenced placeholder textures —
+      // including texture-mode runs, which is what makes editing a texture tab live-update
+      // meshes that consume it.
+      uploadProceduralTextures(result.objects.filter((o): o is GeneratedTexture => o.type === 'texture'));
       lastRun = { tree, gizmos: result.gizmos, controls: result.controls, moduleNameToNodeId };
       mode.consume(result, tree, moduleNameToNodeId);
     },
@@ -1015,7 +1083,11 @@
 
 {#if hasAnyControls && !userData?.renderMode}
   <ControlsPanel
-    controls={lastRun?.controls ?? []}
+    controls={(lastRun?.controls ?? []).filter(
+      // Dependency-tab controls can't route edits to their owning tree yet — showing them
+      // would silently no-op (and falsely dirty the doc). Cross-tab editing is phase-4 work.
+      c => !c.sourceModule || c.sourceModule.split(':')[0] === tabs.active.id
+    )}
     {treeState}
     moduleNameToNodeId={lastRun?.moduleNameToNodeId ?? {}}
     onEdit={scheduleControlRun}
@@ -1031,6 +1103,9 @@
   repl={execution.repl}
   ctxPtr={execution.ctxPtr}
   me={userData?.me}
+  proceduralTextureOptions={scanProceduralOutputs(
+    tabs.tabs.filter(t => t.kind === 'texture').map(t => ({ id: t.id, tree: t.treeState.state.tree }))
+  )}
 />
 
 <EnvironmentSettings

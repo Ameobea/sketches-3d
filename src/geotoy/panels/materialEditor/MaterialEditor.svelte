@@ -20,6 +20,7 @@
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
   import type { User } from 'src/geoscript/geotoyAPIClient';
+  import { isProceduralHandle, type ProceduralTextureOption } from 'src/geotoy/modules/proceduralTextures';
   import { logGeotoyEvent } from 'src/analytics';
 
   let {
@@ -29,6 +30,7 @@
     repl,
     ctxPtr,
     me,
+    proceduralTextureOptions = [],
   }: {
     isOpen: boolean;
     materials: MaterialDefinitions;
@@ -36,6 +38,7 @@
     repl: Comlink.Remote<GeoscriptWorkerMethods>;
     ctxPtr: number | null;
     me: User | undefined | null;
+    proceduralTextureOptions?: ProceduralTextureOption[];
   } = $props();
 
   let dialogElement = $state<HTMLDivElement | null>(null);
@@ -203,10 +206,22 @@
             {@const mat = materials.materials[selectedMaterialID] as CustomShaderMatDef}
             {@const field = view.field}
             <TexturePicker
-              selectedTextureId={mat.props?.[field] != null ? Number(mat.props[field]) : undefined}
+              selectedTextureId={mat.props?.[field] != null
+                ? isProceduralHandle(mat.props[field])
+                  ? mat.props[field]
+                  : Number(mat.props[field])
+                : undefined}
               onselect={newTextureID => {
+                const prev = mat.props?.[field];
                 (mat.props ??= {})[field] = newTextureID != null ? String(newTextureID) : undefined;
+                // A procedural pick changes the run set — the texture tab's outputs only
+                // reach the placeholder once a run imports it.
+                const cur = mat.props[field];
+                if ((cur && isProceduralHandle(cur)) || (prev && isProceduralHandle(prev))) {
+                  void rerun(false);
+                }
               }}
+              proceduralOptions={proceduralTextureOptions}
               onclose={() => {
                 view = { type: 'properties' };
               }}

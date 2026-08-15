@@ -923,6 +923,14 @@ fn hash_callable(
       }
       Some(())
     }
+    // Identity is only cross-run-stable for values minted by cached folds; dynamics with
+    // a content hash (ramps) key stably even when rebuilt fresh each run (injected inputs).
+    Callable::Dynamic { inner, .. } => {
+      if inner.content_hash(hasher).is_none() {
+        (Rc::as_ptr(callable) as usize).hash(hasher);
+      }
+      Some(())
+    }
     _ => {
       (Rc::as_ptr(callable) as usize).hash(hasher);
       Some(())
@@ -2623,13 +2631,99 @@ fn fold_exec_ambient_setter_stmt(
   Ok(true)
 }
 
+/// `input_*` builtins whose values are safe to bake at fold time: primitives + ramps
+/// (content-hashable, so downstream cache keys incorporate the injected value stably).
+/// `input_spline` stays runtime — injected sequences hash by identity, and baking them
+/// would churn every dependent cache key (and grow the cache) on each run.
+const FOLDABLE_INPUT_NAMES: &[&str] = &[
+  "input_float",
+  "input_int",
+  "input_bool",
+  "input_color",
+  "input_select",
+  "input_ramp",
+  "input_color_ramp",
+];
+
+fn foldable_input_callable(
+  ctx: &EvalCtx,
+  local_scope: &ScopeTracker,
+  target: &FunctionCallTarget,
+) -> Option<Rc<Callable>> {
+  let builtin_name = |cb: &Callable| match cb {
+    Callable::Builtin { fn_entry_ix, .. } => Some(fn_sigs().entries[*fn_entry_ix].0),
+    _ => None,
+  };
+  match target {
+    FunctionCallTarget::Literal(cb) => builtin_name(cb)
+      .filter(|n| FOLDABLE_INPUT_NAMES.contains(n))
+      .map(|_| Rc::clone(cb)),
+    FunctionCallTarget::Name(sym) => match local_scope.get(*sym) {
+      Some(TrackedValueRef::Const(Value::Callable(cb))) => builtin_name(cb)
+        .filter(|n| FOLDABLE_INPUT_NAMES.contains(n))
+        .map(|_| Rc::clone(cb)),
+      Some(_) => None,
+      None => ctx.with_resolved_sym(*sym, |name| {
+        let name = FUNCTION_ALIASES.get(name).copied().unwrap_or(name);
+        if !FOLDABLE_INPUT_NAMES.contains(&name) {
+          return None;
+        }
+        Some(Rc::new(Callable::Builtin {
+          fn_entry_ix: get_builtin_fn_sig_entry_ix(name)?,
+          fn_impl: resolve_builtin_impl(name),
+          pre_resolved_signature: None,
+        }))
+      }),
+    },
+  }
+}
+
+/// Executes a top-level `input_*` call at fold time (mirroring the ambient-setter pass) and
+/// replaces it with its value, so the binding folds const and everything downstream can
+/// cache. The control side effect still fires exactly once per run — optimize runs after
+/// the per-run reset and before eval — and the injected-value read keeps the baked value
+/// per-run correct.
+fn fold_exec_input_stmt(
+  ctx: &EvalCtx,
+  local_scope: &mut ScopeTracker,
+  expr: &mut Expr,
+) -> Result<bool, ErrorStack> {
+  let Expr::Call { call, loc } = expr else {
+    return Ok(false);
+  };
+  let Some(cb) = foldable_input_callable(ctx, local_scope, &call.target) else {
+    return Ok(false);
+  };
+  for arg in call.args.iter_mut() {
+    optimize_expr(ctx, local_scope, arg, true)?;
+  }
+  for kwarg in call.kwargs.values_mut() {
+    optimize_expr(ctx, local_scope, kwarg, true)?;
+  }
+  let arg_vals: Option<Vec<Value>> = call.args.iter().map(|a| a.as_literal().cloned()).collect();
+  let kwarg_vals: Option<FxHashMap<Sym, Value>> = call
+    .kwargs
+    .iter()
+    .map(|(k, v)| v.as_literal().cloned().map(|v| (*k, v)))
+    .collect();
+  let (Some(arg_vals), Some(kwarg_vals)) = (arg_vals, kwarg_vals) else {
+    return Ok(false);
+  };
+  let value = ctx.invoke_callable(&cb, &arg_vals, &kwarg_vals).map_err(|err| {
+    let (line, col) = ctx.resolve_loc(*loc);
+    err.with_loc(line, col)
+  })?;
+  *expr = Expr::Literal { value, loc: *loc };
+  Ok(true)
+}
+
 fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
   let _memo_scope = ClosureEffectMemoScope::enter();
   prescan_ambient_state(ctx, ast);
 
   let mut local_scope = ScopeTracker::default();
   // Seed the tracker with the ambient scope's bindings
-  if let Some(ambient) = ctx.ambient_scope.borrow().as_ref() {
+  if let Some(ambient) = ctx.ambient_scope_for_current() {
     for (sym, val) in ambient.own_bindings() {
       local_scope
         .vars
@@ -2638,13 +2732,22 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
     }
   }
   for stmt in &mut ast.statements {
-    if let TopLevelStatement::Statement(Statement::Expr(expr)) = stmt {
-      if fold_exec_ambient_setter_stmt(ctx, &mut local_scope, expr)? {
-        continue;
+    match stmt {
+      TopLevelStatement::Statement(Statement::Expr(expr)) => {
+        if fold_exec_ambient_setter_stmt(ctx, &mut local_scope, expr)? {
+          continue;
+        }
+        fold_exec_input_stmt(ctx, &mut local_scope, expr)?;
       }
-    } else if matches!(stmt, TopLevelStatement::Import { .. }) {
-      // The module body may mutate thresholds when it evaluates at import time.
-      ctx.fold_settings_unknown.set(true);
+      TopLevelStatement::Statement(Statement::Assignment { expr, .. })
+      | TopLevelStatement::Export { expr, .. } => {
+        fold_exec_input_stmt(ctx, &mut local_scope, expr)?;
+      }
+      TopLevelStatement::Import { .. } => {
+        // The module body may mutate thresholds when it evaluates at import time.
+        ctx.fold_settings_unknown.set(true);
+      }
+      _ => {}
     }
     optimize_top_level_statement(ctx, &mut local_scope, stmt, true)?;
   }

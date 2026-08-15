@@ -4702,6 +4702,36 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "input_ramp" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable), default_value: DefaultValue::Required, description: "A `ramp` stop list (any of its forms) or a built `ramp(...)` value. Named easings only — closures can't be edited in the panel." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "An interactively-editable scalar transfer function; returns the same callable `|x: float|: float` that `ramp` builds. Edited as a curve/stop list in the controls panel.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "input_color_ramp" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef { name: "name", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Required, description: "Stable control id, scoped to the node. Also the default panel label." },
+          ArgDef { name: "default", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable), default_value: DefaultValue::Required, description: "A `color_ramp` stop list (vec3 linear-RGB values; any of its forms) or a built `color_ramp(...)` value. Stop-list defaults get `color_ramp`'s defaults (oklab, clamp). Named easings only." },
+          ArgDef { name: "label", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::String), default_value: DefaultValue::Optional(|| Value::Nil), description: "Display label override; defaults to `name`." },
+        ],
+        description: "An interactively-editable color gradient; returns the same callable `|x: float|: vec3` that `color_ramp` builds. Edited via a gradient bar with draggable stops in the controls panel.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
   "render_path" => FnDef {
     module: "core",
     examples: &[],
@@ -6294,6 +6324,193 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Linearly interpolates between two Vec2 values `a` and `b` by a factor `t`",
         return_type: &[ArgType::Vec2],
+      },
+    ],
+  },
+  "ramp" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "stops",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Stop list. Positioned form: `[[pos, value], …]` / `[[pos, value, ease], …]` / `[{pos, value, ease?}, …]` with positions in raw input units. Bare form: `[value, …]` spaced evenly over `domain`. Values must be all numbers or all vec3s (interpolated componentwise). Duplicate positions make a hard edge."
+          },
+          ArgDef {
+            name: "domain",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Vec2),
+            default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(0., 1.))),
+            description: "`[lo, hi]` placement range used only by the bare-values stop form."
+          },
+          ArgDef {
+            name: "extend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("clamp".to_owned())),
+            description: "Out-of-range behavior: \"clamp\" | \"repeat\" | \"mirror\" (period = stop extent)."
+          },
+          ArgDef {
+            name: "ease",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Callable),
+            default_value: DefaultValue::Optional(|| Value::String("linear".to_owned())),
+            description: "Default segment easing: \"linear\" | \"smooth\" | \"smoother\" | \"step\", or a `|t|: float` callable evaluated at construct time. A stop's own `ease` overrides it for the segment leaving that stop."
+          },
+        ],
+        description: "Builds a multi-stop transfer function and returns it as a callable `|x: float|: float|vec3`. Native easings evaluate segments exactly; closure easings bake into a 256-entry LUT at construct time (documented quantization). Common use: mapping noise into other ranges, e.g. `fbm(pos=p) | ramp([[-1., 0.], [1., 1.]])`.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "color_ramp" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "stops",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Stop list as in `ramp`; values must be vec3 colors in linear RGB (use `srgb(0xRRGGBB)` to bring in design-tool hex values)."
+          },
+          ArgDef {
+            name: "domain",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Vec2),
+            default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(0., 1.))),
+            description: "`[lo, hi]` placement range used only by the bare-values stop form."
+          },
+          ArgDef {
+            name: "extend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("clamp".to_owned())),
+            description: "Out-of-range behavior: \"clamp\" | \"repeat\" | \"mirror\" (period = stop extent)."
+          },
+          ArgDef {
+            name: "ease",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Callable),
+            default_value: DefaultValue::Optional(|| Value::String("linear".to_owned())),
+            description: "Default segment easing: \"linear\" | \"smooth\" | \"smoother\" | \"step\", or a `|t|: float` callable evaluated at construct time."
+          },
+          ArgDef {
+            name: "space",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("oklab".to_owned())),
+            description: "Interpolation space: \"oklab\" (perceptually even; default) | \"oklch\" (hue as shorter-arc angle, stays saturated) | \"linear\" (raw RGB / light mixing) | \"srgb\" (legacy gamma-space, for matching design-tool gradients)."
+          },
+        ],
+        description: "Color-specialized `ramp`: builds a gradient over vec3 stops (linear RGB in and out) and returns a callable `|x: float|: vec3`. Non-linear-space mixing bakes into a 256-entry LUT at construct time.",
+        return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "remap" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "in_lo",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Input range start."
+          },
+          ArgDef {
+            name: "in_hi",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Input range end."
+          },
+          ArgDef {
+            name: "out_lo",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Output range start."
+          },
+          ArgDef {
+            name: "out_hi",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Output range end."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Value to remap (componentwise for vec3). Last so pipelines partially apply: `v | remap(-1., 1., 0., 1.)`."
+          },
+          ArgDef {
+            name: "clamp",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "Clamp the normalized position to [0, 1] before mapping (no extrapolation)."
+          },
+        ],
+        description: "Linearly maps `x` from `[in_lo, in_hi]` to `[out_lo, out_hi]`, extrapolating unless `clamp=true`.",
+        return_type: &[ArgType::Float, ArgType::Vec3],
+      },
+    ],
+  },
+  "srgb" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "hex",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "sRGB-encoded hex color like `0xC97B4A`."
+          },
+        ],
+        description: "Decodes an sRGB-encoded hex color to a linear-RGB vec3 — the correct way to bring design-tool colors into geoscript's linear color world.",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "r",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "sRGB-encoded red in [0, 1]."
+          },
+          ArgDef {
+            name: "g",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "sRGB-encoded green in [0, 1]."
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "sRGB-encoded blue in [0, 1]."
+          },
+        ],
+        description: "Decodes sRGB-encoded channel values (0–1) to a linear-RGB vec3.",
+        return_type: &[ArgType::Vec3],
       },
     ],
   },
