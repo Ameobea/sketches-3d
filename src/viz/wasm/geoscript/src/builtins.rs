@@ -3165,6 +3165,35 @@ fn embed_path_impl(
         out
       };
 
+      // A crease-pinned vertex sits (within bisection residue) ON a switching zero, where
+      // branch-select derivatives and jump fields evaluate on float noise.  `crease_dirs` gives
+      // unit ∇g directions for each guard pinned at `uv`; consumers sample at `uv ± crease_step·d`
+      // and average, replacing the arbitrary branch pick with the two-sided mean.  The step clears
+      // the residue (f32-ulp scale) and finite-diff frame windows while staying under feature size.
+      let crease_step = fd_step * 2.;
+      let crease_dirs = |uv: Vec2, bits: u16| -> Vec<Vec2> {
+        let g_at = |p: Vec2, k: usize| eval_guards(p).and_then(|v| v.get(k).copied());
+        let mut dirs = Vec::new();
+        for k in 0..16 {
+          if bits & (1 << k) == 0 {
+            continue;
+          }
+          let (Some(xp), Some(xm), Some(yp), Some(ym)) = (
+            g_at(uv + Vec2::new(crease_step, 0.), k),
+            g_at(uv - Vec2::new(crease_step, 0.), k),
+            g_at(uv + Vec2::new(0., crease_step), k),
+            g_at(uv - Vec2::new(0., crease_step), k),
+          ) else {
+            continue;
+          };
+          let g = Vec2::new(xp - xm, yp - ym);
+          if g.norm() > 1e-9 {
+            dirs.push(g / g.norm());
+          }
+        }
+        dirs
+      };
+
       // §12.2b per-cap independent interiors — engaged exactly when the offset cap can diverge
       // from the top cap (variable thickness on an analytic frame).  `Ok(None)` (touching loops)
       // falls through to the shared-CDT path below.
@@ -3209,6 +3238,30 @@ fn embed_path_impl(
             .iter()
             .enumerate()
             .all(|(j, vk)| vkey_ix(vk) as usize == n_top + j + 1));
+          let top_bits = crease_bits_map(&top_uvs, &top_crease);
+          let off_bits = crease_bits_map(&off_uvs, &off_crease);
+
+          // Ψ = φ + s·t·N jumps across φ-kink / thickness-jump zeros, so a crease-pinned offset
+          // vertex's pointwise position is an arbitrary branch pick; move it to the two-sided mean
+          // (the chamfer midpoint).
+          for (&j, &bits) in &off_bits {
+            let uv = off_uvs[j];
+            let (mut acc, mut cnt) = (Vec3::zeros(), 0);
+            for d in crease_dirs(uv, bits) {
+              let (Ok(p1), Ok(p2)) = (
+                offset_surface(uv + d * crease_step),
+                offset_surface(uv - d * crease_step),
+              ) else {
+                continue;
+              };
+              acc += p1 + p2;
+              cnt += 2;
+            }
+            if cnt != 0 {
+              mesh.vertices[off_vkeys[j]].position = acc / cnt as f32;
+            }
+          }
+
           let top_pos: Vec<Vec3> = (0..n_top)
             .map(|i| mesh.vertices[vkey(i as u32 + 1, 1)].position)
             .collect();
@@ -3216,9 +3269,6 @@ fn embed_path_impl(
             .iter()
             .map(|&vk| mesh.vertices[vk].position)
             .collect();
-
-          let top_bits = crease_bits_map(&top_uvs, &top_crease);
-          let off_bits = crease_bits_map(&off_uvs, &off_crease);
           let bits_at = |map: &FxHashMap<usize, u16>, i: usize| map.get(&i).copied().unwrap_or(0);
           let embed_guard_mask: u16 =
             ((1u32 << guard_state.borrow().n_embed_masked.min(16)) - 1) as u16;
@@ -3633,7 +3683,43 @@ fn embed_path_impl(
           let Some(&uv) = uv_by_key.get(&vk) else {
             return Ok(None);
           };
-          let frame = embed_frame(uv)?;
+          let ix = vkey_ix(&vk) as usize - 1;
+          let mut frame = embed_frame(uv)?;
+          let bits = crease_bits_by_ix.get(&ix).copied().unwrap_or(0);
+          if bits != 0 {
+            // N jumps across a φ-kink: replace the branch-picked frame with the two-sided
+            // average (bisector offset direction); on sampling failure fall back to the
+            // topological normal like a degenerate frame.
+            let (mut n_acc, mut du_acc, mut dv_acc) = (Vec3::zeros(), Vec3::zeros(), Vec3::zeros());
+            let mut cnt = 0;
+            for d in crease_dirs(uv, bits) {
+              let (Ok(f1), Ok(f2)) = (
+                embed_frame(uv + d * crease_step),
+                embed_frame(uv - d * crease_step),
+              ) else {
+                continue;
+              };
+              for f in [f1, f2] {
+                if f.normal.norm() < 1e-9 {
+                  continue;
+                }
+                n_acc += if f.normal.dot(&topo) < 0. {
+                  -f.normal
+                } else {
+                  f.normal
+                };
+                du_acc += f.du;
+                dv_acc += f.dv;
+                cnt += 1;
+              }
+            }
+            if cnt == 0 || n_acc.norm() < 1e-6 {
+              return Ok(None);
+            }
+            frame.normal = n_acc.normalize();
+            frame.du = du_acc / cnt as f32;
+            frame.dv = dv_acc / cnt as f32;
+          }
           if frame.normal.norm() < 1e-9 {
             return Ok(None);
           }
@@ -3642,7 +3728,7 @@ fn embed_path_impl(
           } else {
             frame.normal
           };
-          frames.borrow_mut()[vkey_ix(&vk) as usize - 1] = (normal, frame.du, frame.dv);
+          frames.borrow_mut()[ix] = (normal, frame.du, frame.dv);
           Ok(Some(normal))
         })?;
 
@@ -11294,6 +11380,82 @@ mesh = embed_path(
       assert!(
         count > 0,
         "no crease-aligned vertices on the u={target} kink line"
+      );
+    }
+  }
+
+  // A kink in φ itself makes N jump, so crease-pinned vertices (sitting on the switching zero
+  // within bisection residue) must not branch-pick their offset direction on float noise: the
+  // fold along u=0 (flat sheet N=(0,1,0) meets slope-−2 sheet N=(2,1,0)/√5) has to offset its
+  // crease ring along the two-sided bisector (0.526, 0.851, 0)·t — never either raw branch — in
+  // both frame modes.
+  #[test]
+  fn embed_path_phi_kink_offset_is_branch_consistent() {
+    for mode in ["autodiff", "finite_diff"] {
+      let src = format!(
+        r#"
+mesh = embed_path(
+  path=[vec2(-2, -2), vec2(2, -2), vec2(2, 2), vec2(-2, 2)],
+  embed=|p: vec2|: vec3 {{ v3(p.x, max(p.x, 0) * -2, p.y) }},
+  thickness=0.5,
+  tolerance=0.01,
+  normal_mode="{mode}"
+)
+"#
+      );
+      let ctx = parse_and_eval_program(&src).unwrap();
+      let handle = ctx.get_global("mesh").unwrap();
+      let m = &handle.as_mesh().unwrap().mesh;
+      m.check_is_manifold::<true>().expect("should stay watertight");
+      // Flat-sheet offsets sit at y=0.5, cone-sheet offsets at y ≤ ~0.224; only the crease ring
+      // lives between.
+      let ring: Vec<_> = m
+        .vertices
+        .values()
+        .map(|v| v.position)
+        .filter(|p| p.y > 0.3 && p.y < 0.48)
+        .collect();
+      // Planar sheets refine to nothing interior, so the ring is just the two boundary-pinned
+      // crease verts.
+      assert!(ring.len() >= 2, "[{mode}] no crease-ring offset verts found");
+      for p in &ring {
+        assert!(
+          (p.x - 0.2629).abs() < 0.02 && (p.y - 0.4253).abs() < 0.02,
+          "[{mode}] crease offset vert not on the bisector: {p:?}"
+        );
+      }
+    }
+  }
+
+  // A thickness *jump* tears Ψ even over a flat φ (two-cap path); crease-pinned offset verts must
+  // land on the two-sided mean (mid-jump) instead of coin-flipping between t=1 and t=3.  Thin
+  // strip: the unresolvable jump band refines to the min-split-edge floor, so its cost scales
+  // with crease length / bbox diagonal — a square domain here costs ~35s of band-chasing.
+  #[test]
+  fn embed_path_thickness_jump_offset_is_branch_consistent() {
+    let src = r#"
+mesh = embed_path(
+  path=[vec2(-4, -0.25), vec2(4, -0.25), vec2(4, 0.25), vec2(-4, 0.25)],
+  embed=|p| v3(p.x, 0, p.y),
+  thickness=|pos, uv| if uv.x > 0 { 1.0 } else { 3.0 },
+  tolerance=0.05
+)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let handle = ctx.get_global("mesh").unwrap();
+    let m = &handle.as_mesh().unwrap().mesh;
+    m.check_is_manifold::<true>().expect("should stay watertight");
+    let ring: Vec<_> = m
+      .vertices
+      .values()
+      .map(|v| v.position)
+      .filter(|p| p.y > 1.3 && p.y < 2.7)
+      .collect();
+    assert!(ring.len() >= 2, "no mid-jump ring verts found");
+    for p in &ring {
+      assert!(
+        p.x.abs() < 0.02 && (p.y - 2.).abs() < 0.02,
+        "crease offset vert not on the two-sided mean: {p:?}"
       );
     }
   }

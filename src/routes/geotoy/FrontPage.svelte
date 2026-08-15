@@ -1,8 +1,10 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
+  import { navigating } from '$app/state';
   import type { Composition, CompositionVersion, User } from 'src/geoscript/geotoyAPIClient';
   import { logGeotoyEvent } from 'src/analytics';
   import GeotoyHeader from './GeotoyHeader.svelte';
+  import Spinner from './Spinner.svelte';
 
   let {
     me,
@@ -26,6 +28,8 @@
 
   let nextPageUrl = $derived(hasMore ? (`/geotoy?page=${currentPage + 1}` as const) : null);
 
+  let navTargetPath = $derived(navigating.to?.url.pathname ?? null);
+
   const logOpen = (compID: number) =>
     logGeotoyEvent('browse', 'composition_open', { comp_id: compID, source: 'front_page' });
 </script>
@@ -46,6 +50,7 @@
         </div>
         {#if composition.latest.thumbnail_url}
           <a
+            class="thumb-link"
             href={resolve(`/geotoy/edit/${composition.comp.id}`)}
             onclick={() => logOpen(composition.comp.id)}
           >
@@ -56,6 +61,9 @@
               crossorigin="anonymous"
               loading="lazy"
             />
+            {#if navTargetPath === resolve(`/geotoy/edit/${composition.comp.id}`)}
+              <div class="loading-overlay"><Spinner size={62} /></div>
+            {/if}
           </a>
         {:else}
           <div
@@ -174,6 +182,32 @@
     aspect-ratio: 1;
     object-fit: cover;
     display: block;
+  }
+
+  .thumb-link {
+    position: relative;
+    display: block;
+    margin-bottom: 2px;
+  }
+
+  .thumb-link .composition-thumbnail {
+    margin-bottom: 0;
+  }
+
+  .loading-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+    animation: overlay-in 150ms ease-out 60ms backwards;
+  }
+
+  @keyframes overlay-in {
+    from {
+      opacity: 0;
+    }
   }
 
   .composition-tags {
