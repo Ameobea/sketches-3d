@@ -62,9 +62,11 @@ use crate::{
     PointDistributeSeq, ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
   seq_as_eager, ArgRef, Callable, Closure, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
+  Vec4,
 };
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
+pub(crate) mod blit;
 pub(crate) mod catmull_rom;
 pub(crate) mod fillet_path;
 #[cfg(target_arch = "wasm32")]
@@ -76,6 +78,7 @@ pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
 pub(crate) mod ramp;
+pub(crate) mod sampling;
 pub(crate) mod texture;
 pub(crate) mod trace_path;
 
@@ -85,6 +88,7 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "rot_local" => "rot_around_center",
   "v2" => "vec2",
   "v3" => "vec3",
+  "v4" => "vec4",
   "subdivide" => "tessellate",
   "tess" => "tessellate",
   "length" => "len",
@@ -301,6 +305,18 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_str().unwrap();
       Ok(Value::String(format!("{a}{b}")))
     }
+    // vec4 + vec4
+    10 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(a + b)))
+    }
+    // vec4 + num
+    11 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec4(Rc::new(a.add_scalar(b))))
+    }
     _ => unimplemented!(),
   }
 }
@@ -370,6 +386,18 @@ pub(crate) fn sub_impl(
       let a = lhs.as_vec2().unwrap();
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec2(a - Vec2::new(b, b)))
+    }
+    // vec4 - vec4
+    9 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(a - b)))
+    }
+    // vec4 - num
+    10 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec4(Rc::new(a.add_scalar(-b))))
     }
     _ => unimplemented!(),
   }
@@ -450,6 +478,24 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let p = rhs.as_vec3().unwrap();
       Ok(Value::Vec3((m * p.push(1.)).xyz()))
     }
+    // vec4 * vec4
+    13 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(a.component_mul(b))))
+    }
+    // vec4 * num
+    14 => {
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec4(Rc::new(a * b)))
+    }
+    // num * vec4
+    15 => {
+      let a = lhs.as_float().unwrap();
+      let b = rhs.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(b * a)))
+    }
     _ => unimplemented!(),
   }
 }
@@ -499,6 +545,18 @@ pub(crate) fn div_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let a = lhs.as_vec2().unwrap();
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec2(a / b))
+    }
+    7 => {
+      // vec4 / vec4
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(a.component_div(b))))
+    }
+    8 => {
+      // vec4 / num
+      let a = lhs.as_vec4().unwrap();
+      let b = rhs.as_float().unwrap();
+      Ok(Value::Vec4(Rc::new(a / b)))
     }
     _ => unimplemented!(),
   }
@@ -819,24 +877,19 @@ pub(crate) fn neg_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> 
       let value = val.as_vec2().unwrap();
       Ok(Value::Vec2(-*value))
     }
+    5 => {
+      // negate vec4
+      let value = val.as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(-*value)))
+    }
     _ => unimplemented!(),
   }
 }
 
 pub(crate) fn pos_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> {
   match def_ix {
-    0 => {
-      // pass through numeric value
-      Ok(val.clone())
-    }
-    1 => {
-      // pass through vec3
-      Ok(val.clone())
-    }
-    2 => {
-      // pass through vec2
-      Ok(val.clone())
-    }
+    // pass through numeric / vec3 / vec2 / vec4 unchanged
+    0..=3 => Ok(val.clone()),
     _ => unimplemented!(),
   }
 }
@@ -865,6 +918,11 @@ fn map_obj_transform(obj: &Value, f: impl Fn(&Matrix4<f32>) -> Matrix4<f32>) -> 
       Value::Light(Box::new(light))
     }
     Value::Mat4(m) => Value::Mat4(Rc::new(f(m))),
+    Value::Texture(tex) => {
+      let mut tex = (**tex).clone();
+      tex.transform = f(&tex.transform);
+      Value::Texture(Rc::new(tex))
+    }
     // A bare point carries no frame, so `f` is evaluated against identity and applied directly.
     // Local vs global therefore coincide for points.
     Value::Vec3(p) => Value::Vec3((f(&Matrix4::identity()) * p.push(1.)).xyz()),
@@ -897,7 +955,18 @@ pub(crate) fn translate_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (translation, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
+  let (translation, obj) = match def_ix {
+    TRANSLATE_TEX_VEC2_DEF_IX => {
+      let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      (Vec3::new(xy.x, xy.y, 0.), arg_refs[1].resolve(args, kwargs))
+    }
+    TRANSLATE_TEX_XY_DEF_IX => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      (Vec3::new(x, y, 0.), arg_refs[2].resolve(args, kwargs))
+    }
+    _ => resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs),
+  };
 
   // Right-multiply: M * T (translate in local space)
   let t = Matrix4::new_translation(&translation);
@@ -910,7 +979,18 @@ fn translate_global_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (translation, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
+  let (translation, obj) = match def_ix {
+    TRANSLATE_TEX_VEC2_DEF_IX => {
+      let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      (Vec3::new(xy.x, xy.y, 0.), arg_refs[1].resolve(args, kwargs))
+    }
+    TRANSLATE_TEX_XY_DEF_IX => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      (Vec3::new(x, y, 0.), arg_refs[2].resolve(args, kwargs))
+    }
+    _ => resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs),
+  };
 
   // Left-multiply: T * M (translate in world space)
   let t = Matrix4::new_translation(&translation);
@@ -947,6 +1027,18 @@ pub(crate) fn scale_impl(
         }
       };
 
+      (scale, arg_refs[1].resolve(args, kwargs))
+    }
+    // texture: vec2 or uniform scalar; z stays 1
+    4 => {
+      let val = arg_refs[0].resolve(args, kwargs);
+      let scale = match val {
+        Value::Vec2(s) => Vec3::new(s.x, s.y, 1.),
+        _ => {
+          let s = val.as_float().unwrap();
+          Vec3::new(s, s, 1.)
+        }
+      };
       (scale, arg_refs[1].resolve(args, kwargs))
     }
     _ => unimplemented!(),
@@ -1003,12 +1095,30 @@ fn rot_axis_impl(
 /// breaks that helper's even/odd arg-shape convention.
 const ROT_VEC2_DEF_IX: usize = 8;
 
+/// `rot`-only trailing signature: single-angle UV-plane rotation of a texture's placement.
+const ROT_TEX_DEF_IX: usize = 9;
+
+/// Trailing `translate` signatures for textures (vec2 / x,y forms); break the even/odd convention.
+const TRANSLATE_TEX_VEC2_DEF_IX: usize = 6;
+const TRANSLATE_TEX_XY_DEF_IX: usize = 7;
+
 /// Counter-clockwise, matching `path_rot` — the opposite winding from the 3D Tait-Bryan `rot`.
 fn rot_vec2(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>) -> Value {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
   let p = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
   let (sin, cos) = angle.sin_cos();
   Value::Vec2(Vec2::new(p.x * cos - p.y * sin, p.x * sin + p.y * cos))
+}
+
+/// Rotation about +Z in UV space; same CCW convention as `rot_vec2`.
+fn uv_rotation_mat4(angle: f32) -> Matrix4<f32> {
+  let (sin, cos) = angle.sin_cos();
+  let mut m = Matrix4::identity();
+  m[(0, 0)] = cos;
+  m[(0, 1)] = -sin;
+  m[(1, 0)] = sin;
+  m[(1, 1)] = cos;
+  m
 }
 
 fn transform_point_impl(
@@ -6631,6 +6741,12 @@ fn lerp_impl(
       let b = arg_refs[2].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(a.lerp(b, t)))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, kwargs).as_vec4().unwrap();
+      let b = arg_refs[2].resolve(args, kwargs).as_vec4().unwrap();
+      Ok(Value::Vec4(Rc::new(a.lerp(b, t))))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7534,6 +7650,12 @@ fn rot_impl(
   if def_ix == ROT_VEC2_DEF_IX {
     return Ok(rot_vec2(arg_refs, args, kwargs));
   }
+  if def_ix == ROT_TEX_DEF_IX {
+    let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+    let r = uv_rotation_mat4(angle);
+    let obj = arg_refs[1].resolve(args, kwargs);
+    return Ok(map_obj_transform(obj, |m| m * r));
+  }
   let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
   // Right-multiply: M * R (rotate in local space)
@@ -7549,6 +7671,12 @@ fn rot_global_impl(
 ) -> Result<Value, ErrorStack> {
   if def_ix == ROT_VEC2_DEF_IX {
     return Ok(rot_vec2(arg_refs, args, kwargs));
+  }
+  if def_ix == ROT_TEX_DEF_IX {
+    let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+    let r = uv_rotation_mat4(angle);
+    let obj = arg_refs[1].resolve(args, kwargs);
+    return Ok(map_obj_transform(obj, |m| r * m));
   }
   let (angles, obj) = resolve_vec3_and_subject(def_ix, arg_refs, args, kwargs);
 
@@ -9044,6 +9172,39 @@ fn vec3_impl(
   }
 }
 
+fn vec4_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let v = match def_ix {
+    0 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let z = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      let w = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
+      Vec4::new(x, y, z, w)
+    }
+    1 => {
+      let xyz = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
+      let w = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      Vec4::new(xyz.x, xyz.y, xyz.z, w)
+    }
+    2 => {
+      let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
+      let zw = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
+      Vec4::new(xy.x, xy.y, zw.x, zw.y)
+    }
+    3 => {
+      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      Vec4::new(x, x, x, x)
+    }
+    _ => unimplemented!(),
+  };
+  Ok(Value::Vec4(Rc::new(v)))
+}
+
 fn join_meshes(
   iter: &mut impl Iterator<Item = Result<Value, ErrorStack>>,
 ) -> Result<Value, ErrorStack> {
@@ -9831,6 +9992,7 @@ fn str_impl(
         Value::Float(f) => format!("{f}"),
         Value::Vec2(v) => format!("vec2({}, {})", v.x, v.y),
         Value::Vec3(v) => format!("vec3({}, {}, {})", v.x, v.y, v.z),
+        Value::Vec4(v) => format!("vec4({}, {}, {}, {})", v.x, v.y, v.z, v.w),
         Value::Mesh(mesh_handle) => format!("{:?}", mesh_handle.mesh),
         Value::Light(light) => format!("{light:?}"),
         Value::Callable(callable) => format!("{callable:?}"),
@@ -10045,6 +10207,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "vec3" => builtin_fn!(vec3, |def_ix, arg_refs, args, kwargs, _ctx| {
     vec3_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "vec4" => builtin_fn!(vec4, |def_ix, arg_refs, args, kwargs, _ctx| {
+    vec4_impl(def_ix, arg_refs, args, kwargs)
   }),
   "join" => builtin_fn!(join, |def_ix, arg_refs, args, kwargs, ctx| {
     join_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -10337,6 +10502,15 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "height_to_normal" => builtin_fn!(height_to_normal, |def_ix, arg_refs, args, kwargs, _ctx| {
     texture::height_to_normal_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "blit" => builtin_fn!(blit, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    blit::blit_impl(arg_refs, args, kwargs)
+  }),
+  "scatter" => builtin_fn!(scatter, |def_ix, arg_refs, args, kwargs, ctx| {
+    blit::scatter_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "poisson_points_2d" => builtin_fn!(poisson_points_2d, |def_ix, arg_refs, args, kwargs, _ctx| {
+    sampling::poisson_points_2d_impl(def_ix, arg_refs, args, kwargs)
   }),
   "render_texture" => builtin_fn!(render_texture, |_def_ix, arg_refs, args, kwargs, ctx| {
     texture::render_texture_impl(ctx, arg_refs, args, kwargs)

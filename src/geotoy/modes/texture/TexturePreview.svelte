@@ -48,8 +48,8 @@
     onSetTextureParams?.(sel.sourceModule, sel.name, { [key]: value === PARAM_DEFAULTS[key] ? '' : value });
   };
 
-  const CHANNELS: TextureChannel[] = ['rgb', 'r', 'g', 'b'];
-  const CHANNEL_IX: Record<TextureChannel, number> = { rgb: 0, r: 1, g: 2, b: 3 };
+  const CHANNELS: TextureChannel[] = ['rgb', 'r', 'g', 'b', 'a'];
+  const CHANNEL_IX: Record<TextureChannel, number> = { rgb: 0, r: 1, g: 2, b: 3, a: 4 };
   const WRAP_IX = { repeat: 0, clamp: 1, mirror: 2 } as const;
 
   let canvas: HTMLCanvasElement | undefined = $state();
@@ -100,8 +100,15 @@ void main() {
     if (uChannelSel == 1) c = vec3(c.r);
     else if (uChannelSel == 2) c = vec3(c.g);
     else if (uChannelSel == 3) c = vec3(c.b);
+    else if (uChannelSel == 4) c = vec3(uChannels == 4 ? t.a : 1.0);
     c = clamp(c, 0.0, 1.0);
     if (uSrgb) c = l2s(c);
+    if (uChannels == 4 && uChannelSel == 0) {
+      // straight-alpha composite over a checkerboard so transparency reads visually
+      vec2 acell = floor(screen / 12.0);
+      vec3 backdrop = vec3(0.25 + 0.1 * mod(acell.x + acell.y, 2.0));
+      c = mix(backdrop, c, clamp(t.a, 0.0, 1.0));
+    }
   }
 
   // Unit-tile frame, coverage-blended (max-norm signed distance in device px) so
@@ -163,7 +170,7 @@ void main() {
       for (let i = 0; i < tex.width * tex.height; i++) {
         for (let ch = 0; ch < 3; ch++)
           rgba[i * 4 + ch] = tex.data[i * tex.channels + Math.min(ch, tex.channels - 1)];
-        rgba[i * 4 + 3] = 1;
+        rgba[i * 4 + 3] = tex.channels === 4 ? tex.data[i * 4 + 3] : 1;
       }
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, tex.width, tex.height, 0, gl.RGBA, gl.FLOAT, rgba);
     }
@@ -202,7 +209,9 @@ void main() {
     gl.uniform2f(uniforms.uCenter, mode.center[0], mode.center[1]);
     gl.uniform2f(uniforms.uTilePx, mode.zoom * sel.width * dpr, mode.zoom * sel.height * dpr);
     gl.uniform1i(uniforms.uChannels, sel.channels);
-    gl.uniform1i(uniforms.uChannelSel, CHANNEL_IX[mode.channel]);
+    // A stale 'a' selection on a non-RGBA output falls back to rgb instead of solid white
+    const channel = mode.channel === 'a' && sel.channels !== 4 ? 'rgb' : mode.channel;
+    gl.uniform1i(uniforms.uChannelSel, CHANNEL_IX[channel]);
     gl.uniform1i(uniforms.uTiled, mode.tiled ? 1 : 0);
     gl.uniform1i(uniforms.uWrap, WRAP_IX[sel.wrap]);
     gl.uniform1i(uniforms.uSrgb, mode.srgb ? 1 : 0);
@@ -302,7 +311,7 @@ void main() {
         </div>
       {/if}
       <div class="chips">
-        {#each CHANNELS as ch (ch)}
+        {#each CHANNELS.filter(ch => ch !== 'a' || sel.channels === 4) as ch (ch)}
           <button class="chip" class:active={mode.channel === ch} onclick={() => (mode.channel = ch)}>
             {ch}
           </button>

@@ -19,15 +19,36 @@
     const n = parseInt(hex.slice(1), 16);
     return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
   };
+
+  // The native picker reports only `input`/`change` (Chrome fires both on every color change),
+  // so a release of one of its sliders is observable only as a settle in that stream. Track the
+  // pick locally until then, like Range does mid-drag, so a consumer that re-runs on change
+  // isn't hammered every tick.
+  const SETTLE_MS = 150;
+  let settleTimer = 0;
+  let live = $state.raw<Rgb | null>(null);
+  const shown = $derived(live ?? rgb);
+
+  const pick = (hex: string) => {
+    if (hex === toHex(shown)) return;
+    live = fromHex(hex);
+    clearTimeout(settleTimer);
+    settleTimer = window.setTimeout(() => {
+      const v = live;
+      live = null;
+      if (v) onChange(v);
+    }, SETTLE_MS);
+  };
 </script>
 
 <div class="color">
   <input
     type="color"
-    value={toHex(rgb)}
-    oninput={e => onChange(fromHex((e.currentTarget as HTMLInputElement).value))}
+    value={toHex(shown)}
+    oninput={e => pick((e.currentTarget as HTMLInputElement).value)}
+    onchange={e => pick((e.currentTarget as HTMLInputElement).value)}
   />
-  <span class="readout">{rgb.map(x => x.toFixed(2)).join(', ')}</span>
+  <span class="readout">{shown.map(x => x.toFixed(2)).join(', ')}</span>
 </div>
 
 <style>

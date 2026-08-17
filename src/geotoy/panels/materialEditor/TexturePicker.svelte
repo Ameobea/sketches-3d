@@ -13,7 +13,7 @@
 
   let {
     selectedTextureId,
-    onselect: onselectInner,
+    onselect,
     onclose = () => {},
     onupload = () => {},
     me,
@@ -51,10 +51,6 @@
     refresh();
   });
 
-  const onselect = (id: TextureID | null | string) => {
-    onselectInner(id);
-  };
-
   const SECTIONS = [
     {
       label: 'local composition',
@@ -87,7 +83,7 @@
     }}
     ondelete={() => {
       if (editing && selectedTextureId === editing.id) {
-        onselectInner(null);
+        onselect(null);
       }
       editing = null;
       refresh();

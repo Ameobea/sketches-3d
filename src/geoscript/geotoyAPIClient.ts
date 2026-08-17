@@ -66,7 +66,7 @@ export interface MeshTabView {
   projection: 'perspective' | 'orthographic';
 }
 
-export type TextureChannel = 'rgb' | 'r' | 'g' | 'b';
+export type TextureChannel = 'rgb' | 'r' | 'g' | 'b' | 'a';
 
 export interface TextureTabView {
   /** UV-space point at the viewport center. */

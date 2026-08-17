@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::{FxHashMap, FxHashSet, FxHasher64};
 use mesh::{linked_mesh::Vec3, LinkedMesh};
-use nalgebra::{Matrix4, Vector2};
+use nalgebra::{Matrix4, Vector2, Vector4};
 use nanoserde::SerJson;
 use parry3d::{
   bounding_volume::Aabb,
@@ -709,6 +709,7 @@ impl Drop for ManifoldHandle {
 }
 
 pub type Vec2 = Vector2<f32>;
+pub type Vec4 = Vector4<f32>;
 pub type Mat4 = Matrix4<f32>;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -855,6 +856,28 @@ impl TextureUsage {
   }
 }
 
+pub struct MipLevel {
+  pub pixels: Vec<f32>,
+  pub width: usize,
+  pub height: usize,
+}
+
+/// Lazily-built box-filtered mip chain for minified blit sampling (level 0 = the texture
+/// itself, so the chain holds levels 1..). The chain records the identity of the pixel
+/// buffer it was built from and is revalidated against the handle's live `pixels` Rc on
+/// read, so `Clone` can share it (placement clones keep their mips) while struct-updates
+/// that swap in new pixels self-invalidate instead of serving a stale chain. The pointer
+/// compare is ABA-safe because the handle's own `pixels` keeps the compared allocation
+/// alive.
+#[derive(Clone, Default)]
+pub struct MipCache(pub(crate) RefCell<Option<MipChain>>);
+
+#[derive(Clone)]
+pub struct MipChain {
+  pub(crate) src: usize,
+  pub(crate) levels: Rc<Vec<MipLevel>>,
+}
+
 #[derive(Clone)]
 pub struct TextureHandle {
   /// Row-major interleaved f32; len = width * height * channels. Row y maps to
@@ -871,6 +894,11 @@ pub struct TextureHandle {
   pub min_filter: Option<TextureFilter>,
   pub mag_filter: Option<TextureFilter>,
   pub format: Option<TextureFormat>,
+  /// Placement for blit/scatter: maps the texture's CENTERED local frame ([-0.5, 0.5]²,
+  /// origin = texture center) into the target texture's UV space. Only the 2D affine part
+  /// is honored; ignored by non-blit consumers (materials, `render_texture`).
+  pub transform: Mat4,
+  pub mips: MipCache,
 }
 
 impl Debug for TextureHandle {
@@ -899,12 +927,15 @@ pub enum Value {
   Material(Rc<Material>),
   Light(Box<Light>),
   String(String),
-  // Boxed out-of-line: a bare `Mat4` (64 bytes) would blow the enum size. On
-  // wasm32 the `Rc` is a 4-byte thin pointer, keeping `Value` at 16 bytes.
-  // Must stay after discriminant 5 so the `clone` fast path doesn't shallow-copy it.
   Mat4(Rc<Mat4>),
   Texture(Rc<TextureHandle>),
+  // Boxed like `Mat4`: a bare `Vec4` (16 bytes) + discriminant would blow the 16-byte
+  // enum size. Must stay after discriminant 5; `Clone` has a dedicated non-cold branch
+  // keyed on `VEC4_DISCRIMINANT`.
+  Vec4(Rc<Vec4>),
 }
+
+const VEC4_DISCRIMINANT: u8 = 15;
 
 // The wasm-side `maybe_init` also asserts this at runtime; this fails the build.
 #[cfg(target_arch = "wasm32")]
@@ -961,6 +992,10 @@ fn test_value_discriminant_order() {
   }
 
   assert_eq!((Value::Bool(false)).discriminant(), 5);
+  assert_eq!(
+    Value::Vec4(Rc::new(Vec4::zeros())).discriminant(),
+    VEC4_DISCRIMINANT
+  );
 }
 
 #[cold]
@@ -982,14 +1017,24 @@ fn clone_value_slow(val: &Value) -> Value {
     Value::Material(material) => Value::Material(Rc::clone(material)),
     Value::Mat4(mat) => Value::Mat4(Rc::clone(mat)),
     Value::Texture(tex) => Value::Texture(Rc::clone(tex)),
+    Value::Vec4(v) => Value::Vec4(Rc::clone(v)),
   }
 }
 
 impl Clone for Value {
   fn clone(&self) -> Self {
-    if std::hint::likely(self.discriminant() <= 5) {
+    let disc = self.discriminant();
+    if std::hint::likely(disc <= 5) {
       // fast path for copyable variants
       return unsafe { std::ptr::read(self as *const Value) };
+    }
+
+    // vec4s are hot in per-pixel texture code; keep their refcount bump out of the cold path
+    if disc == VEC4_DISCRIMINANT {
+      let Value::Vec4(v) = self else {
+        unsafe { std::hint::unreachable_unchecked() }
+      };
+      return Value::Vec4(Rc::clone(v));
     }
 
     clone_value_slow(self)
@@ -1014,6 +1059,7 @@ impl Debug for Value {
       Value::Material(material) => write!(f, "Material({material:?})"),
       Value::Mat4(mat) => write!(f, "Mat4({mat:?})"),
       Value::Texture(tex) => write!(f, "{tex:?}"),
+      Value::Vec4(v) => write!(f, "Vec4({}, {}, {}, {})", v.x, v.y, v.z, v.w),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -1123,6 +1169,9 @@ const MATERIAL_FLAG: u16 = 0b0000_1000_0000_0000;
 const NIL_FLAG: u16 = 0b0001_0000_0000_0000;
 const MAT4_FLAG: u16 = 0b0010_0000_0000_0000;
 const TEXTURE_FLAG: u16 = 0b0100_0000_0000_0000;
+// Takes the final u16 bit; the next type added forces a u16 -> u32 widening of the whole
+// `valid_types` / dispatch-table flag space.
+const VEC4_FLAG: u16 = 0b1000_0000_0000_0000;
 const ANY_FLAG: u16 = 0xFFFF;
 
 impl Value {
@@ -1186,6 +1235,13 @@ impl Value {
   fn as_mat4(&self) -> Option<&Mat4> {
     match self {
       Value::Mat4(m) => Some(m),
+      _ => None,
+    }
+  }
+
+  fn as_vec4(&self) -> Option<&Vec4> {
+    match self {
+      Value::Vec4(v) => Some(v),
       _ => None,
     }
   }
@@ -1261,6 +1317,7 @@ impl Value {
       Value::Material(_) => ArgType::Material,
       Value::Mat4(_) => ArgType::Mat4,
       Value::Texture(_) => ArgType::Texture,
+      Value::Vec4(_) => ArgType::Vec4,
       Value::Nil => ArgType::Nil,
     }
   }
@@ -1281,6 +1338,7 @@ impl Value {
       Value::Material(_) => MATERIAL_FLAG,
       Value::Mat4(_) => MAT4_FLAG,
       Value::Texture(_) => TEXTURE_FLAG,
+      Value::Vec4(_) => VEC4_FLAG,
       Value::Nil => NIL_FLAG,
     }
   }
@@ -1303,6 +1361,7 @@ pub enum ArgType {
   Material,
   Mat4,
   Texture,
+  Vec4,
   Nil,
   Any,
 }
@@ -1329,6 +1388,7 @@ impl ArgType {
       ArgType::Material => MATERIAL_FLAG,
       ArgType::Mat4 => MAT4_FLAG,
       ArgType::Texture => TEXTURE_FLAG,
+      ArgType::Vec4 => VEC4_FLAG,
       ArgType::Nil => NIL_FLAG,
       ArgType::Any => ANY_FLAG,
     }
@@ -1351,6 +1411,7 @@ impl ArgType {
       ArgType::Material => "material",
       ArgType::Mat4 => "mat4",
       ArgType::Texture => "texture",
+      ArgType::Vec4 => "vec4",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
@@ -1365,6 +1426,7 @@ impl ArgType {
     for arg_type in &[
       ArgType::Vec2,
       ArgType::Vec3,
+      ArgType::Vec4,
       ArgType::Mesh,
       ArgType::Light,
       ArgType::Callable,
@@ -3497,53 +3559,49 @@ impl EvalCtx {
   }
 
   fn eval_static_field_access(&self, lhs: &Value, field: &str) -> Result<Value, ErrorStack> {
+    fn swizzle(
+      field: &str,
+      comp: impl Fn(char) -> Result<f32, ErrorStack>,
+    ) -> Result<Value, ErrorStack> {
+      let mut vals = [0f32; 4];
+      let mut n = 0usize;
+      for c in field.chars() {
+        if n == 4 {
+          return Err(ErrorStack::new("invalid swizzle; expected 1 to 4 chars"));
+        }
+        vals[n] = comp(c)?;
+        n += 1;
+      }
+      match n {
+        1 => Ok(Value::Float(vals[0])),
+        2 => Ok(Value::Vec2(Vec2::new(vals[0], vals[1]))),
+        3 => Ok(Value::Vec3(Vec3::new(vals[0], vals[1], vals[2]))),
+        4 => Ok(Value::Vec4(Rc::new(Vec4::new(
+          vals[0], vals[1], vals[2], vals[3],
+        )))),
+        _ => Err(ErrorStack::new("invalid swizzle; expected 1 to 4 chars")),
+      }
+    }
+
     match lhs {
-      Value::Vec2(v2) => {
-        let swiz = |c| match c {
-          'x' | 'r' => Ok(v2.x),
-          'y' | 'g' => Ok(v2.y),
-          _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
-        };
-
-        match field.chars().count() {
-          1 => swiz(field.chars().next().unwrap()).map(Value::Float),
-          2 => {
-            let mut chars = field.chars();
-            let a = chars.next().unwrap();
-            let b = chars.next().unwrap();
-
-            Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
-          }
-          _ => Err(ErrorStack::new("invalid swizzle; expected 1 or 2 chars")),
-        }
-      }
-      Value::Vec3(v3) => {
-        let swiz = |c| match c {
-          'x' | 'r' => Ok(v3.x),
-          'y' | 'g' => Ok(v3.y),
-          'z' | 'b' => Ok(v3.z),
-          _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
-        };
-        match field.chars().count() {
-          1 => swiz(field.chars().next().unwrap()).map(Value::Float),
-          2 => {
-            let mut chars = field.chars();
-            let a = chars.next().unwrap();
-            let b = chars.next().unwrap();
-
-            Ok(Value::Vec2(Vec2::new(swiz(a)?, swiz(b)?)))
-          }
-          3 => {
-            let mut chars = field.chars();
-            let a = chars.next().unwrap();
-            let b = chars.next().unwrap();
-            let c = chars.next().unwrap();
-
-            Ok(Value::Vec3(Vec3::new(swiz(a)?, swiz(b)?, swiz(c)?)))
-          }
-          _ => Err(ErrorStack::new("invalid swizzle; expected 1 to 3 chars")),
-        }
-      }
+      Value::Vec2(v2) => swizzle(field, |c| match c {
+        'x' | 'r' => Ok(v2.x),
+        'y' | 'g' => Ok(v2.y),
+        _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec2"))),
+      }),
+      Value::Vec3(v3) => swizzle(field, |c| match c {
+        'x' | 'r' => Ok(v3.x),
+        'y' | 'g' => Ok(v3.y),
+        'z' | 'b' => Ok(v3.z),
+        _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec3"))),
+      }),
+      Value::Vec4(v4) => swizzle(field, |c| match c {
+        'x' | 'r' => Ok(v4.x),
+        'y' | 'g' => Ok(v4.y),
+        'z' | 'b' => Ok(v4.z),
+        'w' | 'a' => Ok(v4.w),
+        _ => Err(ErrorStack::new(format!("Unknown field `{c}` for Vec4"))),
+      }),
       Value::Map(map) => Ok(if let Some(val) = map.get(field) {
         val.clone()
       } else {
@@ -3569,6 +3627,13 @@ impl EvalCtx {
           1 => Ok(Value::Float(v3.y)),
           2 => Ok(Value::Float(v3.z)),
           _ => Err(ErrorStack::new(format!("Index {i} out of bounds for Vec3"))),
+        },
+        Value::Vec4(v4) => match i {
+          0 => Ok(Value::Float(v4.x)),
+          1 => Ok(Value::Float(v4.y)),
+          2 => Ok(Value::Float(v4.z)),
+          3 => Ok(Value::Float(v4.w)),
+          _ => Err(ErrorStack::new(format!("Index {i} out of bounds for Vec4"))),
         },
         Value::Map(map) => Ok(if let Some(val) = map.get(&i.to_string()) {
           val.clone()
@@ -5894,6 +5959,55 @@ x = pi*2
     panic!("Expected result to be a Float");
   };
   assert_eq!(c, 2.);
+}
+
+#[test]
+fn test_vec4_e2e() {
+  let src = r#"
+a = vec4(1, 2, 3, 4)
+b = v4(v3(1, 2, 3), 4)
+c = v4(v2(1, 2), v2(3, 4))
+d = v4(7)
+rgb = a.rgb
+alpha = a.a
+swiz = a.wzyx
+from3 = v3(1, 2, 3).xxyy
+arith = (a + b) * 0.5 - v4(1) / v4(2)
+scaled = 2 * a * 2
+mixed = lerp(0.5, v4(0), a)
+negged = -a
+ix = a[3]
+s = str(a)
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+  let get_v4 = |name: &str| -> Vec4 {
+    match ctx.get_global(name).unwrap() {
+      Value::Vec4(v) => *v,
+      other => panic!("Expected {name} to be a Vec4, found: {other:?}"),
+    }
+  };
+
+  assert_eq!(get_v4("a"), Vec4::new(1., 2., 3., 4.));
+  assert_eq!(get_v4("b"), Vec4::new(1., 2., 3., 4.));
+  assert_eq!(get_v4("c"), Vec4::new(1., 2., 3., 4.));
+  assert_eq!(get_v4("d"), Vec4::new(7., 7., 7., 7.));
+  assert_eq!(
+    ctx.get_global("rgb").unwrap().as_vec3().copied(),
+    Some(Vec3::new(1., 2., 3.))
+  );
+  assert_eq!(ctx.get_global("alpha").unwrap().as_float(), Some(4.));
+  assert_eq!(get_v4("swiz"), Vec4::new(4., 3., 2., 1.));
+  assert_eq!(get_v4("from3"), Vec4::new(1., 1., 2., 2.));
+  assert_eq!(get_v4("arith"), Vec4::new(0.5, 1.5, 2.5, 3.5));
+  assert_eq!(get_v4("scaled"), Vec4::new(4., 8., 12., 16.));
+  assert_eq!(get_v4("mixed"), Vec4::new(0.5, 1., 1.5, 2.));
+  assert_eq!(get_v4("negged"), Vec4::new(-1., -2., -3., -4.));
+  assert_eq!(ctx.get_global("ix").unwrap().as_float(), Some(4.));
+  assert_eq!(
+    ctx.get_global("s").unwrap().as_str(),
+    Some("vec4(1, 2, 3, 4)")
+  );
 }
 
 #[test]

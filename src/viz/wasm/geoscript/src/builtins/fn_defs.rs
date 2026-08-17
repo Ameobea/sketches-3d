@@ -348,6 +348,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Composes a translation onto a transform matrix in local space (right-multiply: M = M * T). Alias: `trans`.",
         return_type: &[ArgType::Mat4],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a texture's placement transform in base-UV units (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a texture's placement transform in base-UV units (right-multiply: M = M * T). Alias: `trans`.",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "translate_global" => FnDef {
@@ -515,6 +562,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Composes a translation onto a transform matrix in world space (left-multiply: M = T * M). Alias: `trans_global`.",
         return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a texture's placement in base-UV units, unaffected by its current rotation/scale (left-multiply: M = T * M). The idiomatic final placement op: `stamp | scale(s) | rot(a) | trans_global(pos)`. Alias: `trans_global`.",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Translates a texture's placement in base-UV units, unaffected by its current rotation/scale (left-multiply: M = T * M). Alias: `trans_global`.",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -710,6 +804,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.",
         return_type: &[ArgType::Vec2],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation angle in radians."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rotates a texture's placement transform in the UV plane (right-multiply: M = M * R; local ops act about the texture's centered origin).  Counter-clockwise, matching the 2D point `rot` convention.",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "rot_global" => FnDef {
@@ -903,6 +1017,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.  A bare point has no frame of its own, so this matches `rot`.",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation angle in radians."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rotates a texture's placement in the UV plane about the base-UV origin (left-multiply: M = R * M).  Counter-clockwise, matching the 2D point `rot` convention.",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -1471,6 +1605,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Composes a scale onto a transform matrix in local space (right-multiply: M = M * S). Accepts a Vec3 for non-uniform scaling or a number for uniform scaling.",
         return_type: &[ArgType::Mat4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Scales a texture's placement transform (right-multiply: M = M * S; local ops act about the texture's centered origin). Accepts a Vec2 for non-uniform scaling or a number for uniform scaling.",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -2077,6 +2231,99 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "vec4" => FnDef {
+    module: "core",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "z",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "w",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec4 given x, y, z, w",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "xyz",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "w",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec4 from a Vec3 and a w component",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "xy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "zw",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec4 from two Vec2s",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Creates a Vec4 with all components set to `value`",
+        return_type: &[ArgType::Vec4],
+      },
+    ],
+  },
   "join" => FnDef {
     // TODO: would be nice to add this to multiple modules depending on signature
     module: "mesh",
@@ -2493,6 +2740,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Negates each component of a Vec2",
         return_type: &[ArgType::Vec2],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Negates each component of a Vec4",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "pos" => FnDef {
@@ -2537,6 +2797,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Passes through the input unchanged (implementation detail of the unary `+` operator)",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Passes through the input unchanged (implementation detail of the unary `+` operator)",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -2950,6 +3223,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Concatenates two strings",
         return_type: &[ArgType::String],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds two Vec4s component-wise",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a numeric value to each component of a Vec4",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "sub" => FnDef {
@@ -3135,6 +3448,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Subtracts a numeric value from each component of a Vec2",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise subtraction of two Vec4s",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Subtracts a numeric value from each component of a Vec4",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -3402,6 +3755,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Transforms a 3D point by a transform matrix, treating it as a position (`w = 1`), so translation applies.  Same as `transform_point`.  Use `transform_dir` for directions, which ignores translation.  Assumes an affine matrix; there is no perspective divide.",
         return_type: &[ArgType::Vec3],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the component-wise product of two Vec4 values",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplies each element of a Vec4 by a scalar",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplies each element of a Vec4 by a scalar",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "div" => FnDef {
@@ -3547,6 +3960,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Divides each component of a Vec2 by a scalar",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the component-wise division of two Vec4 values",
+        return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Divides each element of a Vec4 by a scalar",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -6344,6 +6797,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Linearly interpolates between two Vec2 values `a` and `b` by a factor `t`",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "t",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Linearly interpolates between two Vec4 values `a` and `b` by a factor `t`",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -12018,7 +12498,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable of signature `|uv: vec2|: float | vec2 | vec3`, invoked once per pixel at the pixel's center UV.  The return type sets the channel count (float -> 1, vec2 -> 2, vec3 -> 3)."
+            description: "Callable of signature `|uv: vec2|: float | vec2 | vec3 | vec4`, invoked once per pixel at the pixel's center UV.  The return type sets the channel count (float -> 1, vec2 -> 2, vec3 -> 3, vec4 -> 4/RGBA)."
           },
           ArgDef {
             name: "wrap",
@@ -12128,6 +12608,173 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Registers a texture as a named output of the composition, symmetric to `render` for meshes",
         return_type: &[ArgType::Nil],
+      },
+    ],
+  },
+  "blit" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "stamp",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture to draw; its transform places its centered [-0.5, 0.5]² local frame in the base's UV space. Sampled with decal semantics — its own wrap mode is ignored and outside its bounds contributes nothing."
+          },
+          ArgDef {
+            name: "base",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture to draw into. Writes follow ITS wrap mode: \"repeat\" wraps the stamp's footprint around edges (preserving seamless tiling); \"clamp\"/\"mirror\" clip."
+          },
+          ArgDef {
+            name: "blend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A stamp alpha channel (4-channel always; 2-channel onto a 1-channel base) modulates any mode."
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("bilinear".to_owned())),
+            description: "\"bilinear\" (default; trilinear mip prefiltering kicks in when minified) or \"nearest\" (raw texels, no prefiltering)"
+          },
+        ],
+        description: "Draws `stamp` into `base` at the placement carried by the stamp's transform (see `trans`/`rot`/`scale` on textures), returning a new texture. The base's own transform and wrap mode are preserved on the result.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "scatter" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of instances to generate and blit"
+          },
+          ArgDef {
+            name: "stamps",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Generator callable `|ix: int|: texture` returning a PLACED texture for each instance (position/rotation/scale via the texture transform ops). Invoked once per instance in order."
+          },
+          ArgDef {
+            name: "base",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture the instances are blitted into"
+          },
+          ArgDef {
+            name: "blend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\""
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("bilinear".to_owned())),
+            description: "\"bilinear\" or \"nearest\""
+          },
+        ],
+        description: "Blits `count` generated stamp instances into `base` (instance order = blend order), returning a new texture. Equivalent to folding `blit` over the generated stamps, but with a single pixel-buffer copy.",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "stamps",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of placed textures to blit in order"
+          },
+          ArgDef {
+            name: "base",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture the instances are blitted into"
+          },
+          ArgDef {
+            name: "blend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\""
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("bilinear".to_owned())),
+            description: "\"bilinear\" or \"nearest\""
+          },
+        ],
+        description: "Blits each placed texture in `stamps` into `base` in sequence order, returning a new texture.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "poisson_points_2d" => FnDef {
+    module: "math",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Float),
+            default_value: DefaultValue::Required,
+            description: "Minimum distance between points, in UV units"
+          },
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+        ],
+        description: "Generates a blue-noise (Poisson-disk) point set over [0,1)² via Bridson's algorithm, packed as densely as the radius allows. Distances are TOROIDAL, so the set tiles seamlessly with repeat-wrapped textures. Deterministic for a given seed.",
+        return_type: &[ArgType::Sequence],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Exact number of points to return"
+          },
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: ""
+          },
+        ],
+        description: "Generates exactly `count` blue-noise (Poisson-disk) points over [0,1)² with toroidal distances (tiles seamlessly). The point order is shuffled, so any prefix is itself a well-spaced subset. Deterministic for a given seed.",
+        return_type: &[ArgType::Sequence],
       },
     ],
   },

@@ -3,8 +3,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use crate::{
-  ArgRef, Callable, ErrorStack, EvalCtx, RenderedTexture, Sym, TextureHandle, TextureUsage,
-  TextureWrap, Value, Vec2, Vec3, EMPTY_KWARGS,
+  ArgRef, Callable, ErrorStack, EvalCtx, Mat4, RenderedTexture, Sym, TextureHandle, TextureUsage,
+  TextureWrap, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
 const MAX_TEXTURE_DIM: i64 = 8192;
@@ -33,11 +33,12 @@ impl TextureHandle {
   }
 }
 
-fn pixel_from_value(v: &Value) -> Option<([f32; 3], usize)> {
+fn pixel_from_value(v: &Value) -> Option<([f32; 4], usize)> {
   match v {
-    Value::Vec2(v) => Some(([v.x, v.y, 0.], 2)),
-    Value::Vec3(v) => Some(([v.x, v.y, v.z], 3)),
-    v => v.as_float().map(|f| ([f, 0., 0.], 1)),
+    Value::Vec2(v) => Some(([v.x, v.y, 0., 0.], 2)),
+    Value::Vec3(v) => Some(([v.x, v.y, v.z, 0.], 3)),
+    Value::Vec4(v) => Some(([v.x, v.y, v.z, v.w], 4)),
+    v => v.as_float().map(|f| ([f, 0., 0., 0.], 1)),
   }
 }
 
@@ -71,7 +72,8 @@ pub(crate) fn texture_impl(
         })?;
       let (px, n) = pixel_from_value(&out).ok_or_else(|| {
         ErrorStack::new(format!(
-          "Expected float, vec2, or vec3 from `generator` callable in `texture`, found: {out:?}"
+          "Expected float, vec2, vec3, or vec4 from `generator` callable in `texture`, found: \
+           {out:?}"
         ))
       })?;
       if channels == 0 {
@@ -79,7 +81,7 @@ pub(crate) fn texture_impl(
         pixels.reserve_exact(w * h * n);
       } else if n != channels {
         return Err(ErrorStack::new(
-          "`generator` callable in `texture` returned a mix of float/vec2/vec3 values",
+          "`generator` callable in `texture` returned a mix of float/vec2/vec3/vec4 values",
         ));
       }
       pixels.extend_from_slice(&px[..n]);
@@ -95,6 +97,8 @@ pub(crate) fn texture_impl(
     min_filter: None,
     mag_filter: None,
     format: None,
+    transform: Mat4::identity(),
+    mips: Default::default(),
   })))
 }
 
@@ -113,6 +117,12 @@ pub(crate) fn map_texture_impl(
       let val = match ch {
         1 => Value::Float(src[base]),
         2 => Value::Vec2(Vec2::new(src[base], src[base + 1])),
+        4 => Value::Vec4(Rc::new(Vec4::new(
+          src[base],
+          src[base + 1],
+          src[base + 2],
+          src[base + 3],
+        ))),
         _ => Value::Vec3(Vec3::new(src[base], src[base + 1], src[base + 2])),
       };
       let uv = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
@@ -130,7 +140,7 @@ pub(crate) fn map_texture_impl(
         .map_err(|err| err.wrap("Error produced by callable passed to `map` over texture"))?;
       let (px, n) = pixel_from_value(&res).ok_or_else(|| {
         ErrorStack::new(format!(
-          "Expected float, vec2, or vec3 from callable passed to `map` over texture, found: \
+          "Expected float, vec2, vec3, or vec4 from callable passed to `map` over texture, found: \
            {res:?}"
         ))
       })?;
@@ -139,7 +149,7 @@ pub(crate) fn map_texture_impl(
         out.reserve_exact(w * h * n);
       } else if n != out_ch {
         return Err(ErrorStack::new(
-          "callable passed to `map` over texture returned a mix of float/vec2/vec3 values",
+          "callable passed to `map` over texture returned a mix of float/vec2/vec3/vec4 values",
         ));
       }
       out.extend_from_slice(&px[..n]);
@@ -211,12 +221,40 @@ pub(crate) fn blur_impl(
     out
   };
 
-  let mid = TextureHandle {
-    pixels: Rc::new(pass(tex, 1, 0)),
-    ..(**tex).clone()
+  // RGBA filters premultiplied so transparent texels' RGB doesn't bleed into visible ones.
+  let src = if ch == 4 {
+    let mut px = (*tex.pixels).clone();
+    for p in px.chunks_exact_mut(4) {
+      let a = p[3];
+      p[0] *= a;
+      p[1] *= a;
+      p[2] *= a;
+    }
+    TextureHandle {
+      pixels: Rc::new(px),
+      ..(**tex).clone()
+    }
+  } else {
+    (**tex).clone()
   };
+
+  let mid = TextureHandle {
+    pixels: Rc::new(pass(&src, 1, 0)),
+    ..src
+  };
+  let mut out = pass(&mid, 0, 1);
+  if ch == 4 {
+    for p in out.chunks_exact_mut(4) {
+      let a = p[3];
+      if a > 1e-8 {
+        p[0] /= a;
+        p[1] /= a;
+        p[2] /= a;
+      }
+    }
+  }
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(pass(&mid, 0, 1)),
+    pixels: Rc::new(out),
     ..mid
   })))
 }
@@ -366,6 +404,28 @@ texture(4, 4, |uv| 0.5) | height_to_normal | render_texture(name="flat_n")
     for px in flat_n.pixels.chunks(3) {
       assert_eq!(px, &[0.5, 0.5, 1.0]);
     }
+  }
+
+  #[test]
+  fn texture_vec4_roundtrip() {
+    let ctx = parse_and_eval_program(
+      r#"
+t = texture(2, 2, |uv| v4(uv.x, uv.y, 1., 0.5))
+(t -> |val| val.a) | render_texture(name="alpha")
+t | render_texture(name="rgba")
+"#,
+    )
+    .unwrap();
+    let rendered = ctx.rendered_textures.into_inner();
+    assert_eq!(rendered.len(), 2);
+
+    let alpha = &rendered[0].texture;
+    assert_eq!(alpha.channels, 1);
+    assert!(alpha.pixels.iter().all(|&p| p == 0.5));
+
+    let rgba = &rendered[1].texture;
+    assert_eq!((rgba.width, rgba.height, rgba.channels), (2, 2, 4));
+    assert_eq!(rgba.pixels[0..4], [0.25, 0.25, 1., 0.5]);
   }
 
   /// `render_texture` pushes to `rendered_textures` as a side effect, so it must not be

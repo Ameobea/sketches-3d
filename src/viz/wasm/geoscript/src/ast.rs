@@ -54,6 +54,7 @@ impl FromStr for ArgType {
       "num" => Ok(ArgType::Numeric),
       "vec2" | "v2" => Ok(ArgType::Vec2),
       "vec3" | "v3" => Ok(ArgType::Vec3),
+      "vec4" | "v4" => Ok(ArgType::Vec4),
       "bool" => Ok(ArgType::Bool),
       "str" | "string" => Ok(ArgType::String),
       "map" => Ok(ArgType::Map),
@@ -79,6 +80,7 @@ impl ArgType {
       (ArgType::Numeric, Value::Int(_) | Value::Float(_)) => Ok(()),
       (ArgType::Vec2, Value::Vec2(_)) => Ok(()),
       (ArgType::Vec3, Value::Vec3(_)) => Ok(()),
+      (ArgType::Vec4, Value::Vec4(_)) => Ok(()),
       (ArgType::Bool, Value::Bool(_)) => Ok(()),
       (ArgType::Sequence, Value::Sequence(_)) => Ok(()),
       (ArgType::Callable, Value::Callable(_)) => Ok(()),
@@ -2272,6 +2274,7 @@ fn swizzle_result_ty(field: &str, valid: impl Fn(char) -> bool) -> Option<ArgTyp
     1 => Some(ArgType::Float),
     2 => Some(ArgType::Vec2),
     3 => Some(ArgType::Vec3),
+    4 => Some(ArgType::Vec4),
     _ => None,
   }
 }
@@ -2282,6 +2285,9 @@ pub fn infer_static_field_access_ty(lhs_ty: ArgType, field: &str) -> Option<ArgT
   match lhs_ty {
     ArgType::Vec2 => swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'r' | 'g')),
     ArgType::Vec3 => swizzle_result_ty(field, |c| matches!(c, 'x' | 'y' | 'z' | 'r' | 'g' | 'b')),
+    ArgType::Vec4 => swizzle_result_ty(field, |c| {
+      matches!(c, 'x' | 'y' | 'z' | 'w' | 'r' | 'g' | 'b' | 'a')
+    }),
     _ => None,
   }
 }
@@ -2302,7 +2308,7 @@ pub fn infer_dynamic_field_access_ty(
     return infer_static_field_access_ty(lhs_ty, s);
   }
   match (lhs_ty, field_ty) {
-    (ArgType::Vec2 | ArgType::Vec3, ArgType::Int) => Some(ArgType::Float),
+    (ArgType::Vec2 | ArgType::Vec3 | ArgType::Vec4, ArgType::Int) => Some(ArgType::Float),
     _ => None,
   }
 }

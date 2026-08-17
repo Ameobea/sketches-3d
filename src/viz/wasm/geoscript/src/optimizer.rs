@@ -1003,6 +1003,14 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
       val.y.to_bits().hash(hasher);
       val.z.to_bits().hash(hasher);
     }
+    // Content-hashed despite the box, like `Mat4`: identity hashing a fresh-Rc-per-run
+    // value would grow the cache without bound.
+    Value::Vec4(val) => {
+      val.x.to_bits().hash(hasher);
+      val.y.to_bits().hash(hasher);
+      val.z.to_bits().hash(hasher);
+      val.w.to_bits().hash(hasher);
+    }
     Value::Bool(val) => {
       val.hash(hasher);
     }
@@ -1053,26 +1061,29 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
 fn is_assoc_foldable_literal(val: &Value) -> bool {
   matches!(
     val,
-    Value::Int(_) | Value::Float(_) | Value::Vec2(_) | Value::Vec3(_)
+    Value::Int(_) | Value::Float(_) | Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)
   )
 }
 
 fn is_float_assoc_literal(val: &Value) -> bool {
-  matches!(val, Value::Float(_) | Value::Vec2(_) | Value::Vec3(_))
+  matches!(
+    val,
+    Value::Float(_) | Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_)
+  )
 }
 
 fn expr_requires_float_assoc(ctx: &EvalCtx, local_scope: &ScopeTracker, expr: &Expr) -> bool {
   let mut env = local_scope.build_type_env(ctx);
   match infer_expr(ctx, &mut env, expr).as_single_arg_type() {
     Some(ArgType::Int) => false,
-    Some(ArgType::Float | ArgType::Vec2 | ArgType::Vec3 | ArgType::Numeric) => true,
+    Some(ArgType::Float | ArgType::Vec2 | ArgType::Vec3 | ArgType::Vec4 | ArgType::Numeric) => true,
     Some(_) => false,
     None => true,
   }
 }
 
 fn is_vec_literal(val: &Value) -> bool {
-  matches!(val, Value::Vec2(_) | Value::Vec3(_))
+  matches!(val, Value::Vec2(_) | Value::Vec3(_) | Value::Vec4(_))
 }
 
 /// Mesh is included because `mesh * vec` / `mesh * num` are scales and `mesh + vec` is a
@@ -1088,6 +1099,7 @@ fn expr_is_assoc_safe(ctx: &EvalCtx, local_scope: &ScopeTracker, expr: &Expr) ->
         | ArgType::Numeric
         | ArgType::Vec2
         | ArgType::Vec3
+        | ArgType::Vec4
         | ArgType::Mesh
     )
   )

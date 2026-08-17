@@ -78,6 +78,17 @@ fn write_value(out: &mut String, ctx: &EvalCtx, val: &Value, sample_count: usize
       write_f32(out, v.z);
       out.push_str("]}");
     }
+    Value::Vec4(v) => {
+      out.push_str("{\"t\":\"vec4\",\"v\":[");
+      write_f32(out, v.x);
+      out.push(',');
+      write_f32(out, v.y);
+      out.push(',');
+      write_f32(out, v.z);
+      out.push(',');
+      write_f32(out, v.w);
+      out.push_str("]}");
+    }
     Value::Mat4(m) => {
       out.push_str("{\"t\":\"mat4\",\"v\":[");
       for (i, e) in m.as_slice().iter().enumerate() {

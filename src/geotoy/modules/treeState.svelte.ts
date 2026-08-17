@@ -342,7 +342,9 @@ export class TreeState {
 
   /** Does NOT push undo. Pair with `recordControlChange` to commit an undo entry. */
   setControl(nodeId: string, handleId: string, value: ControlValue): void {
-    opsSetControl(this.state.tree, nodeId, handleId, value);
+    // Snapshot first: callers routinely hand over UI state, and `opsSetControl`
+    // `structuredClone`s, which throws DataCloneError on a `$state` proxy.
+    opsSetControl(this.state.tree, nodeId, handleId, $state.snapshot(value) as ControlValue);
     this.treeDirty = true;
   }
 

@@ -15,10 +15,22 @@
     onChange: (key: string, spec: RampSpecJson) => void;
   } = $props();
 
+  // In-flight edit, rendered locally until released. Raw: `commit` hands the spec to
+  // `treeState`, which `structuredClone`s it — a state proxy throws there.
+  let draft = $state.raw<{ key: string; spec: RampSpecJson } | null>(null);
+
   const rows = $derived(
     controls
       .filter(c => c.kind === 'ramp')
-      .map(c => ({ c, key: controlKey(c), label: c.label ?? c.handleId, spec: getSpec(controlKey(c)) }))
+      .map(c => {
+        const key = controlKey(c);
+        return {
+          c,
+          key,
+          label: c.label ?? c.handleId,
+          spec: draft?.key === key ? draft.spec : getSpec(key),
+        };
+      })
       .filter((r): r is typeof r & { spec: RampSpecJson } => r.spec !== null)
   );
 
@@ -35,14 +47,26 @@
 
   const cloneSpec = (spec: RampSpecJson): RampSpecJson => JSON.parse(JSON.stringify(spec));
 
-  /** Commit an edit; keeps stops sorted (stable) so the bar and wasm agree on order. */
-  const commit = (key: string, spec: RampSpecJson, keepIx?: number): number => {
+  /** Keeps stops sorted (stable) so the bar and wasm agree on order. */
+  const sortStops = (spec: RampSpecJson, keepIx?: number): number => {
     const tagged = spec.stops.map((s, i) => ({ s, i }));
     tagged.sort((a, b) => a.s.pos - b.s.pos || a.i - b.i);
-    const newIx = keepIx !== undefined ? tagged.findIndex(t => t.i === keepIx) : -1;
     spec.stops = tagged.map(t => t.s);
+    return keepIx === undefined ? -1 : tagged.findIndex(t => t.i === keepIx);
+  };
+
+  const commit = (key: string, spec: RampSpecJson, keepIx?: number): number => {
+    const ix = sortStops(spec, keepIx);
+    draft = null;
     onChange(key, spec);
-    return newIx;
+    return ix;
+  };
+
+  /** Render-only update; the re-run is deferred to the matching `commit` on release. */
+  const preview = (key: string, spec: RampSpecJson, keepIx?: number): number => {
+    const ix = sortStops(spec, keepIx);
+    draft = { key, spec };
+    return ix;
   };
 
   const extent = (spec: RampSpecJson): [number, number] => [
@@ -67,7 +91,13 @@
     return `#${h(enc[0])}${h(enc[1])}${h(enc[2])}`;
   };
 
+  // The native picker reports only `input`/`change` (Chrome fires both on every color change),
+  // so a release of one of its sliders is observable only as a settle in that stream.
+  const COLOR_SETTLE_MS = 150;
+  let colorSettleTimer = 0;
+
   const onStopColor = (row: (typeof rows)[number], ix: number, hex: string) => {
+    if (hex === stopColorHex(row.spec, row.spec.stops[ix])) return;
     const spec = cloneSpec(row.spec);
     const lin = srgbToLinear([
       parseInt(hex.slice(1, 3), 16) / 255,
@@ -75,7 +105,15 @@
       parseInt(hex.slice(5, 7), 16) / 255,
     ]);
     spec.stops[ix].value = spec.scalar ? [lin[0]] : [...lin];
-    commit(row.key, spec);
+    preview(row.key, spec);
+    clearTimeout(colorSettleTimer);
+    colorSettleTimer = window.setTimeout(flushColorSettle, COLOR_SETTLE_MS);
+  };
+
+  /** Land a pending color pick before anything else takes over the draft. */
+  const flushColorSettle = () => {
+    clearTimeout(colorSettleTimer);
+    if (draft) commit(draft.key, draft.spec);
   };
 
   const onStopField = (row: (typeof rows)[number], ix: number, field: 'pos' | 'value', raw: string) => {
@@ -118,23 +156,27 @@
   // numerically instead) so the bar's mapping stays stable mid-drag.
   const onMarkerPointerDown = (row: (typeof rows)[number], ix: number, e: PointerEvent) => {
     selected = { key: row.key, ix };
+    flushColorSettle();
     if (ix === 0 || ix === row.spec.stops.length - 1) return;
     const marker = e.currentTarget as HTMLElement;
     const bar = marker.parentElement!;
     marker.setPointerCapture(e.pointerId);
     const [lo, hi] = extent(row.spec);
+    const start = row.spec;
+    let live: RampSpecJson | null = null;
     const onMove = (ev: PointerEvent) => {
       const r = bar.getBoundingClientRect();
       const pos = lo + (hi - lo) * Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
-      const spec = cloneSpec(row.spec);
-      spec.stops[ix].pos = Math.min(hi, Math.max(lo, pos));
-      const newIx = commit(row.key, spec, ix);
+      live = cloneSpec(start);
+      live.stops[ix].pos = Math.min(hi, Math.max(lo, pos));
+      const newIx = preview(row.key, live, ix);
       if (newIx >= 0) selected = { key: row.key, ix: newIx };
     };
     const onUp = () => {
       marker.removeEventListener('pointermove', onMove);
       marker.removeEventListener('pointerup', onUp);
       marker.removeEventListener('pointercancel', onUp);
+      if (live) commit(row.key, live);
     };
     marker.addEventListener('pointermove', onMove);
     marker.addEventListener('pointerup', onUp);
@@ -203,6 +245,7 @@
               type="color"
               value={stopColorHex(row.spec, s)}
               oninput={e => onStopColor(row, ix, (e.target as HTMLInputElement).value)}
+              onchange={e => onStopColor(row, ix, (e.target as HTMLInputElement).value)}
             />
           {/if}
           <select
