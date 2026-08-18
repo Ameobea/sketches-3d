@@ -2,6 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
   auth::User,
+  db::begin_write,
   render_thumbnail::render_thumbnail,
   tags::{COMPOSITION_TAGS, load_tags, load_tags_one, set_tags},
 };
@@ -190,7 +191,7 @@ pub async fn create_composition(
 ) -> Result<Json<Composition>, APIError> {
   payload.tree.validate()?;
 
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     APIError::new(
       StatusCode::INTERNAL_SERVER_ERROR,
       format!("Failed to begin transaction: {err}"),
@@ -385,7 +386,7 @@ pub async fn fork_composition(
     )
   })?;
 
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     APIError::new(
       StatusCode::INTERNAL_SERVER_ERROR,
       format!("Failed to begin transaction: {err}"),
@@ -876,7 +877,7 @@ pub async fn update_composition(
     ));
   }
 
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     APIError::new(
       StatusCode::INTERNAL_SERVER_ERROR,
       format!("Failed to begin transaction: {err}"),

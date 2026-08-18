@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use crate::{
   auth::User,
+  db::begin_write,
   server::APIError,
   tags::{TEXTURE_TAGS, load_tags, load_tags_one, set_tags},
 };
@@ -288,7 +289,7 @@ async fn create_texture_inner(
   let texture_url = texture_url_res?;
   let thumbnail_url = thumbnail_url_res?;
 
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;
@@ -435,7 +436,7 @@ pub async fn update_texture(
   Extension(user): Extension<User>,
   Json(body): Json<UpdateTextureBody>,
 ) -> Result<Json<Texture>, APIError> {
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;
@@ -482,7 +483,7 @@ pub async fn delete_texture(
   Path(texture_id): Path<i64>,
   Extension(user): Extension<User>,
 ) -> Result<StatusCode, APIError> {
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;

@@ -12,6 +12,7 @@ use url::Url;
 
 use crate::{
   auth::User,
+  db::begin_write,
   render_material_thumbnail::render_material_thumbnail,
   server::APIError,
   tags::{MATERIAL_TAGS, load_tags, load_tags_one, set_tags},
@@ -190,7 +191,7 @@ pub async fn create_material(
       APIError::new(StatusCode::BAD_REQUEST, "Invalid material definition")
     })?;
 
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;
@@ -245,7 +246,7 @@ pub async fn update_material(
   Extension(user): Extension<User>,
   Json(body): Json<UpdateMaterialBody>,
 ) -> Result<Json<Material>, APIError> {
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;
@@ -324,7 +325,7 @@ pub async fn delete_material(
   Path(material_id): Path<i64>,
   Extension(user): Extension<User>,
 ) -> Result<StatusCode, APIError> {
-  let mut tx = pool.begin().await.map_err(|err| {
+  let mut tx = begin_write(&pool).await.map_err(|err| {
     error!("Failed to begin transaction: {err}");
     APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Internal server error")
   })?;
