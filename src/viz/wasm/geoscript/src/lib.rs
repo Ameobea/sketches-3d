@@ -65,6 +65,7 @@ pub mod path_building;
 pub mod preprocess;
 mod resolve;
 mod seq;
+pub mod texture_encode;
 pub mod ty;
 pub mod type_infer;
 pub mod value_json;
@@ -94,6 +95,7 @@ pub const DEP_BIT_TEXT2PATH: u32 = 1 << 3;
 pub const DEP_BIT_UV_UNWRAP: u32 = 1 << 4;
 pub const DEP_BIT_UV_SOLVERS: u32 = 1 << 5;
 pub const DEP_BIT_MODEL_DATA: u32 = 1 << 6;
+pub const DEP_BIT_IMAGE_DATA: u32 = 1 << 7;
 
 // Single-threaded WASM makes a global mutable u32 safe for dep tracking.
 #[cfg(target_arch = "wasm32")]
@@ -245,6 +247,13 @@ pub trait Sequence: Any + Debug {
     &self,
     ctx: &'a EvalCtx,
   ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a>;
+
+  /// What consuming this sequence evaluates: the callables it invokes and the inner
+  /// sequences it consumes. Analyzers recurse through these; entries that are neither are
+  /// ignored, and values that are merely yielded as elements must not be listed. `None`
+  /// means consumption is opaque (wraps an arbitrary iterator, etc.) and must be assumed
+  /// effectful. Deliberately has no default impl so new sequence types have to declare.
+  fn consumption_deps(&self) -> Option<Vec<Value>>;
 }
 
 pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {
@@ -447,6 +456,7 @@ impl Callable {
             | "render"
             | "render_path"
             | "render_texture"
+            | "render_texture_stack"
             | "set_default_material"
             | "call"
             | "randv"
@@ -1891,10 +1901,15 @@ pub struct RenderedPath {
   pub path_id: u32,
 }
 
-/// A texture registered as a named output channel via `render_texture`.
+/// A texture registered as a named output channel via `render_texture` /
+/// `render_texture_stack`.
 #[derive(Clone)]
 pub struct RenderedTexture {
+  /// First (only, for singles) slice; GPU-param baking targets this handle.
   pub texture: Rc<TextureHandle>,
+  /// Slices 1.. for stacks; empty for plain `render_texture` outputs. All slices share
+  /// dims/channels/wrap (validated at registration).
+  pub extra_slices: Vec<Rc<TextureHandle>>,
   pub name: String,
   pub usage: Option<TextureUsage>,
   pub source_module: Option<String>,

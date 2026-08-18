@@ -817,16 +817,83 @@ pub fn geoscript_get_rendered_texture_wrap(ctx: *const GeoscriptReplCtx, tex_ix:
   .to_owned()
 }
 
+/// Layer count; 1 for plain `render_texture` outputs, the slice count for stacks.
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_layers(ctx: *const GeoscriptReplCtx, tex_ix: usize) -> usize {
+  let ctx = unsafe { &*ctx };
+  1 + ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
+    .extra_slices
+    .len()
+}
+
+/// All slices concatenated in layer order; len = width*height*channels*layers.
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_texture_pixels(
   ctx: *const GeoscriptReplCtx,
   tex_ix: usize,
 ) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  ctx.geo_ctx.rendered_textures.inner.borrow()[tex_ix]
-    .texture
-    .pixels
-    .to_vec()
+  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+  let rt = &textures[tex_ix];
+  if rt.extra_slices.is_empty() {
+    return rt.texture.pixels.to_vec();
+  }
+  let mut out = Vec::with_capacity(rt.texture.pixels.len() * (1 + rt.extra_slices.len()));
+  out.extend_from_slice(&rt.texture.pixels);
+  for slice in &rt.extra_slices {
+    out.extend_from_slice(&slice.pixels);
+  }
+  out
+}
+
+/// RGBA-expanded f32 pixels (all slices concatenated; gray → rgb, b zero-filled, a=1).
+/// Fetched by the host only for 3-channel textures — the one channel count whose raw
+/// pixels can't be uploaded to a GPU-mippable float format directly.
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_pixels_rgba(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+  let rt = &textures[tex_ix];
+  let tex = &rt.texture;
+  let layer_len = tex.width * tex.height * 4;
+  let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
+  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+    geoscript::texture_encode::expand_rgba_f32(
+      &slice.pixels,
+      tex.channels,
+      &mut out[i * layer_len..(i + 1) * layer_len],
+    );
+  }
+  out
+}
+
+/// unorm8-encoded pixels (all slices concatenated) for the texture's materialization
+/// format; empty when the resolved format is float (consumers upload the raw f32s). An
+/// unset format defaults to rgba8, mirroring the JS-side `DEFAULT_FORMAT`.
+#[wasm_bindgen]
+pub fn geoscript_encode_rendered_texture_pixels(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<u8> {
+  let ctx = unsafe { &*ctx };
+  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+  let rt = &textures[tex_ix];
+  let tex = &rt.texture;
+  let format = tex.format.unwrap_or(TextureFormat::Rgba8);
+  let bpp = match format {
+    TextureFormat::Rgba8 => 4,
+    TextureFormat::R8 => 1,
+    TextureFormat::Rg8 => 2,
+    _ => return Vec::new(),
+  };
+  let mut out = Vec::with_capacity(tex.width * tex.height * (1 + rt.extra_slices.len()) * bpp);
+  for slice in std::iter::once(tex).chain(rt.extra_slices.iter()) {
+    geoscript::texture_encode::encode_unorm8(&slice.pixels, tex.channels, format, &mut out);
+  }
+  out
 }
 
 #[wasm_bindgen]
@@ -1433,6 +1500,111 @@ mod tests {
     format!(
       r#"{{"scalar":false,"stops":[{{"pos":0.0,"value":[{v},{v},{v}],"ease":"linear"}},{{"pos":1.0,"value":[{v},{v},{v}],"ease":"linear"}}],"extend":"clamp","space":"linear"}}"#
     )
+  }
+
+  /// Pixel-buffer Rc addresses of every rendered texture slice after evaling `src` fresh
+  /// on a warm ctx (const-eval cache persists across the reset, like real reruns).
+  fn eval_rendered_pixel_ptrs(p: *mut GeoscriptReplCtx, src: &str) -> Vec<usize> {
+    geoscript_repl_reset(p);
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, None);
+    let ctx = unsafe { &*p };
+    ctx.last_result.as_ref().unwrap();
+    let out = ctx
+      .geo_ctx
+      .rendered_textures
+      .inner
+      .borrow()
+      .iter()
+      .flat_map(|rt| {
+        std::iter::once(&rt.texture)
+          .chain(rt.extra_slices.iter())
+          .map(|t| Rc::as_ptr(&t.pixels) as usize)
+      })
+      .collect::<Vec<_>>();
+    assert!(!out.is_empty());
+    out
+  }
+
+  const LAZY_STACK_HEADER: &str = "n = 32\nf0 = texture(n, n, |uv| fbm(pos=uv))\nramp = \
+                                   color_ramp(stops=[[-1., srgb(0x504d4c)], [1., \
+                                   srgb(0xdfd9d3)]])\nlayers = 0..4 -> |i| ramp(f0 * ((i + 1) / \
+                                   4.))\n";
+
+  /// A pure lazy map piped into a side-effectful consumer gets pre-collected into the
+  /// const-eval cache, so warm runs replay the computed slices instead of re-running the
+  /// per-element work inside the render impl.
+  #[test]
+  fn lazy_seq_into_render_stack_replays_from_cache() {
+    let src = format!(
+      "{LAZY_STACK_HEADER}layers | render_texture_stack(name=\"s\")\nlayers | first | \
+       render_texture(name='x')"
+    );
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let first = eval_rendered_pixel_ptrs(p, &src);
+    let second = eval_rendered_pixel_ptrs(p, &src);
+    assert_eq!(first.len(), 5);
+    assert_eq!(first, second, "warm run must replay all cached slices");
+  }
+
+  #[test]
+  fn direct_call_seq_arg_replays_from_cache() {
+    let src = format!("{LAZY_STACK_HEADER}render_texture_stack(layers, name=\"s\")");
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let first = eval_rendered_pixel_ptrs(p, &src);
+    let second = eval_rendered_pixel_ptrs(p, &src);
+    assert_eq!(first.len(), 4);
+    assert_eq!(first, second);
+  }
+
+  /// Fold keys for rng-free seq computations must not embed rng-stream position: inserting
+  /// an unrelated draw upstream shifts the fold-world rng state but must not invalidate the
+  /// cached map/collect chain (pre-sharpening, the blanket `Value::Sequence` poison did).
+  #[test]
+  fn pure_seq_fold_cache_survives_unrelated_rng_shift() {
+    let head = "n = 16\nf0 = texture(n, n, |uv| fbm(pos=uv))\n";
+    let tail = "layers = 0..4 -> |i| f0 * ((i + 1) / 4.)\nlayers | \
+                render_texture_stack(name=\"s\")";
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let first = eval_rendered_pixel_ptrs(p, &format!("{head}{tail}"));
+    let second = eval_rendered_pixel_ptrs(p, &format!("{head}shift = randf()\n{tail}"));
+    assert_eq!(first.len(), 4);
+    assert_eq!(
+      first, second,
+      "rng-position-independent seq folds must replay across unrelated rng edits"
+    );
+  }
+
+  /// Wrapped callbacks (partial application over a pure builtin) must get the same precise
+  /// rng analysis as bare closures — no fallback to the blanket poison.
+  #[test]
+  fn paf_callback_seq_replays_from_cache() {
+    let src = "n = 16\nf0 = texture(n, n, |uv| fbm(pos=uv))\nscale = |a, b| f0 * (a * \
+               b)\nlayers = [0.25, 0.5, 0.75, 1.] -> scale(0.5)\nlayers | \
+               render_texture_stack(name=\"s\")";
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let first = eval_rendered_pixel_ptrs(p, src);
+    let second = eval_rendered_pixel_ptrs(p, src);
+    assert_eq!(first.len(), 4);
+    assert_eq!(first, second);
+  }
+
+  /// An rng-drawing callback must NOT be pre-collected: draws stay at consumption time and
+  /// each run recomputes (and redraws), exactly as before.
+  #[test]
+  fn rng_lazy_seq_into_render_stack_stays_lazy() {
+    let src = "n = 8\nf0 = texture(n, n, |uv| fbm(pos=uv))\nlayers = 0..3 -> |i| f0 * \
+               randf()\nlayers | render_texture_stack(name=\"s\")";
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let first = eval_rendered_pixel_ptrs(p, src);
+    let second = eval_rendered_pixel_ptrs(p, src);
+    assert_eq!(first.len(), 3);
+    assert_ne!(first, second, "rng seq must stay lazy and recompute per run");
   }
 
   #[test]

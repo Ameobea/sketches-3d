@@ -3263,6 +3263,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Adds a numeric value to each component of a Vec4",
         return_type: &[ArgType::Vec4],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds two textures elementwise; dims and channel counts must match",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "sub" => FnDef {
@@ -3814,6 +3834,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Multiplies each element of a Vec4 by a scalar",
         return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplies every texel of a texture by a scalar",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplies every texel of a texture by a scalar",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Multiplies two textures elementwise (masking); dims and channel counts must match",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -12513,6 +12593,114 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "spectral_noise" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "bands",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "8 rows of 4 floats: log-polar spectrum gains, radial bands (low->high frequency, log-spaced over cycles/pixel [1/256, 0.5]) x angular sectors. Each value is a log-power gain relative to the loudest cell, in [-14, 0] nats (0 = loudest, -14 = silent)."
+          },
+          ArgDef {
+            name: "kernels",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional spectral peaks; each is [f0y, f0x, sig1, sig2, angle, energy], all floats: f0 in cycles/pixel [-0.5, 0.5]; sig1/sig2 = log10 of the peak's spectral widths, in [-3, -0.5]; angle in radians [0, pi]; energy = log10 of the peak's energy relative to the band spectrum, in [-4, 2]."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output width in pixels; power of two (FFT synthesis)"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output height in pixels; power of two (FFT synthesis)"
+          },
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(0)),
+            description: "Noise instance seed; same params + seed + size -> identical texture. Different seeds are independent instances of the same texture, suitable for equal-power crossfade morphing."
+          },
+          ArgDef {
+            name: "freq_scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Scales all model frequencies (>1 = finer detail) without changing the fingerprint; [0.125, 8]"
+          },
+          ArgDef {
+            name: "distribution",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("gaussian".to_owned())),
+            description: "\"gaussian\" (default): standardized field, mean 0 / std 1 — the form that composes linearly (equal-power seed crossfades stay exact); pair with z-score ramp stop positions. \"uniform\": values remapped to uniform [0, 1] via the Gaussian CDF, for direct use as a mask/height."
+          },
+        ],
+        description: "Synthesizes a seamless 1-channel Gaussian noise texture from a compact spectral fingerprint (as produced by the texture-utils noise-signature extractor). Params are size-independent: any power-of-two output size yields the same texture statistics.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "load_image" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "uri",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "`data:image/...;base64,...` data URI. Decoded host-side in the browser; PNG is the canonical format."
+          },
+          ArgDef {
+            name: "srgb",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Decode sRGB-encoded color channels to linear (the convention for color images). Pass false for data images (heightmaps, texton kernels, masks) whose bytes are raw values. Alpha is never sRGB-decoded."
+          },
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Multiplier applied to every non-alpha channel after decode (decode yields [0, 1])"
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Added to every non-alpha channel after `scale`"
+          },
+          ArgDef {
+            name: "channels",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Force the output channel count (1, 3, or 4). Default auto-detects: 4 if any alpha < 1, 1 if fully gray, else 3."
+          },
+        ],
+        description: "Decodes an embedded base64 image into a float texture (wrap=repeat). The image-decode dependency loads lazily on first use.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
   "blur" => FnDef {
     module: "texture",
     examples: &[],
@@ -12611,6 +12799,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "render_texture_stack" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "slices",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Seq of 2-256 textures with matching dims/channels/wrap, interpolated by a normalized index t in [0,1] at render time (slice 0 at t=0, last at t=1)"
+          },
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("default".to_owned())),
+            description: "Output channel name this stack is published under"
+          },
+          ArgDef {
+            name: "usage",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Semantic role of this output: one of \"albedo\", \"normal\", \"roughness\", \"height\", \"metalness\", \"ao\", \"mask\". Drives colorspace handling and preview auto-binding in consumers."
+          },
+        ],
+        description: "Registers an ordered set of texture slices as a named stack output of the composition. Consumers sample it as a texture array, interpolating adjacent slices by a per-fragment index t in [0,1].",
+        return_type: &[ArgType::Nil],
+      },
+    ],
+  },
   "blit" => FnDef {
     module: "texture",
     examples: &[],
@@ -12636,7 +12857,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
-            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A stamp alpha channel (4-channel always; 2-channel onto a 1-channel base) modulates any mode."
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A stamp alpha channel (4-channel always; 2-channel onto a 1-channel base) modulates any mode — \"over\" then alpha-composites like a sprite. Without an alpha channel \"over\" replaces the full stamp quad, so give heightfield stamps a `v2(height, alpha)` shape rather than bare floats."
           },
           ArgDef {
             name: "filter",
@@ -12683,7 +12904,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
-            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\""
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A stamp alpha channel (4-channel always; 2-channel onto a 1-channel base) modulates any mode — \"over\" then alpha-composites like a sprite. Without an alpha channel \"over\" replaces the full stamp quad, so give heightfield stamps a `v2(height, alpha)` shape rather than bare floats."
           },
           ArgDef {
             name: "filter",
@@ -12717,7 +12938,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
-            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\""
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A stamp alpha channel (4-channel always; 2-channel onto a 1-channel base) modulates any mode — \"over\" then alpha-composites like a sprite. Without an alpha channel \"over\" replaces the full stamp quad, so give heightfield stamps a `v2(height, alpha)` shape rather than bare floats."
           },
           ArgDef {
             name: "filter",

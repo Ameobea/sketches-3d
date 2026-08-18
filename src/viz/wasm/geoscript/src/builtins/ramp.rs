@@ -256,6 +256,29 @@ impl DynamicCallable for RampCallable {
         .get(&interned_x)
         .ok_or_else(|| ErrorStack::new("ramp: expected argument `x`"))?
     };
+    if let Value::Texture(tex) = x_val {
+      if tex.channels != 1 {
+        return Err(ErrorStack::new(format!(
+          "ramp applied to a texture requires 1 channel, found {}",
+          tex.channels
+        )));
+      }
+      let out_ch = if self.spec.scalar { 1 } else { 3 };
+      let mut pixels = Vec::with_capacity(tex.pixels.len() * out_ch);
+      for &v in tex.pixels.iter() {
+        let c = self.sample(v, ctx)?;
+        if self.spec.scalar {
+          pixels.push(c.x);
+        } else {
+          pixels.extend_from_slice(&[c.x, c.y, c.z]);
+        }
+      }
+      return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {
+        pixels: std::rc::Rc::new(pixels),
+        channels: out_ch,
+        ..(**tex).clone()
+      })));
+    }
     let x = x_val
       .as_float()
       .ok_or_else(|| ErrorStack::new(format!("ramp: `x` must be a number, got {x_val:?}")))?;

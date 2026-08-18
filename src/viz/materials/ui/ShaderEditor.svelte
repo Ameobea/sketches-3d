@@ -34,13 +34,14 @@
             'color',
             'common',
             'lightAttenuation',
+            'stackIndex',
             'roughness',
             'metalness',
             'iridescence',
             'pomHeight',
             'pomNormal',
           ]
-        : ['color', 'common', 'lightAttenuation', 'roughness', 'metalness', 'iridescence']
+        : ['color', 'common', 'lightAttenuation', 'stackIndex', 'roughness', 'metalness', 'iridescence']
   );
 
   let activeShader = $state<ShaderName>('color');

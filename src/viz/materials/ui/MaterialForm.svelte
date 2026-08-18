@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
 
   import type { CustomShaderMatDef, MaterialDef } from 'src/viz/materials/schema';
+  import { isStackHandle } from 'src/geotoy/modules/proceduralTextures';
   import FormField from './FormField.svelte';
   import ColorPicker from './ColorPicker.svelte';
   import UvPropertiesEditor from './UvPropertiesEditor.svelte';
@@ -47,6 +48,13 @@
 
   const mappingMode = (m: ReqCustomShader): 'triplanar' | 'mesh_uv' | 'uv' =>
     m.meshUvUnwrap ? 'uv' : m.options.useTriplanarMapping === false ? 'mesh_uv' : 'triplanar';
+
+  const stackAssigned = $derived(
+    material.type === 'customShader' &&
+      [material.props?.map, material.props?.normalMap, material.props?.roughnessMap].some(
+        h => !!h && isStackHandle(h)
+      )
+  );
 
   let showRoughnessConfigurator = $state(false);
   let showMetalnessConfigurator = $state(false);
@@ -156,6 +164,31 @@
       cs.props.roughnessMap,
       h => (cs.props.roughnessMap = h)
     )}
+    {#if stackAssigned}
+      {#if cs.shaders?.stackIndexShader}
+        <FormField
+          label="stack index"
+          help="A stack-backed texture slot is assigned and the stackIndex shader slot is defined, so the interpolation index is computed per fragment by that snippet."
+        >
+          <span class="stack-shader-hint">per-fragment via `stackIndex` shader slot</span>
+        </FormField>
+      {:else}
+        <FormField
+          label="stack index"
+          help="Interpolation index across the assigned stack's slices: 0 = first slice, 1 = last. For per-fragment control (e.g. world-space noise), define the `stackIndex` slot in the shader editor — it overrides this slider."
+        >
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.01"
+            value={cs.props.stackIndex ?? 0}
+            oninput={e => (cs.props.stackIndex = (e.target as HTMLInputElement).valueAsNumber)}
+          />
+          <span>{(cs.props.stackIndex ?? 0).toFixed(2)}</span>
+        </FormField>
+      {/if}
+    {/if}
     {#if cs.props.map}
       <FormField label="derived roughness map">
         <div class="derived-map-controls">
@@ -618,6 +651,11 @@
   .section-divider {
     border-top: 1px solid #333;
     margin: 10px 0;
+  }
+
+  .stack-shader-hint {
+    font-size: 11px;
+    color: #9a9;
   }
 
   .advanced-options {

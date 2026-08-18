@@ -20,7 +20,11 @@
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
   import type { User } from 'src/geoscript/geotoyAPIClient';
-  import { isProceduralHandle, type ProceduralTextureOption } from 'src/geotoy/modules/proceduralTextures';
+  import {
+    isProceduralHandle,
+    STACK_CAPABLE_SLOTS,
+    type ProceduralTextureOption,
+  } from 'src/geotoy/modules/proceduralTextures';
   import { logGeotoyEvent } from 'src/analytics';
 
   let {
@@ -221,7 +225,9 @@
                   void rerun(false);
                 }
               }}
-              proceduralOptions={proceduralTextureOptions}
+              proceduralOptions={STACK_CAPABLE_SLOTS.includes(field)
+                ? proceduralTextureOptions
+                : proceduralTextureOptions.filter(o => !o.layers)}
               onclose={() => {
                 view = { type: 'properties' };
               }}

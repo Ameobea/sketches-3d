@@ -659,6 +659,32 @@ maxed = blit(texture(2, 2, |uv| 0.1) | cover, base1, blend="max", filter="neares
     }
   }
 
+  /// The alpha-aware height composite: a `v2(value, alpha)` stamp over a 1-channel base
+  /// lerps by alpha instead of replacing the full stamp quad (the scattered-heightfield
+  /// idiom — coverage occludes like a sprite, no bounding-box or voronoi-crease artifacts).
+  #[test]
+  fn blit_value_alpha_over_gray_base() {
+    let ctx = parse_and_eval_program(
+      r#"
+base = texture(2, 2, |uv| 0.8)
+half = blit(texture(2, 2, |uv| v2(0.2, 0.5)) | trans_global(0.5, 0.5), base, filter="nearest")
+zero = blit(texture(2, 2, |uv| v2(0.2, 0.)) | trans_global(0.5, 0.5), base, filter="nearest")
+full = blit(texture(2, 2, |uv| v2(0.2, 1.)) | trans_global(0.5, 0.5), base, filter="nearest")
+"#,
+    )
+    .unwrap();
+
+    for px in get_tex(&ctx, "half").pixels.iter() {
+      assert!((px - 0.5).abs() < 1e-6, "alpha 0.5: expected 0.5, got {px}");
+    }
+    for px in get_tex(&ctx, "zero").pixels.iter() {
+      assert!((px - 0.8).abs() < 1e-6, "alpha 0: base must survive, got {px}");
+    }
+    for px in get_tex(&ctx, "full").pixels.iter() {
+      assert!((px - 0.2).abs() < 1e-6, "alpha 1: stamp must replace, got {px}");
+    }
+  }
+
   #[test]
   fn blit_minification_uses_mips() {
     let ctx = parse_and_eval_program(

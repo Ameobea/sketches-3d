@@ -74,6 +74,7 @@ export interface PhysicalMaterialDef {
     common?: string;
     color?: string;
     lightAttenuation?: string;
+    stackIndex?: string;
     roughness?: string;
     metalness?: string;
     iridescence?: string;
@@ -115,6 +116,12 @@ export const buildDefaultShaders = (): NonNullable<PhysicalMaterialDef['shaders'
 // procedural shadow + AO. (1.0, 1.0) = no attenuation.
 vec2 getLightAttenuation(vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) {
   return vec2(1.0);
+}`,
+  stackIndex: `// Per-fragment interpolation index for stack-backed texture slots
+// (map/normalMap/roughnessMap). Return t in [0, 1]: slice 0 at t=0, the last slice at
+// t=1. Only runs when a texture stack is assigned; overrides the stackIndex prop.
+float getStackIndex(vec3 pos, vec3 normal, vec2 uv, float curTimeSeconds, SceneCtx ctx) {
+  return 0.0;
 }`,
   roughness: `float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTimeSeconds, SceneCtx ctx) {
   return baseRoughness;

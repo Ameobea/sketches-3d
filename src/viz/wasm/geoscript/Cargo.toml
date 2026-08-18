@@ -36,6 +36,9 @@ lyon_extra = "1.0"
 # lazily-loaded module reached via FFI, keeping faer/gemm out of this blob.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uv_solvers = { path = "../uv_solvers" }
+# Native `load_image` decodes data URIs directly (browser decode on wasm)
+png = "0.17"
+base64 = "0.22"
 
 [dev-dependencies]
 # Native constrained-Delaunay triangulator, used only in tests to exercise the

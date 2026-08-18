@@ -36,6 +36,7 @@ import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
 import { initClipper2, setClipper2WasmURL } from 'src/viz/wasm/clipper2/clipper2';
 import { initUVUnwrap, setUVUnwrapWasmURL } from './uvUnwrap';
 import { initUVSolvers, setUVSolversWasmURL } from './uvSolvers';
+import { initImageData } from './imageData';
 import { initModelData, setModelDataURLs } from './modelData';
 import { textToSvg } from './text_to_path';
 import type { GeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
@@ -95,6 +96,7 @@ export interface GeoscriptAsyncDeps {
   uv_unwrap?: boolean;
   uv_solvers?: boolean;
   model_data?: boolean;
+  image_data?: boolean;
 }
 
 const initAsyncDeps = (
@@ -125,6 +127,9 @@ const initAsyncDeps = (
   }
   if (deps.model_data) {
     promises.push(initModelData(argsByKey.model_data));
+  }
+  if (deps.image_data) {
+    promises.push(initImageData(argsByKey.image_data));
   }
   if (deps.text_to_path) {
     const args = argsByKey.text_to_path;
@@ -340,6 +345,8 @@ const methods = {
   getRenderedTextureCount: (ctxPtr: number) => Geoscript.geoscript_get_rendered_texture_count(ctxPtr),
   getRenderedTexture: (ctxPtr: number, texIx: number) => {
     const [width, height, channels] = Geoscript.geoscript_get_rendered_texture_dims(ctxPtr, texIx);
+    /** 1 for plain outputs; stacks concatenate their slices in `pixels`. */
+    const layers = Geoscript.geoscript_get_rendered_texture_layers(ctxPtr, texIx);
     const pixels = Geoscript.geoscript_get_rendered_texture_pixels(ctxPtr, texIx);
     const name = Geoscript.geoscript_get_rendered_texture_name(ctxPtr, texIx);
     /** Empty string when no usage was declared. */
@@ -349,12 +356,24 @@ const methods = {
     const textureId = Geoscript.geoscript_get_rendered_texture_id(ctxPtr, texIx);
     /** Empty strings mean unset. */
     const [minFilter, magFilter, format] = Geoscript.geoscript_get_rendered_texture_gpu_params(ctxPtr, texIx);
+    /** SIMD-encoded in wasm for u8 materialization formats; empty for float formats. */
+    const encodedRaw = Geoscript.geoscript_encode_rendered_texture_pixels(ctxPtr, texIx);
+    const encoded = encodedRaw.length ? encodedRaw : undefined;
+    // must mirror the wasm export's unset-format resolution
+    const encodedFormat = encoded ? format || 'rgba8' : undefined;
+    /** See `GeneratedTexture.rgba`. */
+    const rgba =
+      channels === 3 ? Geoscript.geoscript_get_rendered_texture_pixels_rgba(ctxPtr, texIx) : undefined;
     return Comlink.transfer(
       {
         width,
         height,
         channels,
+        layers,
         pixels,
+        encoded,
+        encodedFormat,
+        rgba,
         name,
         usage,
         wrap,
@@ -364,7 +383,7 @@ const methods = {
         magFilter,
         format,
       },
-      [pixels.buffer]
+      filterNils([pixels.buffer, encoded?.buffer, rgba?.buffer])
     );
   },
   setTextureParams: (ctxPtr: number, entries: TextureParamsEntry[]) => {

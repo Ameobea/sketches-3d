@@ -4,7 +4,7 @@
   import type { MaterialEditorHost } from 'src/viz/materials/ui/host';
   import TexturePreview from './TexturePreview.svelte';
   import { Textures } from './state.svelte';
-  import { isProceduralHandle } from 'src/geotoy/modules/proceduralTextures';
+  import { isProceduralHandle, isStackHandle } from 'src/geotoy/modules/proceduralTextures';
   import type { User } from 'src/geoscript/geotoyAPIClient';
 
   let {
@@ -55,7 +55,9 @@
 {#snippet textureSlot({ field, handle }: { field: PhysicalMaterialTextureField; handle: string | undefined })}
   <TexturePreview
     texture={handle ? Textures.textures[handle] : undefined}
-    proceduralLabel={handle && isProceduralHandle(handle) ? handle.slice('procedural:'.length) : undefined}
+    proceduralLabel={handle && isProceduralHandle(handle)
+      ? handle.slice(handle.indexOf(':') + 1) + (isStackHandle(handle) ? ' (stack)' : '')
+      : undefined}
     onclick={() => onpicktexture(field)}
   />
 {/snippet}

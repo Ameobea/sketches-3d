@@ -72,8 +72,20 @@ export interface GeneratedTexture {
   width: number;
   height: number;
   channels: number;
-  /** Row-major interleaved f32, len = width·height·channels. */
+  /** Slice count: 1 for `render_texture` outputs, ≥2 for `render_texture_stack`. */
+  layers: number;
+  /** Row-major interleaved f32 with slices concatenated in layer order;
+   *  len = width·height·channels·layers. */
   data: Float32Array;
+  /** Pixels pre-encoded (SIMD, in-worker) for the resolved materialization format;
+   *  present only when that format is a u8 format. */
+  encoded?: Uint8Array;
+  /** The resolved format `encoded` was encoded for; consumers must check it matches their
+   *  own resolution before using `encoded`. */
+  encodedFormat?: string;
+  /** RGBA-expanded copy of `data`, present iff channels === 3 — the one count the 2D
+   *  preview can't upload direct (RGB32F isn't color-renderable, breaking GPU mipgen). */
+  rgba?: Float32Array;
   sourceModule: string;
   /** Stable across runs for unchanged textures (cache replay preserves it). */
   textureId: number;

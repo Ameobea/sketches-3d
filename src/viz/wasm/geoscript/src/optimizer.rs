@@ -194,6 +194,7 @@ impl Drop for ClosureEffectMemoScope {
     });
     if remaining == 0 {
       CLOSURE_EFFECT_MEMO.with(|m| m.borrow_mut().clear());
+      SEQ_USES_MEMO.with(|m| m.borrow_mut().clear());
     }
   }
 }
@@ -503,15 +504,17 @@ fn callable_requires_rng_state(callable: &Callable) -> bool {
       .inner
       .iter()
       .any(|c| callable_requires_rng_state(c)),
-    Callable::Closure(_) | Callable::Dynamic { .. } => true,
+    Callable::Closure(_) => true,
+    // trusted self-report, mirroring `is_known_rng_free_callable`; the trait requires impls
+    // to answer
+    Callable::Dynamic { inner, .. } => inner.is_rng_dependent(),
   }
 }
 
 fn value_requires_rng_state(value: &Value) -> bool {
   match value {
     Value::Callable(c) => callable_requires_rng_state(c),
-    // opaque: may wrap closures that draw when consumed
-    Value::Sequence(_) => true,
+    Value::Sequence(seq) => seq_consumption_draws_rng(seq),
     Value::Map(m) => m.values().any(value_requires_rng_state),
     _ => false,
   }
@@ -568,18 +571,6 @@ fn hash_expr(
       std::mem::discriminant(op).hash(hasher);
       hash_expr(lhs, hasher, uses, config)?;
       hash_expr(rhs, hasher, uses, config)?;
-      if config.track_rng && matches!(op, BinOp::Pipeline | BinOp::Map) {
-        if let Expr::Literal {
-          value: Value::Callable(callable),
-          ..
-        } = rhs.as_ref()
-        {
-          if callable_requires_rng_state(callable) {
-            uses.rng = true;
-          }
-          uses.settings |= callable.reads_ctx_settings();
-        }
-      }
       Some(())
     }
     Expr::PrefixOp {
@@ -872,11 +863,14 @@ fn hash_call(
   })
   .hash(hasher);
   std::mem::discriminant(&FunctionCallTarget::Literal(Rc::clone(callable))).hash(hasher);
-  hash_callable(callable, hasher, uses, config)?;
-  if config.track_rng && callable_requires_rng_state(callable) {
-    uses.rng = true;
-  }
-  if config.track_rng {
+  // The callee is a resolved value, so hash it like one (mirroring `hash_value`'s Callable
+  // arm): closure bodies contain dynamic exprs but hash structurally, with their rng/settings
+  // usage tracked precisely by the walk. `config` stays strict for the arg exprs below.
+  hash_callable(callable, hasher, uses, ExprHashConfig::const_eval_value())?;
+  if config.track_rng && !matches!(&**callable, Callable::Closure(_)) {
+    if callable_requires_rng_state(callable) {
+      uses.rng = true;
+    }
     uses.settings |= callable.reads_ctx_settings();
   }
   args.len().hash(hasher);
@@ -936,6 +930,152 @@ fn hash_callable(
       Some(())
     }
   }
+}
+
+thread_local! {
+  static SEQ_USES_MEMO: RefCell<FxHashMap<usize, (Rc<dyn crate::Sequence>, Uses)>> =
+    RefCell::new(FxHashMap::default());
+}
+
+/// Consumption-precise ambient-state usage of a sequence value, via the
+/// `Sequence::consumption_deps` walk: what consuming it would actually evaluate. Opaque
+/// deps (`None`) and unhashable closure callbacks poison both flags. Memoized per seq
+/// allocation for the life of the outermost optimization (`ClosureEffectMemoScope`) since
+/// this sits on the fold key-hashing hot path.
+fn seq_consumption_uses(seq: &Rc<dyn crate::Sequence>, uses: &mut Uses) {
+  let key = Rc::as_ptr(seq) as *const () as usize;
+  if let Some(hit) = SEQ_USES_MEMO.with(|m| m.borrow().get(&key).map(|(_, u)| *u)) {
+    uses.rng |= hit.rng;
+    uses.settings |= hit.settings;
+    return;
+  }
+  let mut own = Uses::default();
+  match seq.consumption_deps() {
+    None => {
+      own.rng = true;
+      own.settings = true;
+    }
+    Some(deps) => {
+      for dep in &deps {
+        value_consumption_uses(dep, &mut own);
+      }
+    }
+  }
+  SEQ_USES_MEMO.with(|m| m.borrow_mut().insert(key, (Rc::clone(seq), own)));
+  uses.rng |= own.rng;
+  uses.settings |= own.settings;
+}
+
+fn value_consumption_uses(value: &Value, uses: &mut Uses) {
+  match value {
+    Value::Callable(c) => callable_consumption_uses(c, uses),
+    Value::Sequence(s) => seq_consumption_uses(s, uses),
+    Value::Map(m) => m.values().for_each(|v| value_consumption_uses(v, uses)),
+    _ => {}
+  }
+}
+
+/// Like `callable_requires_rng_state` but recursing through wrappers so a partial/composed
+/// fn over a pure closure stays precise instead of hitting the blanket `Closure => true`.
+fn callable_consumption_uses(callable: &Rc<Callable>, uses: &mut Uses) {
+  match &**callable {
+    Callable::Closure(_) => {
+      let mut hasher = SipHasher::new_with_keys(0, 0);
+      if hash_callable(
+        callable,
+        &mut hasher,
+        uses,
+        ExprHashConfig::const_eval_value(),
+      )
+      .is_none()
+      {
+        uses.rng = true;
+        uses.settings = true;
+      }
+    }
+    Callable::PartiallyAppliedFn(paf) => {
+      callable_consumption_uses(&paf.inner, uses);
+      for v in paf.args.iter().chain(paf.kwargs.values()) {
+        value_consumption_uses(v, uses);
+      }
+    }
+    Callable::ComposedFn(composed) => {
+      for inner in composed.inner.iter() {
+        callable_consumption_uses(inner, uses);
+      }
+    }
+    _ => {
+      uses.rng |= callable_requires_rng_state(callable);
+      uses.settings |= callable.reads_ctx_settings();
+    }
+  }
+}
+
+fn seq_consumption_draws_rng(seq: &Rc<dyn crate::Sequence>) -> bool {
+  let mut uses = Uses::default();
+  seq_consumption_uses(seq, &mut uses);
+  uses.rng
+}
+
+/// Const-eval `collect(<seq_expr>)` through the normal call-fold path (so the materialized
+/// elements land in the const-eval cache) for a literal, non-eager, rng-free-to-consume
+/// sequence expr. `None` = not applicable.
+fn const_eval_collect_seq(ctx: &EvalCtx, seq_expr: &Expr) -> Result<Option<Value>, ErrorStack> {
+  let Some(seq_val) = seq_expr.as_literal() else {
+    return Ok(None);
+  };
+  let Value::Sequence(seq) = seq_val else {
+    return Ok(None);
+  };
+  if crate::seq_as_eager(&**seq).is_some() || seq_consumption_draws_rng(seq) {
+    return Ok(None);
+  }
+  let Some(Value::Callable(collect)) = resolve_global("collect") else {
+    unreachable!("`collect` builtin must resolve");
+  };
+  let arg_vals = [seq_val.clone()];
+  const_eval_call_value(
+    ctx,
+    &collect,
+    std::slice::from_ref(seq_expr),
+    &FxHashMap::default(),
+    &arg_vals,
+    &FxHashMap::default(),
+    true,
+  )
+}
+
+/// `seq | render_texture_stack(...)` etc.: the callee is side-effectful so the call never
+/// folds, and a lazy seq argument re-runs its per-element work inside the callee every run —
+/// the const cache ends up holding only the unevaluated thunk. Pre-collecting seq args
+/// through the fold path caches the computed elements instead. Only for provably rng-free
+/// consumption (materializing moves rng draws to the binding site), and callers gate to the
+/// top-level fold world (closure bodies optimize with rng const-eval disabled, where the
+/// collect fold couldn't cache). `print` is exempted: it accepts anything and gains nothing.
+fn inject_collects_for_effectful_callee<'a>(
+  ctx: &EvalCtx,
+  callee: &Callable,
+  args: impl Iterator<Item = &'a mut Expr>,
+  loc: SourceLoc,
+) -> Result<(), ErrorStack> {
+  if !callee.is_side_effectful() || callable_is_print(callee) {
+    return Ok(());
+  }
+  for arg in args {
+    if let Some(collected) = const_eval_collect_seq(ctx, arg).map_err(|err| {
+      let (line, col) = ctx.resolve_loc(loc);
+      err.with_loc(line, col)
+    })? {
+      *arg = collected.into_literal_expr(loc);
+    }
+  }
+  Ok(())
+}
+
+fn callable_is_print(callable: &Callable) -> bool {
+  static PRINT_IX: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+  matches!(callable, Callable::Builtin { fn_entry_ix, .. }
+    if Some(*fn_entry_ix) == *PRINT_IX.get_or_init(|| get_builtin_fn_sig_entry_ix("print")))
 }
 
 fn const_eval_call_value(
@@ -1030,10 +1170,10 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
       }
     }
     Value::Sequence(seq) => {
-      // Opaque: may wrap closures that draw rng / read settings when consumed.
       (Rc::as_ptr(seq) as *const () as usize).hash(hasher);
-      uses.rng = true;
-      uses.settings = true;
+      // consumption-precise: only ambient state the seq would actually read when consumed
+      // poisons the key (opaque seqs poison both flags)
+      seq_consumption_uses(seq, uses);
     }
     Value::Map(map) => {
       (Rc::as_ptr(map) as *const () as usize).hash(hasher);
@@ -1489,6 +1629,27 @@ fn fold_constants<'a>(
         return Ok(());
       }
 
+      if matches!(op, BinOp::Pipeline) && allow_rng_const_eval {
+        let callee = match rhs.as_ref() {
+          Expr::Literal {
+            value: Value::Callable(c),
+            ..
+          } => Some(c),
+          Expr::Call {
+            call:
+              FunctionCall {
+                target: FunctionCallTarget::Literal(c),
+                ..
+              },
+            ..
+          } => Some(c),
+          _ => None,
+        };
+        if let Some(callee) = callee {
+          inject_collects_for_effectful_callee(ctx, callee, std::iter::once(&mut **lhs), *loc)?;
+        }
+      }
+
       let (Some(lhs_val), Some(rhs_val)) = (lhs.as_literal(), rhs.as_literal()) else {
         return Ok(());
       };
@@ -1521,19 +1682,6 @@ fn fold_constants<'a>(
         op_discriminant.hash(hasher);
         hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
         hash_expr(rhs, hasher, uses, ExprHashConfig::const_eval())?;
-        // Already handled by hash_expr with const_eval config, but add explicit check for clarity
-        if matches!(op, BinOp::Pipeline | BinOp::Map) {
-          if let Expr::Literal {
-            value: Value::Callable(callable),
-            ..
-          } = rhs.as_ref()
-          {
-            if callable_requires_rng_state(callable) {
-              uses.rng = true;
-            }
-            uses.settings |= callable.reads_ctx_settings();
-          }
-        }
         Some(())
       });
       if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
@@ -1859,6 +2007,17 @@ fn fold_constants<'a>(
               pre_resolved_signature,
             }));
           }
+        }
+      }
+
+      if allow_rng_const_eval {
+        if let FunctionCallTarget::Literal(callable) = &*target {
+          inject_collects_for_effectful_callee(
+            ctx,
+            callable,
+            args.iter_mut().chain(kwargs.iter_mut().map(|(_, v)| v)),
+            *loc,
+          )?;
         }
       }
 

@@ -19,12 +19,18 @@ export class TextureMode implements Mode {
   private readonly deps: TextureModeDeps;
 
   hasRun = $state(false);
-  textures = $state<GeneratedTexture[]>([]);
+  // $state.raw: deep-proxying multi-MB Float32Array-holding objects makes hot per-pixel
+  // reads in TexturePreview go through the proxy get trap (~100x slowdown); only ever
+  // reassigned wholesale, never mutated in place.
+  textures = $state.raw<GeneratedTexture[]>([]);
   private lastRunTree = $state.raw<TreeDef | null>(null);
   private moduleNameToNodeId = $state.raw<Record<string, string>>({});
 
   selectedName = $state<string | null>(null);
   channel = $state<TextureChannel>('rgb');
+  /** Stack-preview interpolation index t ∈ [0,1]; only meaningful when the selected
+   *  output has layers > 1. Session-local (not persisted in the tab view). */
+  stackT = $state(0);
   tiled = $state(false);
   /** Explicit user override; `null` defers to the selected output's usage (albedo → on). */
   srgbOverride = $state<boolean | null>(null);

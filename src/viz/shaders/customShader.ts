@@ -70,6 +70,32 @@ const buildTileBreakSampleExpr = (
     ? /* glsl */ `textureNoTileNeyret(${sampler}, ${uv}, ${mean})`
     : /* glsl */ `texture2D(${sampler}, ${uv})`;
 
+/** A three ShaderChunk with `pattern` swapped in place; throws if a three upgrade changed
+ *  the chunk so the texture-stack splices can't silently no-op. */
+const spliceChunk = (chunk: string, pattern: string, replacement: string): string => {
+  const src = THREE.ShaderChunk[chunk as keyof typeof THREE.ShaderChunk] as string;
+  if (!src.includes(pattern)) {
+    throw new Error(
+      `three chunk "${chunk}" no longer contains \`${pattern}\`; update the texture-stack splice`
+    );
+  }
+  return src.replaceAll(pattern, replacement);
+};
+
+const STACK_HELPERS_GLSL = /* glsl */ `
+precision highp sampler2DArray;
+// Shared per-fragment stack interpolation index, assigned once at the top of main().
+float _stackT;
+vec4 sampleStack(sampler2DArray s, vec2 uv, float t) {
+  float layers = float(textureSize(s, 0).z);
+  float layer = clamp(t, 0., 1.) * (layers - 1.);
+  float lo = floor(layer);
+  vec4 a = texture(s, vec3(uv, lo));
+  vec4 b = texture(s, vec3(uv, min(lo + 1., layers - 1.)));
+  return mix(a, b, fract(layer));
+}
+`;
+
 const MAX_ANISO_TAPS = 6;
 
 // Anisotropic in-plane oversampling for the procedural color + roughness shaders.
@@ -751,6 +777,7 @@ export const buildCustomShaderArgs = (
     normalMapType,
     useDisplacementNormals,
     roughnessMap,
+    stackIndex = 0,
     pomHeightMap,
     emissiveIntensity,
     lightMapIntensity,
@@ -770,6 +797,7 @@ export const buildCustomShaderArgs = (
     colorShader,
     lightAttenuationShader,
     normalShader,
+    stackIndexShader,
     roughnessShader,
     roughnessReverseColorRamp,
     metalnessShader,
@@ -807,6 +835,11 @@ export const buildCustomShaderArgs = (
     useOrenNayarDiffuse = true,
   }: CustomShaderOptions = {}
 ) => {
+  const stackMap = map instanceof THREE.DataArrayTexture;
+  const stackNormalMap = normalMap instanceof THREE.DataArrayTexture;
+  const stackRoughnessMap = roughnessMap instanceof THREE.DataArrayTexture;
+  const hasStacks = stackMap || stackNormalMap || stackRoughnessMap;
+
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
     UniformsLib.envmap,
@@ -897,6 +930,9 @@ export const buildCustomShaderArgs = (
     }
   }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
+  if (hasStacks && !stackIndexShader) {
+    uniforms.stackIndex = { value: stackIndex };
+  }
   uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
   uniforms.uvTransform = { value: uvTransform ?? new THREE.Matrix3().identity() };
   if (emissiveIntensity !== undefined) {
@@ -930,6 +966,27 @@ export const buildCustomShaderArgs = (
   }
 
   // TODO: enable physically correct lights, look into it at least
+
+  if (hasStacks && tileBreaking) {
+    throw new Error('Texture stacks cannot be combined with tile breaking');
+  }
+  if (stackMap && usePackedDiffuseNormalGBA) {
+    throw new Error('Texture stacks cannot be used with packed diffuse/normal GBA maps');
+  }
+  if (stackNormalMap && pom && pomTexturing !== 'triplanar') {
+    throw new Error('A stack-backed normalMap under POM requires triplanar texturing');
+  }
+  for (const [slot, tex] of [
+    ['clearcoatNormalMap', clearcoatNormalMap],
+    ['pomHeightMap', pomHeightMap],
+    ['transmissionMap', transmissionMap],
+  ] as const) {
+    if (tex instanceof THREE.DataArrayTexture) {
+      throw new Error(
+        `Texture stacks are not supported for the ${slot} slot (v1 supports map/normalMap/roughnessMap)`
+      );
+    }
+  }
 
   if (
     normalMap &&
@@ -1049,13 +1106,17 @@ export const buildCustomShaderArgs = (
   // Both 'generated' and 'tangent' resolve a marched UV (`_pomGenUv`) at the hit.
   const mapUvSym = pomGen || pomTangent ? '_pomGenUv' : 'vMapUv';
 
+  // The snippet only runs when a stack-backed slot exists to consume its index.
+  const activeStackIndexShader = hasStacks ? stackIndexShader : undefined;
+
   const usesSceneCtx = !!(
     colorShader ||
     lightAttenuationShader ||
     roughnessShader ||
     metalnessShader ||
     emissiveShader ||
-    iridescenceShader
+    iridescenceShader ||
+    activeStackIndexShader
   );
 
   const hasCustomShaderSnippet = !!(
@@ -1114,7 +1175,7 @@ export const buildCustomShaderArgs = (
       if (!tileBreaking) {
         return /* glsl */ `
         #ifdef USE_MAP
-          vec4 sampledDiffuseColor = texture2D( map, ${mapUvSym} );
+          vec4 sampledDiffuseColor = ${stackMap ? `sampleStack(map, ${mapUvSym}, _stackT)` : `texture2D( map, ${mapUvSym} )`};
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
@@ -1159,7 +1220,7 @@ export const buildCustomShaderArgs = (
         return /* glsl */ `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', mapUvSym, tileBreaking)}.xyz;`;
       else
         return /* glsl */ `
-      vec4 texelRoughness = texture2D( roughnessMap, ${mapUvSym} );
+      vec4 texelRoughness = ${stackRoughnessMap ? `sampleStack(roughnessMap, ${mapUvSym}, _stackT)` : `texture2D( roughnessMap, ${mapUvSym} )`};
       `;
     })();
 
@@ -1261,6 +1322,14 @@ export const buildCustomShaderArgs = (
 
     ${normalMapSuffix}
   `;
+      else if (stackNormalMap)
+        // The chunk body verbatim with the sample swapped; the trailing normalize handles
+        // the shortened mix of adjacent slices' encoded normals.
+        return spliceChunk(
+          'normal_fragment_maps',
+          'texture2D( normalMap, vNormalMapUv )',
+          'sampleStack(normalMap, vNormalMapUv, _stackT)'
+        );
       else return '#include <normal_fragment_maps>';
     })();
 
@@ -1338,10 +1407,16 @@ export const buildCustomShaderArgs = (
     if (!customUniforms) {
       return '';
     }
-    return Object.entries(customUniforms)
-      .filter(([, def]) => (forVertex ? def.vertex : true))
-      .map(([name, def]) => `uniform ${def.type} ${name};`)
-      .join('\n');
+    return (
+      Object.entries(customUniforms)
+        .filter(([, def]) => (forVertex ? def.vertex : true))
+        // sampler2DArray has no default precision in ES 3.0, so qualify it inline
+        .map(
+          ([name, def]) =>
+            `uniform ${def.type === 'sampler2DArray' ? 'highp sampler2DArray' : def.type} ${name};`
+        )
+        .join('\n')
+    );
   };
 
   // User constants baked into the fragment GLSL as `#define`s (override a slot's `#ifndef` default).
@@ -1638,7 +1713,7 @@ ${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;
 #include <packing>
 #include <color_pars_fragment>
 #include <uv_pars_fragment>
-#include <map_pars_fragment>
+${stackMap ? spliceChunk('map_pars_fragment', 'uniform sampler2D map;', 'uniform highp sampler2DArray map;') : '#include <map_pars_fragment>'}
 #include <alphamap_pars_fragment>
 #include <alphatest_pars_fragment>
 #include <aomap_pars_fragment>
@@ -1655,10 +1730,10 @@ ${buildPhysicalParsFragment(useOrenNayarDiffuse)}
 #include <transmission_pars_fragment>
 #include <shadowmap_pars_fragment>
 // #include <bumpmap_pars_fragment>
-#include <normalmap_pars_fragment>
+${stackNormalMap ? spliceChunk('normalmap_pars_fragment', 'uniform sampler2D normalMap;', 'uniform highp sampler2DArray normalMap;') : '#include <normalmap_pars_fragment>'}
 #include <clearcoat_pars_fragment>
 #include <iridescence_pars_fragment>
-#include <roughnessmap_pars_fragment>
+${stackRoughnessMap ? spliceChunk('roughnessmap_pars_fragment', 'uniform sampler2D roughnessMap;', 'uniform highp sampler2DArray roughnessMap;') : '#include <roughnessmap_pars_fragment>'}
 #include <metalnessmap_pars_fragment>
 #include <logdepthbuf_pars_fragment>
 #include <clipping_planes_pars_fragment>
@@ -1774,6 +1849,8 @@ ${noiseShaders}
 ${useNoise2 ? noise2Shaders : ''}
 
 // Helpers emitted before user shaders so user shaders can call them.
+${hasStacks ? STACK_HELPERS_GLSL : ''}
+${hasStacks && !stackIndexShader ? 'uniform float stackIndex;' : ''}
 ${
   tileBreaking?.type === 'neyret'
     ? tileBreakingNeyretFragment.replace(
@@ -1789,7 +1866,8 @@ ${
           ? buildDefaultTriplanarParams()
           : { ...buildDefaultTriplanarParams(), ...useTriplanarMapping },
         (sampler, uv, mean) => buildTileBreakSampleExpr(sampler, uv, tileBreaking, mean),
-        tileBreaking ? 'neyret' : 'none'
+        tileBreaking ? 'neyret' : 'none',
+        hasStacks
       )
     : ''
 }
@@ -1850,6 +1928,7 @@ ${hasCustomShaderSnippet || pomProjected || pomGrid ? proceduralMaterialPatternC
 
 ${commonShader ?? ''}
 
+${activeStackIndexShader ?? ''}
 ${colorShader ?? ''}
 ${lightAttenuationShader ?? ''}
 ${normalShader ?? ''}
@@ -1955,6 +2034,15 @@ void main() {
       : ''
   }
   ${usesSceneCtx ? 'SceneCtx ctx = SceneCtx(vMapUv, diffuseColor, distanceToCamera, aaWorldFootprint);' : ''}
+  ${
+    hasStacks
+      ? `_stackT = clamp(${
+          activeStackIndexShader
+            ? 'getStackIndex(vWorldPos, vObjectNormal, vMapUv, curTimeSeconds, ctx)'
+            : 'stackIndex'
+        }, 0., 1.);`
+      : ''
+  }
 
   ${pomTangent ? 'pomComputeUvGradients();' : ''}
   ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomAnalytic, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}

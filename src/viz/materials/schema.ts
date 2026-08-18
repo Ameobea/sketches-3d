@@ -82,6 +82,7 @@ export const ShaderShadersJsonSchema = z.object({
   colorShader: z.string().optional(),
   lightAttenuationShader: z.string().optional(),
   normalShader: z.string().optional(),
+  stackIndexShader: z.string().optional(),
   roughnessShader: z.string().optional(),
   roughnessReverseColorRamp: ReverseColorRampParamsSchema.optional(),
   metalnessShader: z.string().optional(),
@@ -143,6 +144,9 @@ export const ShaderPropsJsonSchema = z.object({
    * Shorthand for the most common uvTransform use case.
    */
   uvScale: Vec2.optional(),
+  /** Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot
+   *  references a stack. Ignored when `shaders.stackIndexShader` is set. */
+  stackIndex: z.number().optional(),
   // texture refs — string keys into textures registry
   map: z.string().optional(),
   normalMap: z.string().optional(),

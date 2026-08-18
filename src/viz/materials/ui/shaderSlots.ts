@@ -6,6 +6,7 @@ export type ShaderSlots = {
   color?: string;
   common?: string;
   lightAttenuation?: string;
+  stackIndex?: string;
   roughness?: string;
   metalness?: string;
   iridescence?: string;
@@ -19,6 +20,7 @@ const SHADER_SLOT_MAP = {
   color: 'colorShader',
   common: 'commonShader',
   lightAttenuation: 'lightAttenuationShader',
+  stackIndex: 'stackIndexShader',
   roughness: 'roughnessShader',
   metalness: 'metalnessShader',
   iridescence: 'iridescenceShader',
@@ -30,6 +32,7 @@ export const sharedToSlots = (sh: Shaders): ShaderSlots => ({
   color: sh?.colorShader,
   common: sh?.commonShader,
   lightAttenuation: sh?.lightAttenuationShader,
+  stackIndex: sh?.stackIndexShader,
   roughness: sh?.roughnessShader,
   metalness: sh?.metalnessShader,
   iridescence: sh?.iridescenceShader,

@@ -63,8 +63,10 @@
     ...proceduralOptions.map(o => ({
       id: o.handle,
       name: o.label,
-      description: 'procedural output from texture tabs in the local composition',
-      tags: ['procedural', ...(o.usage ? [o.usage] : [])],
+      description: o.layers
+        ? `procedural texture stack (${o.layers} slices interpolated by the material's stack index)`
+        : 'procedural output from texture tabs in the local composition',
+      tags: ['procedural', ...(o.layers ? [`stack ×${o.layers}`] : []), ...(o.usage ? [o.usage] : [])],
       section: 'local composition',
     })),
     ...textures.map(t => ({ ...t, section: 'texture library' })),

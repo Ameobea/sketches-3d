@@ -46,10 +46,16 @@ export interface CustomShaderProps {
   sheenRoughness?: number;
   color?: number | THREE.Color;
   normalScale?: number;
+  /** `map`/`normalMap`/`roughnessMap` may be a `THREE.DataArrayTexture` (a texture stack):
+   *  slices are interpolated per fragment by a shared index t ∈ [0,1] from the
+   *  `stackIndex` prop or the `stackIndexShader` slot. */
   map?: THREE.Texture;
   normalMap?: THREE.Texture;
   roughnessMap?: THREE.Texture;
   metalnessMap?: THREE.Texture;
+  /** Uniform stack index t ∈ [0,1] used when no `stackIndexShader` is set (ignored — and
+   *  its uniform not declared — when the snippet is present). Default 0. */
+  stackIndex?: number;
   /**
    * Optional heightmap texture sampled during Parallax Occlusion Mapping.
    *
@@ -155,6 +161,7 @@ export type CustomUniformDef = (
   | { type: 'mat3'; value: THREE.Matrix3 }
   | { type: 'mat4'; value: THREE.Matrix4 }
   | { type: 'sampler2D'; value: THREE.Texture | null }
+  | { type: 'sampler2DArray'; value: THREE.Texture | null }
 ) & { vertex?: boolean };
 
 /**
@@ -200,6 +207,16 @@ export interface CustomShaderShaders {
    */
   lightAttenuationShader?: string;
   normalShader?: string;
+  /**
+   * GLSL defining
+   * `float getStackIndex(vec3 pos, vec3 normal, vec2 uv, float curTimeSeconds, SceneCtx ctx)`,
+   * the per-fragment interpolation index (clamped to [0,1]) shared by every stack-backed
+   * map slot. `normal` is the interpolated geometric normal (the mapped normal doesn't
+   * exist yet — and can't, when normalMap is itself stack-backed). When present, the
+   * `stackIndex` prop/uniform is ignored. Only used when at least one of
+   * map/normalMap/roughnessMap is a `DataArrayTexture` stack.
+   */
+  stackIndexShader?: string;
   roughnessShader?: string;
   roughnessReverseColorRamp?: ReverseColorRampParams;
   metalnessShader?: string;

@@ -2455,6 +2455,11 @@ impl SubpathsSeq {
 }
 
 impl Sequence for SubpathsSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    // yields freshly-minted tracer callables as elements without invoking anything
+    Some(Vec::new())
+  }
+
   fn consume<'a>(
     &self,
     _ctx: &'a EvalCtx,

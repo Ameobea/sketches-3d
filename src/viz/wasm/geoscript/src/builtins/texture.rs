@@ -33,6 +33,37 @@ impl TextureHandle {
   }
 }
 
+pub(crate) fn texture_zip(
+  a: &TextureHandle,
+  b: &TextureHandle,
+  op: &str,
+  f: impl Fn(f32, f32) -> f32,
+) -> Result<Value, ErrorStack> {
+  if (a.width, a.height, a.channels) != (b.width, b.height, b.channels) {
+    return Err(ErrorStack::new(format!(
+      "texture {op} texture requires matching dims and channels; found {}x{}x{}ch vs {}x{}x{}ch",
+      a.width, a.height, a.channels, b.width, b.height, b.channels
+    )));
+  }
+  let pixels = a
+    .pixels
+    .iter()
+    .zip(b.pixels.iter())
+    .map(|(&x, &y)| f(x, y))
+    .collect();
+  Ok(Value::Texture(Rc::new(TextureHandle {
+    pixels: Rc::new(pixels),
+    ..a.clone()
+  })))
+}
+
+pub(crate) fn texture_scale(t: &TextureHandle, s: f32) -> Value {
+  Value::Texture(Rc::new(TextureHandle {
+    pixels: Rc::new(t.pixels.iter().map(|&x| x * s).collect()),
+    ..t.clone()
+  }))
+}
+
 fn pixel_from_value(v: &Value) -> Option<([f32; 4], usize)> {
   match v {
     Value::Vec2(v) => Some(([v.x, v.y, 0., 0.], 2)),
@@ -311,6 +342,68 @@ pub(crate) fn render_texture_impl(
   };
   ctx.rendered_textures.push(RenderedTexture {
     texture: Rc::clone(tex),
+    extra_slices: Vec::new(),
+    name: name.to_owned(),
+    usage,
+    source_module: ctx.current_module.borrow().clone(),
+    texture_id: ctx.next_render_id(),
+  });
+  Ok(Value::Nil)
+}
+
+const MAX_STACK_LAYERS: usize = 256;
+
+pub(crate) fn render_texture_stack_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+  let name = arg_refs[1].resolve(args, kwargs).as_str().unwrap();
+  let usage = match arg_refs[2].resolve(args, kwargs) {
+    Value::Nil => None,
+    v => Some(TextureUsage::from_name(v.as_str().unwrap())?),
+  };
+
+  let mut slices: Vec<Rc<TextureHandle>> = Vec::new();
+  for (i, val) in seq.consume(ctx).enumerate() {
+    let val = val.map_err(|err| err.wrap("Error produced by `slices` seq in `render_texture_stack`"))?;
+    let Value::Texture(tex) = val else {
+      return Err(ErrorStack::new(format!(
+        "Expected texture at index {i} of `slices` in `render_texture_stack`, found: {val:?}"
+      )));
+    };
+    if let Some(first) = slices.first() {
+      if (tex.width, tex.height, tex.channels, tex.wrap)
+        != (first.width, first.height, first.channels, first.wrap)
+      {
+        return Err(ErrorStack::new(format!(
+          "All slices in `render_texture_stack` must have matching dims/channels/wrap; slice 0 is \
+           {}x{}x{}ch wrap={:?} but slice {i} is {}x{}x{}ch wrap={:?}",
+          first.width, first.height, first.channels, first.wrap, tex.width, tex.height, tex.channels,
+          tex.wrap
+        )));
+      }
+    }
+    if slices.len() >= MAX_STACK_LAYERS {
+      return Err(ErrorStack::new(format!(
+        "`render_texture_stack` supports at most {MAX_STACK_LAYERS} slices"
+      )));
+    }
+    slices.push(tex);
+  }
+  if slices.len() < 2 {
+    return Err(ErrorStack::new(format!(
+      "`render_texture_stack` requires at least 2 slices, found {}",
+      slices.len()
+    )));
+  }
+
+  let mut slices = slices.into_iter();
+  ctx.rendered_textures.push(RenderedTexture {
+    texture: slices.next().unwrap(),
+    extra_slices: slices.collect(),
     name: name.to_owned(),
     usage,
     source_module: ctx.current_module.borrow().clone(),
@@ -349,6 +442,90 @@ mod tests {
         assert_eq!(tex.pixels[y * 4 + x], (x as f32 + 0.5) / 4.);
       }
     }
+  }
+
+  #[test]
+  fn render_texture_stack_basic_and_validation() {
+    let ctx = parse_and_eval_program(
+      r#"
+s0 = texture(4, 2, |uv| uv.x)
+s1 = texture(4, 2, |uv| uv.y)
+s2 = texture(4, 2, |uv| 1.)
+[s0, s1, s2] | render_texture_stack(name="wall", usage="albedo")
+"#,
+    )
+    .unwrap();
+    let rendered = ctx.rendered_textures.into_inner();
+    assert_eq!(rendered.len(), 1);
+    let t = &rendered[0];
+    assert_eq!(t.name, "wall");
+    assert_eq!(t.usage, Some(crate::TextureUsage::Albedo));
+    assert_eq!(t.extra_slices.len(), 2);
+    assert_eq!((t.texture.width, t.texture.height, t.texture.channels), (4, 2, 1));
+    assert_eq!(t.texture.pixels[0], 0.5 / 4.);
+    assert_eq!(t.extra_slices[1].pixels[0], 1.);
+
+    let err = parse_and_eval_program(r#"[texture(2, 2, |uv| 0.)] | render_texture_stack(name="x")"#)
+      .unwrap_err();
+    assert!(err.to_string().contains("at least 2 slices"));
+
+    let err = parse_and_eval_program(
+      r#"[texture(2, 2, |uv| 0.), texture(4, 2, |uv| 0.)] | render_texture_stack(name="x")"#,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("matching dims"));
+
+    let err =
+      parse_and_eval_program(r#"[texture(2, 2, |uv| 0.), 3] | render_texture_stack(name="x")"#)
+        .unwrap_err();
+    assert!(err.to_string().contains("Expected texture at index 1"));
+  }
+
+  #[test]
+  fn render_texture_stack_survives_rerun() {
+    let ctx = EvalCtx::default();
+    let src = r#"[texture(2, 2, |uv| 0.), texture(2, 2, |uv| 1.)] | render_texture_stack(name="s")"#;
+    let mut ast = parse_program_src(&ctx, src).unwrap();
+    for run in 1..=2 {
+      ctx.rendered_textures.inner.borrow_mut().clear();
+      optimize_ast(&ctx, &mut ast).unwrap();
+      eval_program_with_ctx(&ctx, &ast).unwrap();
+      assert_eq!(ctx.rendered_textures.len(), 1, "run {run}");
+    }
+  }
+
+  #[test]
+  fn render_texture_stack_module_cache_replay_and_param_baking() {
+    let ctx = EvalCtx::default();
+    ctx.module_sources.borrow_mut().insert(
+      "textab:root".to_string(),
+      r#"
+[texture(2, 2, |uv| 0.), texture(2, 2, |uv| uv.x), texture(2, 2, |uv| 1.)]
+  | render_texture_stack(name="stack", usage="mask")
+export marker = 1
+"#
+      .to_string(),
+    );
+    ctx.injected_texture_params.borrow_mut().insert(
+      "textab\0stack".to_string(),
+      crate::InjectedTextureParams {
+        format: Some(crate::TextureFormat::R32F),
+        ..Default::default()
+      },
+    );
+    let src = r#"import { marker } from "textab:root""#;
+    for run in 1..=2 {
+      ctx.rendered_textures.inner.borrow_mut().clear();
+      ctx.replayed_this_run.borrow_mut().clear();
+      crate::parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).unwrap();
+      ctx.apply_injected_texture_params();
+      let rendered = ctx.rendered_textures.inner.borrow();
+      assert_eq!(rendered.len(), 1, "run {run}");
+      assert_eq!(rendered[0].extra_slices.len(), 2, "run {run}");
+      assert_eq!(rendered[0].source_module.as_deref(), Some("textab:root"), "run {run}");
+      assert_eq!(rendered[0].texture.format, Some(crate::TextureFormat::R32F), "run {run}");
+    }
+    assert!(ctx.module_exports.borrow().contains_key("textab:root"));
   }
 
   #[test]
@@ -404,6 +581,45 @@ texture(4, 4, |uv| 0.5) | height_to_normal | render_texture(name="flat_n")
     for px in flat_n.pixels.chunks(3) {
       assert_eq!(px, &[0.5, 0.5, 1.0]);
     }
+  }
+
+  #[test]
+  fn texture_arithmetic_and_ramp_apply() {
+    let ctx = parse_and_eval_program(
+      r#"
+a = texture(2, 2, |uv| uv.x)
+b = texture(2, 2, |uv| 1.)
+(a + b) | render_texture(name="sum")
+(2. * a * 0.5) | render_texture(name="scaled")
+(a * b) | render_texture(name="prod")
+r = color_ramp(stops=[srgb(0x000000), srgb(0xffffff)])
+r(a) | render_texture(name="colored")
+"#,
+    )
+    .unwrap();
+    let rendered = ctx.rendered_textures.into_inner();
+    assert_eq!(rendered.len(), 4);
+    let px = |i: usize| &rendered[i].texture.pixels;
+    assert_eq!(px(0)[0], 0.25 + 1.);
+    assert_eq!(px(1)[0], 0.25);
+    assert_eq!(px(1)[1], 0.75);
+    assert_eq!(px(2)[1], 0.75);
+    let colored = &rendered[3].texture;
+    assert_eq!(colored.channels, 3);
+    assert!(colored.pixels[0] < colored.pixels[3]);
+
+    let err = parse_and_eval_program(r#"texture(2, 2, |uv| 0.) + texture(4, 2, |uv| 0.)"#)
+      .unwrap_err();
+    assert!(err.to_string().contains("matching dims"), "{err}");
+
+    let err = parse_and_eval_program(
+      r#"
+r = color_ramp(stops=[srgb(0x000000), srgb(0xffffff)])
+r(texture(2, 2, |uv| v3(uv.x, 0., 0.)))
+"#,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("1 channel"), "{err}");
   }
 
   #[test]

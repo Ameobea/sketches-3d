@@ -17,21 +17,35 @@ import type { GeneratedTexture } from 'src/geoscript/runner/types';
  * transform; u8 formats quantize with a [0,1] clamp at upload.
  */
 export const PROCEDURAL_HANDLE_PREFIX = 'procedural:';
+/** `render_texture_stack` outputs. Stack-ness lives in the handle so the registry can
+ *  create the right placeholder kind (`DataArrayTexture`) before the producing tab has
+ *  ever run; consumers detect stack-backed slots via `instanceof`. */
+export const PROCEDURAL_STACK_HANDLE_PREFIX = 'procedural-stack:';
 
-export const isProceduralHandle = (handle: string): boolean => handle.startsWith(PROCEDURAL_HANDLE_PREFIX);
+/** True for both single (`procedural:`) and stack (`procedural-stack:`) handles. */
+export const isProceduralHandle = (handle: string): boolean =>
+  handle.startsWith(PROCEDURAL_HANDLE_PREFIX) || handle.startsWith(PROCEDURAL_STACK_HANDLE_PREFIX);
 
-export const buildProceduralHandle = (tabId: string, output: string): string =>
-  `${PROCEDURAL_HANDLE_PREFIX}${tabId}:${output}`;
+export const isStackHandle = (handle: string): boolean => handle.startsWith(PROCEDURAL_STACK_HANDLE_PREFIX);
+
+/** v1 material slots that accept stack handles. */
+export const STACK_CAPABLE_SLOTS: readonly string[] = ['map', 'normalMap', 'roughnessMap'];
+
+export const buildProceduralHandle = (tabId: string, output: string, stack = false): string =>
+  `${stack ? PROCEDURAL_STACK_HANDLE_PREFIX : PROCEDURAL_HANDLE_PREFIX}${tabId}:${output}`;
 
 /** Output names are free-form and may contain `:`; tab ids can't, so split on the first. */
-export const parseProceduralHandle = (handle: string): { tabId: string; output: string } | null => {
+export const parseProceduralHandle = (
+  handle: string
+): { tabId: string; output: string; stack: boolean } | null => {
   if (!isProceduralHandle(handle)) return null;
-  const rest = handle.slice(PROCEDURAL_HANDLE_PREFIX.length);
+  const stack = isStackHandle(handle);
+  const rest = handle.slice((stack ? PROCEDURAL_STACK_HANDLE_PREFIX : PROCEDURAL_HANDLE_PREFIX).length);
   const ix = rest.indexOf(':');
-  return ix > 0 ? { tabId: rest.slice(0, ix), output: rest.slice(ix + 1) } : null;
+  return ix > 0 ? { tabId: rest.slice(0, ix), output: rest.slice(ix + 1), stack } : null;
 };
 
-const registry = new Map<string, THREE.DataTexture>();
+const registry = new Map<string, THREE.DataTexture | THREE.DataArrayTexture>();
 
 const WRAP: Record<GeneratedTexture['wrap'], THREE.Wrapping> = {
   repeat: THREE.RepeatWrapping,
@@ -71,11 +85,19 @@ export const formatOptionsForChannels = (channels: number): string[] => {
 const clampMinFilterForFloat = (name: string): string =>
   name.includes('mipmap') ? name.split('_')[0] : name;
 
-/** Stable per-handle texture; starts as a 1×1 mid-gray placeholder until a run uploads. */
-export const getProceduralTexture = (handle: string): THREE.DataTexture => {
+/** Stable per-handle texture; starts as a mid-gray placeholder (1×1, or 1×1×2 for stack
+ *  handles) until a run uploads. */
+export const getProceduralTexture = (handle: string): THREE.DataTexture | THREE.DataArrayTexture => {
   let tex = registry.get(handle);
   if (!tex) {
-    tex = new THREE.DataTexture(new Uint8Array([128, 128, 128, 255]), 1, 1);
+    const gray = (n: number) => {
+      const px = new Uint8Array(n * 4);
+      for (let i = 0; i < n; i += 1) px.set([128, 128, 128, 255], i * 4);
+      return px;
+    };
+    tex = isStackHandle(handle)
+      ? new THREE.DataArrayTexture(gray(2), 1, 1, 2)
+      : new THREE.DataTexture(gray(1), 1, 1);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
     tex.magFilter = FILTERS[DEFAULT_MAG_FILTER] as THREE.MagnificationTextureFilter;
     tex.minFilter = FILTERS[DEFAULT_MIN_FILTER];
@@ -88,12 +110,19 @@ export const getProceduralTexture = (handle: string): THREE.DataTexture => {
 
 const to8 = (v: number) => (v <= 0 ? 0 : v >= 1 ? 255 : Math.round(v * 255));
 
-/** Encode a run output's f32 pixels for its materialization format. */
+/** Encode a run output's f32 pixels for its materialization format. u8 formats normally
+ *  arrive pre-encoded from the worker (`t.encoded`, SIMD in wasm) and rgba32f 3ch as
+ *  `t.rgba`; the JS loops are the fallback. Per-pixel, so concatenated stack slices encode
+ *  in one pass. */
 const encodePixels = (
   t: GeneratedTexture,
   format: string
 ): { data: Uint8Array | Float32Array; glFormat: THREE.PixelFormat; type: THREE.TextureDataType } => {
-  const n = t.width * t.height;
+  if (t.encoded && t.encodedFormat === format) {
+    const glFormat = format === 'r8' ? THREE.RedFormat : format === 'rg8' ? THREE.RGFormat : THREE.RGBAFormat;
+    return { data: t.encoded, glFormat, type: THREE.UnsignedByteType };
+  }
+  const n = t.width * t.height * t.layers;
   const px = t.data;
   const c = t.channels;
   switch (format) {
@@ -126,13 +155,16 @@ const encodePixels = (
       return { data: out, glFormat: THREE.RGFormat, type: THREE.FloatType };
     }
     case 'rgba32f': {
-      const out = new Float32Array(n * 4);
-      for (let i = 0; i < n; i += 1) {
-        const b = i * c;
-        out[i * 4] = px[b];
-        out[i * 4 + 1] = c >= 2 ? px[b + 1] : px[b];
-        out[i * 4 + 2] = c >= 3 ? px[b + 2] : c === 1 ? px[b] : 0;
-        out[i * 4 + 3] = c === 4 ? px[b + 3] : 1;
+      let out = c === 4 ? px : t.rgba;
+      if (!out) {
+        out = new Float32Array(n * 4);
+        for (let i = 0; i < n; i += 1) {
+          const b = i * c;
+          out[i * 4] = px[b];
+          out[i * 4 + 1] = c >= 2 ? px[b + 1] : px[b];
+          out[i * 4 + 2] = c >= 3 ? px[b + 2] : c === 1 ? px[b] : 0;
+          out[i * 4 + 3] = 1;
+        }
       }
       return { data: out, glFormat: THREE.RGBAFormat, type: THREE.FloatType };
     }
@@ -151,12 +183,15 @@ const encodePixels = (
   }
 };
 
-/** In-place upload of a run's outputs into any matching placeholder textures. */
+/** In-place upload of a run's outputs into any matching placeholder textures. Stack
+ *  outputs only match stack-handle entries (and vice versa) since the handle key encodes
+ *  stack-ness — a kind change under the same output name needs a re-pick, not an upload. */
 export const uploadProceduralTextures = (textures: GeneratedTexture[]) => {
   for (const t of textures) {
     const sep = t.sourceModule.indexOf(':');
     if (sep <= 0) continue;
-    const tex = registry.get(buildProceduralHandle(t.sourceModule.slice(0, sep), t.name));
+    const isStack = t.layers > 1;
+    const tex = registry.get(buildProceduralHandle(t.sourceModule.slice(0, sep), t.name, isStack));
     if (!tex) continue;
 
     const format = t.format ?? DEFAULT_FORMAT;
@@ -166,19 +201,24 @@ export const uploadProceduralTextures = (textures: GeneratedTexture[]) => {
     const genMips = !isFloat && minName.includes('mipmap');
     const { data, glFormat, type } = encodePixels(t, format);
 
-    // GL storage is immutable (texStorage2D): a dimension/format/mip-count change needs a
-    // fresh GL texture, which dispose() forces while keeping this JS instance (and every
+    // GL storage is immutable (texStorage2D/3D): a dimension/format/mip-count change needs
+    // a fresh GL texture, which dispose() forces while keeping this JS instance (and every
     // material holding it).
     if (
       tex.image.width !== t.width ||
       tex.image.height !== t.height ||
+      (isStack && (tex.image as THREE.DataArrayTexture['image']).depth !== t.layers) ||
       tex.format !== glFormat ||
       tex.type !== type ||
       tex.generateMipmaps !== genMips
     ) {
       tex.dispose();
     }
-    tex.image = { data, width: t.width, height: t.height } as THREE.DataTexture['image'];
+    tex.image = (
+      isStack
+        ? { data, width: t.width, height: t.height, depth: t.layers }
+        : { data, width: t.width, height: t.height }
+    ) as THREE.DataTexture['image'];
     tex.format = glFormat;
     tex.type = type;
     tex.generateMipmaps = genMips;
@@ -213,6 +253,8 @@ export interface ProceduralTextureOption {
   handle: string;
   label: string;
   usage: string | null;
+  /** Slice count for stack outputs; undefined for singles. */
+  layers?: number;
 }
 
 /** Picker options from each texture tab's last-known outputs (indexed from runs, persisted
@@ -224,9 +266,10 @@ export const proceduralOutputOptions = (
     .filter(t => t.kind === 'texture')
     .flatMap(t =>
       t.textureOutputs.map(o => ({
-        handle: buildProceduralHandle(t.id, o.name),
+        handle: buildProceduralHandle(t.id, o.name, (o.layers ?? 1) > 1),
         label: `${t.name}:${o.name}`,
         usage: o.usage ?? null,
+        layers: o.layers,
       }))
     );
 
@@ -239,7 +282,9 @@ export const textureOutputsByTab = (textures: GeneratedTexture[]): Map<string, T
     const tabId = t.sourceModule.slice(0, sep);
     let list = byTab.get(tabId);
     if (!list) byTab.set(tabId, (list = []));
-    if (!list.some(o => o.name === t.name)) list.push({ name: t.name, usage: t.usage ?? undefined });
+    if (!list.some(o => o.name === t.name)) {
+      list.push({ name: t.name, usage: t.usage ?? undefined, layers: t.layers > 1 ? t.layers : undefined });
+    }
   }
   return byTab;
 };

@@ -84,6 +84,7 @@ const resolveShaderProps = (
     'mapDisableTransitionThreshold',
     'ambientDistanceAmp',
     'heightAlpha',
+    'stackIndex',
   ]);
 
   if (propsJson.side !== undefined) props.side = SIDE_MAP[propsJson.side];
@@ -184,6 +185,7 @@ const resolveShaderShaders = (
     'colorShader',
     'lightAttenuationShader',
     'normalShader',
+    'stackIndexShader',
     'roughnessShader',
     'roughnessReverseColorRamp',
     'metalnessShader',

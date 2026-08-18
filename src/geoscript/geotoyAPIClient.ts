@@ -90,6 +90,8 @@ export type TabView = MeshTabView | TextureTabView;
 export interface TextureOutputMeta {
   name: string;
   usage?: string;
+  /** Slice count for `render_texture_stack` outputs; absent for singles. */
+  layers?: number;
 }
 
 /** UI-owned GPU materialization params for one texture output. These have no geoscript

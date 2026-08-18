@@ -79,6 +79,8 @@ pub(crate) mod path_boolean;
 pub(crate) mod path_critical_points;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
+pub(crate) mod load_image;
+pub(crate) mod spectral_noise;
 pub(crate) mod texture;
 pub(crate) mod trace_path;
 
@@ -317,6 +319,13 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_float().unwrap();
       Ok(Value::Vec4(Rc::new(a.add_scalar(b))))
     }
+    // texture + texture
+    12 => texture::texture_zip(
+      lhs.as_texture().unwrap(),
+      rhs.as_texture().unwrap(),
+      "+",
+      |x, y| x + y,
+    ),
     _ => unimplemented!(),
   }
 }
@@ -496,6 +505,23 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let b = rhs.as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(b * a)))
     }
+    // texture * num
+    16 => {
+      let s = rhs.as_float().unwrap();
+      Ok(texture::texture_scale(lhs.as_texture().unwrap(), s))
+    }
+    // num * texture
+    17 => {
+      let s = lhs.as_float().unwrap();
+      Ok(texture::texture_scale(rhs.as_texture().unwrap(), s))
+    }
+    // texture * texture
+    18 => texture::texture_zip(
+      lhs.as_texture().unwrap(),
+      rhs.as_texture().unwrap(),
+      "*",
+      |x, y| x * y,
+    ),
     _ => unimplemented!(),
   }
 }
@@ -10503,6 +10529,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "height_to_normal" => builtin_fn!(height_to_normal, |def_ix, arg_refs, args, kwargs, _ctx| {
     texture::height_to_normal_impl(def_ix, arg_refs, args, kwargs)
   }),
+  "spectral_noise" => builtin_fn!(spectral_noise, |_def_ix, arg_refs, args, kwargs, ctx| {
+    spectral_noise::spectral_noise_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "load_image" => builtin_fn!(load_image, |_def_ix, arg_refs, args, kwargs, ctx| {
+    load_image::load_image_impl(ctx, arg_refs, args, kwargs)
+  }),
   "blit" => builtin_fn!(blit, |_def_ix, arg_refs, args, kwargs, _ctx| {
     blit::blit_impl(arg_refs, args, kwargs)
   }),
@@ -10514,6 +10546,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "render_texture" => builtin_fn!(render_texture, |_def_ix, arg_refs, args, kwargs, ctx| {
     texture::render_texture_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "render_texture_stack" => builtin_fn!(render_texture_stack, |_def_ix, arg_refs, args, kwargs, ctx| {
+    texture::render_texture_stack_impl(ctx, arg_refs, args, kwargs)
   }),
   "render" => builtin_fn!(render, |def_ix, arg_refs, args, kwargs, ctx| {
     render_impl(ctx, def_ix, arg_refs, args, kwargs)

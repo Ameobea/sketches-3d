@@ -56,7 +56,11 @@
   let gl: WebGL2RenderingContext | null = null;
   let uniforms: Record<string, WebGLUniformLocation | null> = {};
   let floatLinear = false;
+  let gpuMips = false;
+  let gpuMipsVerified = false;
   let glTex: WebGLTexture | null = null;
+  let glTexArr: WebGLTexture | null = null;
+  let glTexArrSig: string | null = null;
   let uploadedData: Float32Array | null = null;
 
   const dpr = window.devicePixelRatio || 1;
@@ -72,7 +76,28 @@ uniform bool uTiled;
 uniform int uWrap;
 uniform bool uSrgb;
 uniform sampler2D uTex;
+uniform highp sampler2DArray uTexArr;
+uniform bool uIsArray;
+uniform float uStackT;
 out vec4 fragColor;
+
+vec4 sampleSelected(vec2 suv) {
+  // Analytic UV gradients (uv is linear in screen space): keeps mip selection correct
+  // and seam-free across the fract() tile boundary in tiled mode.
+  vec2 gx = vec2(1.0 / uTilePx.x, 0.0);
+  vec2 gy = vec2(0.0, 1.0 / uTilePx.y);
+  if (uIsArray) {
+    float layers = float(textureSize(uTexArr, 0).z);
+    float layer = clamp(uStackT, 0.0, 1.0) * (layers - 1.0);
+    float lo = floor(layer);
+    return mix(
+      textureGrad(uTexArr, vec3(suv, lo), gx, gy),
+      textureGrad(uTexArr, vec3(suv, min(lo + 1.0, layers - 1.0)), gx, gy),
+      fract(layer)
+    );
+  }
+  return textureGrad(uTex, suv, gx, gy);
+}
 
 vec3 l2s(vec3 c) {
   return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
@@ -95,7 +120,7 @@ void main() {
     else if (uWrap == 1) suv = clamp(uv, 0.0, 1.0);
     else { suv = mod(uv, 2.0); suv = 1.0 - abs(suv - 1.0); }
 
-    vec4 t = texture(uTex, suv);
+    vec4 t = sampleSelected(suv);
     c = uChannels == 1 ? vec3(t.r) : t.rgb;
     if (uChannelSel == 1) c = vec3(c.r);
     else if (uChannelSel == 2) c = vec3(c.g);
@@ -129,6 +154,8 @@ void main() {
     gl = c.getContext('webgl2', { antialias: false, depth: false });
     if (!gl) return;
     floatLinear = !!gl.getExtension('OES_texture_float_linear');
+    // generateMipmap on 32F needs the format renderable (float-render ext) AND filterable
+    gpuMips = floatLinear && !!gl.getExtension('EXT_color_buffer_float');
     const compile = (type: number, src: string) => {
       const sh = gl!.createShader(type)!;
       gl!.shaderSource(sh, src);
@@ -153,33 +180,135 @@ void main() {
       'uWrap',
       'uSrgb',
       'uTex',
+      'uTexArr',
+      'uIsArray',
+      'uStackT',
     ]) {
       uniforms[name] = gl.getUniformLocation(prog, name);
     }
     gl.uniform1i(uniforms.uTex, 0);
+    gl.uniform1i(uniforms.uTexArr, 1);
+  };
+
+  /** Spec-valid with both float exts, but drivers may still refuse 32F mipgen; probe the
+   * first call (getError is a blocking GPU-process round-trip, so skip once verified) and
+   * latch off to the CPU chain on refusal. */
+  const tryGpuMips = (target: number): boolean => {
+    if (!gpuMips) return false;
+    gl!.generateMipmap(target);
+    if (!gpuMipsVerified) {
+      if (gl!.getError() !== gl!.NO_ERROR) {
+        gpuMips = false;
+        return false;
+      }
+      gpuMipsVerified = true;
+    }
+    return true;
+  };
+
+  /** CPU-fallback 2x2 box-filter mip chain down to 1x1 (WebGL2 floor-size semantics; odd
+   * dims clamp), for when GPU mipgen on 32F targets isn't available. */
+  const buildMips = (
+    data: Float32Array,
+    w: number,
+    h: number,
+    ch: number
+  ): { data: Float32Array; w: number; h: number }[] => {
+    const levels: { data: Float32Array; w: number; h: number }[] = [];
+    let src = data;
+    let sw = w;
+    let sh = h;
+    while (sw > 1 || sh > 1) {
+      const dw = Math.max(1, sw >> 1);
+      const dh = Math.max(1, sh >> 1);
+      const dst = new Float32Array(dw * dh * ch);
+      for (let y = 0; y < dh; y++) {
+        const y0 = Math.min(y * 2, sh - 1) * sw;
+        const y1 = Math.min(y * 2 + 1, sh - 1) * sw;
+        for (let x = 0; x < dw; x++) {
+          const x0 = Math.min(x * 2, sw - 1);
+          const x1 = Math.min(x * 2 + 1, sw - 1);
+          for (let c = 0; c < ch; c++) {
+            dst[(y * dw + x) * ch + c] =
+              0.25 *
+              (src[(y0 + x0) * ch + c] +
+                src[(y0 + x1) * ch + c] +
+                src[(y1 + x0) * ch + c] +
+                src[(y1 + x1) * ch + c]);
+          }
+        }
+      }
+      levels.push({ data: dst, w: dw, h: dh });
+      src = dst;
+      sw = dw;
+      sh = dh;
+    }
+    return levels;
+  };
+
+  const setSamplerParams = (target: number, minFilter: number) => {
+    gl!.texParameteri(target, gl!.TEXTURE_MAG_FILTER, gl!.NEAREST);
+    gl!.texParameteri(target, gl!.TEXTURE_MIN_FILTER, minFilter);
+    gl!.texParameteri(target, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE);
+    gl!.texParameteri(target, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
   };
 
   const uploadTexture = (tex: GeneratedTexture) => {
-    if (!gl || uploadedData === tex.data) return;
-    if (!glTex) glTex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, glTex);
-    if (tex.channels === 1) {
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, tex.width, tex.height, 0, gl.RED, gl.FLOAT, tex.data);
-    } else {
-      const rgba = new Float32Array(tex.width * tex.height * 4);
-      for (let i = 0; i < tex.width * tex.height; i++) {
-        for (let ch = 0; ch < 3; ch++)
-          rgba[i * 4 + ch] = tex.data[i * tex.channels + Math.min(ch, tex.channels - 1)];
-        rgba[i * 4 + 3] = tex.channels === 4 ? tex.data[i * 4 + 3] : 1;
+    const { width, height, layers, channels, data, rgba } = tex;
+    if (!gl || uploadedData === data) return;
+    // mag NEAREST keeps texels crisp when zoomed in; min uses the mip chain (trilinear
+    // when the float-linear ext allows filtering, per-level nearest otherwise)
+    const minFilter = floatLinear ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST_MIPMAP_NEAREST;
+    const levels = 32 - Math.clz32(Math.max(width, height));
+    // Raw pixels upload direct in a channel-matched format — GL's (0, 0, 1) fill for
+    // missing g/b/a matches the display shader's expectations. 3ch is the exception and
+    // uses the worker-expanded copy (see `GeneratedTexture.rgba`).
+    const px = channels === 3 ? rgba! : data;
+    const ch = channels === 3 ? 4 : channels;
+    const [ifmt, fmt] = ch === 1 ? [gl.R32F, gl.RED] : ch === 2 ? [gl.RG32F, gl.RG] : [gl.RGBA32F, gl.RGBA];
+    if (layers > 1) {
+      gl.activeTexture(gl.TEXTURE1);
+      // immutable storage can't be resized, so recreate on dimension/format change
+      const sig = `${width}x${height}x${layers}x${ch}`;
+      if (glTexArr && glTexArrSig !== sig) {
+        gl.deleteTexture(glTexArr);
+        glTexArr = null;
       }
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA32F, tex.width, tex.height, 0, gl.RGBA, gl.FLOAT, rgba);
+      if (!glTexArr) {
+        glTexArr = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
+        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, levels, ifmt, width, height, layers);
+        glTexArrSig = sig;
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
+      }
+      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, width, height, layers, fmt, gl.FLOAT, px);
+      if (!tryGpuMips(gl.TEXTURE_2D_ARRAY)) {
+        const layerSize = width * height * ch;
+        for (let l = 0; l < layers; l++) {
+          const mips = buildMips(px.subarray(l * layerSize, (l + 1) * layerSize), width, height, ch);
+          for (let i = 0; i < mips.length; i++) {
+            const m = mips[i];
+            gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, i + 1, 0, 0, l, m.w, m.h, 1, fmt, gl.FLOAT, m.data);
+          }
+        }
+      }
+      setSamplerParams(gl.TEXTURE_2D_ARRAY, minFilter);
+      gl.activeTexture(gl.TEXTURE0);
+    } else {
+      if (!glTex) glTex = gl.createTexture();
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, glTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, width, height, 0, fmt, gl.FLOAT, px);
+      if (!tryGpuMips(gl.TEXTURE_2D)) {
+        const mips = buildMips(px, width, height, ch);
+        mips.forEach(({ data, w, h }, i) => {
+          gl!.texImage2D(gl!.TEXTURE_2D, i + 1, ifmt, w, h, 0, fmt, gl!.FLOAT, data);
+        });
+      }
+      setSamplerParams(gl.TEXTURE_2D, minFilter);
     }
-    // mag NEAREST keeps texels crisp when zoomed in; min LINEAR needs the float-linear ext
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, floatLinear ? gl.LINEAR : gl.NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    uploadedData = tex.data;
+    uploadedData = data;
   };
 
   const fitView = (tex: GeneratedTexture) => {
@@ -205,6 +334,12 @@ void main() {
       return;
     }
     uploadTexture(sel);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, glTex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
+    gl.uniform1i(uniforms.uIsArray, sel.layers > 1 ? 1 : 0);
+    gl.uniform1f(uniforms.uStackT, mode.stackT);
     gl.uniform2f(uniforms.uCanvasSize, pw, ph);
     gl.uniform2f(uniforms.uCenter, mode.center[0], mode.center[1]);
     gl.uniform2f(uniforms.uTilePx, mode.zoom * sel.width * dpr, mode.zoom * sel.height * dpr);
@@ -236,6 +371,7 @@ void main() {
     void mode.srgb;
     void mode.center;
     void mode.zoom;
+    void mode.stackT;
     void width;
     void height;
     if (mode.selected && (!mode.center || mode.zoom === null)) fitView(mode.selected);
@@ -264,6 +400,18 @@ void main() {
     ];
   };
 
+  let shiftHeld = $state(false);
+
+  const onStackTInput = (e: Event & { currentTarget: HTMLInputElement }) => {
+    const sel = mode.selected;
+    let v = e.currentTarget.valueAsNumber;
+    // shift snaps to the nearest exact layer
+    if (shiftHeld && sel && sel.layers > 1) {
+      v = Math.round(v * (sel.layers - 1)) / (sel.layers - 1);
+    }
+    mode.stackT = v;
+  };
+
   let dragLast: [number, number] | null = null;
   const onPointerDown = (e: PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
@@ -282,6 +430,8 @@ void main() {
     dragLast = null;
   };
 </script>
+
+<svelte:window onkeydown={e => (shiftHeld = e.shiftKey)} onkeyup={e => (shiftHeld = e.shiftKey)} />
 
 <canvas
   bind:this={canvas}
@@ -324,6 +474,15 @@ void main() {
           srgb
         </button>
       </div>
+      {#if sel.layers > 1}
+        <div class="stack-t" title="stack interpolation index; shift-drag snaps to layers">
+          <span class="t-label">t</span>
+          <input type="range" min="0" max="1" step="0.001" value={mode.stackT} oninput={onStackTInput} />
+          <span class="t-readout">
+            L{(mode.stackT * (sel.layers - 1)).toFixed(2)} / {sel.layers - 1}
+          </span>
+        </div>
+      {/if}
     {:else}
       <span class="note">no visible outputs (solo active)</span>
     {/if}
@@ -335,7 +494,9 @@ void main() {
       <span class="label">output</span>
       <span class="value accent">{sel.name}</span>
       <span class="label">size</span>
-      <span class="value">{sel.width}×{sel.height} · {sel.channels}ch f32</span>
+      <span class="value">
+        {sel.width}×{sel.height} · {sel.channels}ch f32{sel.layers > 1 ? ` · ${sel.layers} layers` : ''}
+      </span>
       {#if sel.usage}
         <span class="label">usage</span>
         <span class="value">{sel.usage}</span>
@@ -425,6 +586,28 @@ void main() {
 
   .gap {
     width: 10px;
+  }
+
+  .stack-t {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    pointer-events: auto;
+    font-size: 11px;
+    color: #999;
+    width: 100%;
+  }
+
+  .stack-t input[type='range'] {
+    flex: 1;
+    min-width: 120px;
+    accent-color: #0aa;
+  }
+
+  .stack-t .t-readout {
+    color: #ddd;
+    min-width: 62px;
+    text-align: right;
   }
 
   .chip {

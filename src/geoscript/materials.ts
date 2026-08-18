@@ -5,7 +5,11 @@ import type { CustomShaderMatDef, CustomBasicShaderMatDef } from 'src/viz/materi
 import { loadTexture } from 'src/viz/textureLoading';
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { buildDefaultShaders, linearRgbToSrgbHex, type RGBColor } from './geotoyMaterialConvert';
-import { getProceduralTexture, isProceduralHandle } from 'src/geotoy/modules/proceduralTextures';
+import {
+  getProceduralTexture,
+  isProceduralHandle,
+  isStackHandle,
+} from 'src/geotoy/modules/proceduralTextures';
 import type { TextureID } from './geotoyAPIClient';
 
 export { buildDefaultShaders };
@@ -139,6 +143,13 @@ export const buildMaterial = (
   }
 
   const p = def.props ?? {};
+  // v1 stack-capable slots are map/normalMap/roughnessMap only
+  for (const slot of ['metalnessMap', 'clearcoatNormalMap', 'pomHeightMap'] as const) {
+    const h = p[slot];
+    if (h != null && isStackHandle(h)) {
+      throw new Error(`Texture stacks are not supported for the ${slot} slot`);
+    }
+  }
   const mapP = maybeLoadTexture(loader, p.map);
   const normalMapP = maybeLoadTexture(loader, p.normalMap);
   const roughnessMapP = maybeLoadTexture(loader, p.roughnessMap);

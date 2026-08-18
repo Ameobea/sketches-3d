@@ -46,6 +46,10 @@ impl IntoIterator for IntRange {
 }
 
 impl Sequence for IntRange {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(Vec::new())
+  }
+
   fn consume(&self, _ctx: &EvalCtx) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
     Box::new(self.clone().into_iter())
   }
@@ -58,6 +62,10 @@ pub(crate) struct MapSeq {
 }
 
 impl Sequence for MapSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -82,6 +90,10 @@ pub(crate) struct FilterSeq {
 }
 
 impl Sequence for FilterSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -151,6 +163,10 @@ impl<'a> Iterator for ScanIter<'a> {
 }
 
 impl Sequence for ScanSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -200,6 +216,12 @@ impl<'a> Iterator for FlattenIter<'a> {
 }
 
 impl Sequence for FlattenSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    // flatten also consumes seqs produced as *elements* of `inner`, enumerable only when
+    // `inner` is eager
+    crate::seq_as_eager(&*self.inner).map(|eager| eager.inner.to_vec())
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -218,6 +240,10 @@ pub(crate) struct EagerSeq {
 }
 
 impl Sequence for EagerSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(Vec::new())
+  }
+
   fn consume<'a>(
     &self,
     _ctx: &'a EvalCtx,
@@ -318,6 +344,11 @@ impl<'a> Iterator for PointDistributeIter<'a> {
 }
 
 impl Sequence for PointDistributeSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    // sampling uses a self-seeded sampler, not ctx rng
+    Some(self.cb.iter().map(|cb| Value::Callable(Rc::clone(cb))).collect())
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -354,6 +385,10 @@ impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone> Debug for IteratorSe
 }
 
 impl<T: Iterator<Item = Result<Value, ErrorStack>> + Clone + 'static> Sequence for IteratorSeq<T> {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    None
+  }
+
   fn consume<'a>(
     &self,
     _ctx: &'a EvalCtx,
@@ -412,6 +447,10 @@ impl<const WORLD_SPACE: bool> Iterator for MeshVertsIter<WORLD_SPACE> {
 }
 
 impl<const WORLD_SPACE: bool> Sequence for MeshVertsSeq<WORLD_SPACE> {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(Vec::new())
+  }
+
   fn consume<'a>(
     &self,
     _ctx: &'a EvalCtx,
@@ -428,6 +467,10 @@ pub(crate) struct TakeSeq {
 }
 
 impl Sequence for TakeSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -454,6 +497,10 @@ pub(crate) struct SkipSeq {
 }
 
 impl Sequence for SkipSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -515,6 +562,10 @@ impl Iterator for TakeWhileIter<'_> {
 }
 
 impl Sequence for TakeWhileSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -584,6 +635,10 @@ impl Iterator for SkipWhileIter<'_> {
 }
 
 impl Sequence for SkipWhileSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -662,6 +717,10 @@ impl<'a> Iterator for ChainIter<'a> {
 }
 
 impl Sequence for ChainSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(self.inner.iter().map(|s| Value::Sequence(Rc::clone(s))).collect())
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -676,6 +735,10 @@ pub(crate) struct ApplyTransformsSeq {
 }
 
 impl Sequence for ApplyTransformsSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(vec![Value::Sequence(Rc::clone(&self.inner))])
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
