@@ -21,7 +21,7 @@ interface RawRenderedGizmo {
 interface RawRenderedControl {
   source_module: string | null;
   handle_id: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
   label: string | null;
   value: number[];
   str_value: string | null;
@@ -30,6 +30,7 @@ interface RawRenderedControl {
   step: number | null;
   style: string | null;
   options: string[];
+  histogram: number[] | null;
 }
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';

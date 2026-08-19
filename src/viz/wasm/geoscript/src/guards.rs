@@ -90,7 +90,13 @@ impl GuardCtx<'_> {
         self.liftable(start) && end.as_deref().map(|e| self.liftable(e)).unwrap_or(true)
       }
       Expr::StaticFieldAccess { lhs, .. } => self.liftable(lhs),
-      Expr::FieldAccess { lhs, field, .. } => self.liftable(lhs) && self.liftable(field),
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
+        self.liftable(lhs)
+          && self.liftable(field)
+          && field2.as_ref().map(|f2| self.liftable(f2)).unwrap_or(true)
+      }
       Expr::Call { call, .. } => {
         let target_ok = match &call.target {
           FunctionCallTarget::Name(sym) => self.resolves(*sym),
@@ -215,9 +221,14 @@ impl GuardCtx<'_> {
         }
       }
       Expr::StaticFieldAccess { lhs, .. } => self.visit_expr(lhs),
-      Expr::FieldAccess { lhs, field, .. } => {
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
         self.visit_expr(lhs);
         self.visit_expr(field);
+        if let Some(f2) = field2 {
+          self.visit_expr(f2);
+        }
       }
       Expr::Call { call, loc } => {
         for a in &call.args {

@@ -115,9 +115,10 @@ StaticFieldAccessExpr {
 
 // `TightLBrack` keeps `x = { 1 }\n[1, 2, 3]` from being parsed as a field access on the
 // block (which then errors on the comma). With whitespace before `[`, the `[` falls back
-// to a regular token and starts a fresh `ArrayExpr` statement.
+// to a regular token and starts a fresh `ArrayExpr` statement. Comma indices (`t[r, c]`,
+// textures only, max two) are accepted permissively here; the engine enforces arity.
 FieldAccessExpr {
-  Expr !fieldAccess TightLBrack Expr "]"
+  Expr !fieldAccess TightLBrack Expr ("," Expr)* "]"
 }
 
 literal { Float | HexInteger | Integer | BoolLiteral | NilLiteral | StringLiteral }

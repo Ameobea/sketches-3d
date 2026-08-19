@@ -1,5 +1,5 @@
 import type { ControlPanelSetting } from 'src/viz/UI/ControlPanel';
-import type { RampSpecJson } from './geotoyAPIClient';
+import type { ImageLevelsJson, RampSpecJson } from './geotoyAPIClient';
 import type { RenderedControl } from './runner/types';
 
 /** Panel key for a control site: handleIds are unique only per module, so join both.
@@ -37,6 +37,15 @@ export const rampControlSpec = (c: RenderedControl): RampSpecJson | null => {
   }
 };
 
+/** An image-levels control's reported params (fixed wire order). */
+export const imageLevelsControlValue = (c: RenderedControl): ImageLevelsJson => ({
+  in_lo: c.value[0] ?? 0,
+  in_hi: c.value[1] ?? 1,
+  out_lo: c.value[2] ?? 0,
+  out_hi: c.value[3] ?? 1,
+  gamma: c.value[4] ?? 1,
+});
+
 /** The control's current value as reported by the last eval, in ControlPanel state form. */
 export const controlCurrentValue = (c: RenderedControl): any => {
   switch (c.kind) {
@@ -53,6 +62,8 @@ export const controlCurrentValue = (c: RenderedControl): any => {
       return splineControlPoints(c);
     case 'ramp':
       return rampControlSpec(c);
+    case 'image_levels':
+      return imageLevelsControlValue(c);
   }
 };
 
@@ -63,6 +74,7 @@ export const controlToSetting = (c: RenderedControl, key: string): ControlPanelS
   switch (c.kind) {
     case 'spline':
     case 'ramp':
+    case 'image_levels':
       // Edited in dedicated sections, not the generic panel.
       return null;
     case 'bool':

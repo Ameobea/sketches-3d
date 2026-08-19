@@ -65,6 +65,8 @@ pub mod path_building;
 pub mod preprocess;
 mod resolve;
 mod seq;
+#[cfg(test)]
+mod tex_view_tests;
 pub mod texture_encode;
 pub mod ty;
 pub mod type_infer;
@@ -72,13 +74,14 @@ pub mod value_json;
 
 pub use self::ast::{traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
+pub use self::builtins::img_ops::{image_levels_control_value, image_levels_value_from_wire};
 pub use self::builtins::ramp::{ramp_control_value_json, ramp_value_from_wire_json};
 
+/// Mesh prelude: default scene lights.
 pub const PRELUDE: &str = include_str!("prelude.geo");
 
 /// Per-tree-kind prelude source. The prelude is prepended to the *entry* program, which is the
 /// active tab's root — so which one applies is a property of that tab, not of the composition.
-/// Texture programs render no lights and so have nothing to prepend yet.
 pub fn prelude_for_kind(kind: &str) -> &'static str {
   match kind {
     "mesh" => PRELUDE,
@@ -479,6 +482,7 @@ impl Callable {
             | "input_spline"
             | "input_ramp"
             | "input_color_ramp"
+            | "input_image_levels"
         )
       }
       Callable::PartiallyAppliedFn(paf) => {
@@ -872,13 +876,11 @@ pub struct MipLevel {
   pub height: usize,
 }
 
-/// Lazily-built box-filtered mip chain for minified blit sampling (level 0 = the texture
-/// itself, so the chain holds levels 1..). The chain records the identity of the pixel
-/// buffer it was built from and is revalidated against the handle's live `pixels` Rc on
-/// read, so `Clone` can share it (placement clones keep their mips) while struct-updates
-/// that swap in new pixels self-invalidate instead of serving a stale chain. The pointer
-/// compare is ABA-safe because the handle's own `pixels` keeps the compared allocation
-/// alive.
+/// Lazily-built box-filtered mip chain for minified blit sampling (holds levels 1.., since
+/// level 0 is the texture itself). Revalidated against the handle's live `base_ptr()` on
+/// read, so `Clone` shares it while struct-updates that swap in new pixels self-invalidate;
+/// ABA-safe because the handle's own storage keeps the compared allocation alive. A view
+/// shares its base's `base_ptr()` and would wrongly match, so `with_view` clears the cache.
 #[derive(Clone, Default)]
 pub struct MipCache(pub(crate) RefCell<Option<MipChain>>);
 
@@ -888,11 +890,38 @@ pub struct MipChain {
   pub(crate) levels: Rc<Vec<MipLevel>>,
 }
 
+/// Backing pixel storage for a `TextureHandle`: either a dense row-major interleaved
+/// buffer or a zero-copy strided view into one. Handles are immutable, so eager ops that
+/// materialize views today and lazy/fused execution tomorrow are observationally
+/// identical — nothing may expose buffer identity or in-place mutation.
+#[derive(Clone)]
+pub enum TexStorage {
+  Dense(Rc<Vec<f32>>),
+  View(TexView),
+}
+
+/// Strided view over a dense base buffer (never over another view — composition happens
+/// at construction time, so read depth is constant). `chan_map` rather than a channel
+/// stride so permutation/duplication swizzles (`.bgr`, `.rrr`) are expressible; duplicate
+/// entries give zero-copy channel broadcast.
+#[derive(Clone)]
+pub struct TexView {
+  base: Rc<Vec<f32>>,
+  /// Flat f32 index of view texel (0,0), channel-base.
+  origin: isize,
+  /// f32 units per +1 view x; negative = horizontal flip.
+  x_pitch: isize,
+  /// f32 units per +1 view y; negative = vertical flip.
+  y_pitch: isize,
+  /// Per-channel offset within a texel; entries 0..handle.channels are meaningful.
+  chan_map: [u8; 4],
+}
+
 #[derive(Clone)]
 pub struct TextureHandle {
-  /// Row-major interleaved f32; len = width * height * channels. Row y maps to
-  /// v = (y + 0.5) / height.
-  pub pixels: Rc<Vec<f32>>,
+  /// Dense storage is row-major interleaved f32; len = width * height * channels. Row y
+  /// maps to v = (y + 0.5) / height.
+  pub storage: TexStorage,
   pub width: usize,
   pub height: usize,
   pub channels: usize,
@@ -911,12 +940,137 @@ pub struct TextureHandle {
   pub mips: MipCache,
 }
 
+impl TextureHandle {
+  pub fn is_dense(&self) -> bool {
+    matches!(self.storage, TexStorage::Dense(_))
+  }
+
+  pub fn dense_pixels(&self) -> Option<&Rc<Vec<f32>>> {
+    match &self.storage {
+      TexStorage::Dense(px) => Some(px),
+      TexStorage::View(_) => None,
+    }
+  }
+
+  /// The materialize choke point: no-op clone for dense storage, interleaving copy for
+  /// views.
+  pub fn as_dense(&self) -> Rc<Vec<f32>> {
+    match &self.storage {
+      TexStorage::Dense(px) => Rc::clone(px),
+      TexStorage::View(_) => {
+        let mut out = Vec::with_capacity(self.width * self.height * self.channels);
+        for y in 0..self.height {
+          for x in 0..self.width {
+            for c in 0..self.channels {
+              out.push(self.texel_raw(x, y, c));
+            }
+          }
+        }
+        Rc::new(out)
+      }
+    }
+  }
+
+  /// Handle with guaranteed-dense storage; ops materialize at entry through this.
+  pub(crate) fn dense_clone(&self) -> TextureHandle {
+    if self.is_dense() {
+      self.clone()
+    } else {
+      TextureHandle {
+        storage: TexStorage::Dense(self.as_dense()),
+        mips: MipCache::default(),
+        ..self.clone()
+      }
+    }
+  }
+
+  /// Identity of the underlying dense allocation; mip caches key on this and the host
+  /// uses it for cache-replay identity checks.
+  pub fn base_ptr(&self) -> usize {
+    (match &self.storage {
+      TexStorage::Dense(px) => Rc::as_ptr(px),
+      TexStorage::View(v) => Rc::as_ptr(&v.base),
+    }) as usize
+  }
+
+  /// Unwrapped in-bounds texel read; the wrap-aware funnel is `texel` (builtins/texture.rs).
+  #[inline]
+  pub(crate) fn texel_raw(&self, x: usize, y: usize, chan: usize) -> f32 {
+    match &self.storage {
+      TexStorage::Dense(px) => px[(y * self.width + x) * self.channels + chan],
+      TexStorage::View(v) => {
+        let ix =
+          v.origin + y as isize * v.y_pitch + x as isize * v.x_pitch + v.chan_map[chan] as isize;
+        v.base[ix as usize]
+      }
+    }
+  }
+
+  /// Dense-equivalent view parts; the composition point that keeps views one level deep.
+  fn view_parts(&self) -> TexView {
+    match &self.storage {
+      TexStorage::Dense(px) => TexView {
+        base: Rc::clone(px),
+        origin: 0,
+        x_pitch: self.channels as isize,
+        y_pitch: (self.width * self.channels) as isize,
+        chan_map: [0, 1, 2, 3],
+      },
+      TexStorage::View(v) => v.clone(),
+    }
+  }
+
+  fn with_view(&self, v: TexView, width: usize, height: usize, channels: usize) -> TextureHandle {
+    TextureHandle {
+      storage: TexStorage::View(v),
+      width,
+      height,
+      channels,
+      mips: MipCache::default(),
+      ..self.clone()
+    }
+  }
+
+  /// O(1) crop; caller validates bounds. `wrap` applies in view space (a repeat crop
+  /// tiles the crop).
+  pub(crate) fn crop_view(&self, x0: usize, y0: usize, w: usize, h: usize) -> TextureHandle {
+    let mut v = self.view_parts();
+    v.origin += y0 as isize * v.y_pitch + x0 as isize * v.x_pitch;
+    self.with_view(v, w, h, self.channels)
+  }
+
+  /// O(1) channel select/permute/duplicate; `sel` entries are validated against
+  /// `self.channels` by the caller.
+  pub(crate) fn swizzle_view(&self, sel: &[u8]) -> TextureHandle {
+    let old = self.view_parts();
+    let mut chan_map = [0u8; 4];
+    for (i, &s) in sel.iter().enumerate() {
+      chan_map[i] = old.chan_map[s as usize];
+    }
+    self.with_view(TexView { chan_map, ..old }, self.width, self.height, sel.len())
+  }
+
+  pub(crate) fn flip_view(&self, flip_x: bool, flip_y: bool) -> TextureHandle {
+    let mut v = self.view_parts();
+    if flip_x {
+      v.origin += (self.width - 1) as isize * v.x_pitch;
+      v.x_pitch = -v.x_pitch;
+    }
+    if flip_y {
+      v.origin += (self.height - 1) as isize * v.y_pitch;
+      v.y_pitch = -v.y_pitch;
+    }
+    self.with_view(v, self.width, self.height, self.channels)
+  }
+}
+
 impl Debug for TextureHandle {
   #[cold]
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let view = if self.is_dense() { "" } else { " view" };
     write!(
       f,
-      "Texture {{ {}x{}, channels: {}, wrap: {:?} }}",
+      "Texture {{ {}x{}{view}, channels: {}, wrap: {:?} }}",
       self.width, self.height, self.channels, self.wrap
     )
   }
@@ -1958,6 +2112,7 @@ pub enum ControlKind {
   Select,
   Spline,
   Ramp,
+  ImageLevels,
 }
 
 /// An `input_*(...)` value site reported to the host so it can render a control-panel
@@ -1976,6 +2131,9 @@ pub struct RenderedControl {
   pub step: Option<f64>,
   pub style: Option<String>,
   pub options: Vec<String>,
+  /// Derived data for control UIs (currently: 256-bin luma histogram for `ImageLevels`);
+  /// not part of the control value.
+  pub histogram: Option<Vec<u32>>,
 }
 
 type RenderedControls = AppendOnlyBuffer<RenderedControl>;
@@ -2884,7 +3042,9 @@ impl EvalCtx {
           .map(ControlFlow::Continue)
           .map_err(|err| self.locate_err(err, expr.loc()))
       }
-      Expr::FieldAccess { lhs, field, .. } => {
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
         let lhs = match self.eval_expr_env(lhs, env)? {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
@@ -2893,8 +3053,15 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
+        let field2 = match field2 {
+          Some(f2) => match self.eval_expr_env(f2, env)? {
+            ControlFlow::Continue(val) => Some(val),
+            early_exit => return Ok(early_exit),
+          },
+          None => None,
+        };
         self
-          .eval_field_access(&lhs, &field)
+          .eval_field_access(&lhs, &field, field2.as_ref())
           .map(ControlFlow::Continue)
           .map_err(|err| self.locate_err(err, expr.loc()))
       }
@@ -3622,15 +3789,65 @@ impl EvalCtx {
       } else {
         Value::Nil
       }),
+      Value::Texture(t) => {
+        let mut sel = [0u8; 4];
+        let mut n = 0usize;
+        if field.is_empty() {
+          return Err(ErrorStack::new("invalid texture swizzle; expected 1 to 4 chars"));
+        }
+        for c in field.chars() {
+          if n == 4 {
+            return Err(ErrorStack::new("invalid texture swizzle; expected 1 to 4 chars"));
+          }
+          let ix = match c {
+            'x' | 'r' => 0u8,
+            'y' | 'g' => 1,
+            'z' | 'b' => 2,
+            'w' | 'a' => 3,
+            _ => {
+              return Err(ErrorStack::new(format!(
+                "Unknown field `{c}` for Texture; expected rgba/xyzw swizzle chars"
+              )))
+            }
+          };
+          if ix as usize >= t.channels {
+            return Err(ErrorStack::new(format!(
+              "swizzle char `{c}` is invalid for a {}-channel texture",
+              t.channels
+            )));
+          }
+          sel[n] = ix;
+          n += 1;
+        }
+        Ok(Value::Texture(Rc::new(t.swizzle_view(&sel[..n]))))
+      }
       _ => Err(ErrorStack::new(format!(
         "field access not supported for type: {lhs:?}"
       ))),
     }
   }
 
-  fn eval_field_access(&self, lhs: &Value, field: &Value) -> Result<Value, ErrorStack> {
+  pub(crate) fn eval_field_access(
+    &self,
+    lhs: &Value,
+    field: &Value,
+    field2: Option<&Value>,
+  ) -> Result<Value, ErrorStack> {
+    if let Value::String(s) = field {
+      if field2.is_none() {
+        return self.eval_static_field_access(lhs, s);
+      }
+    }
+    if let Value::Texture(t) = lhs {
+      return crate::builtins::texture::texture_index(t, field, field2);
+    }
+    if field2.is_some() {
+      return Err(ErrorStack::new(format!(
+        "comma indexing `[a, b]` is only supported for textures; found: {:?}",
+        lhs.get_type()
+      )));
+    }
     match field {
-      Value::String(s) => self.eval_static_field_access(lhs, s),
       Value::Int(i) => match lhs {
         Value::Vec2(v2) => match i {
           0 => Ok(Value::Float(v2.x)),
@@ -3917,6 +4134,21 @@ impl EvalCtx {
         match &**cb {
           Callable::Dynamic { inner, .. } if inner.content_hash(&mut hasher).is_some() => {}
           _ => hasher.write_u8(0),
+        }
+      }
+      // Injected maps (image levels): flat float-valued maps hashed by content in sorted
+      // key order.
+      Some(Value::Map(map)) => {
+        hasher.write_u8(9);
+        let mut keys: Vec<&String> = map.keys().collect();
+        keys.sort();
+        for k in keys {
+          hasher.write(k.as_bytes());
+          match map.get(k) {
+            Some(Value::Float(f)) => hasher.write_u32(f.to_bits()),
+            Some(Value::Int(i)) => hasher.write_i64(*i),
+            _ => hasher.write_u8(0),
+          }
         }
       }
       _ => hasher.write_u8(0),
@@ -5034,8 +5266,14 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("arr.a.b.c", ParseOutcome::Ok(1)),
   ("arr [0]", ParseOutcome::Err("no whitespace before `[`")),
   ("{ 1 } [0]", ParseOutcome::Err("no whitespace before `[`")),
+  ("arr[1,2]", ParseOutcome::Ok(1)),
+  ("arr[1, 2..4]", ParseOutcome::Ok(1)),
   (
     "arr[1,2,3]",
+    ParseOutcome::Err("at most two comma-separated indices"),
+  ),
+  (
+    "arr[1,]",
     ParseOutcome::Err("must be tight and contain a single value"),
   ),
   // `\n[`/`\n(` — preprocessor splits into two statements.

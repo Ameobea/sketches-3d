@@ -381,7 +381,7 @@ pub(crate) fn spectral_noise_impl(
   };
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(pixels),
+    storage: crate::TexStorage::Dense(Rc::new(pixels)),
     width: w,
     height: h,
     channels: 1,
@@ -427,9 +427,9 @@ t | render_texture(name="field")
     let rendered = ctx.rendered_textures.into_inner();
     let tex = &rendered[0].texture;
     assert_eq!((tex.width, tex.height, tex.channels), (256, 256, 1));
-    let n = tex.pixels.len() as f64;
-    let mean = tex.pixels.iter().map(|&v| v as f64).sum::<f64>() / n;
-    let var = tex.pixels.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
+    let n = tex.as_dense().len() as f64;
+    let mean = tex.as_dense().iter().map(|&v| v as f64).sum::<f64>() / n;
+    let var = tex.as_dense().iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
     assert!(mean.abs() < 0.01, "mean {mean}");
     assert!((var.sqrt() - 1.).abs() < 0.01, "std {}", var.sqrt());
 
@@ -439,9 +439,9 @@ t | render_texture(name="field")
     .unwrap();
     let rendered = ctx.rendered_textures.into_inner();
     let tex = &rendered[0].texture;
-    let mean = tex.pixels.iter().map(|&v| v as f64).sum::<f64>() / tex.pixels.len() as f64;
+    let mean = tex.as_dense().iter().map(|&v| v as f64).sum::<f64>() / tex.as_dense().len() as f64;
     assert!((mean - 0.5).abs() < 0.02, "uniform mean {mean}");
-    assert!(tex.pixels.iter().all(|&v| (0. ..=1.).contains(&v)));
+    assert!(tex.as_dense().iter().all(|&v| (0. ..=1.).contains(&v)));
   }
 
   #[test]
@@ -473,7 +473,7 @@ t | render_texture(name="field")
       let ctx = parse_and_eval_program(&src(seed)).unwrap();
       let rendered = ctx.rendered_textures.into_inner();
       assert_eq!((rendered[0].texture.width, rendered[0].texture.height), (64, 32));
-      Rc::try_unwrap(rendered[0].texture.pixels.clone()).unwrap_or_else(|rc| (*rc).clone())
+      Rc::try_unwrap(rendered[0].texture.as_dense().clone()).unwrap_or_else(|rc| (*rc).clone())
     };
     let a = px(1);
     let b = px(1);

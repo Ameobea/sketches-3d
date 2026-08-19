@@ -107,7 +107,18 @@ export interface TextureParamsEntry {
  *  carries the numeric payload (3 for `vec3`/`color`, 16 col-major for `transform`, 1 for
  *  `float`/`int`/`bool`, 3·N for `spline`); `str_value` carries the `string`/`select` payload. */
 export interface GizmoValueWire {
-  kind: 'vec3' | 'transform' | 'float' | 'int' | 'bool' | 'color' | 'string' | 'select' | 'spline' | 'ramp';
+  kind:
+    | 'vec3'
+    | 'transform'
+    | 'float'
+    | 'int'
+    | 'bool'
+    | 'color'
+    | 'string'
+    | 'select'
+    | 'spline'
+    | 'ramp'
+    | 'image_levels';
   value?: number[];
   str_value?: string;
 }
@@ -117,7 +128,7 @@ export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>
 export interface RenderedControl {
   sourceModule: string | null;
   handleId: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
   /** Display label override; falls back to `handleId` when null. */
   label: string | null;
   /** Numeric payload (float/int: 1 num; color: 3 rgb; spline: 3·N points). Empty for select. */
@@ -131,6 +142,8 @@ export interface RenderedControl {
   style: string | null;
   /** Selectable options for `select`; empty otherwise. */
   options: string[];
+  /** 256-bin luma histogram for `image_levels`; null otherwise. */
+  histogram: number[] | null;
 }
 
 /** A `gizmo(...)`/`gizmo_transform(...)` site reported by the runtime for the last eval. */

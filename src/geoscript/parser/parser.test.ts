@@ -53,9 +53,14 @@ const CASES: Case[] = [
   // — the runtime is authoritative.
   { src: 'arr [0]', expected: { err: true }, lezerOnlyOk: 1 },
   { src: '{ 1 } [0]', expected: { err: true }, lezerOnlyOk: 1 },
-  // `arr[1,2,3]` — Pest's targeted AST check rejects; Lezer errors on the comma inside
-  // FieldAccessExpr.
-  { src: 'arr[1,2,3]', expected: { err: true } },
+  // Comma indexing (`t[r, c]`, textures only, max two indices).
+  { src: 'arr[1,2]', expected: { ok: 1 } },
+  { src: 'arr[1, 2..4]', expected: { ok: 1 } },
+  // >2 indices — Lezer's grammar is permissive; the Pest AST build enforces arity.
+  { src: 'arr[1,2,3]', expected: { err: true }, lezerOnlyOk: 1 },
+  // Trailing comma fails the grammar in both; Pest backtracks to two adjacent statements
+  // and its tightness check rejects.
+  { src: 'arr[1,]', expected: { err: true } },
   // Newline before `[` / `(` — preprocessor on the Pest side inserts `;`; Lezer's
   // tokenizer skips emitting Tight* because the gap contains `\n`. Both: 2 statements.
   { src: 'arr\n[0]', expected: { ok: 2 } },

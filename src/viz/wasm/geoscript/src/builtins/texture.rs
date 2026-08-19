@@ -3,14 +3,14 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use crate::{
-  ArgRef, Callable, ErrorStack, EvalCtx, Mat4, RenderedTexture, Sym, TextureHandle, TextureUsage,
-  TextureWrap, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
+  ArgRef, Callable, ErrorStack, EvalCtx, Mat4, RenderedTexture, Sym, TexStorage, TextureHandle,
+  TextureUsage, TextureWrap, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
-const MAX_TEXTURE_DIM: i64 = 8192;
+pub(crate) const MAX_TEXTURE_DIM: i64 = 8192;
 
 impl TextureHandle {
-  fn wrap_coord(&self, c: i64, n: usize) -> usize {
+  pub(crate) fn wrap_coord(&self, c: i64, n: usize) -> usize {
     let n = n as i64;
     (match self.wrap {
       TextureWrap::Repeat => c.rem_euclid(n),
@@ -29,7 +29,7 @@ impl TextureHandle {
   pub(crate) fn texel(&self, x: i64, y: i64, chan: usize) -> f32 {
     let x = self.wrap_coord(x, self.width);
     let y = self.wrap_coord(y, self.height);
-    self.pixels[(y * self.width + x) * self.channels + chan]
+    self.texel_raw(x, y, chan)
   }
 }
 
@@ -45,23 +45,287 @@ pub(crate) fn texture_zip(
       a.width, a.height, a.channels, b.width, b.height, b.channels
     )));
   }
-  let pixels = a
-    .pixels
-    .iter()
-    .zip(b.pixels.iter())
-    .map(|(&x, &y)| f(x, y))
-    .collect();
+  let pixels = match (a.dense_pixels(), b.dense_pixels()) {
+    (Some(pa), Some(pb)) => pa.iter().zip(pb.iter()).map(|(&x, &y)| f(x, y)).collect(),
+    _ => {
+      let mut out = Vec::with_capacity(a.width * a.height * a.channels);
+      for y in 0..a.height {
+        for x in 0..a.width {
+          for c in 0..a.channels {
+            out.push(f(a.texel_raw(x, y, c), b.texel_raw(x, y, c)));
+          }
+        }
+      }
+      out
+    }
+  };
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(pixels),
+    storage: TexStorage::Dense(Rc::new(pixels)),
+    mips: Default::default(),
     ..a.clone()
   })))
 }
 
-pub(crate) fn texture_scale(t: &TextureHandle, s: f32) -> Value {
+/// Elementwise map with the channel index available; the dense/view split every unary
+/// texture op needs.
+pub(crate) fn texture_map_chan(t: &TextureHandle, f: impl Fn(f32, usize) -> f32) -> Value {
+  let ch = t.channels;
+  let pixels: Vec<f32> = match t.dense_pixels() {
+    // Chunked rather than `i % ch`: `ch` is a runtime value, so that's an integer division
+    // per texel — several times the cost of the op it decorates.
+    Some(px) => {
+      let mut out = Vec::with_capacity(px.len());
+      for texel in px.chunks_exact(ch) {
+        for (c, &x) in texel.iter().enumerate() {
+          out.push(f(x, c));
+        }
+      }
+      out
+    }
+    None => {
+      let mut out = Vec::with_capacity(t.width * t.height * ch);
+      for y in 0..t.height {
+        for x in 0..t.width {
+          for c in 0..ch {
+            out.push(f(t.texel_raw(x, y, c), c));
+          }
+        }
+      }
+      out
+    }
+  };
   Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(t.pixels.iter().map(|&x| x * s).collect()),
+    storage: TexStorage::Dense(Rc::new(pixels)),
+    mips: Default::default(),
     ..t.clone()
   }))
+}
+
+pub(crate) fn texture_map_unary(t: &TextureHandle, f: impl Fn(f32) -> f32) -> Value {
+  texture_map_chan(t, |x, _| f(x))
+}
+
+pub(crate) fn texture_scale(t: &TextureHandle, s: f32) -> Value {
+  texture_map_unary(t, |x| x * s)
+}
+
+/// Per-channel-constant broadcast: `f(texel, v[c])` per channel. Strict: vec len must
+/// equal the texture's channel count.
+pub(crate) fn texture_zip_vec(
+  t: &TextureHandle,
+  v: &[f32],
+  op: &str,
+  f: impl Fn(f32, f32) -> f32,
+) -> Result<Value, ErrorStack> {
+  if t.channels != v.len() {
+    return Err(ErrorStack::new(format!(
+      "texture {op} vec{} requires a {}-channel texture; found {} channel(s)",
+      v.len(),
+      v.len(),
+      t.channels
+    )));
+  }
+  Ok(texture_map_chan(t, |x, c| f(x, v[c])))
+}
+
+fn channels_value(vals: [f32; 4], channels: usize) -> Value {
+  match channels {
+    1 => Value::Float(vals[0]),
+    2 => Value::Vec2(Vec2::new(vals[0], vals[1])),
+    3 => Value::Vec3(Vec3::new(vals[0], vals[1], vals[2])),
+    _ => Value::Vec4(Rc::new(Vec4::new(vals[0], vals[1], vals[2], vals[3]))),
+  }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum ReduceKind {
+  Min,
+  Max,
+  Mean,
+}
+
+/// Per-channel single-pass reduction.
+pub(crate) fn texture_reduce(kind: ReduceKind, t: &TextureHandle) -> [f32; 4] {
+  let ch = t.channels;
+  let mut acc = [match kind {
+    ReduceKind::Min => f32::INFINITY,
+    ReduceKind::Max => f32::NEG_INFINITY,
+    ReduceKind::Mean => 0.,
+  }; 4];
+  let mut mean_acc = [0f64; 4];
+  let mut fold = |c: usize, x: f32| match kind {
+    ReduceKind::Min => acc[c] = acc[c].min(x),
+    ReduceKind::Max => acc[c] = acc[c].max(x),
+    ReduceKind::Mean => mean_acc[c] += x as f64,
+  };
+  match t.dense_pixels() {
+    Some(px) => {
+      for texel in px.chunks_exact(ch) {
+        for (c, &x) in texel.iter().enumerate() {
+          fold(c, x);
+        }
+      }
+    }
+    None => {
+      for y in 0..t.height {
+        for x in 0..t.width {
+          for c in 0..ch {
+            fold(c, t.texel_raw(x, y, c));
+          }
+        }
+      }
+    }
+  }
+  if kind == ReduceKind::Mean {
+    let n = (t.width * t.height) as f64;
+    for c in 0..ch {
+      acc[c] = (mean_acc[c] / n) as f32;
+    }
+  }
+  acc
+}
+
+pub(crate) fn texture_reduce_impl(
+  kind: ReduceKind,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  Ok(channels_value(texture_reduce(kind, t), t.channels))
+}
+
+enum TexIx {
+  Int(i64),
+  /// Half-open; `None` end = to the end of the axis.
+  Range(i64, Option<i64>),
+}
+
+fn parse_tex_ix(v: &Value) -> Result<TexIx, ErrorStack> {
+  match v {
+    Value::Int(i) => Ok(TexIx::Int(*i)),
+    Value::Sequence(seq) => {
+      let any: &dyn std::any::Any = &**seq;
+      match any.downcast_ref::<crate::seq::IntRange>() {
+        Some(r) => Ok(TexIx::Range(r.start, r.end)),
+        None => Err(ErrorStack::new(
+          "indexing a texture with an arbitrary sequence (gather / fancy indexing) is not \
+           supported; use an int or a range like `a..b`",
+        )),
+      }
+    }
+    other => Err(ErrorStack::new(format!(
+      "texture indices must be ints or ranges, found: {other:?}"
+    ))),
+  }
+}
+
+fn resolve_tex_int(i: i64, len: usize, axis: &str) -> Result<usize, ErrorStack> {
+  if i < 0 {
+    return Err(ErrorStack::new(format!(
+      "negative {axis} index {i} not supported for textures"
+    )));
+  }
+  if i as usize >= len {
+    return Err(ErrorStack::new(format!(
+      "{axis} index {i} out of bounds; len={len}"
+    )));
+  }
+  Ok(i as usize)
+}
+
+/// -> (start, len)
+pub(crate) fn resolve_tex_range(
+  start: i64,
+  end: Option<i64>,
+  len: usize,
+  axis: &str,
+) -> Result<(usize, usize), ErrorStack> {
+  if start < 0 {
+    return Err(ErrorStack::new(format!(
+      "negative {axis} index {start} not supported for textures"
+    )));
+  }
+  let end = end.unwrap_or(len as i64);
+  if end <= start {
+    return Err(ErrorStack::new(format!(
+      "empty {axis} range {start}..{end} for texture indexing"
+    )));
+  }
+  if end > len as i64 {
+    return Err(ErrorStack::new(format!(
+      "{axis} range {start}..{end} out of bounds; len={len}"
+    )));
+  }
+  Ok((start as usize, (end - start) as usize))
+}
+
+fn pixel_value(t: &TextureHandle, x: usize, y: usize) -> Value {
+  let mut v = [0f32; 4];
+  for (c, out) in v[..t.channels].iter_mut().enumerate() {
+    *out = t.texel_raw(x, y, c);
+  }
+  channels_value(v, t.channels)
+}
+
+fn tex_val(t: TextureHandle) -> Value {
+  Value::Texture(Rc::new(t))
+}
+
+/// `t[ix0]` / `t[ix0, ix1]`. Axis order is row-major, channel-last; the single-bracket
+/// form indexes the outermost non-degenerate axis (rows when height > 1, else cols, where
+/// an int yields the pixel value — so `lut[i]` on a 1-tall LUT gives the pixel directly).
+pub(crate) fn texture_index(
+  t: &TextureHandle,
+  ix0: &Value,
+  ix1: Option<&Value>,
+) -> Result<Value, ErrorStack> {
+  let ix0 = parse_tex_ix(ix0)?;
+  let Some(ix1) = ix1 else {
+    return Ok(if t.height > 1 {
+      match ix0 {
+        TexIx::Int(i) => {
+          let y = resolve_tex_int(i, t.height, "row")?;
+          tex_val(t.crop_view(0, y, t.width, 1))
+        }
+        TexIx::Range(s, e) => {
+          let (y0, h) = resolve_tex_range(s, e, t.height, "row")?;
+          tex_val(t.crop_view(0, y0, t.width, h))
+        }
+      }
+    } else {
+      match ix0 {
+        TexIx::Int(i) => pixel_value(t, resolve_tex_int(i, t.width, "col")?, 0),
+        TexIx::Range(s, e) => {
+          let (x0, w) = resolve_tex_range(s, e, t.width, "col")?;
+          tex_val(t.crop_view(x0, 0, w, 1))
+        }
+      }
+    });
+  };
+  let ix1 = parse_tex_ix(ix1)?;
+  Ok(match (ix0, ix1) {
+    (TexIx::Int(r), TexIx::Int(c)) => {
+      let y = resolve_tex_int(r, t.height, "row")?;
+      let x = resolve_tex_int(c, t.width, "col")?;
+      pixel_value(t, x, y)
+    }
+    (TexIx::Int(r), TexIx::Range(s, e)) => {
+      let y = resolve_tex_int(r, t.height, "row")?;
+      let (x0, w) = resolve_tex_range(s, e, t.width, "col")?;
+      tex_val(t.crop_view(x0, y, w, 1))
+    }
+    (TexIx::Range(s, e), TexIx::Int(c)) => {
+      let (y0, h) = resolve_tex_range(s, e, t.height, "row")?;
+      let x = resolve_tex_int(c, t.width, "col")?;
+      tex_val(t.crop_view(x, y0, 1, h))
+    }
+    (TexIx::Range(rs, re), TexIx::Range(cs, ce)) => {
+      let (y0, h) = resolve_tex_range(rs, re, t.height, "row")?;
+      let (x0, w) = resolve_tex_range(cs, ce, t.width, "col")?;
+      tex_val(t.crop_view(x0, y0, w, h))
+    }
+  })
 }
 
 fn pixel_from_value(v: &Value) -> Option<([f32; 4], usize)> {
@@ -97,7 +361,15 @@ pub(crate) fn texture_impl(
     for x in 0..w {
       let uv = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
       let out = ctx
-        .invoke_callable(generator, &[Value::Vec2(uv)], EMPTY_KWARGS)
+        .invoke_callable(
+          generator,
+          &[
+            Value::Vec2(uv),
+            Value::Int(x as i64),
+            Value::Int(y as i64),
+          ],
+          EMPTY_KWARGS,
+        )
         .map_err(|err| {
           err.wrap("Error produced by user-supplied `generator` callable in `texture`")
         })?;
@@ -120,7 +392,7 @@ pub(crate) fn texture_impl(
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(pixels),
+    storage: TexStorage::Dense(Rc::new(pixels)),
     width: w,
     height: h,
     channels,
@@ -139,23 +411,16 @@ pub(crate) fn map_texture_impl(
   tex: &TextureHandle,
 ) -> Result<Value, ErrorStack> {
   let (w, h, ch) = (tex.width, tex.height, tex.channels);
-  let src: &[f32] = &tex.pixels;
+  let src_rc = tex.as_dense();
+  let src: &[f32] = &src_rc;
   let mut out: Vec<f32> = Vec::new();
   let mut out_ch = 0usize;
   for y in 0..h {
     for x in 0..w {
       let base = (y * w + x) * ch;
-      let val = match ch {
-        1 => Value::Float(src[base]),
-        2 => Value::Vec2(Vec2::new(src[base], src[base + 1])),
-        4 => Value::Vec4(Rc::new(Vec4::new(
-          src[base],
-          src[base + 1],
-          src[base + 2],
-          src[base + 3],
-        ))),
-        _ => Value::Vec3(Vec3::new(src[base], src[base + 1], src[base + 2])),
-      };
+      let mut v = [0f32; 4];
+      v[..ch].copy_from_slice(&src[base..base + ch]);
+      let val = channels_value(v, ch);
       let uv = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
       let res = ctx
         .invoke_callable(
@@ -189,7 +454,8 @@ pub(crate) fn map_texture_impl(
 
   Ok(Value::Texture(Rc::new(TextureHandle {
     channels: out_ch,
-    pixels: Rc::new(out),
+    storage: TexStorage::Dense(Rc::new(out)),
+    mips: Default::default(),
     ..tex.clone()
   })))
 }
@@ -205,7 +471,52 @@ pub(crate) fn blur_impl(
   if sigma <= 0. {
     return Ok(tex_val.clone());
   }
+  Ok(Value::Texture(Rc::new(blur_tex(sigma, tex))))
+}
 
+/// Materialize preserving handle identity: a dense handle is shared, not re-wrapped, so
+/// const-fold cache hits keep replaying the same `Rc`.
+pub(crate) fn dense_rc(t: &Rc<TextureHandle>) -> Rc<TextureHandle> {
+  if t.is_dense() {
+    Rc::clone(t)
+  } else {
+    Rc::new(t.dense_clone())
+  }
+}
+
+/// Dense copy with RGBA premultiplied so transparent texels' RGB doesn't bleed into
+/// visible ones under filtering; a no-op copy below 4 channels.
+pub(crate) fn premultiplied_dense(tex: &TextureHandle) -> TextureHandle {
+  if tex.channels != 4 {
+    return tex.dense_clone();
+  }
+  let mut px = tex.as_dense().to_vec();
+  for p in px.chunks_exact_mut(4) {
+    let a = p[3];
+    p[0] *= a;
+    p[1] *= a;
+    p[2] *= a;
+  }
+  TextureHandle {
+    storage: TexStorage::Dense(Rc::new(px)),
+    mips: Default::default(),
+    ..tex.clone()
+  }
+}
+
+pub(crate) fn unpremultiply(px: &mut [f32]) {
+  for p in px.chunks_exact_mut(4) {
+    let a = p[3];
+    if a > 1e-8 {
+      p[0] /= a;
+      p[1] /= a;
+      p[2] /= a;
+    }
+  }
+}
+
+/// Separable gaussian; caller guarantees `sigma > 0`.
+pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
   let (w, h, ch) = (tex.width, tex.height, tex.channels);
   let half = ((sigma * 3.).ceil() as i64).max(1);
   let mut weights = Vec::with_capacity(half as usize + 1);
@@ -218,7 +529,7 @@ pub(crate) fn blur_impl(
   }
 
   let pass = |src: &TextureHandle, dx: i64, dy: i64| -> Vec<f32> {
-    let px: &[f32] = &src.pixels;
+    let px: &[f32] = src.dense_pixels().unwrap();
     let stride = (if dx == 1 { 1 } else { w }) * ch;
     let lim = (if dx == 1 { w } else { h }) as i64;
     let mut out = vec![0f32; w * h * ch];
@@ -252,42 +563,22 @@ pub(crate) fn blur_impl(
     out
   };
 
-  // RGBA filters premultiplied so transparent texels' RGB doesn't bleed into visible ones.
-  let src = if ch == 4 {
-    let mut px = (*tex.pixels).clone();
-    for p in px.chunks_exact_mut(4) {
-      let a = p[3];
-      p[0] *= a;
-      p[1] *= a;
-      p[2] *= a;
-    }
-    TextureHandle {
-      pixels: Rc::new(px),
-      ..(**tex).clone()
-    }
-  } else {
-    (**tex).clone()
-  };
+  let src = premultiplied_dense(tex);
 
   let mid = TextureHandle {
-    pixels: Rc::new(pass(&src, 1, 0)),
+    storage: TexStorage::Dense(Rc::new(pass(&src, 1, 0))),
+    mips: Default::default(),
     ..src
   };
   let mut out = pass(&mid, 0, 1);
   if ch == 4 {
-    for p in out.chunks_exact_mut(4) {
-      let a = p[3];
-      if a > 1e-8 {
-        p[0] /= a;
-        p[1] /= a;
-        p[2] /= a;
-      }
-    }
+    unpremultiply(&mut out);
   }
-  Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(out),
+  TextureHandle {
+    storage: TexStorage::Dense(Rc::new(out)),
+    mips: Default::default(),
     ..mid
-  })))
+  }
 }
 
 pub(crate) fn height_to_normal_impl(
@@ -305,6 +596,7 @@ pub(crate) fn height_to_normal_impl(
     _ => unimplemented!(),
   };
 
+  let tex = tex.dense_clone();
   let (w, h) = (tex.width, tex.height);
   let mut out = Vec::with_capacity(w * h * 3);
   for y in 0..h {
@@ -323,8 +615,8 @@ pub(crate) fn height_to_normal_impl(
 
   Ok(Value::Texture(Rc::new(TextureHandle {
     channels: 3,
-    pixels: Rc::new(out),
-    ..(**tex).clone()
+    storage: TexStorage::Dense(Rc::new(out)),
+    ..tex
   })))
 }
 
@@ -340,8 +632,10 @@ pub(crate) fn render_texture_impl(
     Value::Nil => None,
     v => Some(TextureUsage::from_name(v.as_str().unwrap())?),
   };
+  // Materialize at the render boundary so the host getters, which each read the pixels
+  // independently, don't re-interleave a view once per read.
   ctx.rendered_textures.push(RenderedTexture {
-    texture: Rc::clone(tex),
+    texture: dense_rc(tex),
     extra_slices: Vec::new(),
     name: name.to_owned(),
     usage,
@@ -400,7 +694,7 @@ pub(crate) fn render_texture_stack_impl(
     )));
   }
 
-  let mut slices = slices.into_iter();
+  let mut slices = slices.iter().map(dense_rc);
   ctx.rendered_textures.push(RenderedTexture {
     texture: slices.next().unwrap(),
     extra_slices: slices.collect(),
@@ -436,12 +730,36 @@ mod tests {
     assert!(err.to_string().contains("Invalid texture usage"));
     let tex = &t.texture;
     assert_eq!((tex.width, tex.height, tex.channels), (4, 2, 1));
-    assert_eq!(tex.pixels.len(), 8);
+    assert_eq!(tex.as_dense().len(), 8);
     for y in 0..2 {
       for x in 0..4 {
-        assert_eq!(tex.pixels[y * 4 + x], (x as f32 + 0.5) / 4.);
+        assert_eq!(tex.as_dense()[y * 4 + x], (x as f32 + 0.5) / 4.);
       }
     }
+  }
+
+  #[test]
+  fn texture_generator_pixel_indices() {
+    let ctx = parse_and_eval_program(
+      r#"
+ix = texture(4, 2, |uv, x, y| v2(float(x), float(y)))
+uv_only = texture(4, 2, |uv| uv.x)
+"#,
+    )
+    .unwrap();
+    let get = |name: &str| match ctx.get_global(name).unwrap() {
+      crate::Value::Texture(t) => t,
+      other => panic!("expected texture, got {other:?}"),
+    };
+    let ix = get("ix").as_dense().to_vec();
+    for y in 0..2 {
+      for x in 0..4 {
+        let base = (y * 4 + x) * 2;
+        assert_eq!((ix[base], ix[base + 1]), (x as f32, y as f32));
+      }
+    }
+    // A closure declaring only `uv` still works; the extra args are dropped.
+    assert_eq!(get("uv_only").as_dense()[0], 0.125);
   }
 
   #[test]
@@ -462,8 +780,8 @@ s2 = texture(4, 2, |uv| 1.)
     assert_eq!(t.usage, Some(crate::TextureUsage::Albedo));
     assert_eq!(t.extra_slices.len(), 2);
     assert_eq!((t.texture.width, t.texture.height, t.texture.channels), (4, 2, 1));
-    assert_eq!(t.texture.pixels[0], 0.5 / 4.);
-    assert_eq!(t.extra_slices[1].pixels[0], 1.);
+    assert_eq!(t.texture.as_dense()[0], 0.5 / 4.);
+    assert_eq!(t.extra_slices[1].as_dense()[0], 1.);
 
     let err = parse_and_eval_program(r#"[texture(2, 2, |uv| 0.)] | render_texture_stack(name="x")"#)
       .unwrap_err();
@@ -546,15 +864,15 @@ t = texture(4, 2, |uv| uv.x)
     for y in 0..2 {
       for x in 0..4 {
         let base = (y * 4 + x) * 3;
-        assert_eq!(rgb.pixels[base], (x as f32 + 0.5) / 4.);
-        assert_eq!(rgb.pixels[base + 1], (y as f32 + 0.5) / 2.);
-        assert_eq!(rgb.pixels[base + 2], (x + y) as f32);
+        assert_eq!(rgb.as_dense()[base], (x as f32 + 0.5) / 4.);
+        assert_eq!(rgb.as_dense()[base + 1], (y as f32 + 0.5) / 2.);
+        assert_eq!(rgb.as_dense()[base + 2], (x + y) as f32);
       }
     }
 
     let doubled = &rendered[1].texture;
     assert_eq!(doubled.channels, 1);
-    assert_eq!(doubled.pixels[1], 2. * (1.5 / 4.));
+    assert_eq!(doubled.as_dense()[1], 2. * (1.5 / 4.));
   }
 
   #[test]
@@ -573,12 +891,12 @@ texture(4, 4, |uv| 0.5) | height_to_normal | render_texture(name="flat_n")
     // Repeat wrap leaks the impulse across the seam to (7,0); clamp doesn't.
     let wrapped = &rendered[0].texture;
     let clamped = &rendered[1].texture;
-    assert!(wrapped.pixels[7] > 0.);
-    assert_eq!(clamped.pixels[7], 0.);
+    assert!(wrapped.as_dense()[7] > 0.);
+    assert_eq!(clamped.as_dense()[7], 0.);
 
     let flat_n = &rendered[2].texture;
     assert_eq!(flat_n.channels, 3);
-    for px in flat_n.pixels.chunks(3) {
+    for px in flat_n.as_dense().chunks(3) {
       assert_eq!(px, &[0.5, 0.5, 1.0]);
     }
   }
@@ -599,14 +917,14 @@ r(a) | render_texture(name="colored")
     .unwrap();
     let rendered = ctx.rendered_textures.into_inner();
     assert_eq!(rendered.len(), 4);
-    let px = |i: usize| &rendered[i].texture.pixels;
+    let px = |i: usize| rendered[i].texture.as_dense();
     assert_eq!(px(0)[0], 0.25 + 1.);
     assert_eq!(px(1)[0], 0.25);
     assert_eq!(px(1)[1], 0.75);
     assert_eq!(px(2)[1], 0.75);
     let colored = &rendered[3].texture;
     assert_eq!(colored.channels, 3);
-    assert!(colored.pixels[0] < colored.pixels[3]);
+    assert!(colored.as_dense()[0] < colored.as_dense()[3]);
 
     let err = parse_and_eval_program(r#"texture(2, 2, |uv| 0.) + texture(4, 2, |uv| 0.)"#)
       .unwrap_err();
@@ -637,11 +955,11 @@ t | render_texture(name="rgba")
 
     let alpha = &rendered[0].texture;
     assert_eq!(alpha.channels, 1);
-    assert!(alpha.pixels.iter().all(|&p| p == 0.5));
+    assert!(alpha.as_dense().iter().all(|&p| p == 0.5));
 
     let rgba = &rendered[1].texture;
     assert_eq!((rgba.width, rgba.height, rgba.channels), (2, 2, 4));
-    assert_eq!(rgba.pixels[0..4], [0.25, 0.25, 1., 0.5]);
+    assert_eq!(rgba.as_dense()[0..4], [0.25, 0.25, 1., 0.5]);
   }
 
   /// `render_texture` pushes to `rendered_textures` as a side effect, so it must not be

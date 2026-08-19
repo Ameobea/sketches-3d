@@ -310,9 +310,14 @@ fn expr_contains_fold_unsafe_effects(expr: &Expr, allow_rng: bool) -> bool {
           .is_some_and(|e| expr_contains_fold_unsafe_effects(e, allow_rng))
     }
     Expr::StaticFieldAccess { lhs, .. } => expr_contains_fold_unsafe_effects(lhs, allow_rng),
-    Expr::FieldAccess { lhs, field, .. } => {
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => {
       expr_contains_fold_unsafe_effects(lhs, allow_rng)
         || expr_contains_fold_unsafe_effects(field, allow_rng)
+        || field2
+          .as_ref()
+          .is_some_and(|f2| expr_contains_fold_unsafe_effects(f2, allow_rng))
     }
     Expr::Closure { params, body, .. } => {
       params.iter().any(|p| {
@@ -400,7 +405,9 @@ fn expr_reads_hit(expr: &Expr, bound: &fxhash::FxHashSet<Sym>, local_scope: &Sco
     Expr::PrefixOp { expr, .. } => hit(expr),
     Expr::Range { start, end, .. } => hit(start) || end.as_ref().is_some_and(|e| hit(&*e)),
     Expr::StaticFieldAccess { lhs, .. } => hit(lhs),
-    Expr::FieldAccess { lhs, field, .. } => hit(lhs) || hit(field),
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => hit(lhs) || hit(field) || field2.as_ref().is_some_and(|f2| hit(f2)),
     Expr::Call {
       call: FunctionCall { args, kwargs, .. },
       ..
@@ -597,9 +604,16 @@ fn hash_expr(
       field.hash(hasher);
       hash_expr(lhs, hasher, uses, config)
     }
-    Expr::FieldAccess { lhs, field, .. } => {
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => {
       hash_expr(lhs, hasher, uses, config)?;
-      hash_expr(field, hasher, uses, config)
+      hash_expr(field, hasher, uses, config)?;
+      field2.is_some().hash(hasher);
+      match field2 {
+        Some(f2) => hash_expr(f2, hasher, uses, config),
+        None => Some(()),
+      }
     }
     Expr::Call {
       call:
@@ -1847,12 +1861,28 @@ fn fold_constants<'a>(
 
       Ok(())
     }
-    Expr::FieldAccess { lhs, field, loc } => {
+    Expr::FieldAccess {
+      lhs,
+      field,
+      field2,
+      loc,
+    } => {
       optimize_expr(ctx, local_scope, lhs, allow_rng_const_eval)?;
       optimize_expr(ctx, local_scope, field, allow_rng_const_eval)?;
+      if let Some(f2) = field2 {
+        optimize_expr(ctx, local_scope, f2, allow_rng_const_eval)?;
+      }
 
+      let field2_ref = field2.as_deref();
       let (Some(lhs_val), Some(field_val)) = (lhs.as_literal(), field.as_literal()) else {
         return Ok(());
+      };
+      let field2_val = match field2_ref {
+        Some(f2) => match f2.as_literal() {
+          Some(v) => Some(v),
+          None => return Ok(()),
+        },
+        None => None,
       };
 
       let field_access_discriminant = std::mem::discriminant(&Expr::FieldAccess {
@@ -1864,12 +1894,18 @@ fn fold_constants<'a>(
           value: Value::Nil,
           loc: SourceLoc::default(),
         }),
+        field2: None,
         loc: SourceLoc::default(),
       });
       let cache_lookup = const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
         field_access_discriminant.hash(hasher);
         hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())?;
-        hash_expr(field, hasher, uses, ExprHashConfig::const_eval())
+        hash_expr(field, hasher, uses, ExprHashConfig::const_eval())?;
+        field2_ref.is_some().hash(hasher);
+        match field2_ref {
+          Some(f2) => hash_expr(f2, hasher, uses, ExprHashConfig::const_eval()),
+          None => Some(()),
+        }
       });
       if let Some(lookup) = cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
@@ -1878,7 +1914,7 @@ fn fold_constants<'a>(
         }
       }
 
-      let val = ctx.eval_field_access(lhs_val, field_val)?;
+      let val = ctx.eval_field_access(lhs_val, field_val, field2_val)?;
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }

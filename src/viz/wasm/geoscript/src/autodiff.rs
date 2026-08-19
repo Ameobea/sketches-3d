@@ -653,9 +653,18 @@ impl<'a> DerivCtx<'a> {
         field: field.clone(),
         loc: *loc,
       },
-      Expr::FieldAccess { lhs, field, loc } => Expr::FieldAccess {
+      Expr::FieldAccess {
+        lhs,
+        field,
+        field2,
+        loc,
+      } => Expr::FieldAccess {
         lhs: Box::new(self.subst_primal(lhs)?),
         field: Box::new(self.subst_primal(field)?),
+        field2: match field2 {
+          Some(f2) => Some(Box::new(self.subst_primal(f2)?)),
+          None => None,
+        },
         loc: *loc,
       },
       Expr::Call { call, loc } => {

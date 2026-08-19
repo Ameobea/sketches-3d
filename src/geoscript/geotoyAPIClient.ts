@@ -206,10 +206,26 @@ export interface RampSpecJson {
   space: 'linear' | 'oklab' | 'oklch' | 'srgb';
 }
 
+/** `input_image_levels` params; mirrors the wasm-side five-key map. */
+export interface ImageLevelsJson {
+  in_lo: number;
+  in_hi: number;
+  out_lo: number;
+  out_hi: number;
+  gamma: number;
+}
+
 /** An `input_*(...)` control value keyed by handleId; sparse. Written by the control panel. */
 export interface ControlValue {
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp';
-  value: number | boolean | [number, number, number] | string | [number, number, number][] | RampSpecJson;
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
+  value:
+    | number
+    | boolean
+    | [number, number, number]
+    | string
+    | [number, number, number][]
+    | RampSpecJson
+    | ImageLevelsJson;
 }
 
 export interface NodeDef {

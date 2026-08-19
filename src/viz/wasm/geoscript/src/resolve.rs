@@ -196,9 +196,14 @@ impl Resolver {
         }
       }
       Expr::StaticFieldAccess { lhs, .. } => self.walk_expr(lhs, None),
-      Expr::FieldAccess { lhs, field, .. } => {
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
         self.walk_expr(lhs, None);
         self.walk_expr(field, None);
+        if let Some(f2) = field2 {
+          self.walk_expr(f2, None);
+        }
       }
       Expr::Call { call, .. } => {
         // literal callables are already resolved at construction (fold/autodiff/guards)

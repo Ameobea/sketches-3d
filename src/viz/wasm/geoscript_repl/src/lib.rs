@@ -835,13 +835,14 @@ pub fn geoscript_get_rendered_texture_pixels(
   let ctx = unsafe { &*ctx };
   let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
   let rt = &textures[tex_ix];
+  let px = rt.texture.as_dense();
   if rt.extra_slices.is_empty() {
-    return rt.texture.pixels.to_vec();
+    return px.to_vec();
   }
-  let mut out = Vec::with_capacity(rt.texture.pixels.len() * (1 + rt.extra_slices.len()));
-  out.extend_from_slice(&rt.texture.pixels);
+  let mut out = Vec::with_capacity(px.len() * (1 + rt.extra_slices.len()));
+  out.extend_from_slice(&px);
   for slice in &rt.extra_slices {
-    out.extend_from_slice(&slice.pixels);
+    out.extend_from_slice(&slice.as_dense());
   }
   out
 }
@@ -862,7 +863,7 @@ pub fn geoscript_get_rendered_texture_pixels_rgba(
   let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
   for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
     geoscript::texture_encode::expand_rgba_f32(
-      &slice.pixels,
+      &slice.as_dense(),
       tex.channels,
       &mut out[i * layer_len..(i + 1) * layer_len],
     );
@@ -891,7 +892,7 @@ pub fn geoscript_encode_rendered_texture_pixels(
   };
   let mut out = Vec::with_capacity(tex.width * tex.height * (1 + rt.extra_slices.len()) * bpp);
   for slice in std::iter::once(tex).chain(rt.extra_slices.iter()) {
-    geoscript::texture_encode::encode_unorm8(&slice.pixels, tex.channels, format, &mut out);
+    geoscript::texture_encode::encode_unorm8(&slice.as_dense(), tex.channels, format, &mut out);
   }
   out
 }
@@ -981,6 +982,10 @@ pub fn geoscript_repl_set_gizmo_values(
           .map(|c| Value::Vec3(Vec3::new(c[0], c[1], c[2])))
           .collect(),
       ),
+      "image_levels" => match geoscript::image_levels_value_from_wire(&wire.value) {
+        Some(v) => v,
+        None => continue,
+      },
       "string" | "select" => match wire.str_value {
         Some(s) => Value::String(s),
         None => continue,
@@ -1140,6 +1145,7 @@ struct RenderedControlWire {
   step: Option<f64>,
   style: Option<String>,
   options: Vec<String>,
+  histogram: Option<Vec<u32>>,
 }
 
 #[wasm_bindgen]
@@ -1158,6 +1164,7 @@ pub fn geoscript_repl_get_rendered_control(
     geoscript::ControlKind::Select => "select",
     geoscript::ControlKind::Spline => "spline",
     geoscript::ControlKind::Ramp => "ramp",
+    geoscript::ControlKind::ImageLevels => "image_levels",
   }
   .to_owned();
   if matches!(c.kind, geoscript::ControlKind::Ramp) {
@@ -1173,6 +1180,7 @@ pub fn geoscript_repl_get_rendered_control(
       step: None,
       style: None,
       options: Vec::new(),
+      histogram: None,
     }
     .serialize_json();
   }
@@ -1182,6 +1190,10 @@ pub fn geoscript_repl_get_rendered_control(
     Value::Bool(b) => (vec![if *b { 1. } else { 0. }], None),
     Value::Vec3(v) => (vec![v.x, v.y, v.z], None),
     Value::String(s) => (Vec::new(), Some(s.clone())),
+    Value::Map(_) => (
+      geoscript::image_levels_control_value(&c.current_value).unwrap_or_default(),
+      None,
+    ),
     // Spline: eager sequence of vec3 → flat 3·N floats.
     Value::Sequence(seq) => {
       let mut flat = Vec::new();
@@ -1206,6 +1218,7 @@ pub fn geoscript_repl_get_rendered_control(
     step: c.step,
     style: c.style.clone(),
     options: c.options.clone(),
+    histogram: c.histogram.clone(),
   }
   .serialize_json()
 }
@@ -1519,7 +1532,7 @@ mod tests {
       .flat_map(|rt| {
         std::iter::once(&rt.texture)
           .chain(rt.extra_slices.iter())
-          .map(|t| Rc::as_ptr(&t.pixels) as usize)
+          .map(|t| t.base_ptr())
       })
       .collect::<Vec<_>>();
     assert!(!out.is_empty());
@@ -1656,7 +1669,7 @@ mod tests {
       let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
       (
         Rc::as_ptr(&textures[0].texture) as usize,
-        textures[0].texture.pixels[0],
+        textures[0].texture.as_dense()[0],
       )
     };
 
@@ -1669,6 +1682,65 @@ mod tests {
     let (b_ptr, b_px) = run(p, Some(&const_ramp_spec(0.75)));
     assert_ne!(a_ptr, b_ptr, "changed injected value must recompute");
     assert!((b_px - 0.75).abs() < 1e-4, "{b_px}");
+  }
+
+  #[test]
+  fn input_image_levels_injection_roundtrip() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let src = "g = texture(8, 8, |uv| uv.x)\nout = input_image_levels(\"lv\", g)\nout | \
+               render_texture(name=\"d\")";
+    let levels_wire = |vals: [f32; 5]| -> String {
+      #[derive(SerJson)]
+      struct W {
+        kind: String,
+        value: Vec<f32>,
+      }
+      W {
+        kind: "image_levels".to_owned(),
+        value: vals.to_vec(),
+      }
+      .serialize_json()
+    };
+
+    let run = |p: *mut GeoscriptReplCtx, inject: Option<[f32; 5]>| -> (usize, f32, String) {
+      geoscript_repl_reset(p);
+      if let Some(vals) = inject {
+        geoscript_repl_set_gizmo_values(
+          p,
+          vec!["_root".to_owned()],
+          vec!["lv".to_owned()],
+          vec![levels_wire(vals)],
+        );
+      }
+      geoscript_repl_parse_program(p, src.to_owned(), None);
+      geoscript_repl_eval(p, None);
+      let ctx = unsafe { &*p };
+      ctx.last_result.as_ref().unwrap();
+      let control_json = geoscript_repl_get_rendered_control(p, 0);
+      let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+      (
+        Rc::as_ptr(&textures[0].texture) as usize,
+        textures[0].texture.as_dense()[0],
+        control_json,
+      )
+    };
+
+    // `input_image_levels` deliberately stays runtime (not in FOLDABLE_INPUT_NAMES): the
+    // levels pass itself is the cheap per-run cost, so assert value semantics rather than
+    // pointer-stable replay.
+    let (_, default_px, control_json) = run(p, None);
+    assert!((default_px - 0.5 / 8.).abs() < 1e-6);
+    assert!(control_json.contains("\"kind\":\"image_levels\""), "{control_json}");
+    assert!(control_json.contains("\"histogram\":["), "{control_json}");
+
+    let (_, a_px, a_json) = run(p, Some([0., 1., 0., 0.5, 1.]));
+    assert!((a_px - 0.5 * 0.5 / 8.).abs() < 1e-6, "{a_px}");
+    assert!(a_json.contains("\"value\":[0.0,1.0,0.0,0.5,1.0]"), "{a_json}");
+    let (_, a2_px, _) = run(p, Some([0., 1., 0., 0.5, 1.]));
+    assert_eq!(a_px, a2_px);
+    let (_, b_px, _) = run(p, Some([0., 1., 0., 2., 1.]));
+    assert!((b_px - 2. * 0.5 / 8.).abs() < 1e-6, "{b_px}");
   }
 
   #[test]
@@ -1695,11 +1767,9 @@ mod tests {
       geoscript_repl_eval(p, Some("t:_root".to_owned()));
       let ctx = unsafe { &*p };
       ctx.last_result.as_ref().unwrap();
-      let pixels_ptr = Rc::as_ptr(
-        &ctx.geo_ctx.rendered_textures.inner.borrow()[0]
-          .texture
-          .pixels,
-      ) as usize;
+      let pixels_ptr = ctx.geo_ctx.rendered_textures.inner.borrow()[0]
+        .texture
+        .base_ptr();
       (geoscript_get_rendered_texture_gpu_params(p, 0), pixels_ptr)
     };
 
@@ -1812,6 +1882,45 @@ mod tests {
       json.contains("0.25") && json.contains("0.5") && json.contains("0.75"),
       "{json}"
     );
+  }
+
+  /// Both directions of the fixed-order `[in_lo, in_hi, out_lo, out_hi, gamma]` wire array
+  /// go through the geoscript crate's helpers; this pins the order across that boundary.
+  #[test]
+  fn input_image_levels_control_wire_roundtrip() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    let src = "g = texture(4, 1, |uv| uv.x)\nlv = input_image_levels(\"lv\", g)\nlv[0]";
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, None);
+    unsafe { (*p).last_result.as_ref().unwrap() };
+
+    // Identity defaults flow out in wire order.
+    let wire = geoscript_repl_get_rendered_control(p, 0);
+    assert!(wire.contains("image_levels"), "{wire}");
+    assert!(wire.contains("\"value\":[0.0,1.0,0.0,1.0,1.0]"), "identity in wire order: {wire}");
+
+    // in_hi=0.5 doubles the black end, proving slot 1 drives in_hi and not some other param.
+    #[derive(SerJson)]
+    struct W {
+      kind: String,
+      value: Vec<f32>,
+    }
+    geoscript_repl_set_gizmo_values(
+      p,
+      vec!["_root".to_owned()],
+      vec!["lv".to_owned()],
+      vec![W {
+        kind: "image_levels".to_owned(),
+        value: vec![0., 0.5, 0., 1., 1.],
+      }
+      .serialize_json()],
+    );
+    geoscript_repl_parse_program(p, src.to_owned(), None);
+    geoscript_repl_eval(p, None);
+    unsafe { (*p).last_result.as_ref().unwrap() };
+    let json = geoscript_repl_get_last_value_json(p, 4);
+    assert!(json.contains("0.25"), "in_hi=0.5 must double the black end: {json}");
   }
 
   #[test]

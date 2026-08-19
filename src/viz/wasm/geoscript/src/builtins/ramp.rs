@@ -264,8 +264,9 @@ impl DynamicCallable for RampCallable {
         )));
       }
       let out_ch = if self.spec.scalar { 1 } else { 3 };
-      let mut pixels = Vec::with_capacity(tex.pixels.len() * out_ch);
-      for &v in tex.pixels.iter() {
+      let src = tex.as_dense();
+      let mut pixels = Vec::with_capacity(src.len() * out_ch);
+      for &v in src.iter() {
         let c = self.sample(v, ctx)?;
         if self.spec.scalar {
           pixels.push(c.x);
@@ -274,8 +275,9 @@ impl DynamicCallable for RampCallable {
         }
       }
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {
-        pixels: std::rc::Rc::new(pixels),
+        storage: crate::TexStorage::Dense(std::rc::Rc::new(pixels)),
         channels: out_ch,
+        mips: Default::default(),
         ..(**tex).clone()
       })));
     }
@@ -619,6 +621,7 @@ pub fn remap_impl(
   };
   match &x_val {
     Value::Vec3(v) => Ok(Value::Vec3(v.map(map1))),
+    Value::Texture(t) => Ok(super::texture::texture_map_unary(t, map1)),
     v => Ok(Value::Float(map1(v.as_float().ok_or_else(|| {
       ErrorStack::new(format!("remap: `x` must be a number or vec3, got {v:?}"))
     })?))),
@@ -855,6 +858,7 @@ pub(crate) fn input_ramp_impl(
     step: None,
     style: None,
     options: Vec::new(),
+    histogram: None,
   });
   Ok(value)
 }

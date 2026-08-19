@@ -59,8 +59,9 @@
         // Splines never route through the ControlPanel; edits flow via the viewport overlay.
         return { type: 'spline', value: value as [number, number, number][] };
       case 'ramp':
-        // `controlToSetting` surfaces no widget for ramps here yet, so this can't be reached.
-        throw new Error('ramp inputs are not editable in the level editor yet');
+      case 'image_levels':
+        // `controlToSetting` surfaces no widget for these here yet, so this can't be reached.
+        throw new Error(`${kind} inputs are not editable in the level editor yet`);
     }
   };
 

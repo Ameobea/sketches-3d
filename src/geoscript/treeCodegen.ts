@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 
-import type { ControlValue, GizmoValue, NodeDef, Transform3, TreeDef } from './geotoyAPIClient';
+import type {
+  ControlValue,
+  GizmoValue,
+  ImageLevelsJson,
+  NodeDef,
+  Transform3,
+  TreeDef,
+} from './geotoyAPIClient';
 import { ROOT_NODE_NAME } from './geotoyAPIClient';
 import type { GizmoValuesByModule, GizmoValueWire } from './runner/types';
 import { composeTransform3 } from './runner/worldMatrixCache';
@@ -119,6 +126,10 @@ export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
       return { kind: 'spline', value: (v.value as [number, number, number][]).flat() };
     case 'ramp':
       return { kind: 'ramp', str_value: JSON.stringify(v.value) };
+    case 'image_levels': {
+      const l = v.value as ImageLevelsJson;
+      return { kind: 'image_levels', value: [l.in_lo, l.in_hi, l.out_lo, l.out_hi, l.gamma] };
+    }
   }
 };
 

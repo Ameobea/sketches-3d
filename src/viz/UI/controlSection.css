@@ -1,0 +1,85 @@
+/* Shared chrome for the geoscript control sections (ramp, image levels, and future ones).
+ * Global rather than per-component so the sections render as one continuous stack; each
+ * component keeps only the properties it genuinely differs on, and this file deliberately
+ * never sets those (canvas/marker `height`, marker `top`/`background`, field `width`,
+ * button `font-size`) so component rules never have to fight it on specificity. */
+.ctl-section {
+  --ctl-bg: #141414;
+  --ctl-field-bg: #1a1a1a;
+  --ctl-border: #2e2e2e;
+  --ctl-field-border: #444;
+  --ctl-text: #ddd;
+  --ctl-label: #aaa;
+
+  background: var(--ctl-bg);
+  border: 1px solid var(--ctl-border);
+  padding: 6px 8px 8px 8px;
+  width: 260px;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: var(--ctl-text);
+}
+
+.ctl-section .ctl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.ctl-section .ctl-head-label {
+  color: var(--ctl-label);
+}
+
+/* Bar: a canvas with markers positioned absolutely over it. `dragAlongBar` measures the
+ * marker's parent, so markers must be siblings of the canvas inside the wrap. */
+.ctl-section .ctl-bar-wrap {
+  position: relative;
+}
+
+.ctl-section .ctl-canvas {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--ctl-field-border);
+  box-sizing: border-box;
+}
+
+.ctl-section .ctl-marker {
+  position: absolute;
+  width: 9px;
+  transform: translateX(-50%);
+  border: 1px solid #ccc;
+  cursor: grab;
+  touch-action: none;
+}
+
+.ctl-section .ctl-num,
+.ctl-section .ctl-select {
+  background: var(--ctl-field-bg);
+  color: var(--ctl-text);
+  border: 1px solid var(--ctl-field-border);
+  font-size: 11px;
+}
+
+.ctl-section .ctl-num {
+  padding: 1px 3px;
+}
+
+.ctl-section .ctl-fields {
+  display: flex;
+  align-items: center;
+  padding: 2px 4px 4px 4px;
+}
+
+.ctl-section .ctl-btn {
+  background: #333;
+  border: 1px solid #555;
+  color: #f0f0f0;
+  cursor: pointer;
+  padding: 0 6px;
+}
+
+.ctl-section .ctl-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

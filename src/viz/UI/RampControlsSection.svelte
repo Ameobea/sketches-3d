@@ -3,6 +3,8 @@
   import type { RampSpecJson, RampStopJson } from 'src/geoscript/geotoyAPIClient';
   import { controlKey } from 'src/geoscript/controlsUi';
   import { drawRampPreview, linearToSrgb, sampleRampSpec, srgbToLinear } from 'src/geoscript/rampPreview';
+  import { dragAlongBar, redrawOn } from 'src/viz/UI/controlSection';
+  import 'src/viz/UI/controlSection.css';
 
   let {
     controls,
@@ -36,14 +38,7 @@
 
   let selected = $state<{ key: string; ix: number } | null>(null);
 
-  const canvasFor = (canvas: HTMLCanvasElement, spec: RampSpecJson) => {
-    drawRampPreview(canvas, spec);
-    return {
-      update(next: RampSpecJson) {
-        drawRampPreview(canvas, next);
-      },
-    };
-  };
+  const canvasFor = redrawOn(drawRampPreview);
 
   const cloneSpec = (spec: RampSpecJson): RampSpecJson => JSON.parse(JSON.stringify(spec));
 
@@ -158,40 +153,32 @@
     selected = { key: row.key, ix };
     flushColorSettle();
     if (ix === 0 || ix === row.spec.stops.length - 1) return;
-    const marker = e.currentTarget as HTMLElement;
-    const bar = marker.parentElement!;
-    marker.setPointerCapture(e.pointerId);
     const [lo, hi] = extent(row.spec);
     const start = row.spec;
     let live: RampSpecJson | null = null;
-    const onMove = (ev: PointerEvent) => {
-      const r = bar.getBoundingClientRect();
-      const pos = lo + (hi - lo) * Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width));
-      live = cloneSpec(start);
-      live.stops[ix].pos = Math.min(hi, Math.max(lo, pos));
-      const newIx = preview(row.key, live, ix);
-      if (newIx >= 0) selected = { key: row.key, ix: newIx };
-    };
-    const onUp = () => {
-      marker.removeEventListener('pointermove', onMove);
-      marker.removeEventListener('pointerup', onUp);
-      marker.removeEventListener('pointercancel', onUp);
-      if (live) commit(row.key, live);
-    };
-    marker.addEventListener('pointermove', onMove);
-    marker.addEventListener('pointerup', onUp);
-    marker.addEventListener('pointercancel', onUp);
+    dragAlongBar(
+      e,
+      f => {
+        live = cloneSpec(start);
+        live.stops[ix].pos = Math.min(hi, Math.max(lo, lo + (hi - lo) * f));
+        const newIx = preview(row.key, live, ix);
+        if (newIx >= 0) selected = { key: row.key, ix: newIx };
+      },
+      () => {
+        if (live) commit(row.key, live);
+      }
+    );
   };
 </script>
 
 {#if rows.length > 0}
-  <div class="ramps">
+  <div class="ctl-section ramps">
     {#each rows as row (row.key)}
-      <div class="ramp-row">
-        <span class="ramp-label">{row.label}</span>
+      <div class="ctl-head">
+        <span class="ctl-head-label">{row.label}</span>
         {#if !row.spec.scalar}
           <select
-            class="space-select"
+            class="ctl-select space-select"
             value={row.spec.space}
             onchange={e => {
               const spec = cloneSpec(row.spec);
@@ -206,11 +193,11 @@
         {/if}
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
-      <div class="bar-wrap" ondblclick={e => addStop(row, e)} title="double-click to add a stop">
-        <canvas class="bar" width={228} height={18} use:canvasFor={row.spec}></canvas>
+      <div class="ctl-bar-wrap bar-wrap" ondblclick={e => addStop(row, e)} title="double-click to add a stop">
+        <canvas class="ctl-canvas bar" width={228} height={18} use:canvasFor={row.spec}></canvas>
         {#each row.spec.stops as s, ix (ix)}
           <div
-            class="marker"
+            class="ctl-marker marker"
             class:selected={selected?.key === row.key && selected.ix === ix}
             class:pinned={ix === 0 || ix === row.spec.stops.length - 1}
             style="left: {frac(row.spec, s.pos) * 100}%; background: {stopColorHex(row.spec, s)}"
@@ -221,9 +208,9 @@
       {#if selected?.key === row.key && row.spec.stops[selected.ix]}
         {@const ix = selected.ix}
         {@const s = row.spec.stops[ix]}
-        <div class="stop-editor">
+        <div class="ctl-fields stop-editor">
           <input
-            class="num"
+            class="ctl-num num"
             type="number"
             step="any"
             value={s.pos}
@@ -232,7 +219,7 @@
           />
           {#if row.spec.scalar}
             <input
-              class="num"
+              class="ctl-num num"
               type="number"
               step="any"
               value={s.value[0]}
@@ -249,7 +236,7 @@
             />
           {/if}
           <select
-            class="ease-select"
+            class="ctl-select ease-select"
             value={s.ease}
             title="easing toward the next stop"
             onchange={e => onStopEase(row, ix, (e.target as HTMLSelectElement).value as RampStopJson['ease'])}
@@ -259,7 +246,7 @@
             {/each}
           </select>
           <button
-            class="del"
+            class="ctl-btn del"
             disabled={row.spec.stops.length <= 2}
             title="remove stop"
             onclick={() => removeStop(row, ix)}
@@ -273,52 +260,17 @@
 {/if}
 
 <style>
-  .ramps {
-    background: #141414;
-    border: 1px solid #2e2e2e;
-    padding: 6px 8px 8px 8px;
-    width: 260px;
-    box-sizing: border-box;
-    font-size: 12px;
-    color: #ddd;
-  }
-  .ramp-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 3px 0;
-  }
-  .ramp-label {
-    color: #aaa;
-  }
-  .space-select,
-  .ease-select {
-    background: #1a1a1a;
-    color: #ddd;
-    border: 1px solid #444;
-    font-size: 11px;
-  }
+  /* Shared chrome lives in controlSection.css; only the ramp-specific geometry is here. */
   .bar-wrap {
-    position: relative;
     height: 26px;
     margin: 2px 4px 6px 4px;
   }
   .bar {
-    width: 100%;
     height: 18px;
-    display: block;
-    border: 1px solid #444;
-    box-sizing: border-box;
   }
   .marker {
-    position: absolute;
     top: 14px;
-    width: 9px;
     height: 11px;
-    transform: translateX(-50%);
-    border: 1px solid #ccc;
-    cursor: grab;
-    touch-action: none;
   }
   .marker.pinned {
     cursor: pointer;
@@ -328,18 +280,10 @@
     outline: 1px solid #0ff;
   }
   .stop-editor {
-    display: flex;
-    align-items: center;
     gap: 5px;
-    padding: 2px 4px 4px 4px;
   }
   .num {
     width: 58px;
-    background: #1a1a1a;
-    color: #ddd;
-    border: 1px solid #444;
-    font-size: 11px;
-    padding: 1px 3px;
   }
   .swatch {
     width: 30px;
@@ -349,15 +293,6 @@
     background: none;
   }
   .del {
-    background: #333;
-    border: 1px solid #555;
-    color: #f0f0f0;
-    cursor: pointer;
     font-size: 12px;
-    padding: 0 6px;
-  }
-  .del:disabled {
-    opacity: 0.4;
-    cursor: default;
   }
 </style>

@@ -394,6 +394,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       step: c.step,
       style: c.style,
       options: c.options,
+      histogram: c.histogram,
     });
   }
 

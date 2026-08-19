@@ -35,7 +35,7 @@ term                         = { path_block | map_literal | array_literal | clos
 path_block                   = { "path" ~ "{" ~ statement* ~ "}" }
 
 static_field_access          = { "." ~ ident }
-field_access                 = { "[" ~ expr ~ "]" }
+field_access                 = { "[" ~ expr ~ ("," ~ expr)* ~ "]" }
 
 // need these to work around ambiguity where a range expression starting with an
 // integer literal looks like a float

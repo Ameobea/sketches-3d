@@ -150,7 +150,7 @@ pub(crate) fn load_image_impl(
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    pixels: Rc::new(pixels),
+    storage: crate::TexStorage::Dense(Rc::new(pixels)),
     width: w,
     height: h,
     channels,
@@ -200,7 +200,7 @@ mod tests {
     let t = get_tex(&ctx, "t");
     assert_eq!((t.width, t.height, t.channels), (2, 2, 1));
     let expected = [-1., 85. / 255. * 2. - 1., 170. / 255. * 2. - 1., 1.];
-    for (px, exp) in t.pixels.iter().zip(expected) {
+    for (px, exp) in t.as_dense().iter().zip(expected) {
       assert!((px - exp).abs() < 1e-6, "{px} vs {exp}");
     }
   }
@@ -214,14 +214,14 @@ mod tests {
     .unwrap();
     let auto = get_tex(&ctx, "auto");
     assert_eq!(auto.channels, 3);
-    assert!((auto.pixels[0] - 1.).abs() < 1e-6);
+    assert!((auto.as_dense()[0] - 1.).abs() < 1e-6);
     // sRGB 128/255 decodes to ~0.2158 linear
-    assert!((auto.pixels[1] - 0.2158).abs() < 1e-3, "{}", auto.pixels[1]);
-    assert_eq!(auto.pixels[2], 0.);
+    assert!((auto.as_dense()[1] - 0.2158).abs() < 1e-3, "{}", auto.as_dense()[1]);
+    assert_eq!(auto.as_dense()[2], 0.);
 
     let forced = get_tex(&ctx, "forced");
     assert_eq!(forced.channels, 4);
-    assert_eq!(forced.pixels[3], 1.);
+    assert_eq!(forced.as_dense()[3], 1.);
   }
 
   #[test]
@@ -230,7 +230,7 @@ mod tests {
     let ctx = parse_and_eval_program(&format!("t = load_image(\"{uri}\", srgb=false)")).unwrap();
     let t = get_tex(&ctx, "t");
     assert_eq!(t.channels, 4);
-    assert!((t.pixels[3] - 128. / 255.).abs() < 1e-6);
+    assert!((t.as_dense()[3] - 128. / 255.).abs() < 1e-6);
 
     let err = parse_and_eval_program("load_image(\"http://example.com/x.png\")").unwrap_err();
     assert!(err.to_string().contains("data URI"), "{err}");
@@ -280,9 +280,9 @@ field = scatter(
     let ctx = parse_and_eval_program(&src).unwrap();
     let t = get_tex(&ctx, "field");
     assert_eq!((t.width, t.height, t.channels), (64, 64, 1));
-    let n = t.pixels.len() as f64;
-    let mean = t.pixels.iter().map(|&v| v as f64).sum::<f64>() / n;
-    let var = t.pixels.iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
+    let n = t.as_dense().len() as f64;
+    let mean = t.as_dense().iter().map(|&v| v as f64).sum::<f64>() / n;
+    let var = t.as_dense().iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
     assert!(mean.abs() < 0.15, "mean {mean}");
     assert!((var.sqrt() - 1.).abs() < 0.25, "std {}", var.sqrt());
   }

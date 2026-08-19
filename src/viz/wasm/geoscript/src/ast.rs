@@ -15,8 +15,10 @@ use crate::{
     map_impl, mod_impl, mul_impl, neg_impl, neq_impl, not_impl, numeric_bool_op_impl, or_impl,
     pos_impl, sub_impl, BoolOp,
   },
-  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types, ArgType, Callable, ErrorStack,
-  EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value, EMPTY_KWARGS, PRATT_PARSER,
+  get_binop_def_ix, get_unop_def_ix, match_signature_by_arg_types,
+  ty::AbstractType,
+  ArgType, Callable, ErrorStack, EvalCtx, IntRange, PreResolvedSignature, Rule, Sym, Value,
+  EMPTY_KWARGS, PRATT_PARSER,
 };
 
 /// Source location index. Points into a SourceMap to retrieve (line, col).
@@ -372,6 +374,8 @@ pub enum Expr {
   FieldAccess {
     lhs: Box<Expr>,
     field: Box<Expr>,
+    /// Second index of the comma form `t[rows, cols]`; textures only.
+    field2: Option<Box<Expr>>,
     loc: SourceLoc,
   },
   Call {
@@ -474,10 +478,15 @@ impl Expr {
         cb(self);
         lhs.traverse(cb);
       }
-      Expr::FieldAccess { lhs, field, .. } => {
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
         cb(self);
         lhs.traverse(cb);
         field.traverse(cb);
+        if let Some(f2) = field2 {
+          f2.traverse(cb);
+        }
       }
       Expr::Call { call, .. } => {
         cb(self);
@@ -569,11 +578,17 @@ impl Expr {
       }
       Expr::FieldAccess { .. } => {
         cb(self);
-        let Expr::FieldAccess { lhs, field, .. } = self else {
+        let Expr::FieldAccess {
+          lhs, field, field2, ..
+        } = self
+        else {
           return;
         };
         lhs.traverse_mut(cb);
         field.traverse_mut(cb);
+        if let Some(f2) = field2 {
+          f2.traverse_mut(cb);
+        }
       }
       Expr::Call { .. } => {
         cb(self);
@@ -1869,10 +1884,27 @@ fn parse_chained_term(ctx: &EvalCtx, chained: Pair<Rule>) -> Result<Expr, ErrorS
             .with_loc(line as u32, col as u32),
           );
         }
-        let index_expr = parse_expr(ctx, access.into_inner().next().unwrap())?;
+        let mut inner = access.into_inner();
+        let index_expr = parse_expr(ctx, inner.next().unwrap())?;
+        let field2 = match inner.next() {
+          Some(p) => {
+            if inner.next().is_some() {
+              let (line, col) = p.line_col();
+              return Err(
+                ErrorStack::new(
+                  "at most two comma-separated indices are supported in `[...]` (rows, cols)",
+                )
+                .with_loc(line as u32, col as u32),
+              );
+            }
+            Some(Box::new(parse_expr(ctx, p)?))
+          }
+          None => None,
+        };
         expr = Expr::FieldAccess {
           lhs: Box::new(expr),
           field: Box::new(index_expr),
+          field2,
           loc,
         };
       }
@@ -2288,27 +2320,58 @@ pub fn infer_static_field_access_ty(lhs_ty: ArgType, field: &str) -> Option<ArgT
     ArgType::Vec4 => swizzle_result_ty(field, |c| {
       matches!(c, 'x' | 'y' | 'z' | 'w' | 'r' | 'g' | 'b' | 'a')
     }),
+    // Channel count isn't in the type system; char-vs-channel validation is runtime-only.
+    ArgType::Texture => ((1..=4).contains(&field.len())
+      && field
+        .chars()
+        .all(|c| matches!(c, 'x' | 'y' | 'z' | 'w' | 'r' | 'g' | 'b' | 'a')))
+    .then_some(ArgType::Texture),
     _ => None,
   }
 }
 
-/// Type-level dynamic field access (`v[i]` or `v[s]`).  Handles:
-/// - integer index into Vec2/Vec3 → Float
+/// Any of the value types a texture pixel access can produce (by channel count).
+fn tex_pixel_union() -> Vec<ArgType> {
+  vec![ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4]
+}
+
+/// Type-level dynamic field access (`v[i]`, `v[s]`, `t[a, b]`).  Handles:
+/// - integer index into Vec2/Vec3/Vec4 → Float
 /// - string-literal field is equivalent to static field access
+/// - texture indexing (int / range / comma forms)
 pub fn infer_dynamic_field_access_ty(
   lhs_ty: ArgType,
   field_expr: &Expr,
   field_ty: ArgType,
-) -> Option<ArgType> {
+  field2_ty: Option<ArgType>,
+) -> Option<AbstractType> {
+  if let Some(f2) = field2_ty {
+    if !matches!(lhs_ty, ArgType::Texture) {
+      return None;
+    }
+    return Some(match (field_ty, f2) {
+      (ArgType::Int, ArgType::Int) => AbstractType::Union(tex_pixel_union()),
+      _ => AbstractType::Concrete(ArgType::Texture),
+    });
+  }
   if let Expr::Literal {
     value: Value::String(s),
     ..
   } = field_expr
   {
-    return infer_static_field_access_ty(lhs_ty, s);
+    return infer_static_field_access_ty(lhs_ty, s).map(AbstractType::Concrete);
   }
   match (lhs_ty, field_ty) {
-    (ArgType::Vec2 | ArgType::Vec3 | ArgType::Vec4, ArgType::Int) => Some(ArgType::Float),
+    (ArgType::Vec2 | ArgType::Vec3 | ArgType::Vec4, ArgType::Int) => {
+      Some(AbstractType::Concrete(ArgType::Float))
+    }
+    // `t[int]` is a row view when height > 1, else the pixel value.
+    (ArgType::Texture, ArgType::Int) => {
+      let mut u = tex_pixel_union();
+      u.push(ArgType::Texture);
+      Some(AbstractType::Union(u))
+    }
+    (ArgType::Texture, ArgType::Sequence) => Some(AbstractType::Concrete(ArgType::Texture)),
     _ => None,
   }
 }
@@ -2395,8 +2458,14 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       }
     }
     Expr::StaticFieldAccess { lhs, .. } => get_dyn_type(lhs, local_scope),
-    Expr::FieldAccess { lhs, field, .. } => {
-      get_dyn_type(lhs, local_scope) | get_dyn_type(field, local_scope)
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => {
+      let mut ty = get_dyn_type(lhs, local_scope) | get_dyn_type(field, local_scope);
+      if let Some(f2) = field2 {
+        ty = ty | get_dyn_type(f2, local_scope);
+      }
+      ty
     }
     Expr::Call {
       call: FunctionCall { args, kwargs, .. },

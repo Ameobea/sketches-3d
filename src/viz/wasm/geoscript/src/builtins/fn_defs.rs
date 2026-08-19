@@ -134,6 +134,57 @@ macro_rules! argtype_flags {
   };
 }
 
+const CONCAT_CHANNELS_DESC: &str = "Joins the channels of several same-sized textures into one texture, in argument order (numpy `concatenate(axis=-1)`).  A numeric argument contributes one channel filled with that constant.  At least one argument must be a texture; it fixes the output dims, wrap mode, and placement transform.  Total channels must be <= 4.\n\nThe idiom for compositing with a mask sourced from an unrelated texture: `concat_channels(rgb, mask)` builds an RGBA stamp for `blit`.";
+
+const CONCAT_CHANNELS_ARG_DESC: &str =
+  "Texture whose channels are appended in order, or a constant filling a single channel";
+
+macro_rules! concat_channels_arg {
+  ($name:literal) => {
+    ArgDef {
+      name: $name,
+      interned_name: Sym(0),
+      valid_types: argtype_flags!(ArgType::Texture, ArgType::Numeric),
+      default_value: DefaultValue::Required,
+      description: CONCAT_CHANNELS_ARG_DESC,
+    }
+  };
+}
+
+const MORPH_RADIUS_DESC: &str = "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 is a no-op for `morph_open`/`morph_close` and yields an all-zero result for the difference forms.";
+
+macro_rules! morph_fn_def {
+  ($desc:literal) => {
+    morph_fn_def!($desc, MORPH_RADIUS_DESC)
+  };
+  ($desc:literal, $radius_desc:expr) => {
+    FnDef {
+      module: "texture",
+      examples: &[],
+      signatures: &[FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: $radius_desc,
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "",
+          },
+        ],
+        description: $desc,
+        return_type: &[ArgType::Texture],
+      }],
+    }
+  };
+}
+
 pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::phf_map! {
   "box" => FnDef {
     module: "mesh",
@@ -2869,6 +2920,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Component-wise absolute value of a Vec2",
         return_type: &[ArgType::Vec2],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Absolute value of every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "signum" => FnDef {
@@ -3283,6 +3347,166 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Adds two textures elementwise; dims and channel counts must match",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a scalar to every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Adds a scalar to every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture + vec2` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec2 + texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture + vec3` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec3 + texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture + vec4` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec4 + texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "sub" => FnDef {
@@ -3508,6 +3732,186 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Subtracts a numeric value from each component of a Vec4",
         return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Subtracts two same-shape textures element-wise",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Subtracts a scalar from every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Scalar minus every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture - vec2` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec2 - texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture - vec3` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec3 - texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture - vec4` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec4 - texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -3895,6 +4299,126 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Multiplies two textures elementwise (masking); dims and channel counts must match",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture * vec2` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec2 * texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture * vec3` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec3 * texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture * vec4` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec4 * texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "div" => FnDef {
@@ -4081,6 +4605,186 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Divides each element of a Vec4 by a scalar",
         return_type: &[ArgType::Vec4],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Divides two same-shape textures element-wise",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Divides every channel of a texture by a scalar",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Scalar divided by every channel of a texture",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture / vec2` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec2 / texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture / vec3` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec3 / texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `texture / vec4` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `vec4 / texture` (vec length must match the channel count)",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "mod" => FnDef {
@@ -4213,6 +4917,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Component-wise maximum of two Vec2s",
         return_type: &[ArgType::Vec2],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Element-wise maximum of two same-shape textures",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel maximum of a texture and a scalar",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel maximum of a texture and a scalar",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "min" => FnDef {
@@ -4298,6 +5062,66 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Component-wise minimum of two Vec2s",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Element-wise minimum of two same-shape textures",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel minimum of a texture and a scalar",
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel minimum of a texture and a scalar",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -4412,6 +5236,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Clamps each component of a Vec2 between min and max",
         return_type: &[ArgType::Vec2],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Clamps every channel of a texture",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -4712,7 +5563,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|val: float|vec2|vec3, uv: vec2, x_ix: int, y_ix: int|: float | vec2 | vec3`, invoked once per pixel.  `val`'s type matches the input's channel count; the return type sets the output's channel count."
+            description: "Callable with signature `|val: float|vec2|vec3|vec4, uv: vec2, x_ix: int, y_ix: int|: float | vec2 | vec3 | vec4`, invoked once per pixel.  `val`'s type matches the input's channel count; the return type sets the output's channel count."
           },
           ArgDef {
             name: "texture",
@@ -5819,6 +6670,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns a Vec3 with each component raised to the power of `exponent`",
         return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "base",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "exponent",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Raises every channel of a texture to a power",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -7031,9 +7902,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "x",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec3),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec3, ArgType::Texture),
             default_value: DefaultValue::Required,
-            description: "Value to remap (componentwise for vec3). Last so pipelines partially apply: `v | remap(-1., 1., 0., 1.)`."
+            description: "Value to remap (componentwise for vec3; every channel for a texture). Last so pipelines partially apply: `v | remap(-1., 1., 0., 1.)`."
           },
           ArgDef {
             name: "clamp",
@@ -7044,7 +7915,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Linearly maps `x` from `[in_lo, in_hi]` to `[out_lo, out_hi]`, extrapolating unless `clamp=true`.",
-        return_type: &[ArgType::Float, ArgType::Vec3],
+        return_type: &[ArgType::Float, ArgType::Vec3, ArgType::Texture],
       },
     ],
   },
@@ -7124,6 +7995,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Works the same as `smoothstep` in GLSL.\n\nIt returns 0 if `x < edge0`, 1 if `x > edge1`, and a smooth Hermite interpolation between 0 and 1 for values of `x` between `edge0` and `edge1`.",
         return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "edge0",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "edge1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Applies smoothstep to every channel of a texture",
+        return_type: &[ArgType::Texture],
       },
     ],
   },
@@ -12553,6 +13451,415 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "texture_levels" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "in_lo",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Input black point"
+          },
+          ArgDef {
+            name: "in_hi",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Input white point"
+          },
+          ArgDef {
+            name: "out_lo",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Output level for the black point (swap with `out_hi` to invert)"
+          },
+          ArgDef {
+            name: "out_hi",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Output level for the white point"
+          },
+          ArgDef {
+            name: "gamma",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Midtone gamma; > 1 brightens midtones, < 1 darkens"
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Photoshop-style levels: `out_lo + (out_hi - out_lo) * clamp((x - in_lo) / (in_hi - in_lo), 0, 1)^(1/gamma)` on color channels; alpha is preserved on 4-channel textures.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "input_image_levels" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "Stable control id, scoped to the node. Also the default panel label."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Input texture; also sources the histogram shown behind the control.  Put this downstream of expensive synthesis so scrubbing stays cheap."
+          },
+          ArgDef {
+            name: "default",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional map with any of the keys in_lo/in_hi/out_lo/out_hi/gamma; missing keys use identity values."
+          },
+          ArgDef {
+            name: "label",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Display label override; defaults to `name`."
+          },
+        ],
+        description: "An interactively-editable levels adjustment (`texture_levels` with UI-configured params over a histogram); returns the adjusted texture.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "resize" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Output width in pixels"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Output height in pixels"
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("mitchell".to_owned())),
+            description: "\"nearest\", \"box\", \"triangle\", \"mitchell\" (the default), or \"lanczos3\""
+          },
+        ],
+        description: "Resamples a texture to new dimensions via a separable filter.  Downsampling is area-correct (the kernel widens with the minification ratio); boundaries respect the texture's wrap mode.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "dilate" => morph_fn_def!("Morphological dilation (per-channel running max over a box window), wrap-aware at boundaries.  O(1) per pixel at any radius.", "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 returns the input unchanged."),
+  "erode" => morph_fn_def!("Morphological erosion (per-channel running min over a box window), wrap-aware at boundaries.  O(1) per pixel at any radius.", "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 returns the input unchanged."),
+  "texture_min" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel minimum over all pixels; returns a float for 1-channel textures, vec2/vec3/vec4 otherwise",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
+      },
+    ],
+  },
+  "texture_max" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel maximum over all pixels; returns a float for 1-channel textures, vec2/vec3/vec4 otherwise",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
+      },
+    ],
+  },
+  "texture_mean" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel mean over all pixels; returns a float for 1-channel textures, vec2/vec3/vec4 otherwise",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
+      },
+    ],
+  },
+  "concat_channels" => FnDef {
+    module: "texture",
+    examples: &[],
+    // Longest-first: `get_args` returns the first signature that validates without
+    // checking that every positional was consumed, so a shorter arity listed first
+    // would shadow the longer ones and silently drop the trailing args.
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          concat_channels_arg!("a"),
+          concat_channels_arg!("b"),
+          concat_channels_arg!("c"),
+          concat_channels_arg!("d"),
+        ],
+        description: CONCAT_CHANNELS_DESC,
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          concat_channels_arg!("a"),
+          concat_channels_arg!("b"),
+          concat_channels_arg!("c"),
+        ],
+        description: CONCAT_CHANNELS_DESC,
+        return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          concat_channels_arg!("a"),
+          concat_channels_arg!("b"),
+        ],
+        description: CONCAT_CHANNELS_DESC,
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "crop" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Left edge of the crop, in pixels"
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Top edge of the crop, in pixels"
+          },
+          ArgDef {
+            name: "w",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Crop width in pixels; must be >= 1 and fit within the texture"
+          },
+          ArgDef {
+            name: "h",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Crop height in pixels; must be >= 1 and fit within the texture"
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "O(1) rectangular crop view; no pixels are copied.  Equivalent to `t[y..y+h, x..x+w]`.  `wrap` applies in view space, so a repeat-wrapped crop tiles the crop.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "sharpen" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "amt",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: "Strength of the re-added high-frequency detail.  0 is a no-op; negative values soften."
+          },
+          ArgDef {
+            name: "sigma",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(2.)),
+            description: "Gaussian radius of the blur subtracted to isolate detail; larger picks up coarser features."
+          },
+        ],
+        description: "Unsharp mask: `t + (t - blur(sigma, t)) * amt`.  The texture is the first arg so pipelines partially apply: `t | sharpen(amt=0.3)`.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "texture_invert" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Inverts every channel (`1 - x`), alpha included.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "texture_normalize" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel min-max stretch so every channel spans exactly [0, 1]; a constant channel maps to 0.  Useful ahead of `texture_levels` / `input_image_levels` when a synthesis step's output range is unknown.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "morph_open" => morph_fn_def!("Morphological opening (erode then dilate): removes bright specks smaller than the structuring element, leaving larger shapes at their original size."),
+  "morph_close" => morph_fn_def!("Morphological closing (dilate then erode): fills dark pinholes and gaps smaller than the structuring element.  Dual of `morph_open`."),
+  "morph_outline" => morph_fn_def!("Morphological gradient (`dilate - erode`): a band straddling every edge, 2r+1 px wide."),
+  "morph_tophat" => morph_fn_def!("White top-hat (`t - morph_open(t)`): isolates bright features smaller than the structuring element."),
+  "morph_blackhat" => morph_fn_def!("Black top-hat (`morph_close(t) - t`): isolates dark features smaller than the structuring element."),
+  "materialize" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Copies a strided texture view (crop/swizzle/flip) into dense storage; no-op on already-dense textures.  A perf hint only — every op accepts views directly.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "flip_x" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a texture horizontally.  O(1): returns a view of the same pixel data.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "flip_y" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Mirrors a texture vertically.  O(1): returns a view of the same pixel data.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
   "texture" => FnDef {
     module: "texture",
     examples: &[],
@@ -12578,7 +13885,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable of signature `|uv: vec2|: float | vec2 | vec3 | vec4`, invoked once per pixel at the pixel's center UV.  The return type sets the channel count (float -> 1, vec2 -> 2, vec3 -> 3, vec4 -> 4/RGBA)."
+            description: "Callable of signature `|uv: vec2, x_ix: int, y_ix: int|: float | vec2 | vec3 | vec4`, invoked once per pixel at the pixel's center UV; `x_ix`/`y_ix` are absolute pixel indices and may be omitted from the closure's params.  The return type sets the channel count (float -> 1, vec2 -> 2, vec3 -> 3, vec4 -> 4/RGBA)."
           },
           ArgDef {
             name: "wrap",

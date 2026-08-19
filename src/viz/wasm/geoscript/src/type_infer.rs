@@ -521,7 +521,9 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
         .unwrap_or(AbstractType::Unknown)
     }
 
-    Expr::FieldAccess { lhs, field, .. } => {
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => {
       let lhs_ty = infer_expr(ctx, env, lhs);
       let field_ty = infer_expr(ctx, env, field);
       let Some(lhs_c) = lhs_ty.as_single_arg_type() else {
@@ -530,8 +532,14 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
       let Some(field_c) = field_ty.as_single_arg_type() else {
         return AbstractType::Unknown;
       };
-      infer_dynamic_field_access_ty(lhs_c, field, field_c)
-        .map(AbstractType::Concrete)
+      let field2_c = match field2 {
+        Some(f2) => match infer_expr(ctx, env, f2).as_single_arg_type() {
+          Some(t) => Some(t),
+          None => return AbstractType::Unknown,
+        },
+        None => None,
+      };
+      infer_dynamic_field_access_ty(lhs_c, field, field_c, field2_c)
         .unwrap_or(AbstractType::Unknown)
     }
 

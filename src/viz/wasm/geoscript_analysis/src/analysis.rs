@@ -517,16 +517,25 @@ impl<'a> AnalysisWalker<'a> {
           .map(AbstractType::Concrete)
           .unwrap_or(AbstractType::Unknown)
       }
-      Expr::FieldAccess { lhs, field, .. } => {
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
         let lhs_ty = self.walk_expr(lhs);
         let field_ty = self.walk_expr(field);
+        let field2_ty = field2.as_ref().map(|f2| self.walk_expr(f2));
         let (Some(lhs_c), Some(field_c)) =
           (lhs_ty.as_single_arg_type(), field_ty.as_single_arg_type())
         else {
           return AbstractType::Unknown;
         };
-        infer_dynamic_field_access_ty(lhs_c, field, field_c)
-          .map(AbstractType::Concrete)
+        let field2_c = match field2_ty {
+          Some(t) => match t.as_single_arg_type() {
+            Some(t) => Some(t),
+            None => return AbstractType::Unknown,
+          },
+          None => None,
+        };
+        infer_dynamic_field_access_ty(lhs_c, field, field_c, field2_c)
           .unwrap_or(AbstractType::Unknown)
       }
       Expr::Closure {
