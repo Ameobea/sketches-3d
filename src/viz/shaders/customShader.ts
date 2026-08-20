@@ -94,6 +94,15 @@ vec4 sampleStack(sampler2DArray s, vec2 uv, float t) {
   vec4 b = texture(s, vec3(uv, min(lo + 1., layers - 1.)));
   return mix(a, b, fract(layer));
 }
+// Explicit-LOD twin for the POM marcher, which samples in non-uniform control flow.
+vec4 sampleStackLod0(sampler2DArray s, vec2 uv, float t) {
+  float layers = float(textureSize(s, 0).z);
+  float layer = clamp(t, 0., 1.) * (layers - 1.);
+  float lo = floor(layer);
+  vec4 a = textureLod(s, vec3(uv, lo), 0.);
+  vec4 b = textureLod(s, vec3(uv, min(lo + 1., layers - 1.)), 0.);
+  return mix(a, b, fract(layer));
+}
 `;
 
 const MAX_ANISO_TAPS = 6;
@@ -838,7 +847,8 @@ export const buildCustomShaderArgs = (
   const stackMap = map instanceof THREE.DataArrayTexture;
   const stackNormalMap = normalMap instanceof THREE.DataArrayTexture;
   const stackRoughnessMap = roughnessMap instanceof THREE.DataArrayTexture;
-  const hasStacks = stackMap || stackNormalMap || stackRoughnessMap;
+  const stackPomHeightMap = pomHeightMap instanceof THREE.DataArrayTexture;
+  const hasStacks = stackMap || stackNormalMap || stackRoughnessMap || stackPomHeightMap;
 
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
@@ -978,12 +988,11 @@ export const buildCustomShaderArgs = (
   }
   for (const [slot, tex] of [
     ['clearcoatNormalMap', clearcoatNormalMap],
-    ['pomHeightMap', pomHeightMap],
     ['transmissionMap', transmissionMap],
   ] as const) {
     if (tex instanceof THREE.DataArrayTexture) {
       throw new Error(
-        `Texture stacks are not supported for the ${slot} slot (v1 supports map/normalMap/roughnessMap)`
+        `Texture stacks are not supported for the ${slot} slot (supported: map/normalMap/roughnessMap/pomHeightMap)`
       );
     }
   }
@@ -1759,7 +1768,7 @@ float softenTerminator(vec3 geoN, vec3 lightDir) {
   return 1.0;
 #endif
 }
-${buildPomUniformDecls(!!pom, pomBounded, !!pomHeightMap, !!pomSelfShadow)}
+${buildPomUniformDecls(!!pom, pomBounded, pomHeightMap ? (stackPomHeightMap ? 'stack' : 'single') : false, !!pomSelfShadow)}
 
 uniform vec3 playerShadowPos;
 uniform vec4 playerShadowParams; // x=radius, y=intensity, z/w=min/max probe receiverY (early-out band)
@@ -1944,7 +1953,7 @@ ${pomHeightShader ?? ''}
 ${pomProjected ? 'float getPomHeight(vec3 p, vec3 N, float t) { return gridHeight(domProject(p, domAxis(N)), t); }' : ''}
 ${pomSafe && !pomLateralDist ? 'float gridLateralDist(vec2 uv) { return 0.; }' : ''}
 ${pomGrid ? `float getPomHeight(vec3 p, vec3 N, float t) { vec2 uv = domProject(p, domAxis(N)); vec2 cid = floor(uv / GRID_PITCH); return gridHeight(GridCtx((fract(uv / GRID_PITCH) - 0.5) * GRID_PITCH, cid, t), gridComputeCell(cid)); }` : ''}
-${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, pomTexturing }) : ''}
+${pom ? buildPomHeightSources({ hasHeightShader: !!pomHeightShader, hasHeightMap: !!pomHeightMap, stackHeightMap: stackPomHeightMap, pomTexturing }) : ''}
 ${pom && pomNormalShader ? pomNormalShader : ''}
 ${pomHitFrame ? `${hitType} _pomHitData; // one cell-field eval at the hit, shared by every slot below` : ''}
 ${pomHitFrame && colorShader ? 'vec4 getFragColor(vec3 baseColor, vec3 p, vec3 n, float t, SceneCtx ctx) { return gridColor(_pomHitData, baseColor, ctx); }' : ''}

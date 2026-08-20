@@ -2,6 +2,10 @@ use geoscript::preprocess::preprocess;
 use geoscript_analysis::AnalysisCtx;
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOC: geoscript::aligned_alloc::CacheAligned = geoscript::aligned_alloc::CacheAligned;
+
 static mut DID_INIT: bool = false;
 
 fn maybe_init() {

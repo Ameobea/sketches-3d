@@ -17,6 +17,10 @@ use mesh::{
 use nanoserde::{DeJson, SerJson};
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+#[global_allocator]
+static ALLOC: geoscript::aligned_alloc::CacheAligned = geoscript::aligned_alloc::CacheAligned;
+
 #[wasm_bindgen]
 extern "C" {
   #[wasm_bindgen(js_namespace = console)]

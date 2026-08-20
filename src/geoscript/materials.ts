@@ -143,8 +143,7 @@ export const buildMaterial = (
   }
 
   const p = def.props ?? {};
-  // v1 stack-capable slots are map/normalMap/roughnessMap only
-  for (const slot of ['metalnessMap', 'clearcoatNormalMap', 'pomHeightMap'] as const) {
+  for (const slot of ['metalnessMap', 'clearcoatNormalMap'] as const) {
     const h = p[slot];
     if (h != null && isStackHandle(h)) {
       throw new Error(`Texture stacks are not supported for the ${slot} slot`);

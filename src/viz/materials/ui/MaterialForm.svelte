@@ -51,9 +51,12 @@
 
   const stackAssigned = $derived(
     material.type === 'customShader' &&
-      [material.props?.map, material.props?.normalMap, material.props?.roughnessMap].some(
-        h => !!h && isStackHandle(h)
-      )
+      [
+        material.props?.map,
+        material.props?.normalMap,
+        material.props?.roughnessMap,
+        material.props?.pomHeightMap,
+      ].some(h => !!h && isStackHandle(h))
   );
 
   let showRoughnessConfigurator = $state(false);

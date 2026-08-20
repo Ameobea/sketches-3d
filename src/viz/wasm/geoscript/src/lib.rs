@@ -51,6 +51,10 @@ use crate::{
   seq::{ChainSeq, IntRange, MapSeq},
 };
 
+/// Only meaningful on wasm; see the module docs. Consumers that produce a wasm cdylib declare
+/// `#[global_allocator]` with it.
+#[cfg(target_arch = "wasm32")]
+pub mod aligned_alloc;
 pub mod ast;
 pub mod autodiff;
 pub mod builtins;

@@ -28,8 +28,8 @@ export const isProceduralHandle = (handle: string): boolean =>
 
 export const isStackHandle = (handle: string): boolean => handle.startsWith(PROCEDURAL_STACK_HANDLE_PREFIX);
 
-/** v1 material slots that accept stack handles. */
-export const STACK_CAPABLE_SLOTS: readonly string[] = ['map', 'normalMap', 'roughnessMap'];
+/** Material slots that accept stack handles. */
+export const STACK_CAPABLE_SLOTS: readonly string[] = ['map', 'normalMap', 'roughnessMap', 'pomHeightMap'];
 
 export const buildProceduralHandle = (tabId: string, output: string, stack = false): string =>
   `${stack ? PROCEDURAL_STACK_HANDLE_PREFIX : PROCEDURAL_HANDLE_PREFIX}${tabId}:${output}`;

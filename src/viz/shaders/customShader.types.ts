@@ -46,9 +46,9 @@ export interface CustomShaderProps {
   sheenRoughness?: number;
   color?: number | THREE.Color;
   normalScale?: number;
-  /** `map`/`normalMap`/`roughnessMap` may be a `THREE.DataArrayTexture` (a texture stack):
-   *  slices are interpolated per fragment by a shared index t ∈ [0,1] from the
-   *  `stackIndex` prop or the `stackIndexShader` slot. */
+  /** `map`/`normalMap`/`roughnessMap`/`pomHeightMap` may be a `THREE.DataArrayTexture` (a
+   *  texture stack): slices are interpolated per fragment by a shared index t ∈ [0,1] from
+   *  the `stackIndex` prop or the `stackIndexShader` slot. */
   map?: THREE.Texture;
   normalMap?: THREE.Texture;
   roughnessMap?: THREE.Texture;
@@ -70,6 +70,10 @@ export interface CustomShaderProps {
    *
    * Combined additively with `shaders.pomHeightShader` if both are provided;
    * the sum is clamped to `[0, 0.8]` before scaling by `pom.depth`.
+   *
+   * May be a stack (`THREE.DataArrayTexture`); the index is fixed per fragment (resolved
+   * from the base surface before the march), but every marcher tap then costs two texture
+   * reads — triplanar goes from 3 to 6 per step.
    */
   pomHeightMap?: THREE.Texture;
   normalMapType?: THREE.NormalMapTypes;
@@ -214,7 +218,7 @@ export interface CustomShaderShaders {
    * map slot. `normal` is the interpolated geometric normal (the mapped normal doesn't
    * exist yet — and can't, when normalMap is itself stack-backed). When present, the
    * `stackIndex` prop/uniform is ignored. Only used when at least one of
-   * map/normalMap/roughnessMap is a `DataArrayTexture` stack.
+   * map/normalMap/roughnessMap/pomHeightMap is a `DataArrayTexture` stack.
    */
   stackIndexShader?: string;
   roughnessShader?: string;

@@ -1,16 +1,23 @@
 export const POM_BOUNDED_SILHOUETTE_FLAG = 'pomBoundedSilhouette';
 
+/** `'stack'` = a `DataArrayTexture` heightmap sampled through `sampleStackLod0`. */
+export type PomHeightMapKind = false | 'single' | 'stack';
+
 export const buildPomUniformDecls = (
   pom: boolean,
   pomBounded: boolean,
-  pomHeightMap: boolean,
+  pomHeightMap: PomHeightMapKind,
   pomSelfShadow: boolean
 ): string =>
   [
     pom ? 'uniform float pomDepth;' : '',
     pomBounded ? 'uniform highp sampler2D pomBackDepth; // R = euclidean dist camera->nearest back face' : '',
     pomBounded ? 'uniform vec2 pomResolution; // drawing-buffer size; the back-face RT may be lower-res' : '',
-    pomHeightMap ? 'uniform sampler2D pomHeightMap;' : '',
+    pomHeightMap === 'stack'
+      ? 'uniform highp sampler2DArray pomHeightMap;'
+      : pomHeightMap
+        ? 'uniform sampler2D pomHeightMap;'
+        : '',
     pomSelfShadow ? 'uniform vec3 pomShadowLightDir; // world-space direction toward the light' : '',
   ].join('\n');
 
@@ -27,12 +34,18 @@ export type PomTexturing = 'triplanar' | 'generated' | 'baseline' | 'tangent';
 export const buildPomHeightSources = (opts: {
   hasHeightShader: boolean;
   hasHeightMap: boolean;
+  stackHeightMap: boolean;
   pomTexturing: PomTexturing;
 }): string => {
-  const { hasHeightShader, hasHeightMap, pomTexturing } = opts;
+  const { hasHeightShader, hasHeightMap, stackHeightMap, pomTexturing } = opts;
   const proceduralDefault = hasHeightShader
     ? ''
     : 'float getPomHeight(vec3 _p, vec3 _N, float _t) { return 0.; }';
+  // `_stackT` is fixed per fragment, so a stack tap reads the same slice pair for the whole march.
+  const tap = (uv: string) =>
+    stackHeightMap
+      ? `sampleStackLod0(pomHeightMap, ${uv}, _stackT).r`
+      : `textureLod(pomHeightMap, ${uv}, 0.0).r`;
   const sampleFn = (() => {
     if (!hasHeightMap) {
       return 'float samplePomHeightMap(vec3 _p, vec3 _N) { return 0.; }';
@@ -46,9 +59,9 @@ float samplePomHeightMap(vec3 p, vec3 _N) {
   vec3 sp = vTriplanarPos + (p - vWorldPos);
   vec2 _phUvScale = vec2(uvTransform[0][0], uvTransform[1][1]);
   float h = 0.;
-  if (_pomTriW.x > 0.01) h += textureLod(pomHeightMap, sp.yz * _phUvScale, 0.0).r * _pomTriW.x;
-  if (_pomTriW.y > 0.01) h += textureLod(pomHeightMap, sp.zx * _phUvScale, 0.0).r * _pomTriW.y;
-  if (_pomTriW.z > 0.01) h += textureLod(pomHeightMap, sp.xy * _phUvScale, 0.0).r * _pomTriW.z;
+  if (_pomTriW.x > 0.01) h += ${tap('sp.yz * _phUvScale')} * _pomTriW.x;
+  if (_pomTriW.y > 0.01) h += ${tap('sp.zx * _phUvScale')} * _pomTriW.y;
+  if (_pomTriW.z > 0.01) h += ${tap('sp.xy * _phUvScale')} * _pomTriW.z;
   return 1. - h;
 }`;
     }
@@ -56,12 +69,12 @@ float samplePomHeightMap(vec3 p, vec3 _N) {
       // Mesh-UV march: each marched point projects into the surface tangent frame
       // (`pomMeshUv`, emitted by customShader) so the height field follows the swept UV.
       return /* glsl */ `
-float samplePomHeightMap(vec3 p, vec3 _N) { return 1. - textureLod(pomHeightMap, pomMeshUv(p), 0.0).r; }`;
+float samplePomHeightMap(vec3 p, vec3 _N) { return 1. - ${tap('pomMeshUv(p)')}; }`;
     }
     return /* glsl */ `
 float samplePomHeightMap(vec3 p, vec3 N) {
   vec2 uv = (uvTransform * vec3(generateUV(p, N), 1.)).xy;
-  return 1. - textureLod(pomHeightMap, uv, 0.0).r;
+  return 1. - ${tap('uv')};
 }`;
   })();
   return `${proceduralDefault}\n${sampleFn}`;
