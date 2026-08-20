@@ -2,7 +2,12 @@ import * as Comlink from 'comlink';
 
 import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
 import type { Light } from 'src/geotoy/modes/mesh/lights';
-import type { GizmoValuesByModule, TextureParamsEntry } from './runner/types';
+import type {
+  GizmoValuesByModule,
+  TextureParamsEntry,
+  VectorizeFlags,
+  VectorizeReport,
+} from './runner/types';
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 
 /** Raw shape of `geoscript_repl_get_rendered_gizmo`'s JSON (snake_case from Rust). */
@@ -344,6 +349,13 @@ const methods = {
     return Comlink.transfer({ light, lightId }, []);
   },
   getRenderedTextureCount: (ctxPtr: number) => Geoscript.geoscript_get_rendered_texture_count(ctxPtr),
+  getVectorizeReports: (ctxPtr: number): VectorizeReport[] =>
+    JSON.parse(Geoscript.geoscript_repl_get_vectorize_reports(ctxPtr)),
+  setVectorizeFlags: (ctxPtr: number, flags: VectorizeFlags) => {
+    Geoscript.geoscript_repl_set_no_vectorize(ctxPtr, flags.disabled);
+    Geoscript.geoscript_repl_set_verify(ctxPtr, flags.verify);
+    Geoscript.geoscript_repl_set_vectorize_profile(ctxPtr, flags.profile);
+  },
   getRenderedTexture: (ctxPtr: number, texIx: number) => {
     const [width, height, channels] = Geoscript.geoscript_get_rendered_texture_dims(ctxPtr, texIx);
     /** 1 for plain outputs; stacks concatenate their slices in `pixels`. */

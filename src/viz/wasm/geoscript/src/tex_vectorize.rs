@@ -10,6 +10,7 @@
 
 use std::{
   cell::{Cell, RefCell},
+  collections::VecDeque,
   rc::Rc,
 };
 
@@ -27,17 +28,67 @@ use crate::{
 
 const MIN_TEXELS: usize = 64;
 const MAX_CACHED_PLANS: usize = 512;
-const REG_BYTE_BUDGET: usize = 512 << 20;
+const REG_BYTE_BUDGET: u64 = 512 << 20;
+/// Bail once a body's counters approach the `u16` register/uniform index space.
+const MAX_PLAN_SLOTS: usize = 60_000;
+
+#[derive(Clone)]
+enum PlanEntry {
+  Ok(Rc<Plan>),
+  /// Compile bailed; the reason is replayed as this body's report on every later run.
+  Bail(Rc<str>, (u32, u32)),
+}
 
 pub struct VectorizeState {
-  plans: RefCell<FxHashMap<PlanKey, Option<Rc<Plan>>>>,
+  plans: RefCell<FxHashMap<PlanKey, PlanEntry>>,
+  /// Insertion order over `plans`, so hitting the cap evicts the oldest quarter instead of
+  /// wiping the live run's plans.
+  plan_order: RefCell<VecDeque<PlanKey>>,
   /// Shared per-(w,h) uv planes: `u = (x+0.5)/w`, `v = (y+0.5)/h` — every generator and
   /// uv-referencing map body at one size reads the same two read-only planes.
-  uv_planes: RefCell<FxHashMap<(u32, u32), [Rc<Vec<f32>>; 2]>>,
+  uv_planes: RefCell<VecDeque<((u32, u32), [Rc<Vec<f32>>; 2])>>,
   pub no_vectorize: Cell<bool>,
   pub verify: Cell<bool>,
+  /// Render each vectorized body's plan listing with per-step timings into its report.
+  /// Off by default: the common path must not even read a clock.
+  pub profile: Cell<bool>,
   /// Per-body outcome for diagnostics, keyed by `ResolvedBody::id`; last invocation wins.
   pub reports: RefCell<FxHashMap<u64, VectorizeReport>>,
+}
+
+// Bound method call on the global `performance` object; a bare `js_namespace` import calls
+// `now` detached from its receiver ("Illegal invocation").
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+extern "C" {
+  type Performance;
+  #[wasm_bindgen(js_name = performance)]
+  static PERFORMANCE: Performance;
+  #[wasm_bindgen(method)]
+  fn now(this: &Performance) -> f64;
+}
+
+fn now_ms() -> f64 {
+  #[cfg(target_arch = "wasm32")]
+  {
+    PERFORMANCE.now()
+  }
+  #[cfg(not(target_arch = "wasm32"))]
+  {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1e3
+  }
+}
+
+impl VectorizeState {
+  /// Per-run teardown for a long-lived host ctx. `plans` deliberately survives: closures
+  /// replayed from the module-exports cache keep their `ResolvedBody` Rc, so their plans hit
+  /// across runs, and body ids are monotonic and never reused, so a stale key can never
+  /// collide. `uv_planes` does not survive — 536 MB per 8192² entry, rebuilt in one pass.
+  pub fn reset_per_run(&self) {
+    self.uv_planes.borrow_mut().clear();
+    self.reports.borrow_mut().clear();
+  }
 }
 
 impl Default for VectorizeState {
@@ -48,9 +99,11 @@ impl Default for VectorizeState {
     let env_on = |_name: &str| false;
     VectorizeState {
       plans: RefCell::new(FxHashMap::default()),
-      uv_planes: RefCell::new(FxHashMap::default()),
+      plan_order: RefCell::new(VecDeque::new()),
+      uv_planes: RefCell::new(VecDeque::new()),
       no_vectorize: Cell::new(env_on("GEOSCRIPT_NO_VECTORIZE")),
       verify: Cell::new(env_on("GEOSCRIPT_VECTORIZE_VERIFY")),
+      profile: Cell::new(false),
       reports: RefCell::new(FxHashMap::default()),
     }
   }
@@ -61,8 +114,13 @@ pub struct VectorizeReport {
   pub vectorized: bool,
   /// Bail reason naming the offending construct.
   pub reason: Option<String>,
-  /// (line, col) of the offending node (or the body on success).
+  /// (line, col) of the offending node (or the body on success), within `module`'s source.
   pub loc: (u32, u32),
+  /// Module being evaluated at invocation — the defining module for all but cross-module
+  /// helper closures, which is what the host needs to attribute the loc to a node.
+  pub module: Option<String>,
+  /// Plan listing (+ per-step ms) for this invocation; only with `VectorizeState::profile`.
+  pub plan: Option<String>,
 }
 
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
@@ -73,7 +131,7 @@ struct PlanKey {
   capture_sig: u64,
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Src {
   Reg(u16),
   /// Input texture plane (the texel param's channel).
@@ -85,7 +143,7 @@ enum Src {
   Const(f32),
 }
 
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum OpKind {
   Neg,
   Abs,
@@ -119,8 +177,23 @@ enum OpKind {
   LinearStep,
   /// Float-arm lerp: `a + (b - a) * t`, srcs (a, b, t).
   LerpF,
-  /// Vec-arm lerp (nalgebra axpy): `t*b + (1-t)*a`, srcs (a, b, t).
+  /// Vec-arm lerp (nalgebra axpy): `t*b + (1-t)*a`, srcs (a, b, t). nalgebra skips the
+  /// `beta * y` term entirely when `beta == 0`, so `t == 1` must not read `a` either.
   LerpV,
+  // Masks are 1-channel planes holding exactly 0.0/1.0 (compares produce them, logic ops
+  // preserve them), which is what lets `and`/`or`/`not` be plain arithmetic.
+  Gt,
+  Lt,
+  Gte,
+  Lte,
+  Eq,
+  Neq,
+  And,
+  Or,
+  Not,
+  /// Exact per-texel pick, srcs (mask, then, else). Bitwise, never a lerp — `0 * inf` would
+  /// NaN the untaken side — and a uniform mask makes it a register move in the executor.
+  Select,
 }
 
 enum UniSrc {
@@ -131,18 +204,23 @@ enum UniSrc {
   Slot(u16),
   /// Copy of an earlier uniform-table value (binds uniform args to inlinee param slots).
   UniRef(u16),
+  /// `.field` of an earlier uniform-table value, re-evaluated per run.
+  SwizzleOf { of: u16, field: String },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum UniShape {
-  /// Extracted as per-channel f32s with this arity.
-  Num(u8),
+  /// Extracted as per-channel f32s with this arity and int/float class — the class steers
+  /// the interpreter's def resolution, so a run that flips it must fall back to scalar.
+  Num { ar: u8, int: bool },
   /// A builtin callable with this `fn_entry_ix` (validated, never extracted).
   Builtin(usize),
   /// A closure whose body was inlined; validated by `ResolvedBody` id.
   ClosureBody(u64),
   /// A pure dynamic callable with this return arity (validated, invoked per texel).
   Dynamic(u8),
+  /// A bool, extracted as a 0/1 mask channel (conditions, logic operands, mask arms).
+  Bool,
   /// Used as a raw `Value` (fbm params); validated at the use site.
   Any,
 }
@@ -153,14 +231,40 @@ struct UniStep {
   frame: u16,
   slot: Option<u16>,
   hint: Option<ArgType>,
+  /// Skipped (left `Nil`) on runs whose guard is off — the scalar path never evaluates an
+  /// untaken arm either.
+  guard: Option<u16>,
+  /// Inside a varying conditional's arm or a `&&`/`||` rhs: the scalar path evaluates it
+  /// for a texel-dependent subset (possibly none), so an error here aborts to scalar
+  /// instead of being reported.
+  speculative: bool,
+}
+
+/// Run-time arm guard for a uniform-condition conditional: on iff `parent` is on and the
+/// cond uniform equals `expect`. Guarded steps and uniforms are skipped when it's off.
+struct Guard {
+  parent: Option<u16>,
+  cond: u16,
+  expect: bool,
+}
+
+/// An arm that failed to compile. Runs whose guard selects it hand off to the scalar path;
+/// `evict` drops the plan so a value-dependent failure gets recompiled under new uniforms.
+struct BranchAbort {
+  guard: u16,
+  reason: Rc<str>,
+  loc: (u32, u32),
+  evict: bool,
 }
 
 /// One interpreter frame the plan evaluates uniform expressions in: frame 0 is the texel
 /// closure itself; each closure inline adds one, with its captures/self taken from the
-/// callee value at `callee_uix` per run.
+/// callee value at `callee_uix` per run — or from `baked_callee` when the optimizer folded
+/// the callee to an AST literal, which has no per-run identity to re-fetch.
 struct FrameSpec {
   n_slots: u16,
   callee_uix: Option<u16>,
+  baked_callee: Option<Rc<Callable>>,
 }
 
 struct FbmStep {
@@ -204,11 +308,19 @@ pub(crate) struct Plan {
   frames: Vec<FrameSpec>,
   n_regs: u16,
   steps: Vec<Step>,
+  /// Parallel to `steps`.
+  step_guards: Vec<Option<u16>>,
+  guards: Vec<Guard>,
+  branch_aborts: Vec<BranchAbort>,
   unis: Vec<UniStep>,
   n_fbm: u16,
   /// Step index of the last read per register (`u32::MAX` = output, never freed).
   reg_last: Vec<u32>,
   out: PlanOut,
+  /// Diagnostics: ops folded at emission, ops answered by CSE, steps removed as dead.
+  n_folded: u16,
+  n_cse: u16,
+  n_dead: u16,
   /// Peak simultaneously-live registers, for the memory gate.
   peak_regs: u16,
   /// Whether any step or output reads the shared uv planes.
@@ -220,6 +332,7 @@ struct UniRun {
   vals: Vec<Value>,
   chans: Vec<[f32; 4]>,
   fbm: Vec<FbmResolved>,
+  guards: Vec<bool>,
 }
 
 #[derive(Clone, Copy)]
@@ -246,12 +359,72 @@ fn bail<T>(reason: impl Into<String>, loc: SourceLoc) -> Result<T, CErr> {
 #[derive(Clone)]
 struct VV {
   chans: ArrayVec<Src, 4>,
+  /// A varying bool: one 0/1 plane. Never a number — def resolution sees `Value::Bool`.
+  mask: bool,
+}
+
+impl VV {
+  fn num(chans: ArrayVec<Src, 4>) -> AbsVal {
+    AbsVal::V(VV { chans, mask: false })
+  }
+
+  fn mask(src: Src) -> AbsVal {
+    AbsVal::V(VV {
+      chans: [src].into_iter().collect(),
+      mask: true,
+    })
+  }
 }
 
 #[derive(Clone)]
 enum AbsVal {
   U(u16),
   V(VV),
+}
+
+/// `Src` with `Const` by bit pattern, so it can key a map (and order operands).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+enum SrcKey {
+  Reg(u16),
+  In(u8),
+  Uv(u8),
+  Uni(u16, u8),
+  Const(u32),
+}
+
+impl From<Src> for SrcKey {
+  fn from(s: Src) -> Self {
+    match s {
+      Src::Reg(r) => SrcKey::Reg(r),
+      Src::In(c) => SrcKey::In(c),
+      Src::Uv(c) => SrcKey::Uv(c),
+      Src::Uni(u, c) => SrcKey::Uni(u, c),
+      Src::Const(k) => SrcKey::Const(k.to_bits()),
+    }
+  }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum UniKey {
+  /// Numeric/bool literal by type tag + bit pattern.
+  Val(u8, [u32; 4]),
+  Capture(u16, u16),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum CseKey {
+  Op {
+    kind: OpKind,
+    srcs: [SrcKey; 3],
+    guard: Option<u16>,
+  },
+  Fbm {
+    dim: u8,
+    pos: [SrcKey; 3],
+    params: [u16; 5],
+    tileable: Option<u16>,
+    guard: Option<u16>,
+  },
 }
 
 #[derive(Clone)]
@@ -275,6 +448,8 @@ struct EffectFence {
   gizmos: usize,
   controls: usize,
   next_render_id: u32,
+  unnamed_gizmos: u32,
+  gizmo_reads: Option<fxhash::FxHashSet<String>>,
   default_material: Option<Rc<crate::materials::Material>>,
   sharp_angle: f32,
   curve_angle: f32,
@@ -292,6 +467,8 @@ impl EffectFence {
       gizmos: ctx.rendered_gizmos.len(),
       controls: ctx.rendered_controls.len(),
       next_render_id: ctx.next_render_id.get(),
+      unnamed_gizmos: ctx.current_module_unnamed_gizmo_count.get(),
+      gizmo_reads: ctx.current_module_gizmo_reads.borrow().clone(),
       default_material: ctx.default_material.borrow().clone(),
       sharp_angle: *ctx.sharp_angle_threshold_degrees.borrow(),
       curve_angle: *ctx.default_curve_angle_degrees.borrow(),
@@ -309,6 +486,8 @@ impl EffectFence {
       && ctx.rendered_gizmos.len() == self.gizmos
       && ctx.rendered_controls.len() == self.controls
       && ctx.next_render_id.get() == self.next_render_id
+      && ctx.current_module_unnamed_gizmo_count.get() == self.unnamed_gizmos
+      && *ctx.current_module_gizmo_reads.borrow() == self.gizmo_reads
       && match (&*ctx.default_material.borrow(), &self.default_material) {
         (None, None) => true,
         (Some(a), Some(b)) => Rc::ptr_eq(a, b),
@@ -328,6 +507,8 @@ impl EffectFence {
     ctx.rendered_gizmos.inner.borrow_mut().truncate(self.gizmos);
     ctx.rendered_controls.inner.borrow_mut().truncate(self.controls);
     ctx.next_render_id.set(self.next_render_id);
+    ctx.current_module_unnamed_gizmo_count.set(self.unnamed_gizmos);
+    *ctx.current_module_gizmo_reads.borrow_mut() = self.gizmo_reads.clone();
     *ctx.default_material.borrow_mut() = self.default_material.clone();
     *ctx.sharp_angle_threshold_degrees.borrow_mut() = self.sharp_angle;
     *ctx.default_curve_angle_degrees.borrow_mut() = self.curve_angle;
@@ -357,10 +538,19 @@ fn value_chans(v: &Value) -> Option<([f32; 4], u8)> {
 }
 
 const MAX_CACHED_UV_SIZES: usize = 4;
+/// One 8192² pair is 536 MB, so the cache is capped by bytes as well as by count; the
+/// newest entry is always kept even when it alone blows the budget.
+const UV_PLANE_BYTE_BUDGET: usize = 256 << 20;
 
 fn uv_planes_for(ctx: &EvalCtx, w: usize, h: usize) -> [Rc<Vec<f32>>; 2] {
   let key = (w as u32, h as u32);
-  if let Some(p) = ctx.tex_vectorize.uv_planes.borrow().get(&key) {
+  if let Some((_, p)) = ctx
+    .tex_vectorize
+    .uv_planes
+    .borrow()
+    .iter()
+    .find(|(k, _)| *k == key)
+  {
     return p.clone();
   }
   let n = w * h;
@@ -374,10 +564,15 @@ fn uv_planes_for(ctx: &EvalCtx, w: usize, h: usize) -> [Rc<Vec<f32>>; 2] {
   }
   let planes = [Rc::new(u), Rc::new(v)];
   let mut cache = ctx.tex_vectorize.uv_planes.borrow_mut();
-  if cache.len() >= MAX_CACHED_UV_SIZES {
-    cache.clear();
+  let bytes = |c: &VecDeque<((u32, u32), [Rc<Vec<f32>>; 2])>| {
+    c.iter().map(|(_, p)| p[0].len() * 8).sum::<usize>()
+  };
+  while !cache.is_empty()
+    && (cache.len() >= MAX_CACHED_UV_SIZES || bytes(&cache) + n * 8 > UV_PLANE_BYTE_BUDGET)
+  {
+    cache.pop_front();
   }
-  cache.insert(key, planes.clone());
+  cache.push_back((key, planes.clone()));
   planes
 }
 
@@ -443,13 +638,26 @@ struct Compiler<'a> {
   uni_vals: Vec<Value>,
   n_regs: u16,
   n_fbm: u16,
-  reg_last: Vec<u32>,
+  /// Ops answered at emission by `peephole` (exact identities / all-constant folds).
+  n_folded: u16,
+  /// Value-numbering table for CSE: `(op, operands, guard)` → the register already holding
+  /// it. A hit under guard `g` may come from `g` or any ancestor guard, never a sibling.
+  cse: FxHashMap<CseKey, Src>,
+  uni_cse: FxHashMap<(UniKey, Option<u16>), u16>,
+  n_cse: u16,
   /// Frame stack; last = the frame currently being compiled.
   frames: Vec<CFrame>,
   plan_frames: Vec<FrameSpec>,
   /// `ResolvedBody` ids of closures currently being inlined (recursion guard).
   inline_stack: Vec<u64>,
   uses_uv: bool,
+  /// Guard every step/uniform emitted right now carries (innermost uniform-cond arm).
+  guard: Option<u16>,
+  guards: Vec<Guard>,
+  step_guards: Vec<Option<u16>>,
+  branch_aborts: Vec<BranchAbort>,
+  /// >0 while compiling a varying conditional's arm or a `&&`/`||` rhs.
+  spec_depth: u32,
 }
 
 const MAX_INLINE_DEPTH: usize = 8;
@@ -467,11 +675,16 @@ impl<'a> Compiler<'a> {
     &mut self,
     n_slots: u16,
     callee_uix: Option<u16>,
+    baked_callee: Option<Rc<Callable>>,
     captures: Rc<[Value]>,
     self_ref: Rc<Callable>,
   ) {
     let plan_frame = self.plan_frames.len() as u16;
-    self.plan_frames.push(FrameSpec { n_slots, callee_uix });
+    self.plan_frames.push(FrameSpec {
+      n_slots,
+      callee_uix,
+      baked_callee,
+    });
     self.frames.push(CFrame {
       plan_frame,
       slot_abs: vec![SlotState::Unset; n_slots as usize],
@@ -484,33 +697,104 @@ impl<'a> Compiler<'a> {
   fn alloc_reg(&mut self) -> u16 {
     let r = self.n_regs;
     self.n_regs += 1;
-    self.reg_last.push(0);
     r
   }
 
-  fn touch(&mut self, s: Src) {
-    if let Src::Reg(r) = s {
-      self.reg_last[r as usize] = self.steps.len() as u32;
-    }
+  fn push_step(&mut self, step: Step) {
+    self.steps.push(step);
+    self.step_guards.push(self.guard);
   }
 
   fn push_op(&mut self, kind: OpKind, a: Src, b: Src, c: Src) -> Src {
-    self.touch(a);
-    self.touch(b);
-    self.touch(c);
+    if let Some(s) = peephole(kind, a, b, c) {
+      self.n_folded += 1;
+      return s;
+    }
+    // Commuting `+`/`*`/`==`/`!=`/mask-and/or only moves which NaN payload survives, which
+    // the contract already excludes; `min`/`max` can flip a signed zero, so they stay ordered.
+    let (a, b) = match kind {
+      OpKind::Add | OpKind::Mul | OpKind::Eq | OpKind::Neq | OpKind::And | OpKind::Or
+        if SrcKey::from(b) < SrcKey::from(a) =>
+      {
+        (b, a)
+      }
+      _ => (a, b),
+    };
+    let pad = |i: usize, s: Src| if i < op_arity(kind) { SrcKey::from(s) } else { SrcKey::Const(0) };
+    let key = |guard| CseKey::Op {
+      kind,
+      srcs: [pad(0, a), pad(1, b), pad(2, c)],
+      guard,
+    };
+    if let Some(s) = self.cse_lookup(&key) {
+      return s;
+    }
     let dst = self.alloc_reg();
-    self.steps.push(Step::Op { kind, dst, a, b, c });
+    self.push_step(Step::Op { kind, dst, a, b, c });
+    self.cse.insert(key(self.guard), Src::Reg(dst));
     Src::Reg(dst)
   }
 
+  /// A step emitted under the current guard or any ancestor is executed whenever the
+  /// current one is, so its register is safe to reuse; a sibling arm's isn't (it may have
+  /// been skipped this run).
+  fn cse_lookup(&mut self, key: &impl Fn(Option<u16>) -> CseKey) -> Option<Src> {
+    let mut g = self.guard;
+    loop {
+      if let Some(&s) = self.cse.get(&key(g)) {
+        self.n_cse += 1;
+        return Some(s);
+      }
+      g = self.guards[g? as usize].parent;
+    }
+  }
+
+  /// Literals and captures are immutable, so repeated occurrences (every `3.` in `uv * 3.`
+  /// twice, every `fbm` default parameter) share one table entry — which is what lets CSE
+  /// see `fbm(pos=uv * 3.)` twice as the same step. Same guard rule as registers.
+  fn uni_key(&self, src: &UniSrc, val: &Value) -> Option<UniKey> {
+    match src {
+      UniSrc::Const(_) | UniSrc::Expr(Expr::Literal { .. }) => {
+        let (bits, tag) = match val {
+          Value::Float(f) => ([f.to_bits(), 0, 0, 0], 1),
+          Value::Int(i) => ([*i as u32, (*i >> 32) as u32, 0, 0], 2),
+          Value::Bool(b) => ([*b as u32, 0, 0, 0], 3),
+          Value::Vec2(v) => ([v.x.to_bits(), v.y.to_bits(), 0, 0], 4),
+          Value::Vec3(v) => ([v.x.to_bits(), v.y.to_bits(), v.z.to_bits(), 0], 5),
+          Value::Vec4(v) => ([v.x.to_bits(), v.y.to_bits(), v.z.to_bits(), v.w.to_bits()], 6),
+          _ => return None,
+        };
+        Some(UniKey::Val(tag, bits))
+      }
+      UniSrc::Capture(ix) => Some(UniKey::Capture(self.cur().plan_frame, *ix)),
+      _ => None,
+    }
+  }
+
   fn push_uni(&mut self, src: UniSrc, val: Value, slot: Option<u16>, hint: Option<ArgType>) -> u16 {
+    let key = if slot.is_none() && hint.is_none() { self.uni_key(&src, &val) } else { None };
+    if let Some(k) = key {
+      let mut g = self.guard;
+      loop {
+        if let Some(&uix) = self.uni_cse.get(&(k, g)) {
+          return uix;
+        }
+        let Some(gi) = g else { break };
+        g = self.guards[gi as usize].parent;
+      }
+    }
     let uix = self.unis.len() as u16;
+    if let Some(k) = key {
+      self.uni_cse.insert((k, self.guard), uix);
+    }
     self.unis.push(UniStep {
       src,
       shape: UniShape::Any,
       frame: self.cur().plan_frame,
       slot,
       hint,
+      guard: self.guard,
+      speculative: self.spec_depth > 0,
     });
     self.uni_vals.push(val);
     uix
@@ -533,10 +817,11 @@ impl<'a> Compiler<'a> {
   }
 
   /// The typed stand-in used for def resolution: real value for uniforms, phantom of the
-  /// right arity for varyings.
+  /// right arity (or a bool, for masks) for varyings.
   fn typed_value(&self, v: &AbsVal) -> Value {
     match v {
       AbsVal::U(uix) => self.uni_val(*uix).clone(),
+      AbsVal::V(vv) if vv.mask => Value::Bool(false),
       AbsVal::V(vv) => phantom(vv.chans.len() as u8),
     }
   }
@@ -545,7 +830,52 @@ impl<'a> Compiler<'a> {
     match v {
       AbsVal::U(uix) => num_arity(self.uni_val(*uix))
         .ok_or_else(|| CErr::Bail("non-numeric uniform operand in varying expression".into(), SourceLoc::default())),
+      AbsVal::V(vv) if vv.mask => bail("bool used where a number is expected", SourceLoc::default()),
       AbsVal::V(vv) => Ok(vv.chans.len() as u8),
+    }
+  }
+
+  /// A value as a 0/1 mask source: a varying mask's plane, or a uniform bool pinned to
+  /// `UniShape::Bool`. Anything else is a type error in the scalar path too; hand off.
+  fn mask_src(&mut self, v: &AbsVal, loc: SourceLoc) -> Result<Src, CErr> {
+    match v {
+      AbsVal::V(vv) if vv.mask => Ok(vv.chans[0]),
+      AbsVal::V(_) => bail("expected a bool, found a varying number", loc),
+      AbsVal::U(uix) => {
+        if !matches!(self.uni_val(*uix), Value::Bool(_)) {
+          return bail("expected a bool, found a non-bool uniform", loc);
+        }
+        self.unis[*uix as usize].shape = UniShape::Bool;
+        Ok(Src::Uni(*uix, 0))
+      }
+    }
+  }
+
+  fn hint_fits(hint: ArgType, vv: &VV) -> bool {
+    matches!(
+      (hint, vv.mask, vv.chans.len()),
+      (ArgType::Any, _, _)
+        | (ArgType::Bool, true, _)
+        | (ArgType::Float | ArgType::Numeric, false, 1)
+        | (ArgType::Vec2, false, 2)
+        | (ArgType::Vec3, false, 3)
+        | (ArgType::Vec4, false, 4)
+    )
+  }
+
+  /// Compile something the scalar path evaluates for only a texel-dependent subset: a real
+  /// error in here may never fire there, so it bails instead of propagating.
+  fn speculative(
+    &mut self,
+    f: impl FnOnce(&mut Self) -> Result<AbsVal, CErr>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    self.spec_depth += 1;
+    let r = f(self);
+    self.spec_depth -= 1;
+    match r {
+      Err(CErr::Err(e)) => bail(format!("error inside a speculatively-evaluated branch: {e}"), loc),
+      r => r,
     }
   }
 
@@ -554,8 +884,10 @@ impl<'a> Compiler<'a> {
   fn chan(&mut self, v: &AbsVal, c: u8) -> Src {
     match v {
       AbsVal::U(uix) => {
-        let ar = num_arity(self.uni_val(*uix)).expect("chan() on non-numeric uniform");
-        self.unis[*uix as usize].shape = UniShape::Num(ar);
+        let val = self.uni_val(*uix);
+        let ar = num_arity(val).expect("chan() on non-numeric uniform");
+        let int = matches!(val, Value::Int(_));
+        self.unis[*uix as usize].shape = UniShape::Num { ar, int };
         Src::Uni(*uix, c.min(ar - 1))
       }
       AbsVal::V(vv) => vv.chans[c as usize],
@@ -659,6 +991,7 @@ impl<'a> Compiler<'a> {
   // -------------------------------------------------------------------------------------
 
   fn compile_expr(&mut self, expr: &Expr) -> Result<AbsVal, CErr> {
+    self.check_size(expr.loc())?;
     if self.expr_is_uniform(expr) {
       return self.emit_uniform(expr);
     }
@@ -683,9 +1016,9 @@ impl<'a> Compiler<'a> {
             return self.lower_pipeline(l, rhs, loc);
           }
           BinOp::Gt | BinOp::Lt | BinOp::Gte | BinOp::Lte | BinOp::Eq | BinOp::Neq => {
-            return bail("varying comparison (masks land in Phase 2)", loc)
+            return self.lower_compare(*op, lhs, rhs, loc)
           }
-          BinOp::And | BinOp::Or => return bail("varying boolean op (masks land in Phase 2)", loc),
+          BinOp::And | BinOp::Or => return self.lower_logic(*op, lhs, rhs, loc),
           other => return bail(format!("unsupported operator `{other:?}` on varying values"), loc),
         };
         let l = self.compile_expr(lhs)?;
@@ -698,7 +1031,11 @@ impl<'a> Compiler<'a> {
           self.elementwise(OpKind::Neg, &v)
         }
         PrefixOp::Pos => self.compile_expr(inner),
-        PrefixOp::Not => bail("varying `!` (masks land in Phase 2)", loc),
+        PrefixOp::Not => {
+          let v = self.compile_expr(inner)?;
+          let m = self.mask_src(&v, loc)?;
+          Ok(VV::mask(self.push_op(OpKind::Not, m, Src::Const(0.), Src::Const(0.))))
+        }
       },
       Expr::StaticFieldAccess { lhs, field, .. } => {
         let v = self.compile_expr(lhs)?;
@@ -706,7 +1043,13 @@ impl<'a> Compiler<'a> {
       }
       Expr::Call { call, .. } => self.lower_call(call, loc),
       Expr::Block { statements, .. } => self.compile_statements(statements, loc),
-      Expr::Conditional { .. } => bail("varying conditional (Phase 2)", loc),
+      Expr::Conditional {
+        cond,
+        then,
+        else_if_exprs,
+        else_expr,
+        ..
+      } => self.lower_conditional(cond, then, else_if_exprs, else_expr.as_deref(), loc),
       Expr::FieldAccess { .. } => bail("indexing a varying value", loc),
       Expr::Range { .. } => bail("range over a varying value", loc),
       Expr::ArrayLiteral { .. } => bail("array literal containing varying values", loc),
@@ -716,6 +1059,17 @@ impl<'a> Compiler<'a> {
     }
   }
 
+  /// Register, uniform, and guard indices are `u16`; a pathological body must bail, not wrap.
+  fn check_size(&self, loc: SourceLoc) -> Result<(), CErr> {
+    if self.n_regs as usize > MAX_PLAN_SLOTS
+      || self.unis.len() > MAX_PLAN_SLOTS
+      || self.guards.len() > MAX_PLAN_SLOTS
+    {
+      return bail("texel body too large to vectorize", loc);
+    }
+    Ok(())
+  }
+
   fn elementwise(&mut self, kind: OpKind, v: &AbsVal) -> Result<AbsVal, CErr> {
     let ar = self.arity(v)?;
     let mut chans = ArrayVec::new();
@@ -723,7 +1077,7 @@ impl<'a> Compiler<'a> {
       let s = self.chan(v, c);
       chans.push(self.push_op(kind, s, Src::Const(0.), Src::Const(0.)));
     }
-    Ok(AbsVal::V(VV { chans }))
+    Ok(VV::num(chans))
   }
 
   fn lower_arith(
@@ -754,11 +1108,33 @@ impl<'a> Compiler<'a> {
       let b = self.chan(&r, c.min(ra - 1));
       chans.push(self.push_op(kind, a, b, Src::Const(0.)));
     }
-    Ok(AbsVal::V(VV { chans }))
+    Ok(VV::num(chans))
   }
 
   fn lower_swizzle(&mut self, v: &AbsVal, field: &str, loc: SourceLoc) -> Result<AbsVal, CErr> {
-    let AbsVal::V(vv) = v else { unreachable!() };
+    // A varying-classified expression can still produce a uniform value (a block whose
+    // non-final statement is varying); swizzle it through the interpreter, once per run.
+    let vv = match v {
+      AbsVal::V(vv) => vv,
+      AbsVal::U(uix) => {
+        let val = self
+          .ctx
+          .eval_static_field_access(self.uni_val(*uix), field)
+          .map_err(CErr::Err)?;
+        return Ok(AbsVal::U(self.push_uni(
+          UniSrc::SwizzleOf {
+            of: *uix,
+            field: field.to_owned(),
+          },
+          val,
+          None,
+          None,
+        )));
+      }
+    };
+    if vv.mask {
+      return bail("swizzle on a bool", loc);
+    }
     let ar = vv.chans.len();
     let mut chans = ArrayVec::new();
     for ch in field.chars() {
@@ -777,7 +1153,7 @@ impl<'a> Compiler<'a> {
     if chans.is_empty() {
       return bail("empty swizzle", loc);
     }
-    Ok(AbsVal::V(VV { chans }))
+    Ok(VV::num(chans))
   }
 
   fn lower_pipeline(
@@ -891,9 +1267,7 @@ impl<'a> Compiler<'a> {
           let ar = self.arity(a)?;
           let mut chans = ArrayVec::new();
           for c in 0..ar {
-            let s = self.chan(a, c);
-            self.touch(s);
-            chans.push(s);
+            chans.push(self.chan(a, c));
           }
           arg_srcs.push(chans);
         }
@@ -905,14 +1279,12 @@ impl<'a> Compiler<'a> {
           Some(uix) => DynCallee::Uni(uix),
           None => DynCallee::Baked(Rc::clone(callable)),
         };
-        self.steps.push(Step::Dyn(DynStep {
+        self.push_step(Step::Dyn(DynStep {
           callee,
           args: arg_srcs,
           dst: dst.clone(),
         }));
-        Ok(AbsVal::V(VV {
-          chans: dst.iter().map(|r| Src::Reg(*r)).collect(),
-        }))
+        Ok(VV::num(dst.iter().map(|r| Src::Reg(*r)).collect()))
       }
       _ => bail("unsupported callee kind on varying values", loc),
     }
@@ -948,6 +1320,7 @@ impl<'a> Compiler<'a> {
     self.push_frame(
       meta.n_slots,
       callee_uix,
+      callee_uix.is_none().then(|| Rc::clone(callable)),
       Rc::clone(&inner.captures),
       Rc::clone(callable),
     );
@@ -961,14 +1334,7 @@ impl<'a> Compiler<'a> {
     if let Some(hint) = inner.return_type_hint {
       match &result {
         AbsVal::V(vv) => {
-          let ok = matches!(
-            (hint, vv.chans.len()),
-            (ArgType::Float | ArgType::Numeric, 1)
-              | (ArgType::Vec2, 2)
-              | (ArgType::Vec3, 3)
-              | (ArgType::Vec4, 4)
-          );
-          if !ok {
+          if !Self::hint_fits(hint, vv) {
             return bail("return type hint mismatch on inlined closure", loc);
           }
         }
@@ -976,6 +1342,8 @@ impl<'a> Compiler<'a> {
           if hint.validate_val(self.uni_val(*uix)).is_err() {
             return bail("return type hint violation on inlined closure", loc);
           }
+          let entry = &mut self.unis[*uix as usize];
+          entry.hint = entry.hint.or(Some(hint));
         }
       }
     }
@@ -1021,14 +1389,7 @@ impl<'a> Compiler<'a> {
             }
           }
           AbsVal::V(vv) => {
-            let ok = matches!(
-              (hint, vv.chans.len()),
-              (ArgType::Float | ArgType::Numeric, 1)
-                | (ArgType::Vec2, 2)
-                | (ArgType::Vec3, 3)
-                | (ArgType::Vec4, 4)
-            );
-            if !ok {
+            if !Self::hint_fits(hint, vv) {
               return bail("param type hint mismatch on inlined closure", loc);
             }
           }
@@ -1038,7 +1399,7 @@ impl<'a> Compiler<'a> {
         AbsVal::U(src_uix) => {
           let val = self.uni_val(src_uix).clone();
           self.cur().mirror.borrow_mut()[slot as usize] = val.clone();
-          self.push_uni(UniSrc::UniRef(src_uix), val, Some(slot), None);
+          self.push_uni(UniSrc::UniRef(src_uix), val, Some(slot), param.type_hint);
           self.cur_mut().slot_abs[slot as usize] = SlotState::Uniform;
         }
         AbsVal::V(vv) => {
@@ -1110,8 +1471,8 @@ impl<'a> Compiler<'a> {
       ("fract", _) => { let x = arg(self, 0); self.elementwise(OpKind::Fract, &x) }
       ("trunc", _) => { let x = arg(self, 0); self.elementwise(OpKind::Trunc, &x) }
       ("sigmoid", _) => { let x = arg(self, 0); self.elementwise(OpKind::Sigmoid, &x) }
-      ("abs", 1..=3) => { let x = arg(self, 0); self.elementwise(OpKind::Abs, &x) }
-      ("pow", 0..=2) => {
+      ("abs", 1..=3 | 5) => { let x = arg(self, 0); self.elementwise(OpKind::Abs, &x) }
+      ("pow", 0..=2 | 4) => {
         let base = arg(self, 0);
         let expo = arg(self, 1);
         let ar = self.arity(&base)?;
@@ -1121,20 +1482,20 @@ impl<'a> Compiler<'a> {
           let b = self.chan(&base, c);
           chans.push(self.push_op(OpKind::Pow, b, e, Src::Const(0.)));
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
       ("atan2", 0) => {
         let y = arg(self, 0);
         let x = arg(self, 1);
         let (ys, xs) = (self.chan(&y, 0), self.chan(&x, 0));
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::Atan2, ys, xs, Src::Const(0.))].into_iter().collect() }))
+        Ok(VV::num([self.push_op(OpKind::Atan2, ys, xs, Src::Const(0.))].into_iter().collect()))
       }
       ("atan2", 1) => {
         let v = arg(self, 0);
         let (ys, xs) = (self.chan(&v, 1), self.chan(&v, 0));
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::Atan2, ys, xs, Src::Const(0.))].into_iter().collect() }))
+        Ok(VV::num([self.push_op(OpKind::Atan2, ys, xs, Src::Const(0.))].into_iter().collect()))
       }
-      ("min", 1..=3) | ("max", 1..=3) => {
+      ("min", 1..=3 | 7) | ("max", 1..=3 | 7) => {
         let kind = if *name == "min" { OpKind::Min } else { OpKind::Max };
         let a = arg(self, 0);
         let b = arg(self, 1);
@@ -1144,9 +1505,9 @@ impl<'a> Compiler<'a> {
           let (x, y) = (self.chan(&a, c), self.chan(&b, c.min(self.arity(&b)? - 1)));
           chans.push(self.push_op(kind, x, y, Src::Const(0.)));
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
-      ("clamp", 1..=3) => {
+      ("clamp", 1..=3 | 5) => {
         let lo = arg(self, 0);
         let hi = arg(self, 1);
         let x = arg(self, 2);
@@ -1157,14 +1518,14 @@ impl<'a> Compiler<'a> {
           let xs = self.chan(&x, c);
           chans.push(self.push_op(OpKind::Clamp, xs, ls, hs));
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
       ("smoothstep", 0) => {
         let e0 = arg(self, 0);
         let e1 = arg(self, 1);
         let x = arg(self, 2);
         let (e0s, e1s, xs) = (self.chan(&e0, 0), self.chan(&e1, 0), self.chan(&x, 0));
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::SmoothStep, xs, e0s, e1s)].into_iter().collect() }))
+        Ok(VV::num([self.push_op(OpKind::SmoothStep, xs, e0s, e1s)].into_iter().collect()))
       }
       ("lerp", 0..=3) => {
         let t = arg(self, 0);
@@ -1178,37 +1539,33 @@ impl<'a> Compiler<'a> {
           let (x, y) = (self.chan(&a, c), self.chan(&b, c));
           chans.push(self.push_op(kind, x, y, ts));
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
-      ("len", 0..=1) => {
+      ("len", 0..=1 | 6) => {
         let v = arg(self, 0);
         let s = self.sum_of_products(&v, &v)?;
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::Sqrt, s, Src::Const(0.), Src::Const(0.))].into_iter().collect() }))
+        Ok(VV::num([self.push_op(OpKind::Sqrt, s, Src::Const(0.), Src::Const(0.))].into_iter().collect()))
       }
-      ("dot", 0..=1) => {
+      ("dot", 0..=1 | 3) => {
         let a = arg(self, 0);
         let b = arg(self, 1);
         let s = self.sum_of_products(&a, &b)?;
-        Ok(AbsVal::V(VV { chans: [s].into_iter().collect() }))
+        Ok(VV::num([s].into_iter().collect()))
       }
-      ("distance", 0..=1) => {
+      ("distance", 0..=1 | 3) => {
         let a = arg(self, 0);
         let b = arg(self, 1);
         let ar = self.arity(&a)?;
-        let mut acc = None;
+        let mut d = ArrayVec::new();
         for c in 0..ar {
           let (x, y) = (self.chan(&a, c), self.chan(&b, c));
-          let d = self.push_op(OpKind::Sub, x, y, Src::Const(0.));
-          let sq = self.push_op(OpKind::Mul, d, d, Src::Const(0.));
-          acc = Some(match acc {
-            None => sq,
-            Some(prev) => self.push_op(OpKind::Add, prev, sq, Src::Const(0.)),
-          });
+          d.push(self.push_op(OpKind::Sub, x, y, Src::Const(0.)));
         }
-        let s = acc.unwrap();
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::Sqrt, s, Src::Const(0.), Src::Const(0.))].into_iter().collect() }))
+        let d = VV::num(d);
+        let s = self.sum_of_products(&d, &d)?;
+        Ok(VV::num([self.push_op(OpKind::Sqrt, s, Src::Const(0.), Src::Const(0.))].into_iter().collect()))
       }
-      ("normalize", 0..=1) => {
+      ("normalize", 0..=1 | 3) => {
         let v = arg(self, 0);
         let ar = self.arity(&v)?;
         let s = self.sum_of_products(&v, &v)?;
@@ -1218,7 +1575,7 @@ impl<'a> Compiler<'a> {
           let x = self.chan(&v, c);
           chans.push(self.push_op(OpKind::Div, x, norm, Src::Const(0.)));
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
       ("vec2", 0) => {
         let (x, y) = (arg(self, 0), arg(self, 1));
@@ -1263,7 +1620,7 @@ impl<'a> Compiler<'a> {
       ("linearstep", 0) => {
         let (e0, e1, x) = (arg(self, 0), arg(self, 1), arg(self, 2));
         let (e0s, e1s, xs) = (self.chan(&e0, 0), self.chan(&e1, 0), self.chan(&x, 0));
-        Ok(AbsVal::V(VV { chans: [self.push_op(OpKind::LinearStep, xs, e0s, e1s)].into_iter().collect() }))
+        Ok(VV::num([self.push_op(OpKind::LinearStep, xs, e0s, e1s)].into_iter().collect()))
       }
       ("remap", _) => {
         // The scalar formula branches on `in_hi != in_lo` and a clamp flag; that structure
@@ -1300,25 +1657,36 @@ impl<'a> Compiler<'a> {
           };
           chans.push(out);
         }
-        Ok(AbsVal::V(VV { chans }))
+        Ok(VV::num(chans))
       }
       ("fbm", _) => self.lower_fbm(def_ix, &mut arg, loc),
       _ => bail(format!("`{name}` def {def_ix} is not vectorizable"), loc),
     }
   }
 
+  /// nalgebra's `dot` (hence `len`/`distance`/`normalize`): left-to-right for 2/3-vectors,
+  /// but the 4-vector unroll accumulates `(p0 + p2) + (p1 + p3)`.
   fn sum_of_products(&mut self, a: &AbsVal, b: &AbsVal) -> Result<Src, CErr> {
     let ar = self.arity(a)?;
-    let mut acc = None;
+    let mut p = ArrayVec::<Src, 4>::new();
     for c in 0..ar {
       let (x, y) = (self.chan(a, c), self.chan(b, c));
-      let m = self.push_op(OpKind::Mul, x, y, Src::Const(0.));
-      acc = Some(match acc {
-        None => m,
-        Some(prev) => self.push_op(OpKind::Add, prev, m, Src::Const(0.)),
-      });
+      p.push(self.push_op(OpKind::Mul, x, y, Src::Const(0.)));
     }
-    Ok(acc.unwrap())
+    let add = |s: &mut Self, x: Src, y: Src| s.push_op(OpKind::Add, x, y, Src::Const(0.));
+    Ok(match p.len() {
+      1 => p[0],
+      2 => add(self, p[0], p[1]),
+      3 => {
+        let s01 = add(self, p[0], p[1]);
+        add(self, s01, p[2])
+      }
+      _ => {
+        let s02 = add(self, p[0], p[2]);
+        let s13 = add(self, p[1], p[3]);
+        add(self, s02, s13)
+      }
+    })
   }
 
   fn construct(&mut self, comps: &[(AbsVal, u8)]) -> Result<AbsVal, CErr> {
@@ -1326,7 +1694,7 @@ impl<'a> Compiler<'a> {
     for (v, c) in comps {
       chans.push(self.chan(v, *c));
     }
-    Ok(AbsVal::V(VV { chans }))
+    Ok(VV::num(chans))
   }
 
   fn lower_fbm(
@@ -1385,13 +1753,20 @@ impl<'a> Compiler<'a> {
       None => None,
     };
 
+    let key = |guard| CseKey::Fbm {
+      dim,
+      pos: [pos_srcs[0].into(), pos_srcs[1].into(), pos_srcs[2].into()],
+      params,
+      tileable,
+      guard,
+    };
+    if let Some(s) = self.cse_lookup(&key) {
+      return Ok(VV::num([s].into_iter().collect()));
+    }
     let dst = self.alloc_reg();
     let rix = self.n_fbm;
     self.n_fbm += 1;
-    for s in pos_srcs.iter().take(dim as usize) {
-      self.touch(*s);
-    }
-    self.steps.push(Step::Fbm(FbmStep {
+    self.push_step(Step::Fbm(FbmStep {
       dim,
       dst,
       pos: pos_srcs,
@@ -1399,7 +1774,200 @@ impl<'a> Compiler<'a> {
       tileable,
       rix,
     }));
-    Ok(AbsVal::V(VV { chans: [Src::Reg(dst)].into_iter().collect() }))
+    self.cse.insert(key(self.guard), Src::Reg(dst));
+    Ok(VV::num([Src::Reg(dst)].into_iter().collect()))
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Masks + conditionals
+  // -------------------------------------------------------------------------------------
+
+  fn lower_compare(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    let l = self.compile_expr(lhs)?;
+    let r = self.compile_expr(rhs)?;
+    let (lv, rv) = (self.typed_value(&l), self.typed_value(&r));
+    let def_ix = op
+      .resolve_def_ix(self.ctx, &lv, &rv)
+      .map_err(|e| CErr::Err(e.wrap(format!("Error applying binary operator `{op:?}`"))))?;
+    // Every comparison's sig 1 is (Numeric, Numeric) compared as f32 via `as_float()`;
+    // `eq`/`neq` sig 4 is (Bool, Bool). Ints can't vary, so sig 0 never resolves here; the
+    // nil/string arms bail.
+    let (a, b) = match (def_ix, op) {
+      (1, _) => (self.chan(&l, 0), self.chan(&r, 0)),
+      (4, BinOp::Eq | BinOp::Neq) => (self.mask_src(&l, loc)?, self.mask_src(&r, loc)?),
+      _ => return bail(format!("comparison `{op:?}` on non-numeric varying values"), loc),
+    };
+    let kind = match op {
+      BinOp::Gt => OpKind::Gt,
+      BinOp::Lt => OpKind::Lt,
+      BinOp::Gte => OpKind::Gte,
+      BinOp::Lte => OpKind::Lte,
+      BinOp::Eq => OpKind::Eq,
+      _ => OpKind::Neq,
+    };
+    Ok(VV::mask(self.push_op(kind, a, b, Src::Const(0.))))
+  }
+
+  /// `&&` / `||`. A uniform lhs short-circuits in the scalar path, which is exactly a
+  /// uniform-condition conditional (`a && b` ≡ `if a { b } else { false }`), so the rhs
+  /// only runs on runs that need it. A varying lhs evaluates both sides everywhere — total
+  /// ops, so unobservable — and combines the masks arithmetically.
+  fn lower_logic(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    let l = self.compile_expr(lhs)?;
+    if let AbsVal::U(_) = l {
+      let settled = Value::Bool(op == BinOp::Or);
+      let settled = AbsVal::U(self.push_uni(UniSrc::Const(settled.clone()), settled, None, None));
+      return if op == BinOp::And {
+        self.lower_select(l, |c| c.compile_expr(rhs), |_| Ok(settled), loc)
+      } else {
+        self.lower_select(l, |_| Ok(settled), |c| c.compile_expr(rhs), loc)
+      };
+    }
+    let lm = self.mask_src(&l, loc)?;
+    let r = self.speculative(|c| c.compile_expr(rhs), loc)?;
+    let rm = self.mask_src(&r, loc)?;
+    let kind = if op == BinOp::And { OpKind::And } else { OpKind::Or };
+    Ok(VV::mask(self.push_op(kind, lm, rm, Src::Const(0.))))
+  }
+
+  /// `else if` chains fold right-to-left: the tail is re-expressed as a nested conditional,
+  /// so a fully-uniform tail still gets the interpreter's short-circuit for free.
+  fn lower_conditional(
+    &mut self,
+    cond: &Expr,
+    then: &Expr,
+    else_ifs: &[(Expr, Expr)],
+    else_expr: Option<&Expr>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    let Some(else_expr) = else_expr else {
+      return bail("conditional without `else` in a texel body", loc);
+    };
+    let c = self.compile_expr(cond)?;
+    let tail = match else_ifs.split_first() {
+      None => else_expr.clone(),
+      Some(((c0, e0), rest)) => Expr::Conditional {
+        cond: Box::new(c0.clone()),
+        then: Box::new(e0.clone()),
+        else_if_exprs: rest.to_vec(),
+        else_expr: Some(Box::new(else_expr.clone())),
+        loc,
+      },
+    };
+    self.lower_select(c, |c| c.compile_expr(then), |c| c.compile_expr(&tail), loc)
+  }
+
+  fn new_guard(&mut self, cond: u16, expect: bool) -> u16 {
+    self.guards.push(Guard {
+      parent: self.guard,
+      cond,
+      expect,
+    });
+    (self.guards.len() - 1) as u16
+  }
+
+  /// `if cond { then } else { else_ }` over abstract values.
+  ///
+  /// Uniform cond: the plan is cached across runs whose cond value differs, so each arm
+  /// compiles under its own run-time guard (its steps and uniforms are skipped on runs that
+  /// don't take it — the scalar path never evaluates them either) and the arms join through
+  /// a uniform-mask select, a register move in the executor. An arm that fails to compile
+  /// becomes a per-run abort rather than failing the body, so `0..n -> |i| (t -> |v| if i ==
+  /// 0 { v } else { v * w[i - 1] })` vectorizes on every slice that compiles.
+  ///
+  /// Varying cond: both arms run everywhere (total ops) and join through an exact
+  /// bit-select.
+  fn lower_select(
+    &mut self,
+    cond: AbsVal,
+    then: impl FnOnce(&mut Self) -> Result<AbsVal, CErr>,
+    else_: impl FnOnce(&mut Self) -> Result<AbsVal, CErr>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    let AbsVal::U(uix) = cond else {
+      let m = self.mask_src(&cond, loc)?;
+      let t = self.speculative(then, loc)?;
+      let e = self.speculative(else_, loc)?;
+      return self.emit_select(m, &t, &e, loc);
+    };
+    let Value::Bool(cv) = *self.uni_val(uix) else {
+      return bail("condition is not a bool", loc);
+    };
+    if self.const_uniform_value(&cond).is_some() {
+      return if cv { then(self) } else { else_(self) };
+    }
+    self.unis[uix as usize].shape = UniShape::Bool;
+    let outer = self.guard;
+    let (g_then, g_else) = (self.new_guard(uix, true), self.new_guard(uix, false));
+    self.guard = Some(g_then);
+    let t = then(self);
+    self.guard = Some(g_else);
+    let e = else_(self);
+    self.guard = outer;
+    let (t, e) = match (t, e) {
+      (Ok(t), Ok(e)) => (t, e),
+      (Ok(t), Err(err)) => {
+        self.record_branch_abort(g_else, err, loc);
+        (t.clone(), t)
+      }
+      (Err(err), Ok(e)) => {
+        self.record_branch_abort(g_then, err, loc);
+        (e.clone(), e)
+      }
+      (Err(t_err), Err(e_err)) => return Err(if cv { t_err } else { e_err }),
+    };
+    self.emit_select(Src::Uni(uix, 0), &t, &e, loc)
+  }
+
+  fn record_branch_abort(&mut self, guard: u16, err: CErr, loc: SourceLoc) {
+    let (reason, loc, evict) = match err {
+      CErr::Bail(reason, bail_loc) => (reason, bail_loc, false),
+      CErr::Err(e) => (format!("error in conditional branch: {e}"), loc, true),
+    };
+    self.branch_aborts.push(BranchAbort {
+      guard,
+      reason: reason.into(),
+      loc: self.ctx.resolve_loc(loc),
+      evict,
+    });
+  }
+
+  /// Per-channel select of two arms that must agree in kind: both masks, or both numbers
+  /// of one arity. A uniform numeric arm must be float-class — an `Int` arm gives the
+  /// scalar path texel-dependent typing (`x / 3` int-divides on some texels) that f32
+  /// registers can't express. Mismatches bail rather than error: the scalar path only
+  /// errors if some texel actually takes the odd arm.
+  fn emit_select(&mut self, m: Src, t: &AbsVal, e: &AbsVal, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    let is_mask = |c: &Self, v: &AbsVal| match v {
+      AbsVal::V(vv) => vv.mask,
+      AbsVal::U(uix) => matches!(c.uni_val(*uix), Value::Bool(_)),
+    };
+    if is_mask(self, t) {
+      if !is_mask(self, e) {
+        return bail("conditional arms mix bool and number", loc);
+      }
+      let (a, b) = (self.mask_src(t, loc)?, self.mask_src(e, loc)?);
+      return Ok(VV::mask(self.push_op(OpKind::Select, m, a, b)));
+    }
+    for arm in [t, e] {
+      if let AbsVal::U(uix) = arm {
+        match self.uni_val(*uix) {
+          Value::Int(_) => return bail("int-typed arm of a conditional in a texel body (write `0.` not `0`)", loc),
+          v if num_arity(v).is_none() => return bail("non-numeric arm of a conditional in a texel body", loc),
+          _ => {}
+        }
+      }
+    }
+    let (ta, ea) = (self.arity(t)?, self.arity(e)?);
+    if ta != ea {
+      return bail(format!("conditional arms differ in arity ({ta} vs {ea})"), loc);
+    }
+    let mut chans = ArrayVec::new();
+    for c in 0..ta {
+      let (a, b) = (self.chan(t, c), self.chan(e, c));
+      chans.push(self.push_op(OpKind::Select, m, a, b));
+    }
+    Ok(VV::num(chans))
   }
 
   // -------------------------------------------------------------------------------------
@@ -1409,6 +1977,7 @@ impl<'a> Compiler<'a> {
   fn compile_statements(&mut self, stmts: &[Statement], loc: SourceLoc) -> Result<AbsVal, CErr> {
     let mut last: Option<AbsVal> = None;
     for (i, stmt) in stmts.iter().enumerate() {
+      self.check_size(loc)?;
       let is_last = i == stmts.len() - 1;
       match stmt {
         Statement::Assignment {
@@ -1431,23 +2000,27 @@ impl<'a> Compiler<'a> {
             self.push_uni(UniSrc::Expr(expr.clone()), val, Some(*slot), *type_hint);
             self.cur_mut().slot_abs[*slot as usize] = SlotState::Uniform;
           } else {
-            let vv = match self.compile_expr(expr)? {
-              AbsVal::V(vv) => vv,
-              AbsVal::U(_) => unreachable!(),
-            };
-            if let Some(hint) = type_hint {
-              let hint_ar = match hint {
-                ArgType::Float | ArgType::Numeric => 1,
-                ArgType::Vec2 => 2,
-                ArgType::Vec3 => 3,
-                ArgType::Vec4 => 4,
-                _ => return bail("unsupported type hint on varying assignment", expr.loc()),
-              };
-              if hint_ar != vv.chans.len() {
-                return bail("type hint arity mismatch on varying assignment", expr.loc());
+            match self.compile_expr(expr)? {
+              AbsVal::V(vv) => {
+                if type_hint.is_some_and(|h| !Self::hint_fits(h, &vv)) {
+                  return bail("type hint mismatch on varying assignment", expr.loc());
+                }
+                self.cur_mut().slot_abs[*slot as usize] = SlotState::Varying(vv);
+              }
+              // Classified varying but valued uniform (a block with a varying non-final
+              // statement and a uniform final expression).
+              AbsVal::U(src_uix) => {
+                let val = self.uni_val(src_uix).clone();
+                if let Some(hint) = type_hint {
+                  if hint.validate_val(&val).is_err() {
+                    return bail("type hint violation on uniform assignment", expr.loc());
+                  }
+                }
+                self.cur().mirror.borrow_mut()[*slot as usize] = val.clone();
+                self.push_uni(UniSrc::UniRef(src_uix), val, Some(*slot), *type_hint);
+                self.cur_mut().slot_abs[*slot as usize] = SlotState::Uniform;
               }
             }
-            self.cur_mut().slot_abs[*slot as usize] = SlotState::Varying(vv);
           }
           if is_last {
             return bail("closure body ends with an assignment", loc);
@@ -1480,15 +2053,6 @@ impl<'a> Compiler<'a> {
 /// `break` in the body proper, and — for the texel closure itself (`xy_params`) — any
 /// reference to the `x_ix`/`y_ix` params.
 fn prefilter(closure: &Closure, xy_from: Option<usize>) -> Result<(), CErr> {
-  let mut xy_slots: Vec<u16> = Vec::new();
-  if let Some(xy_from) = xy_from {
-    for (i, param) in closure.params.iter().enumerate().skip(xy_from) {
-      let n_idents = param.ident.iter_idents().count();
-      let start = closure.resolved.param_slots[i];
-      xy_slots.extend((0..n_idents as u16).map(|k| start + k));
-    }
-  }
-
   let mut bad: Option<(String, SourceLoc)> = None;
   for stmt in &closure.body.0 {
     check_stmt_control_flow(stmt, &mut bad);
@@ -1496,20 +2060,39 @@ fn prefilter(closure: &Closure, xy_from: Option<usize>) -> Result<(), CErr> {
       if bad.is_some() {
         return;
       }
-      match e {
-        Expr::Call {
-          call:
-            FunctionCall {
-              target: FunctionCallTarget::Literal(c),
-              ..
-            },
-          loc,
-          ..
-        } => {
-          if c.is_side_effectful() || c.is_rng_dependent() {
-            bad = Some((format!("side-effectful or rng-dependent call: {c:?}"), *loc));
-          }
+      if let Expr::Call {
+        call:
+          FunctionCall {
+            target: FunctionCallTarget::Literal(c),
+            ..
+          },
+        loc,
+        ..
+      } = e
+      {
+        if c.is_side_effectful() || c.is_rng_dependent() {
+          bad = Some((format!("side-effectful or rng-dependent call: {c:?}"), *loc));
         }
+      }
+    });
+  }
+
+  let mut xy_slots: Vec<u16> = Vec::new();
+  if let Some(xy_from) = xy_from {
+    for (i, param) in closure.params.iter().enumerate().skip(xy_from) {
+      let start = closure.resolved.param_slots[i];
+      xy_slots.extend((0..param.ident.iter_idents().count() as u16).map(|k| start + k));
+    }
+  }
+  for stmt in &closure.body.0 {
+    if xy_slots.is_empty() {
+      break;
+    }
+    walk_stmt_shallow(stmt, &mut |e: &Expr| {
+      if bad.is_some() {
+        return;
+      }
+      match e {
         Expr::Ident {
           res: VarRes::Local(slot),
           loc,
@@ -1535,6 +2118,79 @@ fn prefilter(closure: &Closure, xy_from: Option<usize>) -> Result<(), CErr> {
   match bad {
     Some((reason, loc)) => Err(CErr::Bail(reason, loc)),
     None => Ok(()),
+  }
+}
+
+/// Slot-scan walk: visits every expression under `stmt` except the bodies of nested
+/// closures, whose `Local(n)` names a slot in a different frame entirely.
+fn walk_stmt_shallow(stmt: &Statement, cb: &mut impl FnMut(&Expr)) {
+  for e in stmt.exprs() {
+    walk_expr_shallow(e, cb);
+  }
+}
+
+fn walk_expr_shallow(expr: &Expr, cb: &mut impl FnMut(&Expr)) {
+  cb(expr);
+  match expr {
+    Expr::BinOp { lhs, rhs, .. } => {
+      walk_expr_shallow(lhs, cb);
+      walk_expr_shallow(rhs, cb);
+    }
+    Expr::PrefixOp { expr, .. } => walk_expr_shallow(expr, cb),
+    Expr::Range { start, end, .. } => {
+      walk_expr_shallow(start, cb);
+      if let Some(e) = end {
+        walk_expr_shallow(e, cb);
+      }
+    }
+    Expr::StaticFieldAccess { lhs, .. } => walk_expr_shallow(lhs, cb),
+    Expr::FieldAccess {
+      lhs, field, field2, ..
+    } => {
+      walk_expr_shallow(lhs, cb);
+      walk_expr_shallow(field, cb);
+      if let Some(f) = field2 {
+        walk_expr_shallow(f, cb);
+      }
+    }
+    Expr::Call { call, .. } => {
+      for a in call.args.iter().chain(call.kwargs.values()) {
+        walk_expr_shallow(a, cb);
+      }
+    }
+    Expr::ArrayLiteral { elements, .. } => {
+      for e in elements {
+        walk_expr_shallow(e, cb);
+      }
+    }
+    Expr::MapLiteral { entries, .. } => {
+      for e in entries {
+        walk_expr_shallow(e.expr(), cb);
+      }
+    }
+    Expr::Conditional {
+      cond,
+      then,
+      else_if_exprs,
+      else_expr,
+      ..
+    } => {
+      walk_expr_shallow(cond, cb);
+      walk_expr_shallow(then, cb);
+      for (c, e) in else_if_exprs {
+        walk_expr_shallow(c, cb);
+        walk_expr_shallow(e, cb);
+      }
+      if let Some(e) = else_expr {
+        walk_expr_shallow(e, cb);
+      }
+    }
+    Expr::Block { statements, .. } => {
+      for s in statements {
+        walk_stmt_shallow(s, cb);
+      }
+    }
+    Expr::Closure { .. } | Expr::Ident { .. } | Expr::Literal { .. } => {}
   }
 }
 
@@ -1646,7 +2302,7 @@ fn eval_uniforms(
   plan: &Plan,
   closure: &Closure,
   callable: &Rc<Callable>,
-) -> Result<Vec<Value>, UniErr> {
+) -> Result<(Vec<Value>, Vec<bool>), UniErr> {
   let fence = EffectFence::snapshot(ctx);
   let res = eval_uniforms_inner(ctx, plan, closure, callable);
   if !fence.verify_or_restore(ctx) {
@@ -1655,12 +2311,39 @@ fn eval_uniforms(
   res
 }
 
+/// Guard `g` given the uniforms evaluated so far (a guard's cond always precedes what it
+/// guards). `None` = the cond isn't a bool; the scalar path's error, hand off.
+fn guard_on(plan: &Plan, vals: &[Value], memo: &mut [Option<bool>], g: u16) -> Option<bool> {
+  if let Some(v) = memo[g as usize] {
+    return Some(v);
+  }
+  let gd = &plan.guards[g as usize];
+  let parent_on = match gd.parent {
+    Some(p) => guard_on(plan, vals, memo, p)?,
+    None => true,
+  };
+  let on = parent_on
+    && match vals[gd.cond as usize] {
+      Value::Bool(b) => b == gd.expect,
+      _ => return None,
+    };
+  memo[g as usize] = Some(on);
+  Some(on)
+}
+
+fn all_guards(plan: &Plan, vals: &[Value]) -> Option<Vec<bool>> {
+  let mut memo = vec![None; plan.guards.len()];
+  (0..plan.guards.len() as u16)
+    .map(|g| guard_on(plan, vals, &mut memo, g))
+    .collect()
+}
+
 fn eval_uniforms_inner(
   ctx: &EvalCtx,
   plan: &Plan,
   closure: &Closure,
   callable: &Rc<Callable>,
-) -> Result<Vec<Value>, UniErr> {
+) -> Result<(Vec<Value>, Vec<bool>), UniErr> {
   // Frame 0 = the texel closure; inline frames resolve their captures/self from the callee
   // value once its uniform entry has been evaluated (always earlier in the table).
   let mirrors: Vec<RefCell<Vec<Value>>> = plan
@@ -1670,8 +2353,19 @@ fn eval_uniforms_inner(
     .collect();
   let mut frame_callees: Vec<Option<Rc<Callable>>> = vec![None; plan.frames.len()];
   let mut vals: Vec<Value> = Vec::with_capacity(plan.unis.len());
+  let mut memo = vec![None; plan.guards.len()];
 
   for step in &plan.unis {
+    if let Some(g) = step.guard {
+      match guard_on(plan, &vals, &mut memo, g) {
+        Some(true) => {}
+        Some(false) => {
+          vals.push(Value::Nil);
+          continue;
+        }
+        None => return Err(UniErr::Abort),
+      }
+    }
     let fi = step.frame as usize;
     let (captures, self_ref): (Rc<[Value]>, Rc<Callable>) = if fi == 0 {
       (Rc::clone(&closure.captures), Rc::clone(callable))
@@ -1679,12 +2373,17 @@ fn eval_uniforms_inner(
       let callee = match &frame_callees[fi] {
         Some(c) => Rc::clone(c),
         None => {
-          let uix = plan.frames[fi].callee_uix.unwrap() as usize;
-          let Value::Callable(c) = &vals[uix] else {
-            return Err(UniErr::Abort);
+          let spec = &plan.frames[fi];
+          let c = match (spec.callee_uix, &spec.baked_callee) {
+            (Some(uix), _) => match &vals[uix as usize] {
+              Value::Callable(c) => Rc::clone(c),
+              _ => return Err(UniErr::Abort),
+            },
+            (None, Some(baked)) => Rc::clone(baked),
+            (None, None) => return Err(UniErr::Abort),
           };
-          frame_callees[fi] = Some(Rc::clone(c));
-          Rc::clone(c)
+          frame_callees[fi] = Some(Rc::clone(&c));
+          c
         }
       };
       let Callable::Closure(inner) = &*callee else {
@@ -1703,6 +2402,7 @@ fn eval_uniforms_inner(
         match ctx.eval_expr_env(expr, &frame) {
           Ok(ControlFlow::Continue(v)) => v,
           Ok(_) => return Err(UniErr::Abort),
+          Err(_) if step.speculative => return Err(UniErr::Abort),
           Err(e) => return Err(UniErr::Err(e)),
         }
       }
@@ -1710,6 +2410,13 @@ fn eval_uniforms_inner(
       UniSrc::Capture(ix) => captures[*ix as usize].clone(),
       UniSrc::Slot(slot) => mirrors[fi].borrow()[*slot as usize].clone(),
       UniSrc::UniRef(uix) => vals[*uix as usize].clone(),
+      UniSrc::SwizzleOf { of, field } => {
+        match ctx.eval_static_field_access(&vals[*of as usize], field) {
+          Ok(v) => v,
+          Err(_) if step.speculative => return Err(UniErr::Abort),
+          Err(e) => return Err(UniErr::Err(e)),
+        }
+      }
     };
     if let Some(hint) = &step.hint {
       if hint.validate_val(&val).is_err() {
@@ -1721,18 +2428,22 @@ fn eval_uniforms_inner(
     }
     vals.push(val);
   }
-  Ok(vals)
+  let guards = all_guards(plan, &vals).ok_or(UniErr::Abort)?;
+  Ok((vals, guards))
 }
 
 /// Shape-checks the uniform table against what compile observed and pre-resolves everything
 /// `exec` needs, so `exec` is infallible.
-fn validate_uniforms(plan: &Plan, vals: Vec<Value>) -> Option<UniRun> {
+fn validate_uniforms(plan: &Plan, vals: Vec<Value>, guards: Vec<bool>) -> Option<UniRun> {
   let mut chans = vec![[0f32; 4]; vals.len()];
   for (i, (step, val)) in plan.unis.iter().zip(&vals).enumerate() {
+    if step.guard.is_some_and(|g| !guards[g as usize]) {
+      continue;
+    }
     match step.shape {
-      UniShape::Num(ar) => {
+      UniShape::Num { ar, int } => {
         let (c, got_ar) = value_chans(val)?;
-        if got_ar != ar {
+        if got_ar != ar || matches!(val, Value::Int(_)) != int {
           return None;
         }
         chans[i] = c;
@@ -1765,6 +2476,10 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>) -> Option<UniRun> {
         },
         _ => return None,
       },
+      UniShape::Bool => match val {
+        Value::Bool(b) => chans[i] = [*b as u8 as f32; 4],
+        _ => return None,
+      },
       UniShape::Any => {}
     }
   }
@@ -1780,8 +2495,11 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>) -> Option<UniRun> {
     };
     plan.n_fbm as usize
   ];
-  for step in &plan.steps {
+  for (ix, step) in plan.steps.iter().enumerate() {
     let Step::Fbm(f) = step else { continue };
+    if plan.step_guards[ix].is_some_and(|g| !guards[g as usize]) {
+      continue;
+    }
     let [seed, octaves, frequency, lacunarity, persistence] = f.params;
     let seed = match vals[seed as usize].as_int() {
       Some(s) if (0..=u32::MAX as i64).contains(&s) => s as u32,
@@ -1810,7 +2528,12 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>) -> Option<UniRun> {
       tileable,
     };
   }
-  Some(UniRun { vals, chans, fbm })
+  Some(UniRun {
+    vals,
+    chans,
+    fbm,
+    guards,
+  })
 }
 
 // ---------------------------------------------------------------------------------------
@@ -1932,6 +2655,49 @@ fn run_ternary(
   }
 }
 
+/// In-place ternary: `buf` holds the operand at position `pos`; `x`, `y` are the other two
+/// in argument order. One monomorphic loop per operand shape so each autovectorizes.
+fn tern_in_place(buf: &mut [f32], pos: u8, x: RSrc, y: RSrc, f: impl Fn(f32, f32, f32) -> f32) {
+  let n = buf.len();
+  macro_rules! go {
+    ($i:ident, $xi:expr, $yi:expr) => {
+      match pos {
+        0 => {
+          for $i in 0..n {
+            buf[$i] = f(buf[$i], $xi, $yi);
+          }
+        }
+        1 => {
+          for $i in 0..n {
+            buf[$i] = f($xi, buf[$i], $yi);
+          }
+        }
+        _ => {
+          for $i in 0..n {
+            buf[$i] = f($xi, $yi, buf[$i]);
+          }
+        }
+      }
+    };
+  }
+  match (x, y) {
+    (RSrc::S(x), RSrc::S(y)) => {
+      let (x, y) = (&x[..n], &y[..n]);
+      go!(i, x[i], y[i])
+    }
+    (RSrc::S(x), RSrc::K(y)) => {
+      let x = &x[..n];
+      go!(i, x[i], y)
+    }
+    (RSrc::K(x), RSrc::S(y)) => {
+      let y = &y[..n];
+      go!(i, x, y[i])
+    }
+    (RSrc::K(x), RSrc::K(y)) => go!(i, x, y),
+  }
+}
+
+/// `step_ms`: per-step wall time when profiling (`NaN` for guarded-off steps).
 fn exec(
   ctx: &EvalCtx,
   plan: &Plan,
@@ -1939,6 +2705,7 @@ fn exec(
   input: &[Rc<Vec<f32>>],
   uv: Option<&[Rc<Vec<f32>>; 2]>,
   n: usize,
+  mut step_ms: Option<&mut Vec<f64>>,
 ) -> Result<Vec<Rc<Vec<f32>>>, ErrorStack> {
   let mut ex = Exec {
     regs: vec![None; plan.n_regs as usize],
@@ -1949,8 +2716,37 @@ fn exec(
   };
 
   for (step_ix, step) in plan.steps.iter().enumerate() {
+    if plan.step_guards[step_ix].is_some_and(|g| !uni.guards[g as usize]) {
+      ex.release_dead(plan, step_ix as u32);
+      if let Some(ms) = step_ms.as_deref_mut() {
+        ms.push(f64::NAN);
+      }
+      continue;
+    }
+    let t0 = step_ms.is_some().then(now_ms);
     let step_ix = step_ix as u32;
     match step {
+      // Uniform-mask select: the pick is known for the whole run — move the picked register
+      // (or copy/fill it when it's still live elsewhere); the other arm's steps were skipped.
+      Step::Op {
+        kind: OpKind::Select,
+        dst,
+        a: Src::Uni(uix, ch),
+        b,
+        c,
+      } => {
+        let pick = if uni.chans[*uix as usize][*ch as usize] != 0. { *b } else { *c };
+        let (mut buf, stolen) = ex.grab_dst(plan, step_ix, &[pick]);
+        if stolen.is_none() {
+          buf.clear();
+          match ex.resolve(pick) {
+            RSrc::S(s) => buf.extend_from_slice(s),
+            RSrc::K(k) => buf.resize(n, k),
+          }
+        }
+        ex.regs[*dst as usize] = Some(buf);
+        ex.release_dead(plan, step_ix);
+      }
       Step::Op { kind, dst, a, b, c } => {
         let (mut buf, stolen) = ex.grab_dst(plan, step_ix, &[*a, *b, *c]);
         exec_op(&mut ex, *kind, &mut buf, stolen, *a, *b, *c, n);
@@ -2066,6 +2862,9 @@ fn exec(
         ex.release_dead(plan, step_ix);
       }
     }
+    if let (Some(ms), Some(t0)) = (step_ms.as_deref_mut(), t0) {
+      ms.push(now_ms() - t0);
+    }
   }
 
   // Assemble output planes; duplicated regs (swizzled outputs) share one Rc.
@@ -2142,35 +2941,12 @@ fn exec_op(
   macro_rules! ternary {
     ($f:expr) => {{
       let f = $f;
-      if stolen.is_some() {
-        // In-place for ternaries: only when the stolen reg is src a.
-        if stolen_is(a) {
-          match (ex.resolve(b), ex.resolve(c)) {
-            (RSrc::K(y), RSrc::K(z)) => kern::map_in(buf, |x| f(x, y, z)),
-            (RSrc::S(s), RSrc::K(z)) => kern::zip_in_a(buf, s, |x, y| f(x, y, z)),
-            (RSrc::K(y), RSrc::S(s)) => kern::zip_in_a(buf, s, |x, z| f(x, y, z)),
-            (RSrc::S(sb), RSrc::S(sc)) => {
-              let n_ = buf.len();
-              for i in 0..n_ {
-                buf[i] = f(buf[i], sb[i], sc[i]);
-              }
-            }
-          }
-        } else {
-          // Stolen b or c: give the buffer back conceptually — recompute out-of-place into
-          // a temp, then move. Rare shape; correctness over cleverness.
-          let saved = std::mem::take(buf);
-          let rs = |s: Src| -> RSrc<'_> {
-            match (s, stolen) {
-              (Src::Reg(r), Some(st)) if r == st => RSrc::S(&saved),
-              (s, _) => ex.resolve(s),
-            }
-          };
-          let mut out = Vec::new();
-          run_ternary(&mut out, rs(a), rs(b), rs(c), n, f);
-          *buf = out;
-          ex.pool.push(saved);
-        }
+      if stolen_is(a) {
+        tern_in_place(buf, 0, ex.resolve(b), ex.resolve(c), f);
+      } else if stolen_is(b) {
+        tern_in_place(buf, 1, ex.resolve(a), ex.resolve(c), f);
+      } else if stolen_is(c) {
+        tern_in_place(buf, 2, ex.resolve(a), ex.resolve(b), f);
       } else {
         run_ternary(buf, ex.resolve(a), ex.resolve(b), ex.resolve(c), n, f);
       }
@@ -2178,40 +2954,119 @@ fn exec_op(
   }
 
   match kind {
-    OpKind::Neg => unary!(|x: f32| -x),
-    OpKind::Abs => unary!(|x: f32| x.abs()),
-    OpKind::Sqrt => unary!(|x: f32| x.sqrt()),
-    OpKind::Sin => unary!(|x: f32| x.sin()),
-    OpKind::Cos => unary!(|x: f32| x.cos()),
-    OpKind::Tan => unary!(|x: f32| x.tan()),
-    OpKind::Asin => unary!(|x: f32| x.asin()),
-    OpKind::Acos => unary!(|x: f32| x.acos()),
-    OpKind::Atan => unary!(|x: f32| x.atan()),
-    OpKind::Exp => unary!(|x: f32| x.exp()),
-    OpKind::Log2 => unary!(|x: f32| x.log2()),
-    OpKind::Floor => unary!(|x: f32| x.floor()),
-    OpKind::Ceil => unary!(|x: f32| x.ceil()),
-    OpKind::Round => unary!(|x: f32| x.round()),
-    OpKind::Fract => unary!(|x: f32| x.fract()),
-    OpKind::Trunc => unary!(|x: f32| x.trunc()),
-    OpKind::Sigmoid => unary!(|x: f32| 1.0 / (1.0 + (-x).exp())),
-    OpKind::Add => binary!(|x: f32, y: f32| x + y),
-    OpKind::Sub => binary!(|x: f32, y: f32| x - y),
-    OpKind::Mul => binary!(|x: f32, y: f32| x * y),
-    OpKind::Div => binary!(|x: f32, y: f32| x / y),
-    OpKind::Mod => binary!(|x: f32, y: f32| x % y),
-    OpKind::Pow => binary!(|x: f32, y: f32| x.powf(y)),
-    OpKind::Atan2 => binary!(|y: f32, x: f32| y.atan2(x)),
-    OpKind::Min => binary!(|x: f32, y: f32| x.min(y)),
-    OpKind::Max => binary!(|x: f32, y: f32| x.max(y)),
-    OpKind::Clamp => ternary!(crate::builtins::clampf),
-    OpKind::SmoothStep => ternary!(|x: f32, e0: f32, e1: f32| {
-      let t = ((x - e0) / (e1 - e0)).clamp(0., 1.);
-      t * t * (3. - 2. * t)
-    }),
-    OpKind::LinearStep => ternary!(|x: f32, e0: f32, e1: f32| ((x - e0) / (e1 - e0)).clamp(0., 1.)),
-    OpKind::LerpF => ternary!(|a: f32, b: f32, t: f32| a + (b - a) * t),
-    OpKind::LerpV => ternary!(|a: f32, b: f32, t: f32| t * b + (1. - t) * a),
+    OpKind::Neg => unary!(sk::neg),
+    OpKind::Abs => unary!(sk::abs),
+    OpKind::Sqrt => unary!(sk::sqrt),
+    OpKind::Sin => unary!(sk::sin),
+    OpKind::Cos => unary!(sk::cos),
+    OpKind::Tan => unary!(sk::tan),
+    OpKind::Asin => unary!(sk::asin),
+    OpKind::Acos => unary!(sk::acos),
+    OpKind::Atan => unary!(sk::atan),
+    OpKind::Exp => unary!(sk::exp),
+    OpKind::Log2 => unary!(sk::log2),
+    OpKind::Floor => unary!(sk::floor),
+    OpKind::Ceil => unary!(sk::ceil),
+    OpKind::Round => unary!(sk::round),
+    OpKind::Fract => unary!(sk::fract),
+    OpKind::Trunc => unary!(sk::trunc),
+    OpKind::Sigmoid => unary!(sk::sigmoid),
+    OpKind::Not => unary!(sk::not),
+    OpKind::Add => binary!(sk::add),
+    OpKind::Sub => binary!(sk::sub),
+    OpKind::Mul => binary!(sk::mul),
+    OpKind::Div => binary!(sk::div),
+    OpKind::Mod => binary!(sk::rem),
+    OpKind::Pow => binary!(sk::pow),
+    OpKind::Atan2 => binary!(sk::atan2),
+    OpKind::Min => binary!(sk::min),
+    OpKind::Max => binary!(sk::max),
+    OpKind::Gt => binary!(sk::gt),
+    OpKind::Lt => binary!(sk::lt),
+    OpKind::Gte => binary!(sk::gte),
+    OpKind::Lte => binary!(sk::lte),
+    OpKind::Eq => binary!(sk::eq),
+    OpKind::Neq => binary!(sk::neq),
+    OpKind::And => binary!(sk::and),
+    OpKind::Or => binary!(sk::or),
+    OpKind::Clamp => ternary!(sk::clamp),
+    OpKind::SmoothStep => ternary!(sk::smoothstep),
+    OpKind::LinearStep => ternary!(sk::linearstep),
+    OpKind::LerpF => ternary!(sk::lerp_f),
+    OpKind::LerpV => ternary!(sk::lerp_v),
+    OpKind::Select => ternary!(kern::bitsel),
+  }
+}
+
+/// The per-element kernels, one fn per `OpKind`. The executor's loops and compile-time
+/// constant folding both go through these, so a folded constant is bit-identical to what
+/// the loop would have produced.
+mod sk {
+  #![allow(clippy::missing_inline_in_public_items)]
+  use super::kern;
+
+  #[inline(always)] pub fn neg(x: f32) -> f32 { -x }
+  #[inline(always)] pub fn abs(x: f32) -> f32 { x.abs() }
+  #[inline(always)] pub fn sqrt(x: f32) -> f32 { x.sqrt() }
+  #[inline(always)] pub fn sin(x: f32) -> f32 { x.sin() }
+  #[inline(always)] pub fn cos(x: f32) -> f32 { x.cos() }
+  #[inline(always)] pub fn tan(x: f32) -> f32 { x.tan() }
+  #[inline(always)] pub fn asin(x: f32) -> f32 { x.asin() }
+  #[inline(always)] pub fn acos(x: f32) -> f32 { x.acos() }
+  #[inline(always)] pub fn atan(x: f32) -> f32 { x.atan() }
+  #[inline(always)] pub fn exp(x: f32) -> f32 { x.exp() }
+  #[inline(always)] pub fn log2(x: f32) -> f32 { x.log2() }
+  #[inline(always)] pub fn floor(x: f32) -> f32 { x.floor() }
+  #[inline(always)] pub fn ceil(x: f32) -> f32 { x.ceil() }
+  #[inline(always)] pub fn round(x: f32) -> f32 { x.round() }
+  #[inline(always)] pub fn fract(x: f32) -> f32 { x.fract() }
+  #[inline(always)] pub fn trunc(x: f32) -> f32 { x.trunc() }
+  #[inline(always)] pub fn sigmoid(x: f32) -> f32 { 1.0 / (1.0 + (-x).exp()) }
+  #[inline(always)] pub fn not(x: f32) -> f32 { 1. - x }
+  #[inline(always)] pub fn add(x: f32, y: f32) -> f32 { x + y }
+  #[inline(always)] pub fn sub(x: f32, y: f32) -> f32 { x - y }
+  #[inline(always)] pub fn mul(x: f32, y: f32) -> f32 { x * y }
+  #[inline(always)] pub fn div(x: f32, y: f32) -> f32 { x / y }
+  #[inline(always)] pub fn rem(x: f32, y: f32) -> f32 { x % y }
+  #[inline(always)] pub fn pow(x: f32, y: f32) -> f32 { x.powf(y) }
+  #[inline(always)] pub fn atan2(y: f32, x: f32) -> f32 { y.atan2(x) }
+  #[inline(always)] pub fn min(x: f32, y: f32) -> f32 { x.min(y) }
+  #[inline(always)] pub fn max(x: f32, y: f32) -> f32 { x.max(y) }
+  #[inline(always)] pub fn gt(x: f32, y: f32) -> f32 { (x > y) as u32 as f32 }
+  #[inline(always)] pub fn lt(x: f32, y: f32) -> f32 { (x < y) as u32 as f32 }
+  #[inline(always)] pub fn gte(x: f32, y: f32) -> f32 { (x >= y) as u32 as f32 }
+  #[inline(always)] pub fn lte(x: f32, y: f32) -> f32 { (x <= y) as u32 as f32 }
+  #[inline(always)] pub fn eq(x: f32, y: f32) -> f32 { (x == y) as u32 as f32 }
+  #[inline(always)] pub fn neq(x: f32, y: f32) -> f32 { (x != y) as u32 as f32 }
+  #[inline(always)] pub fn and(x: f32, y: f32) -> f32 { x * y }
+  #[inline(always)] pub fn or(x: f32, y: f32) -> f32 { x.max(y) }
+  #[inline(always)] pub fn clamp(x: f32, lo: f32, hi: f32) -> f32 { crate::builtins::clampf(x, lo, hi) }
+  #[inline(always)] pub fn smoothstep(x: f32, e0: f32, e1: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0., 1.);
+    t * t * (3. - 2. * t)
+  }
+  #[inline(always)] pub fn linearstep(x: f32, e0: f32, e1: f32) -> f32 { ((x - e0) / (e1 - e0)).clamp(0., 1.) }
+  #[inline(always)] pub fn lerp_f(a: f32, b: f32, t: f32) -> f32 { a + (b - a) * t }
+  /// nalgebra axpy skips the `beta * y` term when `beta == 0`, so `t == 1` must not read `a`.
+  #[inline(always)] pub fn lerp_v(a: f32, b: f32, t: f32) -> f32 {
+    let c = 1. - t;
+    if c == 0. { t * b } else { t * b + c * a }
+  }
+
+  pub fn apply(kind: super::OpKind, a: f32, b: f32, c: f32) -> f32 {
+    use super::OpKind::*;
+    match kind {
+      Neg => neg(a), Abs => abs(a), Sqrt => sqrt(a), Sin => sin(a), Cos => cos(a), Tan => tan(a),
+      Asin => asin(a), Acos => acos(a), Atan => atan(a), Exp => exp(a), Log2 => log2(a),
+      Floor => floor(a), Ceil => ceil(a), Round => round(a), Fract => fract(a), Trunc => trunc(a),
+      Sigmoid => sigmoid(a), Not => not(a),
+      Add => add(a, b), Sub => sub(a, b), Mul => mul(a, b), Div => div(a, b), Mod => rem(a, b),
+      Pow => pow(a, b), Atan2 => atan2(a, b), Min => min(a, b), Max => max(a, b),
+      Gt => gt(a, b), Lt => lt(a, b), Gte => gte(a, b), Lte => lte(a, b), Eq => eq(a, b),
+      Neq => neq(a, b), And => and(a, b), Or => or(a, b),
+      Clamp => clamp(a, b, c), SmoothStep => smoothstep(a, b, c), LinearStep => linearstep(a, b, c),
+      LerpF => lerp_f(a, b, c), LerpV => lerp_v(a, b, c), Select => kern::bitsel(a, b, c),
+    }
   }
 }
 
@@ -2222,7 +3077,7 @@ fn exec_op(
 fn param_slot_referenced(closure: &Closure, slot: usize) -> bool {
   let mut referenced = false;
   for stmt in &closure.body.0 {
-    stmt.traverse_exprs(&mut |e: &Expr| {
+    walk_stmt_shallow(stmt, &mut |e: &Expr| {
       match e {
         Expr::Ident {
           res: VarRes::Local(s),
@@ -2242,6 +3097,16 @@ fn param_slot_referenced(closure: &Closure, slot: usize) -> bool {
     });
   }
   referenced
+}
+
+fn body_loc(closure: &Closure) -> SourceLoc {
+  closure
+    .body
+    .0
+    .first()
+    .and_then(|s| s.exprs().next())
+    .map(|e| e.loc())
+    .unwrap_or_default()
 }
 
 #[derive(Clone, Copy)]
@@ -2281,14 +3146,23 @@ fn compile(
     uni_vals: Vec::new(),
     n_regs: 0,
     n_fbm: 0,
-    reg_last: Vec::new(),
+    n_folded: 0,
+    cse: FxHashMap::default(),
+    uni_cse: FxHashMap::default(),
+    n_cse: 0,
     frames: Vec::new(),
     plan_frames: Vec::new(),
     inline_stack: vec![meta.id],
     uses_uv: false,
+    guard: None,
+    guards: Vec::new(),
+    step_guards: Vec::new(),
+    branch_aborts: Vec::new(),
+    spec_depth: 0,
   };
   compiler.push_frame(
     meta.n_slots,
+    None,
     None,
     Rc::clone(&closure.captures),
     Rc::clone(callable),
@@ -2303,7 +3177,7 @@ fn compile(
       for c in 0..input_arity {
         chans.push(Src::In(c));
       }
-      compiler.cur_mut().slot_abs[meta.param_slots[0] as usize] = SlotState::Varying(VV { chans });
+      compiler.cur_mut().slot_abs[meta.param_slots[0] as usize] = SlotState::Varying(VV { chans, mask: false });
     }
   }
   let uv_param_ix = xy_from - 1;
@@ -2313,12 +3187,12 @@ fn compile(
       let mut chans = ArrayVec::new();
       chans.push(Src::Uv(0));
       chans.push(Src::Uv(1));
-      compiler.cur_mut().slot_abs[uv_slot] = SlotState::Varying(VV { chans });
+      compiler.cur_mut().slot_abs[uv_slot] = SlotState::Varying(VV { chans, mask: false });
       compiler.uses_uv = true;
     }
   }
 
-  let body_loc = closure.body.0.first().and_then(|s| s.exprs().next()).map(|e| e.loc()).unwrap_or_default();
+  let body_loc = body_loc(closure);
   let result = compiler.compile_statements(&closure.body.0, body_loc);
   if !fence.verify_or_restore(ctx) {
     return bail("uniform subtree performed an observable effect", body_loc);
@@ -2326,28 +3200,71 @@ fn compile(
   let result = result?;
 
   let out = match result {
-    AbsVal::V(vv) => {
-      for s in &vv.chans {
-        if let Src::Reg(r) = s {
-          compiler.reg_last[*r as usize] = u32::MAX;
-        }
-      }
-      PlanOut::Chans(vv.chans)
-    }
+    AbsVal::V(vv) if vv.mask => return bail("texel body evaluates to a bool", body_loc),
+    AbsVal::V(vv) => PlanOut::Chans(vv.chans),
     AbsVal::U(uix) => PlanOut::Uniform(uix),
   };
 
+  let out_regs: Vec<u16> = match &out {
+    PlanOut::Chans(chans) => chans
+      .iter()
+      .filter_map(|s| match s {
+        Src::Reg(r) => Some(*r),
+        _ => None,
+      })
+      .collect(),
+    PlanOut::Uniform(_) => Vec::new(),
+  };
+  let n_regs = compiler.n_regs as usize;
+
+  // Dead-code elimination: every step is pure, so anything whose results are never read
+  // (an unused channel of a `normalize`, a swizzled-away construction, a whole varying
+  // spine under a uniform-valued body) simply goes. Steps are in dependency order, so one
+  // backward sweep settles liveness.
+  let mut live = vec![false; n_regs];
+  for &r in &out_regs {
+    live[r as usize] = true;
+  }
+  let mut keep = vec![false; compiler.steps.len()];
+  for ix in (0..compiler.steps.len()).rev() {
+    let step = &compiler.steps[ix];
+    if step_dsts(step).iter().any(|&d| live[d as usize]) {
+      keep[ix] = true;
+      for s in step_srcs(step) {
+        if let Src::Reg(r) = s {
+          live[r as usize] = true;
+        }
+      }
+    }
+  }
+  let n_dead = keep.iter().filter(|k| !**k).count() as u16;
+  let mut keep_it = keep.iter();
+  compiler.steps.retain(|_| *keep_it.next().unwrap());
+  let mut keep_it = keep.iter();
+  compiler.step_guards.retain(|_| *keep_it.next().unwrap());
+
+  // Last read per register (write-only dsts free at their own step); outputs never free.
+  let mut reg_last = vec![0u32; n_regs];
+  for (ix, step) in compiler.steps.iter().enumerate() {
+    for &d in step_dsts(step) {
+      reg_last[d as usize] = ix as u32;
+    }
+    for s in step_srcs(step) {
+      if let Src::Reg(r) = s {
+        reg_last[r as usize] = ix as u32;
+      }
+    }
+  }
+  for &r in &out_regs {
+    reg_last[r as usize] = u32::MAX;
+  }
+
   // Peak live registers via step-order simulation, for the run-time memory gate.
-  let mut live = vec![false; compiler.n_regs as usize];
+  let mut live = vec![false; n_regs];
   let mut peak = 0u16;
   let mut cur = 0u16;
   for (step_ix, step) in compiler.steps.iter().enumerate() {
-    let dsts: &[u16] = match step {
-      Step::Op { dst, .. } => std::slice::from_ref(dst),
-      Step::Fbm(f) => std::slice::from_ref(&f.dst),
-      Step::Dyn(d) => &d.dst,
-    };
-    for &d in dsts {
+    for &d in step_dsts(step) {
       if !live[d as usize] {
         live[d as usize] = true;
         cur += 1;
@@ -2355,7 +3272,7 @@ fn compile(
       }
     }
     for (r, l) in live.iter_mut().enumerate() {
-      if *l && compiler.reg_last[r] == step_ix as u32 {
+      if *l && reg_last[r] == step_ix as u32 {
         *l = false;
         cur -= 1;
       }
@@ -2367,15 +3284,82 @@ fn compile(
       frames: compiler.plan_frames,
       n_regs: compiler.n_regs,
       steps: compiler.steps,
+      step_guards: compiler.step_guards,
+      guards: compiler.guards,
+      branch_aborts: compiler.branch_aborts,
       unis: compiler.unis,
       n_fbm: compiler.n_fbm,
-      reg_last: compiler.reg_last,
+      reg_last,
       out,
       peak_regs: peak.max(1),
       uses_uv: compiler.uses_uv,
+      n_folded: compiler.n_folded,
+      n_cse: compiler.n_cse,
+      n_dead,
     },
     compiler.uni_vals,
   ))
+}
+
+fn step_dsts(step: &Step) -> &[u16] {
+  match step {
+    Step::Op { dst, .. } => std::slice::from_ref(dst),
+    Step::Fbm(f) => std::slice::from_ref(&f.dst),
+    Step::Dyn(d) => &d.dst,
+  }
+}
+
+fn step_srcs(step: &Step) -> ArrayVec<Src, 16> {
+  let mut out = ArrayVec::new();
+  match step {
+    Step::Op { kind, a, b, c, .. } => out.extend([*a, *b, *c].into_iter().take(op_arity(*kind))),
+    Step::Fbm(f) => out.extend(f.pos.iter().copied().take(f.dim as usize)),
+    Step::Dyn(d) => {
+      for chans in &d.args {
+        for s in chans {
+          if out.try_push(*s).is_err() {
+            break;
+          }
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Emission-time peephole. Only identities that are bit-exact in IEEE f32 qualify —
+/// `x + 0.0` is not one (`-0.0 + 0.0 = +0.0`), nor is `x * 0.0` (NaN/∞, signed zero) —
+/// plus all-constant operands, folded through the executor's own scalar kernels.
+fn peephole(kind: OpKind, a: Src, b: Src, c: Src) -> Option<Src> {
+  use Src::Const as K;
+  let ar = op_arity(kind);
+  let k = |s: Src| match s {
+    K(v) => Some(v),
+    _ => None,
+  };
+  if let (Some(ka), kb, kc) = (k(a), k(b), k(c)) {
+    if (ar < 2 || kb.is_some()) && (ar < 3 || kc.is_some()) {
+      return Some(K(sk::apply(kind, ka, kb.unwrap_or(0.), kc.unwrap_or(0.))));
+    }
+  }
+  let is = |s: Src, bits: u32| matches!(s, K(v) if v.to_bits() == bits);
+  const ONE: u32 = 0x3f80_0000;
+  const POS_ZERO: u32 = 0;
+  const NEG_ZERO: u32 = 0x8000_0000;
+  match kind {
+    OpKind::Mul if is(b, ONE) => Some(a),
+    OpKind::Mul if is(a, ONE) => Some(b),
+    OpKind::Div if is(b, ONE) => Some(a),
+    OpKind::Sub if is(b, POS_ZERO) => Some(a),
+    OpKind::Add if is(b, NEG_ZERO) => Some(a),
+    OpKind::Add if is(a, NEG_ZERO) => Some(b),
+    OpKind::Select if b == c => Some(b),
+    OpKind::Select => match a {
+      K(m) => Some(if m != 0. { b } else { c }),
+      _ => None,
+    },
+    _ => None,
+  }
 }
 
 /// `Ok(None)` = the body produced a non-numeric uniform value; hand off to the scalar path
@@ -2387,6 +3371,7 @@ fn plan_output_planes(
   input: &[Rc<Vec<f32>>],
   uv: Option<&[Rc<Vec<f32>>; 2]>,
   n: usize,
+  step_ms: Option<&mut Vec<f64>>,
 ) -> Result<Option<Vec<Rc<Vec<f32>>>>, ErrorStack> {
   match &plan.out {
     PlanOut::Uniform(uix) => {
@@ -2397,8 +3382,14 @@ fn plan_output_planes(
         (0..ar as usize).map(|c| Rc::new(vec![chans[c]; n])).collect(),
       ))
     }
-    PlanOut::Chans(_) => exec(ctx, plan, uni, input, uv, n).map(Some),
+    PlanOut::Chans(_) => exec(ctx, plan, uni, input, uv, n, step_ms).map(Some),
   }
+}
+
+#[derive(Clone, Copy)]
+enum VecTarget<'a> {
+  Map { tex: &'a TextureHandle },
+  Gen { w: usize, h: usize, wrap: crate::TextureWrap },
 }
 
 /// The vectorized fast path for `map` over a texture. `None` ⇒ run the scalar loop.
@@ -2407,94 +3398,7 @@ pub(crate) fn try_vectorized_map(
   cb: &Rc<Callable>,
   tex: &TextureHandle,
 ) -> Option<Result<Value, ErrorStack>> {
-  let state = &ctx.tex_vectorize;
-  if state.no_vectorize.get() {
-    return None;
-  }
-  let Callable::Closure(closure) = &**cb else {
-    return None;
-  };
-  let (w, h) = (tex.width, tex.height);
-  if w * h < MIN_TEXELS {
-    return None;
-  }
-
-  let key = PlanKey {
-    body_id: closure.resolved.id,
-    input_arity: tex.channels as u8,
-    generator: false,
-    capture_sig: capture_sig(closure),
-  };
-
-  let cached = state.plans.borrow().get(&key).map(|p| p.clone());
-  let (plan, uni_vals) = match cached {
-    Some(None) => return None,
-    Some(Some(plan)) => {
-      let vals = match eval_uniforms(ctx, &plan, closure, cb) {
-        Ok(v) => v,
-        Err(UniErr::Abort) => return None,
-        Err(UniErr::Err(e)) => return Some(Err(e)),
-      };
-      (plan, vals)
-    }
-    None => {
-      match compile(ctx, cb, closure, CompileKind::Map { input_arity: tex.channels as u8 }) {
-        Ok((plan, vals)) => {
-          let plan = Rc::new(plan);
-          if state.plans.borrow().len() >= MAX_CACHED_PLANS {
-            state.plans.borrow_mut().clear();
-          }
-          state.plans.borrow_mut().insert(key, Some(plan.clone()));
-          state.reports.borrow_mut().insert(
-            key.body_id,
-            VectorizeReport {
-              vectorized: true,
-              reason: None,
-              loc: (0, 0),
-            },
-          );
-          (plan, vals)
-        }
-        Err(CErr::Bail(reason, loc)) => {
-          if state.plans.borrow().len() >= MAX_CACHED_PLANS {
-            state.plans.borrow_mut().clear();
-          }
-          state.plans.borrow_mut().insert(key, None);
-          let (line, col) = ctx.resolve_loc(loc);
-          state.reports.borrow_mut().insert(
-            key.body_id,
-            VectorizeReport {
-              vectorized: false,
-              reason: Some(reason),
-              loc: (line, col),
-            },
-          );
-          return None;
-        }
-        Err(CErr::Err(e)) => return Some(Err(e)),
-      }
-    }
-  };
-
-  if plan.peak_regs as usize * w * h * 4 > REG_BYTE_BUDGET {
-    return None;
-  }
-  let uni = validate_uniforms(&plan, uni_vals)?;
-  let input = tex.as_planes();
-  let uv = plan.uses_uv.then(|| uv_planes_for(ctx, w, h));
-  match plan_output_planes(ctx, &plan, &uni, &input, uv.as_ref(), w * h) {
-    Ok(Some(planes)) => {
-      let channels = planes.len();
-      Some(Ok(Value::Texture(Rc::new(TextureHandle {
-        channels,
-        storage: TexStorage::planes(planes),
-        mips: Default::default(),
-        ..tex.clone()
-      }))))
-    }
-    Ok(None) => None,
-    Err(e) => Some(Err(e)),
-  }
+  try_vectorized(ctx, cb, VecTarget::Map { tex })
 }
 
 /// The vectorized fast path for `texture(w, h, generator)`. `None` ⇒ run the scalar loop.
@@ -2505,6 +3409,27 @@ pub(crate) fn try_vectorized_texture(
   h: usize,
   wrap: crate::TextureWrap,
 ) -> Option<Result<Value, ErrorStack>> {
+  try_vectorized(ctx, cb, VecTarget::Gen { w, h, wrap })
+}
+
+fn cache_plan(state: &VectorizeState, key: PlanKey, entry: PlanEntry) {
+  let mut plans = state.plans.borrow_mut();
+  let mut order = state.plan_order.borrow_mut();
+  if plans.len() >= MAX_CACHED_PLANS {
+    for k in order.drain(..MAX_CACHED_PLANS / 4) {
+      plans.remove(&k);
+    }
+  }
+  if plans.insert(key, entry).is_none() {
+    order.push_back(key);
+  }
+}
+
+fn try_vectorized(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  target: VecTarget,
+) -> Option<Result<Value, ErrorStack>> {
   let state = &ctx.tex_vectorize;
   if state.no_vectorize.get() {
     return None;
@@ -2512,92 +3437,375 @@ pub(crate) fn try_vectorized_texture(
   let Callable::Closure(closure) = &**cb else {
     return None;
   };
+  let (w, h) = match target {
+    VecTarget::Map { tex } => (tex.width, tex.height),
+    VecTarget::Gen { w, h, .. } => (w, h),
+  };
   if w * h < MIN_TEXELS {
     return None;
   }
 
+  let kind = match target {
+    VecTarget::Map { tex } => CompileKind::Map {
+      input_arity: tex.channels as u8,
+    },
+    VecTarget::Gen { .. } => CompileKind::Generator,
+  };
   let key = PlanKey {
     body_id: closure.resolved.id,
-    input_arity: 0,
-    generator: true,
+    input_arity: match kind {
+      CompileKind::Map { input_arity } => input_arity,
+      CompileKind::Generator => 0,
+    },
+    generator: matches!(kind, CompileKind::Generator),
     capture_sig: capture_sig(closure),
   };
+  // Every invocation records an outcome, cache hits and post-compile aborts included — a
+  // stale `vectorized: true` from an earlier run is the one thing the diagnostic can't say.
+  let loc = ctx.resolve_loc(body_loc(closure));
+  let report_with = |vectorized: bool, reason: Option<String>, loc: (u32, u32), plan: Option<String>| {
+    state.reports.borrow_mut().insert(
+      key.body_id,
+      VectorizeReport {
+        vectorized,
+        reason,
+        loc,
+        module: ctx.current_module.borrow().clone(),
+        plan,
+      },
+    );
+  };
+  let report = |vectorized: bool, reason: Option<String>, loc: (u32, u32)| report_with(vectorized, reason, loc, None);
+  let abort = |reason: &str| report(false, Some(format!("aborted to scalar this run: {reason}")), loc);
 
-  let cached = state.plans.borrow().get(&key).map(|p| p.clone());
-  let (plan, uni_vals) = match cached {
-    Some(None) => return None,
-    Some(Some(plan)) => {
-      let vals = match eval_uniforms(ctx, &plan, closure, cb) {
-        Ok(v) => v,
-        Err(UniErr::Abort) => return None,
-        Err(UniErr::Err(e)) => return Some(Err(e)),
-      };
-      (plan, vals)
-    }
-    None => match compile(ctx, cb, closure, CompileKind::Generator) {
-      Ok((plan, vals)) => {
-        let plan = Rc::new(plan);
-        if state.plans.borrow().len() >= MAX_CACHED_PLANS {
-          state.plans.borrow_mut().clear();
-        }
-        state.plans.borrow_mut().insert(key, Some(plan.clone()));
-        state.reports.borrow_mut().insert(
-          key.body_id,
-          VectorizeReport {
-            vectorized: true,
-            reason: None,
-            loc: (0, 0),
-          },
-        );
-        (plan, vals)
-      }
-      Err(CErr::Bail(reason, loc)) => {
-        if state.plans.borrow().len() >= MAX_CACHED_PLANS {
-          state.plans.borrow_mut().clear();
-        }
-        state.plans.borrow_mut().insert(key, None);
-        let (line, col) = ctx.resolve_loc(loc);
-        state.reports.borrow_mut().insert(
-          key.body_id,
-          VectorizeReport {
-            vectorized: false,
-            reason: Some(reason),
-            loc: (line, col),
-          },
-        );
+  let mut cached = state.plans.borrow().get(&key).cloned();
+  let mut fresh = false;
+  let (plan, uni_vals, guards) = loop {
+    let (plan, vals, guards) = match cached.take() {
+      Some(PlanEntry::Bail(reason, bail_loc)) => {
+        report(false, Some(reason.to_string()), bail_loc);
         return None;
       }
-      Err(CErr::Err(e)) => return Some(Err(e)),
-    },
+      Some(PlanEntry::Ok(plan)) => match eval_uniforms(ctx, &plan, closure, cb) {
+        Ok((vals, guards)) => (plan, vals, guards),
+        Err(UniErr::Abort) => {
+          abort("uniform subtree changed shape or performed an observable effect");
+          return None;
+        }
+        Err(UniErr::Err(e)) => return Some(Err(e)),
+      },
+      None => match compile(ctx, cb, closure, kind) {
+        Ok((plan, vals)) => {
+          let plan = Rc::new(plan);
+          cache_plan(state, key, PlanEntry::Ok(Rc::clone(&plan)));
+          let guards = all_guards(&plan, &vals).expect("compile saw every cond as a bool");
+          fresh = true;
+          (plan, vals, guards)
+        }
+        Err(CErr::Bail(reason, bail_loc)) => {
+          let bail_loc = ctx.resolve_loc(bail_loc);
+          cache_plan(state, key, PlanEntry::Bail(reason.as_str().into(), bail_loc));
+          report(false, Some(reason), bail_loc);
+          return None;
+        }
+        Err(CErr::Err(e)) => return Some(Err(e)),
+      },
+    };
+    let Some(ba) = plan.branch_aborts.iter().find(|b| guards[b.guard as usize]) else {
+      break (plan, vals, guards);
+    };
+    // A value-dependent arm failure (an error under an earlier run's uniforms) is retried
+    // once by recompiling under this run's values; a structural one is final.
+    if ba.evict && !fresh {
+      state.plans.borrow_mut().remove(&key);
+      state.plan_order.borrow_mut().retain(|k| *k != key);
+      continue;
+    }
+    report(
+      false,
+      Some(format!("aborted to scalar this run: selected branch not vectorizable: {}", ba.reason)),
+      ba.loc,
+    );
+    return None;
   };
-
-  if plan.peak_regs as usize * w * h * 4 > REG_BYTE_BUDGET {
+  if plan.peak_regs as u64 * w as u64 * h as u64 * 4 > REG_BYTE_BUDGET {
+    abort("register budget exceeded");
     return None;
   }
-  let uni = validate_uniforms(&plan, uni_vals)?;
+  let Some(uni) = validate_uniforms(&plan, uni_vals, guards) else {
+    abort("uniform shape changed");
+    return None;
+  };
+  let input = match target {
+    VecTarget::Map { tex } => tex.as_planes(),
+    VecTarget::Gen { .. } => Vec::new(),
+  };
   let uv = plan.uses_uv.then(|| uv_planes_for(ctx, w, h));
-  match plan_output_planes(ctx, &plan, &uni, &[], uv.as_ref(), w * h) {
-    Ok(Some(planes)) => {
-      let channels = planes.len();
-      Some(Ok(Value::Texture(Rc::new(TextureHandle {
-        storage: TexStorage::planes(planes),
-        width: w,
-        height: h,
-        channels,
-        wrap,
-        min_filter: None,
-        mag_filter: None,
-        format: None,
-        transform: crate::Mat4::identity(),
-        mips: Default::default(),
-      }))))
+  let profile = state.profile.get();
+  let mut step_ms = Vec::new();
+  let t0 = profile.then(now_ms);
+  let planes = match plan_output_planes(
+    ctx,
+    &plan,
+    &uni,
+    &input,
+    uv.as_ref(),
+    w * h,
+    profile.then_some(&mut step_ms),
+  ) {
+    Ok(Some(planes)) => planes,
+    Ok(None) => {
+      abort("body produced a non-numeric uniform value");
+      return None;
     }
-    Ok(None) => None,
-    Err(e) => Some(Err(e)),
+    Err(e) => return Some(Err(e)),
+  };
+  let listing = t0.map(|t0| {
+    let total_ms = now_ms() - t0;
+    render_plan(&plan, &uni, &step_ms, total_ms, kind, w, h, !fresh, loc)
+  });
+  report_with(true, None, loc, listing);
+
+  let channels = planes.len();
+  let storage = TexStorage::planes(planes);
+  Some(Ok(Value::Texture(Rc::new(match target {
+    VecTarget::Map { tex } => TextureHandle {
+      channels,
+      storage,
+      mips: Default::default(),
+      ..tex.clone()
+    },
+    VecTarget::Gen { w, h, wrap } => TextureHandle {
+      storage,
+      width: w,
+      height: h,
+      channels,
+      wrap,
+      min_filter: None,
+      mag_filter: None,
+      format: None,
+      transform: crate::Mat4::identity(),
+      mips: Default::default(),
+    },
+  }))))
+}
+
+// ---------------------------------------------------------------------------------------
+// Plan listing (diagnostics)
+// ---------------------------------------------------------------------------------------
+
+fn src_name(s: Src, plan: &Plan) -> String {
+  const CH: [char; 4] = ['x', 'y', 'z', 'w'];
+  match s {
+    Src::Reg(r) => format!("r{r}"),
+    Src::In(c) => format!("in.{}", CH[c as usize]),
+    Src::Uv(c) => format!("uv.{}", CH[c as usize]),
+    Src::Uni(u, c) => match plan.unis[u as usize].shape {
+      UniShape::Num { ar, .. } if ar > 1 => format!("u{u}.{}", CH[c as usize]),
+      _ => format!("u{u}"),
+    },
+    Src::Const(k) => format!("{k:?}"),
   }
 }
 
-/// Bit-exact comparison for `GEOSCRIPT_VECTORIZE_VERIFY`.
+fn op_arity(kind: OpKind) -> usize {
+  use OpKind::*;
+  match kind {
+    Neg | Abs | Sqrt | Sin | Cos | Tan | Asin | Acos | Atan | Exp | Log2 | Floor | Ceil | Round
+    | Fract | Trunc | Sigmoid | Not => 1,
+    Clamp | SmoothStep | LinearStep | LerpF | LerpV | Select => 3,
+    _ => 2,
+  }
+}
+
+fn value_brief(v: &Value) -> String {
+  match v {
+    Value::Float(f) => format!("{f:?}"),
+    Value::Int(i) => i.to_string(),
+    Value::Bool(b) => b.to_string(),
+    Value::Vec2(v) => format!("({:?}, {:?})", v.x, v.y),
+    Value::Vec3(v) => format!("({:?}, {:?}, {:?})", v.x, v.y, v.z),
+    Value::Vec4(v) => format!("({:?}, {:?}, {:?}, {:?})", v.x, v.y, v.z, v.w),
+    Value::Texture(t) => format!("texture {}×{}×{}", t.width, t.height, t.channels),
+    Value::Nil => "nil".into(),
+    other => {
+      let d = format!("{other:?}");
+      if d.len() > 40 {
+        format!("{}…", &d[..d.floor_char_boundary(40)])
+      } else {
+        d
+      }
+    }
+  }
+}
+
+/// Human-readable dump of one invocation: header, uniform table (this run's values), guards,
+/// every step with its operands / guard / skip state / wall time, and the output routing.
+/// Registers are 1-channel planes, so swizzles/constructions show up as routing, not steps.
+#[allow(clippy::too_many_arguments)]
+fn render_plan(
+  plan: &Plan,
+  uni: &UniRun,
+  step_ms: &[f64],
+  total_ms: f64,
+  kind: CompileKind,
+  w: usize,
+  h: usize,
+  cache_hit: bool,
+  loc: (u32, u32),
+) -> String {
+  use std::fmt::Write as _;
+  let mut o = String::new();
+  let what = match kind {
+    CompileKind::Map { input_arity } => format!("map {input_arity}ch"),
+    CompileKind::Generator => "generator".into(),
+  };
+  let peak_bytes = plan.peak_regs as f64 * (w * h * 4) as f64;
+  let peak = if peak_bytes >= 1024. * 1024. {
+    format!("{:.1} MB", peak_bytes / (1024. * 1024.))
+  } else {
+    format!("{:.0} KB", peak_bytes / 1024.)
+  };
+  let _ = writeln!(
+    o,
+    "; body @{}:{} · {what} · {w}×{h} · {} steps ({} folded, {} cse, {} dead removed) · peak {} regs ≈ {peak} · plan cache {} · exec {total_ms:.3} ms",
+    loc.0,
+    loc.1,
+    plan.steps.len(),
+    plan.n_folded,
+    plan.n_cse,
+    plan.n_dead,
+    plan.peak_regs,
+    if cache_hit { "hit" } else { "miss" },
+  );
+  if !plan.unis.is_empty() {
+    let _ = writeln!(o, "uniforms:");
+    for (i, (step, val)) in plan.unis.iter().zip(&uni.vals).enumerate() {
+      let off = step.guard.is_some_and(|g| !uni.guards[g as usize]);
+      let src = match &step.src {
+        UniSrc::Expr(_) => "expr".to_string(),
+        UniSrc::Const(_) => "const".into(),
+        UniSrc::Capture(c) => format!("capture#{c}"),
+        UniSrc::Slot(sl) => format!("local#{sl}"),
+        UniSrc::UniRef(u) => format!("= u{u}"),
+        UniSrc::SwizzleOf { of, field } => format!("u{of}.{field}"),
+      };
+      let shape = match step.shape {
+        UniShape::Num { ar, int } => match (ar, int) {
+          (1, true) => "int".into(),
+          (1, false) => "float".into(),
+          (n, _) => format!("vec{n}"),
+        },
+        UniShape::Bool => "bool".into(),
+        UniShape::Builtin(_) => "builtin".into(),
+        UniShape::ClosureBody(_) => "closure".into(),
+        UniShape::Dynamic(ar) => format!("dynamic→{ar}ch"),
+        UniShape::Any => "raw".into(),
+      };
+      let guard = match step.guard {
+        Some(g) if off => format!(" [g{g} off]"),
+        Some(g) => format!(" [g{g}]"),
+        None => String::new(),
+      };
+      let val = if off { "—".to_string() } else { value_brief(val) };
+      let _ = writeln!(o, "  u{i:<3} = {val:<18} {shape:<7} ({src}){guard}");
+    }
+  }
+  if !plan.guards.is_empty() {
+    let _ = writeln!(o, "guards:");
+    for (i, g) in plan.guards.iter().enumerate() {
+      let parent = g.parent.map(|p| format!(" && g{p}")).unwrap_or_default();
+      let _ = writeln!(
+        o,
+        "  g{i:<3} = u{} == {}{parent}   → {}",
+        g.cond,
+        g.expect,
+        if uni.guards[i] { "on" } else { "off" }
+      );
+    }
+  }
+  let _ = writeln!(o, "steps:");
+  for (ix, step) in plan.steps.iter().enumerate() {
+    let (dst, body) = match step {
+      Step::Op { kind, dst, a, b, c } => {
+        let srcs: Vec<String> = [*a, *b, *c]
+          .iter()
+          .take(op_arity(*kind))
+          .map(|s| src_name(*s, plan))
+          .collect();
+        (
+          format!("r{dst}"),
+          format!("{:<7} {}", format!("{kind:?}").to_lowercase(), srcs.join(", ")),
+        )
+      }
+      Step::Fbm(f) => {
+        let pos: Vec<String> = f.pos.iter().take(f.dim as usize).map(|s| src_name(*s, plan)).collect();
+        let [seed, oct, freq, lac, pers] = f.params;
+        let tile = f.tileable.map(|t| format!(" tile=u{t}")).unwrap_or_default();
+        (
+          format!("r{}", f.dst),
+          format!(
+            "fbm{}d   ({}) seed=u{seed} oct=u{oct} freq=u{freq} lac=u{lac} pers=u{pers}{tile}",
+            f.dim,
+            pos.join(", ")
+          ),
+        )
+      }
+      Step::Dyn(d) => {
+        let name = match &d.callee {
+          DynCallee::Baked(c) => match &**c {
+            Callable::Dynamic { name, .. } => name.clone(),
+            _ => "?".into(),
+          },
+          DynCallee::Uni(u) => match &uni.vals[*u as usize] {
+            Value::Callable(c) => match &**c {
+              Callable::Dynamic { name, .. } => name.clone(),
+              _ => "?".into(),
+            },
+            _ => "?".into(),
+          },
+        };
+        let args: Vec<String> = d
+          .args
+          .iter()
+          .map(|chans| {
+            let cs: Vec<String> = chans.iter().map(|s| src_name(*s, plan)).collect();
+            if cs.len() == 1 { cs[0].clone() } else { format!("({})", cs.join(", ")) }
+          })
+          .collect();
+        let dst: Vec<String> = d.dst.iter().map(|r| format!("r{r}")).collect();
+        (dst.join(","), format!("dyn     {name}({}) per-texel", args.join(", ")))
+      }
+    };
+    let guard = match plan.step_guards[ix] {
+      Some(g) if !uni.guards[g as usize] => format!("[g{g} off]"),
+      Some(g) => format!("[g{g}]"),
+      None => String::new(),
+    };
+    let ms = match step_ms.get(ix) {
+      Some(t) if t.is_nan() => "—".to_string(),
+      Some(t) => format!("{t:.3} ms"),
+      None => String::new(),
+    };
+    let guard_w = if plan.guards.is_empty() { 0 } else { 9 };
+    let _ = writeln!(o, "  {dst:<4} = {body:<30} {guard:<guard_w$} {ms:>9}");
+  }
+  match &plan.out {
+    PlanOut::Chans(chans) => {
+      let names: Vec<String> = chans.iter().map(|s| src_name(*s, plan)).collect();
+      let _ = writeln!(o, "out:   [{}]", names.join(", "));
+    }
+    PlanOut::Uniform(u) => {
+      let _ = writeln!(o, "out:   broadcast u{u}");
+    }
+  }
+  o
+}
+
+/// Bit-exact comparison for `GEOSCRIPT_VECTORIZE_VERIFY`, modulo NaN payload: when both
+/// operands of a commutative op are NaN, which payload survives depends on operand order,
+/// which LLVM canonicalizes differently per inlining context (observed on float `lerp`'s
+/// `a + (b - a) * t`). Any NaN therefore matches any NaN; everything else must match bitwise.
 pub fn assert_bit_identical(vec_val: &Value, scalar_val: &Value) -> Result<(), ErrorStack> {
   let (Value::Texture(a), Value::Texture(b)) = (vec_val, scalar_val) else {
     return Err(ErrorStack::new(format!(
@@ -2613,7 +3821,7 @@ pub fn assert_bit_identical(vec_val: &Value, scalar_val: &Value) -> Result<(), E
   let (pa, pb) = (a.as_planes(), b.as_planes());
   for (c, (x, y)) in pa.iter().zip(&pb).enumerate() {
     for (i, (&va, &vb)) in x.iter().zip(y.iter()).enumerate() {
-      if va.to_bits() != vb.to_bits() {
+      if va.to_bits() != vb.to_bits() && !(va.is_nan() && vb.is_nan()) {
         return Err(ErrorStack::new(format!(
           "VECTORIZE_VERIFY: first differing texel: chan {c}, texel {i} ({}, {}): vectorized \
            {va:?} (bits {:#010x}) vs scalar {vb:?} (bits {:#010x})",
@@ -2633,8 +3841,12 @@ mod tests {
   use super::*;
   use crate::parse_and_eval_program;
 
+  /// Both paths pinned explicitly: an ambient `GEOSCRIPT_NO_VECTORIZE=1` would otherwise
+  /// turn every differential test into scalar-vs-scalar.
   fn eval_both(src: &str) -> (crate::EvalCtx, crate::EvalCtx) {
-    let vec_ctx = parse_and_eval_program(src).unwrap();
+    let vec_ctx = EvalCtx::default();
+    vec_ctx.tex_vectorize.no_vectorize.set(false);
+    crate::parse_and_eval_program_with_ctx(src.to_string(), &vec_ctx, false).unwrap();
     let scalar_ctx = EvalCtx::default();
     scalar_ctx.tex_vectorize.no_vectorize.set(true);
     crate::parse_and_eval_program_with_ctx(src.to_string(), &scalar_ctx, false).unwrap();
@@ -2732,8 +3944,9 @@ cap = 2.5
     for (src, needle) in [
       (
         r#"t = texture(16, 16, |uv| uv.x)
-(t -> |v| if v > 0.5 { 1. } else { 0. }) | render_texture(name="o")"#,
-        "conditional",
+(t -> |v| { if v > 0.5 { 1. }
+v }) | render_texture(name="o")"#,
+        "without `else`",
       ),
       (
         r#"t = texture(16, 16, |uv| uv.x)
@@ -2774,7 +3987,8 @@ v }) | render_texture(name="o")"#,
         "side-effectful",
       ),
       (
-        r#"t = texture(16, 16, |uv| uv.x)
+        r#"set_rng_seed(3)
+t = texture(16, 16, |uv| uv.x)
 (t -> |v| v + randf()) | render_texture(name="o")"#,
         "rng",
       ),
@@ -2788,15 +4002,28 @@ v }) | render_texture(name="o")"#,
 (t -> |v| v > 0.5) | render_texture(name="o")"#,
         "!err",
       ),
+      (
+        r#"t = texture(16, 16, |uv| uv.x)
+(t -> |v| if v { 1. } else { 0. }) | render_texture(name="o")"#,
+        "!err",
+      ),
+      (
+        r#"t = texture(16, 16, |uv| uv.x)
+(t -> |v| (v > 0.5) + 1.) | render_texture(name="o")"#,
+        "!err",
+      ),
     ] {
-      let ctx = EvalCtx::default();
-      let res = crate::parse_and_eval_program_with_ctx(src.to_string(), &ctx, false);
       if needle == "!err" {
         // body returns a bool: both paths must error
-        assert!(res.is_err());
+        for no_vec in [false, true] {
+          let ctx = EvalCtx::default();
+          ctx.tex_vectorize.no_vectorize.set(no_vec);
+          assert!(crate::parse_and_eval_program_with_ctx(src.to_string(), &ctx, false).is_err());
+        }
         continue;
       }
-      res.unwrap_or_else(|e| panic!("scalar fallback must succeed: {e}\n{src}"));
+      let (ctx, scalar_ctx) = eval_both(src);
+      assert_identical_outputs(&ctx, &scalar_ctx);
       let reps = reports(&ctx);
       if needle.is_empty() {
         assert!(
@@ -2988,6 +4215,23 @@ i = clamp(5, 3, 4)
     assert_eq!(vec_ctx.get_global("i").unwrap().as_int(), Some(5));
   }
 
+  /// `pow`'s vec2 signature declared Vec3 (a verbatim dup of the vec3 one) while its impl
+  /// arm read `as_vec2()`, so `pow(v2(..), e)` was a resolution error with a dead arm.
+  #[test]
+  fn pow_vec2_arm_resolves() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x + 0.25)
+(h -> |v| pow(v2(v, v * 2.), 3.)) | render_texture(name="a")
+scalar = pow(v2(2., 3.), 2.)
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert_eq!(
+      vec_ctx.get_global("scalar").unwrap().as_vec2(),
+      Some(&crate::Vec2::new(4., 9.))
+    );
+  }
+
   #[test]
   fn view_input_and_identity_passthrough() {
     let src = r#"
@@ -3073,9 +4317,505 @@ c | render_texture(name="c")
     assert_eq!(vec_ctx.tex_vectorize.uv_planes.borrow().len(), 2);
     let c = vec_ctx.rendered_textures.borrow()[1].texture.clone();
     assert_eq!(c.channels, 2);
-    let cached = vec_ctx.tex_vectorize.uv_planes.borrow()[&(8, 8)].clone();
+    let cached = vec_ctx
+      .tex_vectorize
+      .uv_planes
+      .borrow()
+      .iter()
+      .find(|(k, _)| *k == (8, 8))
+      .unwrap()
+      .1
+      .clone();
     assert!(Rc::ptr_eq(&c.as_planes()[0], &cached[0]));
     assert!(Rc::ptr_eq(&c.as_planes()[1], &cached[1]));
+  }
+
+  /// Capture-free top-level helpers get const-folded to `Expr::Literal(Callable::Closure)`,
+  /// so their inlined frames have no `callee_uix`; the second invocation of one body took
+  /// the plan-cache path and had to resolve those frames' captures from the baked callable.
+  #[test]
+  fn literal_inlined_helper_survives_cache_hit() {
+    let src = r#"
+ridge = |x| 1. - abs(x * 2. - 1.)
+f = |v| ridge(v)
+h1 = texture(16, 16, |uv| uv.x)
+h2 = texture(16, 16, |uv| uv.y)
+(h1 -> f) | render_texture(name="a")
+(h2 -> f) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized));
+  }
+
+  #[test]
+  fn literal_inlined_helper_with_defaults_survives_cache_hit() {
+    let src = r#"
+k = 0.75
+scaled = |x, s = (k * 2.)| x * s + k
+h1 = texture(16, 16, |uv| uv.x)
+h2 = texture(16, 16, |uv| uv.y)
+apply = |v| scaled(v)
+(h1 -> apply) | render_texture(name="a")
+(h2 -> apply) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+  }
+
+  /// A block whose non-final statement is varying but whose value is uniform classifies
+  /// non-uniform yet compiles to `AbsVal::U` — both the assignment and the swizzle arm
+  /// have to accept that.
+  #[test]
+  fn varying_block_with_uniform_value() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+(h -> |v| { b = { junk = v * 2.
+5. }
+b + v }) | render_texture(name="a")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+  }
+
+  #[test]
+  fn inlined_helper_with_uniform_value_body() {
+    let src = r#"
+helper = |x| { junk = x * 2.
+v3(5., 6., 7.) }
+h = texture(16, 16, |uv| uv.x)
+(h -> |v| { b = helper(v)
+b.x + v }) | render_texture(name="a")
+(h -> |v| helper(v).y + v) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+  }
+
+  /// A capture the plan key can't tell apart (a map/array carries one type flag) can still
+  /// change the uniform's *shape* between runs; the cache-hit run must abort to scalar and
+  /// say so, not report the previous run's success.
+  #[test]
+  fn uniform_shape_drift_aborts_and_reports() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+f = |a| (h -> |v| v * a[0])
+f([2.]) | render_texture(name="x")
+f([v2(1., 3.)]) | render_texture(name="y")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert!(
+      reps.iter().any(|r| !r.vectorized
+        && r.reason.as_deref().is_some_and(|s| s.contains("aborted to scalar this run"))),
+      "the drifting run must report its abort: {reps:?}"
+    );
+  }
+
+  /// Cache-hit runs must still record an outcome, and successful reports must carry the
+  /// body's real source location rather than (0, 0).
+  #[test]
+  fn cache_hit_runs_report_success_with_a_loc() {
+    let src = r#"
+h1 = texture(16, 16, |uv| uv.x)
+h2 = texture(16, 16, |uv| uv.y)
+f = |v| v * 2. + 0.25
+(h1 -> f) | render_texture(name="a")
+(h2 -> f) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert!(reps.iter().all(|r| r.vectorized), "{reps:?}");
+    assert!(
+      reps.iter().all(|r| r.loc != (0, 0)),
+      "successful reports need the body loc: {reps:?}"
+    );
+  }
+
+  /// The plan/report caches outlive a run on the host's long-lived ctx; a second
+  /// parse+eval of the same source on one ctx must produce identical pixels.
+  #[test]
+  fn same_source_twice_on_one_ctx() {
+    let src = r#"
+h = texture(16, 16, |uv| fbm(pos=uv * 3.))
+(h -> |v, uv| v3(v, uv.x, sigmoid(v * 2.))) | render_texture(name="o")
+"#;
+    let ctx = EvalCtx::default();
+    ctx.tex_vectorize.no_vectorize.set(false);
+    let run = |ctx: &EvalCtx| {
+      ctx.rendered_textures.inner.borrow_mut().clear();
+      ctx.tex_vectorize.reset_per_run();
+      crate::parse_and_eval_program_with_ctx(src.to_string(), ctx, false).unwrap();
+      Rc::clone(&ctx.rendered_textures.borrow()[0].texture)
+    };
+    let first = run(&ctx);
+    let second = run(&ctx);
+    assert_bit_identical(&Value::Texture(first), &Value::Texture(second)).unwrap();
+    assert!(reports(&ctx).iter().all(|r| r.vectorized));
+  }
+
+  /// nalgebra's vec `lerp` short-circuits when `1 - t == 0` and never touches `a`, so the
+  /// kernel must branch identically or `t == 1` diverges on non-finite / signed-zero `a`.
+  #[test]
+  fn vec_lerp_at_t_one_is_bit_identical() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+(h -> |v| { inf3 = v3(1. / (v - v), 0., 0.)
+t = smoothstep(0.4, 0.5, v)
+lerp(t, inf3, v3(v, v, v)) }) | render_texture(name="a")
+(h -> |v| lerp(smoothstep(0.4, 0.5, v), v3(1., 2., 3.), v3(0., 0., 0.) * -1.)) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+  }
+
+  fn vectorized_count(ctx: &EvalCtx) -> usize {
+    reports(ctx).iter().filter(|r| r.vectorized).count()
+  }
+
+  /// Phase 2 surface: varying/uniform conditions, `else if` chains, `&&`/`||`/`!`, mask
+  /// locals (typed), masks through inlined helpers, uniform-vs-varying arm broadcast,
+  /// every comparison op incl. int literals and bool `==`/`!=`, generator entry.
+  #[test]
+  fn conditionals_bit_identical() {
+    let src = r#"
+h = texture(16, 16, |uv| fbm(pos=uv * 3.) * 1.5)
+rgb = texture(16, 16, |uv| v3(uv.x, uv.y, fbm(pos=uv * 4.)))
+flag = true
+cap = 0.25
+pick = |m: bool, a, b| if m {{ a }} else {{ b }}
+step3 = |x| if x < 0.2 { 0. } else if x < 0.5 { 0.5 } else { 1. }
+o1 = h -> |v| if v > 0.5 { v * 2. } else { v - 1. }
+o2 = h -> |v| if v > 0.5 { 1. } else if v > 0. { 0.5 } else if v > -0.5 { 0.25 } else { 0. }
+o3 = h -> |v| { m: bool = v > 0.5 && v < 1.
+n = v < -0.2 || !m
+if m == n { v } else if m != n && !n { v * 3. } else { cap } }
+o4 = h -> |v, uv| if flag { v + uv.x } else { v }
+o5 = h -> |v| if v >= 0.5 { cap } else { v }
+o6 = rgb -> |c| if len(c) > 1. { c * 0.5 } else { c.bgr + v3(0.1, 0.2, 0.3) }
+o7 = h -> |v| pick(v <= 0.3, sigmoid(v), step3(v))
+o8 = h -> |v| if v == 1 { 5. } else if v != 0 { v } else { -1. }
+o9 = h -> |v| if v > 0.5 { if v > 0.75 { 3. } else { 2. } } else { if flag { 1. } else { 0. } }
+o10 = h -> |v| if v > 0.5 { cap } else { cap * 2. }
+g = texture(16, 16, |uv| if uv.x > uv.y { uv.x } else { uv.y * 2. })
+o1 | render_texture(name="o1")
+o2 | render_texture(name="o2")
+o3 | render_texture(name="o3")
+o4 | render_texture(name="o4")
+o5 | render_texture(name="o5")
+o6 | render_texture(name="o6")
+o7 | render_texture(name="o7")
+o8 | render_texture(name="o8")
+o9 | render_texture(name="o9")
+o10 | render_texture(name="o10")
+g | render_texture(name="g")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert_eq!(
+      vectorized_count(&vec_ctx),
+      13,
+      "every conditional body must vectorize (10 maps + 3 generators): {reps:?}"
+    );
+  }
+
+  /// The load-bearing exactness rule: select is a bitwise pick, never a lerp. `1 / x` is
+  /// ±inf on the untaken side (a lerp would NaN), and NaN payloads / signed zeros must
+  /// survive the untaken arm too.
+  #[test]
+  fn select_is_exact_not_a_blend() {
+    let src = r#"
+h = texture(64, 64, |uv| floor(uv.x * 4.))
+safe = h -> |x| if x > 0. { 1. / x } else { 0. }
+m = texture_mean(safe)
+print(m)
+nz = h -> |x| if x > 1. { -0. } else { 0. / (x - x) }
+safe | render_texture(name="safe")
+nz | render_texture(name="nz")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert_eq!(*vec_ctx.prints.borrow(), *scalar_ctx.prints.borrow());
+    assert!(vec_ctx.prints.borrow()[0].contains("0.45833334"), "{:?}", vec_ctx.prints.borrow());
+    assert_eq!(vectorized_count(&vec_ctx), 3);
+  }
+
+  /// A uniform condition picks its arm per run through a guard, so one cached plan serves
+  /// both arm choices across cache-hit runs — and the untaken arm's steps never execute.
+  #[test]
+  fn uniform_cond_guards_flip_across_cache_hits() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+f = |flag| (h -> |v| if flag && v > 0.5 { v * 2. } else { v + 1. })
+slices = 0..4 -> |i| (h -> |v| if i % 2 == 0 { sin(v * float(i)) } else { cos(v) })
+slices | render_texture_stack(name="s")
+f(true) | render_texture(name="t")
+f(false) | render_texture(name="f")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    {
+      let (a, b) = (
+        vec_ctx.rendered_textures.borrow(),
+        scalar_ctx.rendered_textures.borrow(),
+      );
+      for (xs, ys) in a[0].extra_slices.iter().zip(&b[0].extra_slices) {
+        assert_bit_identical(&Value::Texture(Rc::clone(xs)), &Value::Texture(Rc::clone(ys))).unwrap();
+      }
+    }
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized), "{:?}", reports(&vec_ctx));
+    // generator + slice body + f's body: one plan each, reused across both guard states
+    assert_eq!(vec_ctx.tex_vectorize.plans.borrow().len(), 3);
+  }
+
+  /// The stack-slice idiom whose untaken arm *errors* under the first slice's uniforms
+  /// (`w[i - 1]` at `i == 0`): the arm is skipped on that run, the plan aborts+evicts on
+  /// the first run that selects it, recompiles, and every slice stays bit-identical.
+  #[test]
+  fn untaken_uniform_arm_error_is_skipped_then_recompiled() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+w = [0.5, 0.25, 0.125]
+slices = 0..4 -> |i| (h -> |v| if i == 0 { v } else { v * w[i - 1] })
+slices | render_texture_stack(name="s")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    {
+      let (a, b) = (
+        vec_ctx.rendered_textures.borrow(),
+        scalar_ctx.rendered_textures.borrow(),
+      );
+      assert_bit_identical(
+        &Value::Texture(Rc::clone(&a[0].texture)),
+        &Value::Texture(Rc::clone(&b[0].texture)),
+      )
+      .unwrap();
+      assert_eq!(a[0].extra_slices.len(), 3);
+      for (xs, ys) in a[0].extra_slices.iter().zip(&b[0].extra_slices) {
+        assert_bit_identical(&Value::Texture(Rc::clone(xs)), &Value::Texture(Rc::clone(ys))).unwrap();
+      }
+    }
+    // last invocation (i == 3) is a cache hit on the recompiled plan
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized), "{:?}", reports(&vec_ctx));
+    assert_eq!(vec_ctx.tex_vectorize.plans.borrow().len(), 2);
+  }
+
+  /// A structurally unvectorizable arm only costs the runs that select it; the plan stays
+  /// cached and the other arm keeps vectorizing.
+  #[test]
+  fn unvectorizable_uniform_arm_aborts_only_when_selected() {
+    // Distinct args per call (a repeated `f(0)` would be replayed from the const-eval cache).
+    let prog = |n: usize| {
+      let calls: Vec<String> = [0, 5, 1][..n]
+        .iter()
+        .map(|k| format!("f({k}) | render_texture(name=\"r{k}\")"))
+        .collect();
+      format!(
+        "h = texture(16, 16, |uv| uv.x)\nf = |i| (h -> |v| if i < 2 {{ v * 2. }} else {{ v3(v, v, v)[0] }})\n{}",
+        calls.join("\n")
+      )
+    };
+    // Reports keep the last outcome per body, so observe each invocation via program length.
+    for (n, needle) in [(1, None), (2, Some("indexing a varying")), (3, None)] {
+      let (vec_ctx, scalar_ctx) = eval_both(&prog(n));
+      assert_identical_outputs(&vec_ctx, &scalar_ctx);
+      let reps = reports(&vec_ctx);
+      match needle {
+        None => assert!(reps.iter().all(|r| r.vectorized), "run {n}: {reps:?}"),
+        Some(needle) => assert!(
+          reps.iter().any(|r| !r.vectorized
+            && r
+              .reason
+              .as_deref()
+              .is_some_and(|s| s.contains("selected branch") && s.contains(needle))),
+          "run {n}: {reps:?}"
+        ),
+      }
+      assert_eq!(vec_ctx.tex_vectorize.plans.borrow().len(), 2);
+    }
+  }
+
+  /// Arms that can't be expressed bail rather than error: the scalar path only errors if
+  /// some texel actually takes the odd arm, and here none does.
+  #[test]
+  fn odd_arms_bail_to_scalar() {
+    for (src, needle) in [
+      (
+        r#"h = texture(16, 16, |uv| uv.x)
+(h -> |v| if v > 100. { v3(v, v, v) } else { v }) | render_texture(name="o")"#,
+        "arity",
+      ),
+      (
+        r#"h = texture(16, 16, |uv| uv.x)
+(h -> |v| if v > 0.5 { v } else { 0 }) | render_texture(name="o")"#,
+        "int-typed",
+      ),
+      (
+        r#"h = texture(16, 16, |uv| uv.x)
+(h -> |v| if v > 100. { "s" } else { v }) | render_texture(name="o")"#,
+        "non-numeric",
+      ),
+      (
+        r#"h = texture(16, 16, |uv| uv.x)
+w = [1., 2.]
+f = |k| (h -> |v| if v > 100. { v * w[k] } else { v })
+f(5) | render_texture(name="o")"#,
+        "speculatively",
+      ),
+    ] {
+      let (vec_ctx, scalar_ctx) = eval_both(src);
+      assert_identical_outputs(&vec_ctx, &scalar_ctx);
+      let reps = reports(&vec_ctx);
+      assert!(
+        reps.iter().any(|r| !r.vectorized && r.reason.as_deref().is_some_and(|s| s.contains(needle))),
+        "expected bail containing {needle:?}: {reps:?}\n{src}"
+      );
+    }
+  }
+
+  /// A speculative uniform that errors only on a cache-hit run's values (`w[k]` with `k`
+  /// out of range, inside an arm no texel takes) must abort to scalar, not error.
+  #[test]
+  fn speculative_uniform_error_on_cache_hit_aborts() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+w = [1., 2.]
+f = |k| (h -> |v| if v > 100. { v * w[k] } else { v })
+f(0) | render_texture(name="a")
+f(5) | render_texture(name="b")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert!(
+      reps.iter().any(|r| !r.vectorized && r.reason.as_deref().is_some_and(|s| s.contains("aborted"))),
+      "{reps:?}"
+    );
+  }
+
+  /// The vec4 overloads (unary math, abs, pow, min/max, clamp, len/dot/distance/normalize)
+  /// lower through the same arms as vec3; a 4-channel body must vectorize end to end.
+  #[test]
+  fn vec4_builtins_vectorize() {
+    let src = r#"
+rgba = texture(16, 16, |uv| v4(uv.x, uv.y, fbm(pos=uv * 3.), 1. - uv.x))
+o = rgba -> |c| {
+  a = clamp(0., 1., abs(sin(c) * 3.)) + sqrt(fract(c) + 0.5) - floor(c)
+  b = min(c, c.wzyx) * max(c, pow(c, 2.)) + normalize(c + 0.1) * len(c)
+  if dot(c, c) > distance(c, c.yxwz) { a + b } else { sigmoid(a) }
+}
+o | render_texture(name="o")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert_eq!(vectorized_count(&vec_ctx), 2, "{:?}", reports(&vec_ctx));
+  }
+
+  fn compiled_plans(ctx: &EvalCtx) -> Vec<Rc<Plan>> {
+    ctx
+      .tex_vectorize
+      .plans
+      .borrow()
+      .values()
+      .filter_map(|e| match e {
+        PlanEntry::Ok(p) => Some(Rc::clone(p)),
+        _ => None,
+      })
+      .collect()
+  }
+
+  /// DCE drops the unread `normalize` channels; the emission peephole removes `remap`'s
+  /// `* 1.0` / `/ 1.0` and folds all-constant ops; `x + 0.0` must survive (−0.0).
+  #[test]
+  fn dce_and_exact_peepholes() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x - 0.5)
+nz = h -> |v| normalize(v3(v, v * 2., v * 3.)).z
+rm = h -> |v| remap(-1., 1., 0., 1., v)
+neg0 = h -> |v| -(v - v) + 0.
+nz | render_texture(name="nz")
+rm | render_texture(name="rm")
+neg0 | render_texture(name="neg0")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let plans = compiled_plans(&vec_ctx);
+    let shapes: Vec<(usize, u16, u16)> = plans.iter().map(|p| (p.steps.len(), p.n_folded, p.n_dead)).collect();
+    // nz: 2 muls, 3 squares, 2 adds, sqrt, 1 div (the x/y divs are dead)
+    let nz = plans.iter().find(|p| p.n_dead == 2).unwrap_or_else(|| panic!("{shapes:?}"));
+    assert_eq!(nz.steps.len(), 9, "{shapes:?}");
+    // rm: sub, div (÷ 2.0 kept), [clamp], add 0.0 (kept: −0.0 + 0.0 = +0.0); `* 1.0` folded
+    let rm = plans.iter().find(|p| p.n_folded == 1).unwrap_or_else(|| panic!("{shapes:?}"));
+    assert!(rm.steps.len() == 3 || rm.steps.len() == 4, "{shapes:?}");
+    assert!(rm.steps.iter().any(|s| matches!(s, Step::Op { kind: OpKind::Add, a, b, .. }
+      if [a, b].iter().any(|x| matches!(x, Src::Const(k) if k.to_bits() == 0)))));
+    // neg0 output must be +0.0 everywhere in both paths (the `+ 0.` normalizes the −0.0)
+    let t = vec_ctx.rendered_textures.borrow()[2].texture.clone();
+    assert!(t.as_planes()[0].iter().all(|x| x.to_bits() == 0));
+  }
+
+  #[test]
+  fn peephole_rules_are_exact_identities() {
+    let r = |k| Src::Reg(k);
+    let c = Src::Const;
+    assert_eq!(peephole(OpKind::Mul, r(1), c(1.), c(0.)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Mul, c(1.), r(1), c(0.)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Div, r(1), c(1.), c(0.)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Sub, r(1), c(0.), c(0.)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Add, r(1), c(-0.), c(0.)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Add, r(1), c(0.), c(0.)), None);
+    assert_eq!(peephole(OpKind::Mul, r(1), c(0.), c(0.)), None);
+    assert_eq!(peephole(OpKind::Mul, r(1), c(-1.), c(0.)), None);
+    assert_eq!(peephole(OpKind::Sub, r(1), c(-0.), c(0.)), None);
+    assert_eq!(peephole(OpKind::Select, r(0), r(1), r(1)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Select, c(1.), r(1), r(2)), Some(r(1)));
+    assert_eq!(peephole(OpKind::Select, c(0.), r(1), r(2)), Some(r(2)));
+    assert_eq!(peephole(OpKind::Add, c(1.5), c(2.25), c(0.)), Some(c(3.75)));
+    assert_eq!(peephole(OpKind::Sqrt, c(-1.), c(0.), c(0.)).map(|s| matches!(s, Src::Const(v) if v.is_nan())), Some(true));
+    assert_eq!(peephole(OpKind::Add, r(1), Src::Uni(0, 0), c(0.)), None);
+  }
+
+  /// CSE shares `len`/`dot`/`normalize`'s squares+sums and duplicate `fbm` calls, reuses an
+  /// unguarded value inside a guarded arm, and never shares across sibling arms (a sibling's
+  /// register may be unwritten on runs that skipped it).
+  #[test]
+  fn cse_shares_within_dominating_guards_only() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x - 0.5)
+shared = h -> |v, uv| { p = v3(v, uv.x, uv.y)
+len(p) * dot(p, p) + normalize(p).x }
+noise2 = h -> |v, uv| fbm(pos=uv * 3.) + fbm(pos=uv * 3.) * v
+pick = |v, d, flag| if flag { d + 1. } else { v * 2. }
+mk_arms = |flag| (h -> |v| if flag { v * 2. } else { v * 2. + 1. })
+mk_dom = |flag| (h -> |v| pick(v, v * 2., flag))
+arms = mk_arms(true)
+dom = mk_dom(true)
+shared | render_texture(name="shared")
+noise2 | render_texture(name="noise2")
+arms | render_texture(name="arms")
+dom | render_texture(name="dom")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let plans = compiled_plans(&vec_ctx);
+    let shapes: Vec<(usize, u16, u16, usize)> = plans
+      .iter()
+      .map(|p| (p.steps.len(), p.n_cse, p.n_dead, p.steps.iter().filter(|s| matches!(s, Step::Op { kind: OpKind::Mul, .. })).count()))
+      .collect();
+    // shared: 3 squares + 2 adds + sqrt (len) reused by dot (5 hits) and normalize (6 hits);
+    // normalize's y/z divs are dead → 3 mul + 2 add + sqrt + div + mul + add = 9 live steps
+    let shared = plans.iter().find(|p| p.n_cse == 11).unwrap_or_else(|| panic!("{shapes:?}"));
+    assert_eq!((shared.steps.len(), shared.n_dead), (9, 2), "{shapes:?}");
+    let fbm_steps = |p: &Plan| p.steps.iter().filter(|s| matches!(s, Step::Fbm(_))).count();
+    assert!(plans.iter().any(|p| fbm_steps(p) == 1 && p.n_cse >= 3), "{shapes:?}");
+    let muls = |p: &Plan| p.steps.iter().filter(|s| matches!(s, Step::Op { kind: OpKind::Mul, .. })).count();
+    // arms: `v * 2.` under each sibling guard stays separate (2 muls); dom: the arm reuses
+    // the unguarded `d` (1 mul)
+    assert!(plans.iter().any(|p| !p.guards.is_empty() && muls(p) == 2 && p.n_cse == 0), "{shapes:?}");
+    assert!(plans.iter().any(|p| !p.guards.is_empty() && muls(p) == 1 && p.n_cse == 1), "{shapes:?}");
   }
 }
 
@@ -3092,7 +4832,12 @@ mod property_tests {
     rng: Pcg32,
     /// (name, arity) of in-scope locals, including params.
     vars: Vec<(String, u8)>,
+    /// In-scope bool locals (masks).
+    bvars: Vec<String>,
     next_local: usize,
+    /// Conditional arms must not be bare int literals: an `Int` arm bails (texel-dependent
+    /// typing), and the generator only emits must-vectorize programs.
+    no_int_leaf: bool,
   }
 
   impl Gen {
@@ -3101,13 +4846,44 @@ mod property_tests {
       format!("{v:?}")
     }
 
+    /// A random bool expression: compares (every op, int literal rhs sometimes), `&&`/`||`
+    /// /`!`, uniform bool captures (→ guards), and mask locals.
+    fn cond(&mut self, depth: u8) -> String {
+      let d = depth.saturating_sub(1);
+      match self.rng.random_range(0..(if depth == 0 { 4 } else { 9 }) as u32) {
+        0 => {
+          let op = ["<", "<=", ">", ">=", "==", "!="][self.rng.random_range(0..6usize)];
+          let rhs = if self.rng.random_range(0..4u32) == 0 {
+            format!("{}", self.rng.random_range(-1..3i64))
+          } else {
+            self.expr(1, d)
+          };
+          format!("({} {op} {rhs})", self.expr(1, d))
+        }
+        1 => ["flag_t", "flag_f", "(cap > 1.)"][self.rng.random_range(0..3usize)].to_string(),
+        2 if !self.bvars.is_empty() => self.bvars[self.rng.random_range(0..self.bvars.len())].clone(),
+        2 | 3 => format!("({} > {})", self.expr(1, d), self.lit()),
+        4 | 5 => format!("({} && {})", self.cond(d), self.cond(d)),
+        6 => format!("({} || {})", self.cond(d), self.cond(d)),
+        7 => format!("!({})", self.cond(d)),
+        _ => format!("pickb({}, {}, {})", self.cond(d), self.cond(d), self.cond(d)),
+      }
+    }
+
+    fn arm(&mut self, arity: u8, depth: u8) -> String {
+      let prev = std::mem::replace(&mut self.no_int_leaf, true);
+      let e = self.expr(arity, depth);
+      self.no_int_leaf = prev;
+      e
+    }
+
     /// A random expression of the requested arity.
     fn expr(&mut self, arity: u8, depth: u8) -> String {
       if depth == 0 {
         return self.leaf(arity);
       }
       let d = depth - 1;
-      match self.rng.random_range(0..11u32) {
+      match self.rng.random_range(0..13u32) {
         0..=2 => {
           // arithmetic; scalar broadcast only in the directions the language defines
           let op = ["+", "-", "*", "/"][self.rng.random_range(0..4usize)];
@@ -3129,9 +4905,10 @@ mod property_tests {
         }
         4 => format!("-({})", self.expr(arity, d)),
         5 => {
-          // clamp / smoothstep-ish scalar shapes
+          // clamp / smoothstep-ish scalar shapes, plus the identity / remap forms the
+          // emission peephole rewrites (`* 1.`, `/ 1.`, `- 0.`, `+ 0.` must stay exact)
           if arity == 1 {
-            match self.rng.random_range(0..3u32) {
+            match self.rng.random_range(0..7u32) {
               0 => format!(
                 "smoothstep({}, {}, {})",
                 self.lit(),
@@ -3139,7 +4916,16 @@ mod property_tests {
                 self.expr(1, d)
               ),
               1 => format!("atan2({}, {})", self.expr(1, d), self.expr(1, d)),
-              _ => format!("({} % {})", self.expr(1, d), self.lit()),
+              2 => format!("({} % {})", self.expr(1, d), self.lit()),
+              3 => format!(
+                "({} {} {})",
+                self.expr(1, d),
+                ["* 1.", "/ 1.", "- 0.", "+ 0.", "* -1.", "+ -0."][self.rng.random_range(0..6usize)],
+                ""
+              ),
+              4 => format!("remap(-1., 1., 0., 1., {})", self.expr(1, d)),
+              5 => format!("remap(0., 2., -1., 3., {}, clamp=false)", self.expr(1, d)),
+              _ => format!("-({} - {})", self.expr(1, d), self.expr(1, d)),
             }
           } else {
             format!("clamp({}, {}, {})", self.lit(), self.lit(), self.expr(arity, d))
@@ -3155,7 +4941,7 @@ mod property_tests {
           // build the arity via construction or reduce a vec to scalar
           match arity {
             1 => {
-              let src_ar = self.rng.random_range(2..=3u8);
+              let src_ar = self.rng.random_range(2..=4u8);
               match self.rng.random_range(0..3u32) {
                 0 => format!("len({})", self.expr(src_ar, d)),
                 1 => format!("dot({}, {})", self.expr(src_ar, d), self.expr(src_ar, d)),
@@ -3168,7 +4954,11 @@ mod property_tests {
               1 => format!("v3({}, {})", self.expr(2, d), self.expr(1, d)),
               _ => format!("normalize({})", self.expr(3, d)),
             },
-            _ => format!("v4({}, {})", self.expr(2, d), self.expr(2, d)),
+            _ => match self.rng.random_range(0..3u32) {
+              0 => format!("v4({}, {})", self.expr(2, d), self.expr(2, d)),
+              1 => format!("normalize({})", self.expr(4, d)),
+              _ => format!("min({}, {})", self.expr(4, d), self.expr(4, d)),
+            },
           }
         }
         8 => {
@@ -3191,7 +4981,7 @@ mod property_tests {
             self.leaf(arity)
           }
         }
-        _ => match arity {
+        10 => match arity {
           // captured helper closures (inlined) and ramps (per-texel dynamic kernel)
           1 => match self.rng.random_range(0..3u32) {
             0 => format!("helper1({})", self.expr(1, d)),
@@ -3201,6 +4991,21 @@ mod property_tests {
           3 => format!("shade3({})", self.expr(1, d)),
           _ => self.leaf(arity),
         },
+        _ => {
+          // conditionals: plain, else-if chains, and through a mask-param helper
+          let c = self.cond(d.min(2));
+          match self.rng.random_range(0..3u32) {
+            0 => format!("pick({c}, {}, {})", self.arm(arity, d), self.arm(arity, d)),
+            1 => format!(
+              "if {c} {{ {} }} else if {} {{ {} }} else {{ {} }}",
+              self.arm(arity, d),
+              self.cond(d.min(2)),
+              self.arm(arity, d),
+              self.arm(arity, d)
+            ),
+            _ => format!("if {c} {{ {} }} else {{ {} }}", self.arm(arity, d), self.arm(arity, d)),
+          }
+        }
       }
     }
 
@@ -3212,7 +5017,7 @@ mod property_tests {
       }
       match arity {
         1 => {
-          if self.rng.random_range(0..4u32) == 0 {
+          if !self.no_int_leaf && self.rng.random_range(0..4u32) == 0 {
             format!("{}", self.rng.random_range(-3..7i64))
           } else {
             self.lit()
@@ -3226,10 +5031,17 @@ mod property_tests {
 
     fn body(&mut self, out_arity: u8) -> String {
       let mut stmts = Vec::new();
-      for _ in 0..self.rng.random_range(0..3u32) {
-        let ar = self.rng.random_range(1..=4u8);
+      for _ in 0..self.rng.random_range(0..4u32) {
         let name = format!("l{}", self.next_local);
         self.next_local += 1;
+        if self.rng.random_range(0..3u32) == 0 {
+          let c = self.cond(2);
+          let hint = if self.rng.random_range(0..2u32) == 0 { ": bool" } else { "" };
+          stmts.push(format!("{name}{hint} = {c}"));
+          self.bvars.push(name);
+          continue;
+        }
+        let ar = self.rng.random_range(1..=4u8);
         let e = self.expr(ar, 2);
         stmts.push(format!("{name} = {e}"));
         self.vars.push((name, ar));
@@ -3241,7 +5053,12 @@ mod property_tests {
 
   #[test]
   fn differential_fuzz() {
-    for seed in 0..120u64 {
+    let n_seeds: u64 = std::env::var("GEOSCRIPT_FUZZ_SEEDS")
+      .ok()
+      .and_then(|s| s.parse().ok())
+      .unwrap_or(120);
+    let mut skipped = 0u64;
+    for seed in 0..n_seeds {
       // Every third seed fuzzes the generator entry (`texture(w, h, |uv| …)`, no texel
       // param) instead of the map entry.
       let generator_shape = seed % 3 == 0;
@@ -3256,27 +5073,40 @@ mod property_tests {
       let mut g = Gen {
         rng: Pcg32::new(0xcafef00dd15ea5e5 ^ seed, 0xa02bdbf7bb3c0a7 ^ (seed << 17)),
         vars,
+        bvars: Vec::new(),
         next_local: 0,
+        no_int_leaf: false,
       };
       let out_arity = g.rng.random_range(1..=4u8);
       let body = g.body(out_arity);
+      // Every body is invoked twice from one binding — the second invocation takes the
+      // plan-cache path, which is where inlined-closure frames and uniform re-evaluation
+      // live and where hand-written fixtures had no coverage.
       let entry = if generator_shape {
-        format!("out = texture(12, 9, |uv| {{\n  {body}\n}})")
+        format!(
+          "gen = |uv| {{\n  {body}\n}}\nout = texture(12, 9, gen)\nout2 = texture(9, 12, gen)"
+        )
       } else {
         format!(
-          "t = texture(12, 9, |uv| fbm(pos=uv * 3.) * 2.)\nout = t -> |v, uv| {{\n  {body}\n}}"
+          "t = texture(12, 9, |uv| fbm(pos=uv * 3.) * 2.)\nt2 = texture(12, 9, |uv| uv.x * 1.7 - \
+           0.3)\nf = |v, uv| {{\n  {body}\n}}\nout = t -> f\nout2 = t2 -> f"
         )
       };
       let src = format!(
         r#"
 cap = 1.37
 cap3 = v3(0.2, -1.1, 0.6)
+flag_t = cap > 1.
+flag_f = cap < 0.
 helper1 = |x| sigmoid(x * 2.) - 0.25
 helper2 = |a, b| a * b + abs(a)
+pick = |m: bool, a, b| if m {{ a }} else {{ b }}
+pickb = |m: bool, a: bool, b: bool| if m {{ a }} else {{ b }}
 shade1 = ramp(stops=[[0., 0.], [0.5, 0.8], [1., 1.]])
 shade3 = color_ramp(stops=[srgb(0x102030), srgb(0xf0e0d0)])
 {entry}
 out | render_texture(name="o")
+out2 | render_texture(name="o2")
 "#
       );
 
@@ -3287,8 +5117,10 @@ out | render_texture(name="o")
       let scalar_res = crate::parse_and_eval_program_with_ctx(src.clone(), &scalar_ctx, false);
       match (vec_res, scalar_res) {
         (Ok(_), Ok(_)) => {}
-        (Err(a), Err(_b)) => {
-          let _ = a;
+        // Both paths reject the program (a generator type gap, e.g. an overload that doesn't
+        // exist); counted so a generator regression can't silently hollow out the sweep.
+        (Err(_), Err(_)) => {
+          skipped += 1;
           continue;
         }
         (a, b) => panic!(
@@ -3302,11 +5134,14 @@ out | render_texture(name="o")
         vec_ctx.rendered_textures.borrow(),
         scalar_ctx.rendered_textures.borrow(),
       );
-      assert_bit_identical(
-        &Value::Texture(Rc::clone(&a[0].texture)),
-        &Value::Texture(Rc::clone(&b[0].texture)),
-      )
-      .unwrap_or_else(|e| panic!("seed {seed}: {e}\nprogram:\n{src}"));
+      assert_eq!(a.len(), b.len());
+      for (i, (x, y)) in a.iter().zip(b.iter()).enumerate() {
+        assert_bit_identical(
+          &Value::Texture(Rc::clone(&x.texture)),
+          &Value::Texture(Rc::clone(&y.texture)),
+        )
+        .unwrap_or_else(|e| panic!("seed {seed}, output {i}: {e}\nprogram:\n{src}"));
+      }
 
       let reps: Vec<_> = vec_ctx.tex_vectorize.reports.borrow().values().cloned().collect();
       assert!(
@@ -3314,5 +5149,10 @@ out | render_texture(name="o")
         "seed {seed}: generated whitelist-only body failed to vectorize: {reps:?}\nprogram:\n{src}"
       );
     }
+    assert!(
+      skipped * 10 < n_seeds,
+      "{skipped}/{n_seeds} generated programs were rejected by both paths"
+    );
   }
 }
+

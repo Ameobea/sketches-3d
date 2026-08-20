@@ -9,4 +9,6 @@ export type {
   GeneratedLight,
   GeneratedTexture,
   TextureUsage,
+  VectorizeFlags,
+  VectorizeReport,
 } from './types';

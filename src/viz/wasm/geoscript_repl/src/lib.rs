@@ -340,11 +340,14 @@ struct VectorizeReportJson {
   reason: Option<String>,
   line: u32,
   col: u32,
+  module: Option<String>,
+  plan: Option<String>,
 }
 
 /// Texel-closure vectorizer outcomes from the last run, as a JSON array of
-/// `{vectorized, reason, line, col}` — the "did this closure vectorize, and if not, why"
-/// signal (a silent bail is a ~60× per-texel cliff).
+/// `{vectorized, reason, line, col, module}` — the "did this closure vectorize, and if not,
+/// why" signal (a silent bail is a ~60× per-texel cliff). `line`/`col` are within the
+/// named module's registered source.
 #[wasm_bindgen]
 pub fn geoscript_repl_get_vectorize_reports(ctx: *const GeoscriptReplCtx) -> String {
   let ctx = unsafe { &*ctx };
@@ -356,9 +359,11 @@ pub fn geoscript_repl_get_vectorize_reports(ctx: *const GeoscriptReplCtx) -> Str
       reason: r.reason.clone(),
       line: r.loc.0,
       col: r.loc.1,
+      module: r.module.clone(),
+      plan: r.plan.clone(),
     })
     .collect();
-  entries.sort_unstable_by_key(|r| (r.line, r.col));
+  entries.sort_unstable_by_key(|r| (r.module.clone(), r.line, r.col));
   SerJson::serialize_json(&entries)
 }
 
@@ -367,6 +372,21 @@ pub fn geoscript_repl_get_vectorize_reports(ctx: *const GeoscriptReplCtx) -> Str
 pub fn geoscript_repl_set_no_vectorize(ctx: *const GeoscriptReplCtx, no_vectorize: bool) {
   let ctx = unsafe { &*ctx };
   ctx.geo_ctx.tex_vectorize.no_vectorize.set(no_vectorize);
+}
+
+/// Runs both paths and asserts bit-equality on every texel body — the env var behind this
+/// doesn't exist on wasm, so the host needs a setter to reach it at all.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_verify(ctx: *const GeoscriptReplCtx, verify: bool) {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.tex_vectorize.verify.set(verify);
+}
+
+/// Attach each vectorized body's plan listing with per-step timings to its report.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_vectorize_profile(ctx: *const GeoscriptReplCtx, profile: bool) {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.tex_vectorize.profile.set(profile);
 }
 
 /// Reset per-run state. Caches, source map, id counter, and the symbol interner
@@ -406,6 +426,8 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
   *ctx.geo_ctx.ambient_scope.borrow_mut() = None;
   ctx.geo_ctx.clear_tab_ambient_scopes();
+
+  ctx.geo_ctx.tex_vectorize.reset_per_run();
 
   ctx.geo_ctx.reset_rng_to_default();
   #[cfg(target_arch = "wasm32")]
@@ -879,7 +901,7 @@ pub fn geoscript_get_rendered_texture_pixels(
   let rt = &textures[tex_ix];
   let px = rt.texture.as_interleaved();
   if rt.extra_slices.is_empty() {
-    return px.to_vec();
+    return px;
   }
   let mut out = Vec::with_capacity(px.len() * (1 + rt.extra_slices.len()));
   out.extend_from_slice(&px);

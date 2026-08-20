@@ -144,6 +144,11 @@ export const buildInjectedValues = (tree: TreeDef, tabId?: string): GizmoValuesB
   return out;
 };
 
+/** Lines `buildModuleSource` prepends before the node's own text — subtract from
+ *  module-relative line numbers (runtime errors, vectorize reports) to land in the editor. */
+export const moduleSourceLineOffset = (node: NodeDef, tree: TreeDef): number =>
+  node.children.filter(cid => tree.nodes[cid] && !tree.nodes[cid].disabled).length;
+
 const buildModuleSource = (node: NodeDef, tree: TreeDef, tabId?: string): string => {
   const sideEffectImports: string[] = [];
   for (const cid of node.children) {

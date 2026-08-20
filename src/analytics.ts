@@ -64,10 +64,6 @@ const logEvent = (project: string, category: string, subcategory: string, payloa
   if (typeof window === 'undefined') {
     return;
   }
-  if (window.location.href.includes('localhost')) {
-    console.debug('[analytics]', project, category, subcategory, payload);
-    return;
-  }
 
   let queue = queues.get(project);
   if (!queue) {

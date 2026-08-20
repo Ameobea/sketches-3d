@@ -3,6 +3,7 @@
   import type { EditorView, KeyBinding } from '@codemirror/view';
 
   import { buildEditor } from 'src/geoscript/editor';
+  import type { VectorizeMarker } from 'src/geoscript/vectorizeMarkers';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { logGeotoyEvent } from 'src/analytics';
   import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
@@ -17,6 +18,7 @@
     onCenterView,
     armedHandleId,
     readouts,
+    vectorizeMarkers,
   }: {
     treeState: TreeState;
     persistence: GeotoyPersistence;
@@ -31,6 +33,8 @@
     armedHandleId: string | null;
     /** Inline gizmo readout values, keyed by handle id. */
     readouts: Map<string, GizmoReadout>;
+    /** Vectorizer fallbacks in the node being edited, in editor line space. */
+    vectorizeMarkers: VectorizeMarker[];
   } = $props();
 
   const getActiveSource = (): string => {
@@ -60,12 +64,16 @@
   let applyGizmoExtensions: ((hooks?: GizmoEditorHooks) => void) | null = null;
   let dispatchArmed = $state<((handleId: string | null) => void) | null>(null);
   let dispatchValues = $state<((values: Map<string, GizmoReadout>) => void) | null>(null);
+  let dispatchMarkers = $state<((markers: VectorizeMarker[]) => void) | null>(null);
 
   $effect(() => {
     dispatchArmed?.(armedHandleId);
   });
   $effect(() => {
     dispatchValues?.(readouts);
+  });
+  $effect(() => {
+    dispatchMarkers?.(vectorizeMarkers);
   });
 
   const createEditor = (container: HTMLDivElement) => {
@@ -121,6 +129,13 @@
       editor.setAnalysisExtensions(buildAnalysisExtensions(() => analysisPrelude, getAmbientSource));
     });
 
+    import('src/geoscript/vectorizeMarkers').then(
+      ({ buildVectorizeMarkerExtensions, pushVectorizeMarkers }) => {
+        editor.setVectorizeExtensions(buildVectorizeMarkerExtensions());
+        dispatchMarkers = m => editorView && pushVectorizeMarkers(editorView, m);
+      }
+    );
+
     import('src/geoscript/gizmoExtensions').then(
       ({ buildGizmoExtensions, pushGizmoArmed, pushGizmoValues }) => {
         applyGizmoExtensions = hooks => editor.setGizmoExtensions(hooks ? buildGizmoExtensions(hooks) : []);
@@ -165,6 +180,18 @@
 
   /** Viewport mode → Ctrl-Z routes to the tree undo stack. */
   export const blur = () => editorView?.contentDOM.blur();
+
+  /** Cursor to a 1-based editor-space location (after the doc swap for a node change). */
+  export const revealLoc = (line: number, col: number) => {
+    const view = editorView;
+    if (!view) return;
+    const doc = view.state.doc;
+    if (line < 1 || line > doc.lines) return;
+    const l = doc.line(line);
+    const pos = Math.min(l.from + Math.max(col - 1, 0), l.to);
+    view.dispatch({ selection: { anchor: pos }, scrollIntoView: true });
+    view.focus();
+  };
 
   // Switching tabs doesn't recreate the editor, so the extensions have to follow the active
   // mode's hooks — otherwise a mesh tab's gizmo chips stay live over a texture tab's nodes.

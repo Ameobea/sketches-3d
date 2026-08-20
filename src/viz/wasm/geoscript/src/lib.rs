@@ -3815,7 +3815,11 @@ impl EvalCtx {
     }
   }
 
-  fn eval_static_field_access(&self, lhs: &Value, field: &str) -> Result<Value, ErrorStack> {
+  pub(crate) fn eval_static_field_access(
+    &self,
+    lhs: &Value,
+    field: &str,
+  ) -> Result<Value, ErrorStack> {
     fn swizzle(
       field: &str,
       comp: impl Fn(char) -> Result<f32, ErrorStack>,

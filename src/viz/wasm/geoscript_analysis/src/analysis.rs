@@ -798,19 +798,18 @@ impl<'a> AnalysisWalker<'a> {
       }
       Expr::Ident { name, loc, .. } => {
         self.reference_symbol(*name, *loc);
-        // Treat `lhs | name` as `name(lhs)` for builtins, PAFs, or typed closure vars.
-        if self.builtin_syms.contains(name) {
-          let (return_ty, _) =
-            self.resolve_builtin_call_with_diagnostics(*name, &[lhs_ty], &[], *loc);
-          return return_ty;
-        }
-        let var_ty = self.lookup_type(*name).cloned();
-        match var_ty {
+        // Treat `lhs | name` as `name(lhs)` for PAFs, typed closure vars, or unshadowed builtins.
+        match self.lookup_type(*name).cloned() {
           Some(AbstractType::PartiallyApplied(paf)) => {
             self.resolve_paf_call_with_diagnostics(&paf, &[lhs_ty], &[], *loc)
           }
           Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
           Some(other) => infer_bitor_op_result_type(&lhs_ty, &other),
+          None if self.builtin_syms.contains(name) => {
+            self
+              .resolve_builtin_call_with_diagnostics(*name, &[lhs_ty], &[], *loc)
+              .0
+          }
           None => AbstractType::Unknown,
         }
       }

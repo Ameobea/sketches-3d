@@ -220,6 +220,28 @@ export interface RunGeoscriptOptions {
    * resolve within that tab. Defaults to the unqualified `_root`.
    */
   rootModuleName?: string;
+  vectorize?: VectorizeFlags;
+}
+
+/** Per-texel-body outcome of the texture auto-vectorizer (`tex_vectorize.rs`); one entry
+ *  per body that ran this run. `line`/`col` are within `module`'s registered source. */
+export interface VectorizeReport {
+  vectorized: boolean;
+  reason: string | null;
+  line: number;
+  col: number;
+  module: string | null;
+  /** Plan listing with per-step timings; only when `VectorizeFlags.profile` was on. */
+  plan: string | null;
+}
+
+export interface VectorizeFlags {
+  /** Kill switch: every texel body runs the per-texel interpreter (A/B timing). */
+  disabled: boolean;
+  /** Run both paths and assert bit-equality per body; slow, debugging only. */
+  verify: boolean;
+  /** Render each vectorized body's plan + per-step wall time into its report. */
+  profile: boolean;
 }
 
 export interface GeoscriptRunResult {
@@ -230,4 +252,6 @@ export interface GeoscriptRunResult {
   gizmos: RenderedGizmo[];
   /** Input controls declared this run, for the auto-generated control panel (empty on error). */
   controls: RenderedControl[];
+  /** Empty on error. Bodies replayed from the const-eval cache don't run, so don't report. */
+  vectorizeReports: VectorizeReport[];
 }

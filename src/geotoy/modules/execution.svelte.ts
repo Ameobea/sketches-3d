@@ -24,6 +24,7 @@ export interface RunInput {
   gizmoValues: RunGeoscriptOptions['gizmoValues'];
   textureParams: RunGeoscriptOptions['textureParams'];
   rootModuleName: RunGeoscriptOptions['rootModuleName'];
+  vectorize: RunGeoscriptOptions['vectorize'];
   moduleNameToNodeId: Record<string, string>;
   /**
    * Content hash of everything the eval depends on except per-node transforms, computed
@@ -150,6 +151,13 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.run();
   }
 
+  /** Drops the cross-run const-eval cache first, so every module — and every texel body
+   *  in it — actually executes (cached modules are replayed and report nothing). */
+  runUncached = async (): Promise<RunOutcome<T> | null> => {
+    if (this.ctxPtr !== null) await this.repl.clearConstEvalCache(this.ctxPtr);
+    return this.run();
+  };
+
   /**
    * Resolves with the run's settled outcome — for a request coalesced into the
    * latest-wins queue, the trailing run's outcome. Returns null when no ctx exists yet.
@@ -235,6 +243,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
         gizmoValues: input.gizmoValues,
         textureParams: input.textureParams,
         rootModuleName: input.rootModuleName,
+        vectorize: input.vectorize,
       });
 
       if (myGen !== this.runGen) return null;

@@ -72,11 +72,14 @@ pub(crate) fn texture_zip(
       ))
     })
     .collect();
+  // Wrap/transform/filters follow the N-channel operand: under 1ch⊗Nch broadcast the
+  // 1-channel side is a mask, and its placement is not the result's.
+  let meta = if a.channels == out_ch { a } else { b };
   Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     channels: out_ch,
     mips: Default::default(),
-    ..a.clone()
+    ..meta.clone()
   })))
 }
 
@@ -88,8 +91,10 @@ fn try_take_dense(
 ) -> Result<(TextureHandle, Vec<Rc<Vec<f32>>>), Rc<TextureHandle>> {
   match Rc::try_unwrap(t) {
     Ok(mut h) if h.is_dense() => {
+      // Fresh placeholder id, not just emptied planes: a caller that forgets to re-stamp
+      // would otherwise publish mutated pixels under the id the mip/host caches key on.
       let TexKind::Planes(planes) =
-        std::mem::replace(&mut h.storage.kind, TexKind::Planes(Vec::new()))
+        std::mem::replace(&mut h.storage, TexStorage::planes(Vec::new())).kind
       else {
         unreachable!()
       };
@@ -320,11 +325,12 @@ pub(crate) fn texture_lerp(
       ))
     })
     .collect();
+  let meta = [a, b, t].into_iter().find(|x| x.channels == out_ch).unwrap();
   Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     channels: out_ch,
     mips: Default::default(),
-    ..a.clone()
+    ..meta.clone()
   })))
 }
 
@@ -352,7 +358,11 @@ pub(crate) fn texture_construct(name: &str, comps: &[&Value]) -> Result<Value, E
       }
     }
   }
-  let meta = meta.unwrap();
+  let Some(meta) = meta else {
+    return Err(ErrorStack::new(format!(
+      "`{name}` over textures requires at least one texture component"
+    )));
+  };
   let n = meta.width * meta.height;
   let planes = comps
     .iter()
@@ -805,6 +815,7 @@ pub(crate) fn premultiplied_planes(tex: &TextureHandle) -> Vec<Vec<f32>> {
 }
 
 pub(crate) fn unpremultiply_planes(planes: &mut [Vec<f32>]) {
+  debug_assert!(planes.len() >= 4);
   let (rgb, a) = planes.split_at_mut(3);
   for p in rgb {
     for (v, &a) in p.iter_mut().zip(a[0].iter()) {
@@ -908,6 +919,7 @@ pub(crate) fn height_to_normal_impl(
   Ok(Value::Texture(Rc::new(TextureHandle {
     channels: 3,
     storage: TexStorage::from_plane_vecs(planes),
+    mips: Default::default(),
     ..tex
   })))
 }
@@ -1365,6 +1377,25 @@ t | render_texture(name="rgba")
         1,
         "expected a rendered texture on run {run}"
       );
+    }
+  }
+
+  /// Under 1ch⊗Nch broadcast the 1-channel operand is a mask; wrap/transform/filters must
+  /// come from the N-channel side whichever order it was written in. Pixel-hash goldens
+  /// can't see this.
+  #[test]
+  fn broadcast_takes_metadata_from_the_n_channel_side() {
+    let src = r#"
+mask = texture(8, 8, |uv| uv.x)
+stamp = texture(8, 8, |uv| v3(uv.x, uv.y, 0.5), wrap="clamp")
+(mask * stamp) | render_texture(name="a")
+(stamp * mask) | render_texture(name="b")
+lerp(mask, mask, stamp) | render_texture(name="c")
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    for rt in ctx.rendered_textures.borrow().iter() {
+      assert_eq!(rt.texture.channels, 3, "{}", rt.name);
+      assert_eq!(rt.texture.wrap, TextureWrap::Clamp, "{}", rt.name);
     }
   }
 }

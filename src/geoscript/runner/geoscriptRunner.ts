@@ -83,8 +83,10 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     gizmoValues,
     textureParams,
     rootModuleName,
+    vectorize = { disabled: false, verify: false, profile: false },
   } = opts;
   await repl.reset(ctxPtr);
+  await repl.setVectorizeFlags(ctxPtr, vectorize);
 
   // Sent even when empty: `set_module_sources` is the only thing that clears the ctx's
   // registered sources, so skipping it would leave a previous run's modules resolvable.
@@ -111,6 +113,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
         error: `Error building ambient scope: ${err}`,
         gizmos: [],
         controls: [],
+        vectorizeReports: [],
       };
     }
   } else if (ambientSources !== undefined) {
@@ -127,6 +130,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
         error: `Error building ambient scope: ${err}`,
         gizmos: [],
         controls: [],
+        vectorizeReports: [],
       };
     }
   }
@@ -147,6 +151,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       error: errorMessage,
       gizmos: [],
       controls: [],
+      vectorizeReports: [],
     };
   }
 
@@ -163,6 +168,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       error: err,
       gizmos: [],
       controls: [],
+      vectorizeReports: [],
     };
   }
 
@@ -171,6 +177,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     runtimeMs: evalResult.durationMs,
     asyncDeps: bitmaskToAsyncDepNames(evalResult.usedDepsBitmask),
   };
+  const vectorizeReports = await repl.getVectorizeReports(ctxPtr);
   const renderedObjects: GeneratedObject[] = [];
 
   const overrideMat = getOverrideMat(materialOverride);
@@ -247,6 +254,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
           error: errorMessage,
           gizmos: [],
           controls: [],
+          vectorizeReports: [],
         };
       }
     }
@@ -404,6 +412,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     error: null,
     gizmos,
     controls,
+    vectorizeReports,
   };
 
   return result;

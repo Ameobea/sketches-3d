@@ -3066,6 +3066,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Absolute value of every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise absolute value of a Vec4",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "signum" => FnDef {
@@ -3182,6 +3195,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies the square root to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise square root of a Vec4",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "sigmoid" => FnDef {
@@ -3239,6 +3265,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies sigmoid to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise sigmoid of a Vec4",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -5196,6 +5235,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Per-channel maximum of a texture and a scalar",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise maximum of two Vec4s",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "min" => FnDef {
@@ -5342,6 +5401,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Per-channel minimum of a texture and a scalar",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Component-wise minimum of two Vec4s",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "clamp" => FnDef {
@@ -5482,6 +5561,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Clamps every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Clamps each component of a Vec4 between min and max",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -6437,6 +6543,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies sine to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the sine of each component of a Vec4",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "cos" => FnDef {
@@ -6495,6 +6614,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies cosine to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the cosine of each component",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "tan" => FnDef {
@@ -6552,6 +6684,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies tangent to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the tangent of each component of a Vec4",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -6746,6 +6891,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies arccosine to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the arccosine of each component",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "asin" => FnDef {
@@ -6804,6 +6962,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies arcsine to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the arcsine of each component",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "atan" => FnDef {
@@ -6861,6 +7032,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies arctangent to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the arctangent of each component",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -7013,7 +7197,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "base",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec3),
+            valid_types: argtype_flags!(ArgType::Vec2),
             default_value: DefaultValue::Required,
             description: ""
           },
@@ -7025,8 +7209,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Returns a Vec3 with each component raised to the power of `exponent`",
-        return_type: &[ArgType::Vec3],
+        description: "Returns a Vec2 with each component raised to the power of `exponent`",
+        return_type: &[ArgType::Vec2],
       },
       FnSignature {
         arg_defs: &[
@@ -7047,6 +7231,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Raises every channel of a texture to a power",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "base",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "exponent",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with each component raised to the power of `exponent`",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -7105,6 +7309,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies e^x to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the exponential of each component",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -7209,6 +7426,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies log base 2 to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the base-2 logarithm of each component",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "ln" => FnDef {
@@ -7312,6 +7542,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies trunc to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Truncates each component of a Vec4 to its integer part",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "fract" => FnDef {
@@ -7369,6 +7612,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies fract to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a Vec4 with the fractional part of each component",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -7428,6 +7684,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies round to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec4 to the nearest integer",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "ceil" => FnDef {
@@ -7486,6 +7755,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Applies ceil to every channel of a texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec4 up to the nearest integer",
+        return_type: &[ArgType::Vec4],
+      },
     ],
   },
   "floor" => FnDef {
@@ -7543,6 +7825,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Applies floor to every channel of a texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Rounds each component of a Vec4 down to the nearest integer",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -9078,6 +9373,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Per-texel length/magnitude of a texture's channel vector, producing a 1-channel texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "v",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the length/magnitude of a Vec4",
+        return_type: &[ArgType::Float],
+      },
     ],
   },
   "chars" => FnDef {
@@ -9189,6 +9497,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Per-texel euclidean distance between two textures' channel vectors, producing a 1-channel texture",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "`sqrt((a.x - b.x)^2 + (a.y - b.y)^2 + (a.z - b.z)^2 + (a.w - b.w)^2)`",
+        return_type: &[ArgType::Float],
+      },
     ],
   },
   "normalize" => FnDef {
@@ -9233,6 +9561,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Per-texel normalization of a texture's channel vector to length 1",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "v",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a normalized Vec4 (length 1) in the same direction as the input vector",
+        return_type: &[ArgType::Vec4],
       },
     ],
   },
@@ -9299,6 +9640,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Per-texel dot product of two textures' channel vectors, producing a 1-channel texture",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec4),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Dot product of two Vec4s: `a.x*b.x + a.y*b.y + a.z*b.z + a.w*b.w`",
+        return_type: &[ArgType::Float],
       },
     ],
   },

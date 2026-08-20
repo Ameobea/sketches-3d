@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as THREE from 'three';
-  import { onMount, untrack } from 'svelte';
+  import { onMount, untrack, tick } from 'svelte';
   import { resolve } from '$app/paths';
 
   import type { Viz } from 'src/viz';
@@ -13,6 +13,9 @@
   import RunBar from 'src/geotoy/panels/RunBar.svelte';
   import TabStrip from 'src/geotoy/panels/TabStrip.svelte';
   import RunOutput from 'src/geotoy/panels/RunOutput.svelte';
+  import type { VectorizeRow, VectorizeSummary } from 'src/geotoy/panels/RunOutput.svelte';
+  import type { VectorizeMarker } from 'src/geoscript/vectorizeMarkers';
+  import type { VectorizeReport } from 'src/geoscript/runner/runner';
   import Menubar, { type Menu } from 'src/geotoy/panels/Menubar.svelte';
   import EditorPane from 'src/geotoy/panels/EditorPane.svelte';
   import ExportModal from 'src/geotoy/panels/ExportModal.svelte';
@@ -39,6 +42,7 @@
     buildModuleNameToNodeId,
     qualifyModuleName,
     referencedTabIds,
+    moduleSourceLineOffset,
   } from 'src/geoscript/treeCodegen';
   import {
     proceduralOutputOptions,
@@ -72,7 +76,7 @@
   import { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import TexturePlaceholder from 'src/geotoy/modes/texture/TexturePlaceholder.svelte';
   import TexturePreview from 'src/geotoy/modes/texture/TexturePreview.svelte';
-  import type { Mode } from 'src/geotoy/modes/mode';
+  import type { Mode, StatusMetric } from 'src/geotoy/modes/mode';
   import { snapView, orbit, untilOrbitControls } from 'src/geotoy/modes/mesh/cameraControls';
   import { toggleAxisHelpers } from 'src/geotoy/modes/mesh/gizmos';
   import { useRecording } from 'src/geotoy/modes/mesh/recording';
@@ -132,6 +136,25 @@
     size = storedPanelSize(layoutOrientation);
     updateCanvasSize();
   };
+
+  /** Texel-vectorizer controls (view › vectorization); persisted, all off by default. The
+   *  kill switch and verify mode only exist for dev A/B work, so they're localhost-only. */
+  const vectorizeDevTools = window.location.hostname.includes('localhost');
+  let vectorizePrefs = $state<{ report: boolean; disabled: boolean; verify: boolean }>(
+    JSON.parse(localStorage.getItem('geotoyVectorize') ?? 'null') ?? {
+      report: false,
+      disabled: false,
+      verify: false,
+    }
+  );
+  $effect(() => {
+    localStorage.setItem('geotoyVectorize', JSON.stringify(vectorizePrefs));
+  });
+  const vectorizeFlags = $derived({
+    disabled: vectorizeDevTools && vectorizePrefs.disabled,
+    verify: vectorizeDevTools && vectorizePrefs.verify,
+    profile: vectorizePrefs.report,
+  });
 
   /**
    * The single live-capture point for camera state: refresh the active tab from its mode, then
@@ -349,6 +372,7 @@
     gizmos: RenderedGizmo[];
     controls: RenderedControl[];
     moduleNameToNodeId: Record<string, string>;
+    vectorizeReports: VectorizeReport[];
   } | null>(null);
   /** Gates the ghost-toggle menu item / controls panel. */
   const hasAnyGizmos = $derived((lastRun?.gizmos.length ?? 0) > 0);
@@ -369,6 +393,7 @@
 
   let editorPane = $state<{
     blur: () => void;
+    revealLoc: (line: number, col: number) => void;
   } | null>(null);
 
   onMount(() => {
@@ -470,7 +495,10 @@
     // tab's texture output, a change over there must move this hash too, or the fast path
     // would skip the re-eval and leave the dependency stale on screen. Hashing all tabs is
     // the conservative superset of the run set — at worst it costs an extra re-eval.
-    const parts: string[] = [`t:${tabs.active.id}`];
+    const parts: string[] = [
+      `t:${tabs.active.id}`,
+      `vec:${vectorizeFlags.disabled ? 1 : 0}${vectorizeFlags.verify ? 1 : 0}${vectorizeFlags.profile ? 1 : 0}`,
+    ];
     for (const tab of tabs.tabs) {
       const tree = tab.treeState.state.tree;
       parts.push(`g:${tab.id}:${tree.globalsSource}`);
@@ -659,6 +687,7 @@
         textureParams,
         moduleNameToNodeId,
         rootModuleName: qualifyModuleName(ROOT_NODE_NAME, tabId),
+        vectorize: vectorizeFlags,
         tree,
         tabId,
         docEpoch: runDocEpoch,
@@ -688,7 +717,13 @@
           tabs.setTextureOutputs(runTabId, outputsByTab.get(runTabId) ?? []);
         }
       }
-      lastRun = { tree, gizmos: result.gizmos, controls: result.controls, moduleNameToNodeId };
+      lastRun = {
+        tree,
+        gizmos: result.gizmos,
+        controls: result.controls,
+        moduleNameToNodeId,
+        vectorizeReports: result.vectorizeReports,
+      };
       mode.consume(result, tree, moduleNameToNodeId);
     },
     onCancelCleanup: () => {
@@ -786,7 +821,60 @@
   const showTabStrip = $derived(innerWidth >= 768);
 
   const runErr = $derived(execution.err ?? meshScene.materialRuntime.err);
-  const runMetrics = $derived(execution.runStats ? mode.statusMetrics(execution.runStats) : null);
+  const vectorizeRows = $derived.by((): VectorizeRow[] => {
+    if (!vectorizePrefs.report || !lastRun) return [];
+    const { tree, moduleNameToNodeId } = lastRun;
+    return lastRun.vectorizeReports.map(r => {
+      const nodeId = r.module ? (moduleNameToNodeId[r.module] ?? null) : null;
+      const node = nodeId ? tree.nodes[nodeId] : undefined;
+      return {
+        vectorized: r.vectorized,
+        aborted: !r.vectorized && (r.reason?.startsWith('aborted') ?? false),
+        where: node?.name ?? r.module ?? '?',
+        nodeId: node ? nodeId : null,
+        line: node ? r.line - moduleSourceLineOffset(node, tree) : r.line,
+        col: r.col,
+        reason: r.reason,
+        plan: r.plan,
+      };
+    });
+  });
+  const vectorizeSummary = $derived.by((): VectorizeSummary | null =>
+    vectorizePrefs.report
+      ? {
+          rows: vectorizeRows,
+          disabled: vectorizeFlags.disabled,
+          rerunUncached: () => void execution.runUncached(),
+          reveal: async row => {
+            if (!row.nodeId) return;
+            treeState.setSelected(row.nodeId);
+            // The editor swaps its doc in an effect; place the cursor once that has run.
+            await tick();
+            editorPane?.revealLoc(row.line, row.col);
+          },
+        }
+      : null
+  );
+  const editorVectorizeMarkers = $derived.by((): VectorizeMarker[] => {
+    const sel = treeState.state.selectedId;
+    return vectorizeRows
+      .filter(r => !r.vectorized && r.nodeId === sel && r.reason !== null)
+      .map(r => ({ line: r.line, col: r.col, reason: r.reason! }));
+  });
+  const runMetrics = $derived.by((): StatusMetric[] | null => {
+    if (!execution.runStats) return null;
+    const metrics = mode.statusMetrics(execution.runStats);
+    const scalar = vectorizeRows.filter(r => !r.vectorized).length;
+    if (scalar === 0) return metrics;
+    return [
+      ...metrics,
+      {
+        label: 'Scalar texel bodies',
+        value: String(scalar),
+        short: `${scalar} scalar ${scalar === 1 ? 'body' : 'bodies'}`,
+      },
+    ];
+  });
   /** An error force-opens the output without overwriting the user's preference; the
    *  disclosure can still collapse it, so the control is never dead. */
   const runOutputVisible = $derived(runOutputExpanded || runOutputForced);
@@ -1042,6 +1130,38 @@
             { label: 'ui layout', state: layoutOrientation, action: toggleLayoutOrientation },
           ],
         },
+        {
+          header: 'vectorization',
+          items: [
+            {
+              label: 'report',
+              state: vectorizePrefs.report ? 'on' : 'off',
+              action: () => {
+                vectorizePrefs.report = !vectorizePrefs.report;
+                if (vectorizePrefs.report) {
+                  runOutputExpanded = true;
+                  // Plans + timings only exist for bodies that actually execute under
+                  // profiling — a cached replay would show nothing.
+                  void execution.runUncached();
+                }
+              },
+            },
+            ...(vectorizeDevTools
+              ? [
+                  {
+                    label: 'vectorize',
+                    state: vectorizePrefs.disabled ? 'off' : 'on',
+                    action: () => (vectorizePrefs.disabled = !vectorizePrefs.disabled),
+                  },
+                  {
+                    label: 'verify',
+                    state: vectorizePrefs.verify ? 'on' : 'off',
+                    action: () => (vectorizePrefs.verify = !vectorizePrefs.verify),
+                  },
+                ]
+              : []),
+          ],
+        },
       ],
     },
     { title: 'scene', sections: mode.sceneMenu(sceneMenuActions) },
@@ -1257,6 +1377,7 @@
           onCenterView={() => mode.focus(null)}
           armedHandleId={gizmoController.armedRef?.kind === 'handle' ? gizmoController.armedRef.name : null}
           readouts={gizmoController.readouts}
+          vectorizeMarkers={editorVectorizeMarkers}
         />
       </div>
     </div>
@@ -1282,7 +1403,7 @@
       class="run-output-anchor"
       style={`bottom: ${BOTTOM_BAR_HEIGHT}px; width: ${layout.runOutputWidth}px;`}
     >
-      <RunOutput err={runErr} metrics={runMetrics} />
+      <RunOutput err={runErr} metrics={runMetrics} vectorize={vectorizeSummary} />
     </div>
   {/if}
   <div class="bottom-bar" style={`height: ${BOTTOM_BAR_HEIGHT}px;`}>

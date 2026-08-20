@@ -12,7 +12,7 @@
 use std::fmt::Write as _;
 use std::path::PathBuf;
 
-use crate::{parse_and_eval_program, TextureHandle};
+use crate::{parse_and_eval_program_with_ctx, EvalCtx, TextureHandle};
 
 fn record(out: &mut String, fixture: &str, name: &str, slice: usize, t: &TextureHandle) {
   let px = t.as_interleaved();
@@ -54,7 +54,13 @@ fn texture_golden_corpus() {
   for path in &fixtures {
     let fixture = path.file_stem().unwrap().to_str().unwrap();
     let src = std::fs::read_to_string(path).unwrap();
-    let ctx = parse_and_eval_program(src)
+    // `verify` runs the scalar loop alongside every vectorized texel body and asserts
+    // bit-equality, so the corpus proves scalar-vs-vectorized parity on its own rather
+    // than just pinning whatever the vectorized path happened to produce.
+    let ctx = EvalCtx::default();
+    ctx.tex_vectorize.verify.set(true);
+    ctx.tex_vectorize.no_vectorize.set(false);
+    parse_and_eval_program_with_ctx(src, &ctx, false)
       .unwrap_or_else(|err| panic!("fixture {fixture} failed to eval:\n{err:?}"));
     let rendered = ctx.rendered_textures.into_inner();
     assert!(!rendered.is_empty(), "fixture {fixture} rendered no textures");

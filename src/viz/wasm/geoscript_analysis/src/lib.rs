@@ -406,6 +406,22 @@ box(1, 2, 3)
   }
 
   #[test]
+  fn test_pipe_into_ident_shadowing_builtin() {
+    let result = analyze(
+      r#"
+ramp = color_ramp([srgb(0x00ff00), srgb(0xff00ff)])
+tex = texture(10, 10, || randf())
+tex | ramp | render_texture(name='x')
+"#,
+    );
+    assert!(
+      result.diagnostics.is_empty(),
+      "Expected no diagnostics piping into a local that shadows a builtin, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_recursive_closure_binding_in_scope() {
     // A closure's own name is visible inside its body for recursive calls.
     let result = analyze("fact = |n| if n <= 0 { 1 } else { n * fact(n - 1) }");
