@@ -143,62 +143,57 @@ fn channel_layout(stamp_ch: usize, base_ch: usize) -> Result<(usize, bool), Erro
 /// Mip levels 1.. via successive box-halving. 4-channel textures are averaged
 /// premultiplied so RGB doesn't bleed through transparent texels.
 fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
-  let src_ptr = tex.base_ptr();
+  let src_id = tex.storage_id();
   if let Some(chain) = tex.mips.0.borrow().as_ref() {
-    if chain.src == src_ptr {
+    if chain.src == src_id {
       return Rc::clone(&chain.levels);
     }
   }
 
-  let dense = tex.as_dense();
+  let base = tex.as_planes();
   let ch = tex.channels;
   let premult = ch == 4;
   let mut levels: Vec<MipLevel> = Vec::new();
   let (mut pw, mut ph) = (tex.width, tex.height);
   while pw > 1 || ph > 1 {
     let (nw, nh) = ((pw / 2).max(1), (ph / 2).max(1));
-    let src: &[f32] = match levels.last() {
-      Some(l) => &l.pixels,
-      None => &dense,
+    let src: Vec<&[f32]> = match levels.last() {
+      Some(l) => l.planes.iter().map(|p| p.as_slice()).collect(),
+      None => base.iter().map(|p| p.as_slice()).collect(),
     };
-    let mut px = vec![0f32; nw * nh * ch];
+    let mut planes = vec![vec![0f32; nw * nh]; ch];
     for y in 0..nh {
       let (y0, y1) = ((y * 2).min(ph - 1), (y * 2 + 1).min(ph - 1));
       for x in 0..nw {
         let (x0, x1) = ((x * 2).min(pw - 1), (x * 2 + 1).min(pw - 1));
-        let taps = [
-          (y0 * pw + x0) * ch,
-          (y0 * pw + x1) * ch,
-          (y1 * pw + x0) * ch,
-          (y1 * pw + x1) * ch,
-        ];
-        let out = &mut px[(y * nw + x) * ch..(y * nw + x) * ch + ch];
+        let taps = [y0 * pw + x0, y0 * pw + x1, y1 * pw + x0, y1 * pw + x1];
+        let o = y * nw + x;
         if premult {
           let mut acc = [0f32; 4];
           for t in taps {
-            let a = src[t + 3];
+            let a = src[3][t];
             for c in 0..3 {
-              acc[c] += src[t + c] * a;
+              acc[c] += src[c][t] * a;
             }
             acc[3] += a;
           }
           let avg_a = acc[3] * 0.25;
           if avg_a > 1e-8 {
             for c in 0..3 {
-              out[c] = acc[c] * 0.25 / avg_a;
+              planes[c][o] = acc[c] * 0.25 / avg_a;
             }
           }
-          out[3] = avg_a;
+          planes[3][o] = avg_a;
         } else {
           for c in 0..ch {
-            out[c] = (src[taps[0] + c] + src[taps[1] + c] + src[taps[2] + c] + src[taps[3] + c])
-              * 0.25;
+            planes[c][o] =
+              (src[c][taps[0]] + src[c][taps[1]] + src[c][taps[2]] + src[c][taps[3]]) * 0.25;
           }
         }
       }
     }
     levels.push(MipLevel {
-      pixels: px,
+      planes,
       width: nw,
       height: nh,
     });
@@ -207,14 +202,14 @@ fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
 
   let levels = Rc::new(levels);
   *tex.mips.0.borrow_mut() = Some(crate::MipChain {
-    src: src_ptr,
+    src: src_id,
     levels: Rc::clone(&levels),
   });
   levels
 }
 
 struct LevelView<'a> {
-  px: &'a [f32],
+  planes: Vec<&'a [f32]>,
   w: usize,
   h: usize,
 }
@@ -238,11 +233,11 @@ fn sample_level(
     if tx < 0 || ty < 0 || tx >= view.w as i64 || ty >= view.h as i64 {
       return None;
     }
-    let base = (ty as usize * view.w + tx as usize) * ch;
-    let a = if has_alpha { view.px[base + ch - 1] } else { 1. };
+    let base = ty as usize * view.w + tx as usize;
+    let a = if has_alpha { view.planes[ch - 1][base] } else { 1. };
     let mut vals = [0f32; 3];
     for (c, val) in vals.iter_mut().enumerate().take(val_ch) {
-      *val = view.px[base + c];
+      *val = view.planes[c][base];
     }
     Some((vals, a))
   };
@@ -285,10 +280,10 @@ fn sample_level(
   }
 }
 
-/// Blits `stamp` (placed by its transform) into a mutable pixel buffer described by the
+/// Blits `stamp` (placed by its transform) into mutable base planes described by the
 /// base's dimensions/wrap. A degenerate (zero-scale) placement is a no-op.
 pub(crate) fn blit_into(
-  base_px: &mut [f32],
+  base_planes: &mut [Vec<f32>],
   bw: usize,
   bh: usize,
   bch: usize,
@@ -327,29 +322,25 @@ pub(crate) fn blit_into(
   };
 
   // (level view, secondary view for trilinear, lerp factor)
-  let stamp_px = stamp.as_dense();
-  let base_view = LevelView {
-    px: &stamp_px,
+  let stamp_planes = stamp.as_planes();
+  let stamp_view = || LevelView {
+    planes: stamp_planes.iter().map(|p| p.as_slice()).collect(),
     w: sw,
     h: sh,
   };
   let (view0, view1, level_frac) = match &mips {
-    None => (base_view, None, 0.),
+    None => (stamp_view(), None, 0.),
     Some((level_f, levels)) => {
       let l0 = (level_f.floor() as usize).min(levels.len());
       let l1 = (l0 + 1).min(levels.len());
       let frac = if l0 == l1 { 0. } else { level_f - l0 as f32 };
       let view_of = |l: usize| -> LevelView {
         if l == 0 {
-          LevelView {
-            px: &stamp_px,
-            w: sw,
-            h: sh,
-          }
+          stamp_view()
         } else {
           let ml = &levels[l - 1];
           LevelView {
-            px: &ml.pixels,
+            planes: ml.planes.iter().map(|p| p.as_slice()).collect(),
             w: ml.width,
             h: ml.height,
           }
@@ -440,26 +431,28 @@ pub(crate) fn blit_into(
       let sa = sa.min(1.);
 
       let wx = (x.rem_euclid(bw as i64)) as usize;
-      let bpx = &mut base_px[(wy * bw + wx) * bch..(wy * bw + wx) * bch + bch];
+      let o = wy * bw + wx;
       let bvc = if bch == 4 { 3 } else { bch };
       if bch == 4 && blend == BlendMode::Over {
         // Proper straight-alpha over for an RGBA base
-        let ba = bpx[3];
+        let ba = base_planes[3][o];
         let out_a = sa + ba * (1. - sa);
         if out_a > 1e-8 {
           for c in 0..3 {
             let sv = vals[if val_ch == 1 { 0 } else { c }];
-            bpx[c] = (sv * sa + bpx[c] * ba * (1. - sa)) / out_a;
+            let b = base_planes[c][o];
+            base_planes[c][o] = (sv * sa + b * ba * (1. - sa)) / out_a;
           }
         }
-        bpx[3] = out_a;
+        base_planes[3][o] = out_a;
       } else {
         for c in 0..bvc {
           let sv = vals[if val_ch == 1 { 0 } else { c }];
-          bpx[c] += (blend.apply(bpx[c], sv) - bpx[c]) * sa;
+          let b = base_planes[c][o];
+          base_planes[c][o] = b + (blend.apply(b, sv) - b) * sa;
         }
         if bch == 4 {
-          bpx[3] += sa * (1. - bpx[3]);
+          base_planes[3][o] += sa * (1. - base_planes[3][o]);
         }
       }
     }
@@ -493,9 +486,9 @@ pub(crate) fn blit_impl(
   let base = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
   let (blend, filter) = resolve_blend_and_filter(arg_refs, args, kwargs, 2)?;
 
-  let mut px = base.as_dense().to_vec();
+  let mut planes: Vec<Vec<f32>> = base.as_planes().iter().map(|p| p.to_vec()).collect();
   blit_into(
-    &mut px,
+    &mut planes,
     base.width,
     base.height,
     base.channels,
@@ -505,7 +498,7 @@ pub(crate) fn blit_impl(
     filter,
   )?;
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: crate::TexStorage::Dense(Rc::new(px)),
+    storage: crate::TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
     ..(**base).clone()
   })))
@@ -529,7 +522,7 @@ pub(crate) fn scatter_impl(
     .unwrap();
   let (blend, filter) = resolve_blend_and_filter(arg_refs, args, kwargs, blend_ix)?;
   let (bw, bh, bch, bwrap) = (base.width, base.height, base.channels, base.wrap);
-  let mut px = base.as_dense().to_vec();
+  let mut planes: Vec<Vec<f32>> = base.as_planes().iter().map(|p| p.to_vec()).collect();
 
   let mut blit_stamp = |val: &Value, ix: usize| -> Result<(), ErrorStack> {
     let stamp = val.as_texture().ok_or_else(|| {
@@ -537,7 +530,7 @@ pub(crate) fn scatter_impl(
         "`scatter` expected a texture for instance {ix}, found: {val:?}"
       ))
     })?;
-    blit_into(&mut px, bw, bh, bch, bwrap, stamp, blend, filter)
+    blit_into(&mut planes, bw, bh, bch, bwrap, stamp, blend, filter)
       .map_err(|err| err.wrap(format!("Error blitting `scatter` instance {ix}")))
   };
 
@@ -571,7 +564,7 @@ pub(crate) fn scatter_impl(
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: crate::TexStorage::Dense(Rc::new(px)),
+    storage: crate::TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
     ..(**base).clone()
   })))
@@ -607,7 +600,7 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x < 2 && y < 2 { 1. } else { 0. };
-        assert_eq!(quarter.as_dense()[y * 4 + x], expected, "quarter ({x}, {y})");
+        assert_eq!(quarter.as_interleaved()[y * 4 + x], expected, "quarter ({x}, {y})");
       }
     }
 
@@ -620,7 +613,7 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
         } else {
           0.
         };
-        assert_eq!(wrapped.as_dense()[y * 4 + x], expected, "wrapped ({x}, {y})");
+        assert_eq!(wrapped.as_interleaved()[y * 4 + x], expected, "wrapped ({x}, {y})");
       }
     }
 
@@ -629,7 +622,7 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x == 0 && y == 0 { 1. } else { 0. };
-        assert_eq!(clamped.as_dense()[y * 4 + x], expected, "clamped ({x}, {y})");
+        assert_eq!(clamped.as_interleaved()[y * 4 + x], expected, "clamped ({x}, {y})");
       }
     }
   }
@@ -651,14 +644,14 @@ maxed = blit(texture(2, 2, |uv| 0.1) | cover, base1, blend="max", filter="neares
 
     let over = get_tex(&ctx, "over");
     assert_eq!(over.channels, 3);
-    for px in over.as_dense().iter() {
+    for px in over.as_interleaved().iter() {
       assert!((px - 0.6).abs() < 1e-6, "over: expected 0.6, got {px}");
     }
 
-    for px in get_tex(&ctx, "added").as_dense().iter() {
+    for px in get_tex(&ctx, "added").as_interleaved().iter() {
       assert!((px - 0.7).abs() < 1e-6, "add: expected 0.7, got {px}");
     }
-    for px in get_tex(&ctx, "maxed").as_dense().iter() {
+    for px in get_tex(&ctx, "maxed").as_interleaved().iter() {
       assert!((px - 0.3).abs() < 1e-6, "max: expected 0.3, got {px}");
     }
   }
@@ -678,13 +671,13 @@ full = blit(texture(2, 2, |uv| v2(0.2, 1.)) | trans_global(0.5, 0.5), base, filt
     )
     .unwrap();
 
-    for px in get_tex(&ctx, "half").as_dense().iter() {
+    for px in get_tex(&ctx, "half").as_interleaved().iter() {
       assert!((px - 0.5).abs() < 1e-6, "alpha 0.5: expected 0.5, got {px}");
     }
-    for px in get_tex(&ctx, "zero").as_dense().iter() {
+    for px in get_tex(&ctx, "zero").as_interleaved().iter() {
       assert!((px - 0.8).abs() < 1e-6, "alpha 0: base must survive, got {px}");
     }
-    for px in get_tex(&ctx, "full").as_dense().iter() {
+    for px in get_tex(&ctx, "full").as_interleaved().iter() {
       assert!((px - 0.2).abs() < 1e-6, "alpha 1: stamp must replace, got {px}");
     }
   }
@@ -703,9 +696,9 @@ out = blit(checker | scale(0.5) | trans_global(0.25, 0.25), base)
     let out = get_tex(&ctx, "out");
     // 16 checker texels minified into one base pixel: the mip chain averages to ~0.5;
     // unfiltered sampling would alias to 0 or 1
-    let px = out.as_dense()[0];
+    let px = out.as_interleaved()[0];
     assert!((px - 0.5).abs() < 0.1, "expected ~0.5 from mips, got {px}");
-    assert_eq!(out.as_dense()[3], 0., "pixel outside the footprint");
+    assert_eq!(out.as_interleaved()[3], 0., "pixel outside the footprint");
   }
 
   #[test]
@@ -723,12 +716,12 @@ turned = blit(grad | rot(pi / 2.) | trans_global(0.5, 0.5), base_v, filter="near
 
     // 180°: horizontal order swaps
     let flipped = get_tex(&ctx, "flipped");
-    assert_eq!(&flipped.as_dense()[..], &[0.75, 0.25]);
+    assert_eq!(&flipped.as_interleaved()[..], &[0.75, 0.25]);
 
     // +90° CCW in UV coords (v-down storage): +local-x maps to +v, so the right texel
     // lands in the bottom row
     let turned = get_tex(&ctx, "turned");
-    assert_eq!(&turned.as_dense()[..], &[0.25, 0.75]);
+    assert_eq!(&turned.as_interleaved()[..], &[0.25, 0.75]);
   }
 
   #[test]
@@ -748,13 +741,13 @@ from_seq = scatter([dot | scale(0.25) | trans_global(0.875, 0.875)], base, blend
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x % 2 == 0 && y % 2 == 0 { 1. } else { 0. };
-        assert_eq!(scattered.as_dense()[y * 4 + x], expected, "scattered ({x}, {y})");
+        assert_eq!(scattered.as_interleaved()[y * 4 + x], expected, "scattered ({x}, {y})");
       }
     }
 
     let from_seq = get_tex(&ctx, "from_seq");
-    assert_eq!(from_seq.as_dense().iter().sum::<f32>(), 1.);
-    assert_eq!(from_seq.as_dense()[3 * 4 + 3], 1.);
+    assert_eq!(from_seq.as_interleaved().iter().sum::<f32>(), 1.);
+    assert_eq!(from_seq.as_interleaved()[3 * 4 + 3], 1.);
   }
 }
 
@@ -780,7 +773,7 @@ mod cache_and_alpha_tests {
     assert!(Rc::ptr_eq(&a, &get_or_build_mips(&placed)));
 
     let repixeled = TextureHandle {
-      storage: crate::TexStorage::Dense(Rc::new(vec![0.5; 8 * 8])),
+      storage: crate::TexStorage::planes(vec![Rc::new(vec![0.5; 8 * 8])]),
       ..(*t).clone()
     };
     assert!(!Rc::ptr_eq(&a, &get_or_build_mips(&repixeled)));
@@ -801,7 +794,7 @@ b = t | blur(2.)
       panic!("expected texture");
     };
     // Pixel just inside the opaque half (x=9, mid row): green must not bleed through.
-    let px = &b.as_dense()[(8 * 16 + 9) * 4..(8 * 16 + 9) * 4 + 4];
+    let px = &b.as_interleaved()[(8 * 16 + 9) * 4..(8 * 16 + 9) * 4 + 4];
     assert!(px[1] < 0.01, "green bled into opaque side: {px:?}");
     assert!(px[2] > 0.9, "blue should stay saturated: {px:?}");
     assert!(px[3] > 0.4 && px[3] < 1.01, "alpha should blur normally: {px:?}");

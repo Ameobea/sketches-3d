@@ -839,14 +839,14 @@ pub fn geoscript_get_rendered_texture_pixels(
   let ctx = unsafe { &*ctx };
   let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
   let rt = &textures[tex_ix];
-  let px = rt.texture.as_dense();
+  let px = rt.texture.as_interleaved();
   if rt.extra_slices.is_empty() {
     return px.to_vec();
   }
   let mut out = Vec::with_capacity(px.len() * (1 + rt.extra_slices.len()));
   out.extend_from_slice(&px);
   for slice in &rt.extra_slices {
-    out.extend_from_slice(&slice.as_dense());
+    out.extend_from_slice(&slice.as_interleaved());
   }
   out
 }
@@ -867,7 +867,7 @@ pub fn geoscript_get_rendered_texture_pixels_rgba(
   let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
   for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
     geoscript::texture_encode::expand_rgba_f32(
-      &slice.as_dense(),
+      &slice.as_interleaved(),
       tex.channels,
       &mut out[i * layer_len..(i + 1) * layer_len],
     );
@@ -896,7 +896,7 @@ pub fn geoscript_encode_rendered_texture_pixels(
   };
   let mut out = Vec::with_capacity(tex.width * tex.height * (1 + rt.extra_slices.len()) * bpp);
   for slice in std::iter::once(tex).chain(rt.extra_slices.iter()) {
-    geoscript::texture_encode::encode_unorm8(&slice.as_dense(), tex.channels, format, &mut out);
+    geoscript::texture_encode::encode_unorm8(&slice.as_interleaved(), tex.channels, format, &mut out);
   }
   out
 }
@@ -1521,7 +1521,7 @@ mod tests {
 
   /// Pixel-buffer Rc addresses of every rendered texture slice after evaling `src` fresh
   /// on a warm ctx (const-eval cache persists across the reset, like real reruns).
-  fn eval_rendered_pixel_ptrs(p: *mut GeoscriptReplCtx, src: &str) -> Vec<usize> {
+  fn eval_rendered_pixel_ptrs(p: *mut GeoscriptReplCtx, src: &str) -> Vec<u64> {
     geoscript_repl_reset(p);
     geoscript_repl_parse_program(p, src.to_owned(), None);
     geoscript_repl_eval(p, None);
@@ -1536,7 +1536,7 @@ mod tests {
       .flat_map(|rt| {
         std::iter::once(&rt.texture)
           .chain(rt.extra_slices.iter())
-          .map(|t| t.base_ptr())
+          .map(|t| t.storage_id())
       })
       .collect::<Vec<_>>();
     assert!(!out.is_empty());
@@ -1673,7 +1673,7 @@ mod tests {
       let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
       (
         Rc::as_ptr(&textures[0].texture) as usize,
-        textures[0].texture.as_dense()[0],
+        textures[0].texture.as_interleaved()[0],
       )
     };
 
@@ -1725,7 +1725,7 @@ mod tests {
       let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
       (
         Rc::as_ptr(&textures[0].texture) as usize,
-        textures[0].texture.as_dense()[0],
+        textures[0].texture.as_interleaved()[0],
         control_json,
       )
     };
@@ -1754,7 +1754,7 @@ mod tests {
     let module_src = "texture(2, 2, |uv| uv.x) | render_texture(name=\"d\")";
     let entry = "import { } from \"child\"";
 
-    let run = |p: *mut GeoscriptReplCtx, params: Option<(&str, &str)>| -> (Vec<String>, usize) {
+    let run = |p: *mut GeoscriptReplCtx, params: Option<(&str, &str)>| -> (Vec<String>, u64) {
       geoscript_repl_reset(p);
       geoscript_repl_set_module_sources(p, vec!["t:child".to_owned()], vec![module_src.to_owned()]);
       if let Some((min, format)) = params {
@@ -1773,7 +1773,7 @@ mod tests {
       ctx.last_result.as_ref().unwrap();
       let pixels_ptr = ctx.geo_ctx.rendered_textures.inner.borrow()[0]
         .texture
-        .base_ptr();
+        .storage_id();
       (geoscript_get_rendered_texture_gpu_params(p, 0), pixels_ptr)
     };
 

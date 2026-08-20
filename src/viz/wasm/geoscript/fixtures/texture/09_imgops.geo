@@ -1,0 +1,11 @@
+n = 64
+h = texture(n, n, |uv| fbm(octaves=3, frequency=5., pos=uv, tileable=true))
+mask = smoothstep(0.45, 0.55, h)
+resize(96, 96, h) | render_texture(name="resize_up")
+resize(24, 24, h, filter="lanczos3") | render_texture(name="resize_down")
+resize(96, 96, h, filter="nearest") | render_texture(name="resize_nearest")
+dilate(2, mask) | render_texture(name="dilate")
+erode(2, mask) | render_texture(name="erode")
+morph_outline(1, mask) | render_texture(name="outline")
+(h | sharpen(amt=0.4, sigma=1.5)) | render_texture(name="sharpen")
+blur(2.5, h) | render_texture(name="blur")

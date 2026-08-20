@@ -264,18 +264,20 @@ impl DynamicCallable for RampCallable {
         )));
       }
       let out_ch = if self.spec.scalar { 1 } else { 3 };
-      let src = tex.as_dense();
-      let mut pixels = Vec::with_capacity(src.len() * out_ch);
+      let src = &tex.as_planes()[0];
+      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| Vec::with_capacity(src.len())).collect();
       for &v in src.iter() {
         let c = self.sample(v, ctx)?;
         if self.spec.scalar {
-          pixels.push(c.x);
+          planes[0].push(c.x);
         } else {
-          pixels.extend_from_slice(&[c.x, c.y, c.z]);
+          planes[0].push(c.x);
+          planes[1].push(c.y);
+          planes[2].push(c.z);
         }
       }
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {
-        storage: crate::TexStorage::Dense(std::rc::Rc::new(pixels)),
+        storage: crate::TexStorage::from_plane_vecs(planes),
         channels: out_ch,
         mips: Default::default(),
         ..(**tex).clone()

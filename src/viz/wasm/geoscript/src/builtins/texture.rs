@@ -9,10 +9,10 @@ use crate::{
 
 pub(crate) const MAX_TEXTURE_DIM: i64 = 8192;
 
-impl TextureHandle {
-  pub(crate) fn wrap_coord(&self, c: i64, n: usize) -> usize {
+impl TextureWrap {
+  pub(crate) fn coord(self, c: i64, n: usize) -> usize {
     let n = n as i64;
-    (match self.wrap {
+    (match self {
       TextureWrap::Repeat => c.rem_euclid(n),
       TextureWrap::Clamp => c.clamp(0, n - 1),
       TextureWrap::Mirror => {
@@ -24,6 +24,12 @@ impl TextureHandle {
         }
       }
     }) as usize
+  }
+}
+
+impl TextureHandle {
+  pub(crate) fn wrap_coord(&self, c: i64, n: usize) -> usize {
+    self.wrap.coord(c, n)
   }
 
   pub(crate) fn texel(&self, x: i64, y: i64, chan: usize) -> f32 {
@@ -45,57 +51,29 @@ pub(crate) fn texture_zip(
       a.width, a.height, a.channels, b.width, b.height, b.channels
     )));
   }
-  let pixels = match (a.dense_pixels(), b.dense_pixels()) {
-    (Some(pa), Some(pb)) => pa.iter().zip(pb.iter()).map(|(&x, &y)| f(x, y)).collect(),
-    _ => {
-      let mut out = Vec::with_capacity(a.width * a.height * a.channels);
-      for y in 0..a.height {
-        for x in 0..a.width {
-          for c in 0..a.channels {
-            out.push(f(a.texel_raw(x, y, c), b.texel_raw(x, y, c)));
-          }
-        }
-      }
-      out
-    }
-  };
+  let (pa, pb) = (a.as_planes(), b.as_planes());
+  let planes = pa
+    .iter()
+    .zip(&pb)
+    .map(|(x, y)| Rc::new(x.iter().zip(y.iter()).map(|(&x, &y)| f(x, y)).collect::<Vec<f32>>()))
+    .collect();
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::Dense(Rc::new(pixels)),
+    storage: TexStorage::planes(planes),
     mips: Default::default(),
     ..a.clone()
   })))
 }
 
-/// Elementwise map with the channel index available; the dense/view split every unary
-/// texture op needs.
+/// Elementwise map with the channel index available; one contiguous pass per plane.
 pub(crate) fn texture_map_chan(t: &TextureHandle, f: impl Fn(f32, usize) -> f32) -> Value {
-  let ch = t.channels;
-  let pixels: Vec<f32> = match t.dense_pixels() {
-    // Chunked rather than `i % ch`: `ch` is a runtime value, so that's an integer division
-    // per texel — several times the cost of the op it decorates.
-    Some(px) => {
-      let mut out = Vec::with_capacity(px.len());
-      for texel in px.chunks_exact(ch) {
-        for (c, &x) in texel.iter().enumerate() {
-          out.push(f(x, c));
-        }
-      }
-      out
-    }
-    None => {
-      let mut out = Vec::with_capacity(t.width * t.height * ch);
-      for y in 0..t.height {
-        for x in 0..t.width {
-          for c in 0..ch {
-            out.push(f(t.texel_raw(x, y, c), c));
-          }
-        }
-      }
-      out
-    }
-  };
+  let planes = t
+    .as_planes()
+    .iter()
+    .enumerate()
+    .map(|(c, p)| Rc::new(p.iter().map(|&x| f(x, c)).collect::<Vec<f32>>()))
+    .collect();
   Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::Dense(Rc::new(pixels)),
+    storage: TexStorage::planes(planes),
     mips: Default::default(),
     ..t.clone()
   }))
@@ -158,22 +136,9 @@ pub(crate) fn texture_reduce(kind: ReduceKind, t: &TextureHandle) -> [f32; 4] {
     ReduceKind::Max => acc[c] = acc[c].max(x),
     ReduceKind::Mean => mean_acc[c] += x as f64,
   };
-  match t.dense_pixels() {
-    Some(px) => {
-      for texel in px.chunks_exact(ch) {
-        for (c, &x) in texel.iter().enumerate() {
-          fold(c, x);
-        }
-      }
-    }
-    None => {
-      for y in 0..t.height {
-        for x in 0..t.width {
-          for c in 0..ch {
-            fold(c, t.texel_raw(x, y, c));
-          }
-        }
-      }
+  for (c, p) in t.as_planes().iter().enumerate() {
+    for &x in p.iter() {
+      fold(c, x);
     }
   }
   if kind == ReduceKind::Mean {
@@ -355,7 +320,7 @@ pub(crate) fn texture_impl(
   }
   let (w, h) = (width as usize, height as usize);
 
-  let mut pixels: Vec<f32> = Vec::new();
+  let mut planes: Vec<Vec<f32>> = Vec::new();
   let mut channels = 0usize;
   for y in 0..h {
     for x in 0..w {
@@ -381,18 +346,20 @@ pub(crate) fn texture_impl(
       })?;
       if channels == 0 {
         channels = n;
-        pixels.reserve_exact(w * h * n);
+        planes = (0..n).map(|_| Vec::with_capacity(w * h)).collect();
       } else if n != channels {
         return Err(ErrorStack::new(
           "`generator` callable in `texture` returned a mix of float/vec2/vec3/vec4 values",
         ));
       }
-      pixels.extend_from_slice(&px[..n]);
+      for (c, plane) in planes.iter_mut().enumerate() {
+        plane.push(px[c]);
+      }
     }
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::Dense(Rc::new(pixels)),
+    storage: TexStorage::from_plane_vecs(planes),
     width: w,
     height: h,
     channels,
@@ -411,15 +378,16 @@ pub(crate) fn map_texture_impl(
   tex: &TextureHandle,
 ) -> Result<Value, ErrorStack> {
   let (w, h, ch) = (tex.width, tex.height, tex.channels);
-  let src_rc = tex.as_dense();
-  let src: &[f32] = &src_rc;
-  let mut out: Vec<f32> = Vec::new();
+  let src = tex.as_planes();
+  let mut planes: Vec<Vec<f32>> = Vec::new();
   let mut out_ch = 0usize;
   for y in 0..h {
     for x in 0..w {
-      let base = (y * w + x) * ch;
+      let i = y * w + x;
       let mut v = [0f32; 4];
-      v[..ch].copy_from_slice(&src[base..base + ch]);
+      for (c, out) in v[..ch].iter_mut().enumerate() {
+        *out = src[c][i];
+      }
       let val = channels_value(v, ch);
       let uv = Vec2::new((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32);
       let res = ctx
@@ -442,19 +410,21 @@ pub(crate) fn map_texture_impl(
       })?;
       if out_ch == 0 {
         out_ch = n;
-        out.reserve_exact(w * h * n);
+        planes = (0..n).map(|_| Vec::with_capacity(w * h)).collect();
       } else if n != out_ch {
         return Err(ErrorStack::new(
           "callable passed to `map` over texture returned a mix of float/vec2/vec3/vec4 values",
         ));
       }
-      out.extend_from_slice(&px[..n]);
+      for (c, plane) in planes.iter_mut().enumerate() {
+        plane.push(px[c]);
+      }
     }
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
     channels: out_ch,
-    storage: TexStorage::Dense(Rc::new(out)),
+    storage: TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
     ..tex.clone()
   })))
@@ -484,33 +454,28 @@ pub(crate) fn dense_rc(t: &Rc<TextureHandle>) -> Rc<TextureHandle> {
   }
 }
 
-/// Dense copy with RGBA premultiplied so transparent texels' RGB doesn't bleed into
-/// visible ones under filtering; a no-op copy below 4 channels.
-pub(crate) fn premultiplied_dense(tex: &TextureHandle) -> TextureHandle {
-  if tex.channels != 4 {
-    return tex.dense_clone();
+/// Owned plane copies with RGBA premultiplied so transparent texels' RGB doesn't bleed
+/// into visible ones under filtering; a plain copy below 4 channels.
+pub(crate) fn premultiplied_planes(tex: &TextureHandle) -> Vec<Vec<f32>> {
+  let mut planes: Vec<Vec<f32>> = tex.as_planes().iter().map(|p| p.to_vec()).collect();
+  if tex.channels == 4 {
+    let (rgb, a) = planes.split_at_mut(3);
+    for p in rgb {
+      for (v, &a) in p.iter_mut().zip(a[0].iter()) {
+        *v *= a;
+      }
+    }
   }
-  let mut px = tex.as_dense().to_vec();
-  for p in px.chunks_exact_mut(4) {
-    let a = p[3];
-    p[0] *= a;
-    p[1] *= a;
-    p[2] *= a;
-  }
-  TextureHandle {
-    storage: TexStorage::Dense(Rc::new(px)),
-    mips: Default::default(),
-    ..tex.clone()
-  }
+  planes
 }
 
-pub(crate) fn unpremultiply(px: &mut [f32]) {
-  for p in px.chunks_exact_mut(4) {
-    let a = p[3];
-    if a > 1e-8 {
-      p[0] /= a;
-      p[1] /= a;
-      p[2] /= a;
+pub(crate) fn unpremultiply_planes(planes: &mut [Vec<f32>]) {
+  let (rgb, a) = planes.split_at_mut(3);
+  for p in rgb {
+    for (v, &a) in p.iter_mut().zip(a[0].iter()) {
+      if a > 1e-8 {
+        *v /= a;
+      }
     }
   }
 }
@@ -518,6 +483,7 @@ pub(crate) fn unpremultiply(px: &mut [f32]) {
 /// Separable gaussian; caller guarantees `sigma > 0`.
 pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
   let (w, h, ch) = (tex.width, tex.height, tex.channels);
+  let wrap = tex.wrap;
   let half = ((sigma * 3.).ceil() as i64).max(1);
   let mut weights = Vec::with_capacity(half as usize + 1);
   for i in 0..=half {
@@ -528,56 +494,49 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
     *wt /= norm;
   }
 
-  let pass = |src: &TextureHandle, dx: i64, dy: i64| -> Vec<f32> {
-    let px: &[f32] = src.dense_pixels().unwrap();
-    let stride = (if dx == 1 { 1 } else { w }) * ch;
+  let pass = |src: &[f32], dx: i64, dy: i64| -> Vec<f32> {
+    let stride = if dx == 1 { 1 } else { w };
     let lim = (if dx == 1 { w } else { h }) as i64;
-    let mut out = vec![0f32; w * h * ch];
+    let tap = |x: i64, y: i64| src[wrap.coord(y, h) * w + wrap.coord(x, w)];
+    let mut out = vec![0f32; w * h];
     for y in 0..h {
       for x in 0..w {
-        let base = (y * w + x) * ch;
+        let base = y * w + x;
         let pos = (if dx == 1 { x } else { y }) as i64;
         if pos >= half && pos + half < lim {
           // Interior: no tap can wrap, so index directly instead of paying
-          // `wrap_coord`'s rem_euclid + branch per tap.
-          for c in 0..ch {
-            let mut acc = weights[0] * px[base + c];
-            for i in 1..=half as usize {
-              acc += weights[i] * (px[base + c - i * stride] + px[base + c + i * stride]);
-            }
-            out[base + c] = acc;
+          // `wrap.coord`'s rem_euclid + branch per tap.
+          let mut acc = weights[0] * src[base];
+          for i in 1..=half as usize {
+            acc += weights[i] * (src[base - i * stride] + src[base + i * stride]);
           }
+          out[base] = acc;
         } else {
-          for c in 0..ch {
-            let mut acc = weights[0] * src.texel(x as i64, y as i64, c);
-            for i in 1..=half {
-              acc += weights[i as usize]
-                * (src.texel(x as i64 - i * dx, y as i64 - i * dy, c)
-                  + src.texel(x as i64 + i * dx, y as i64 + i * dy, c));
-            }
-            out[base + c] = acc;
+          let (x, y) = (x as i64, y as i64);
+          let mut acc = weights[0] * tap(x, y);
+          for i in 1..=half {
+            acc +=
+              weights[i as usize] * (tap(x - i * dx, y - i * dy) + tap(x + i * dx, y + i * dy));
           }
+          out[base] = acc;
         }
       }
     }
     out
   };
 
-  let src = premultiplied_dense(tex);
-
-  let mid = TextureHandle {
-    storage: TexStorage::Dense(Rc::new(pass(&src, 1, 0))),
-    mips: Default::default(),
-    ..src
-  };
-  let mut out = pass(&mid, 0, 1);
+  let mut planes = premultiplied_planes(tex);
+  for p in &mut planes {
+    let mid = pass(p, 1, 0);
+    *p = pass(&mid, 0, 1);
+  }
   if ch == 4 {
-    unpremultiply(&mut out);
+    unpremultiply_planes(&mut planes);
   }
   TextureHandle {
-    storage: TexStorage::Dense(Rc::new(out)),
+    storage: TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
-    ..mid
+    ..tex.clone()
   }
 }
 
@@ -598,24 +557,22 @@ pub(crate) fn height_to_normal_impl(
 
   let tex = tex.dense_clone();
   let (w, h) = (tex.width, tex.height);
-  let mut out = Vec::with_capacity(w * h * 3);
+  let mut planes: Vec<Vec<f32>> = (0..3).map(|_| Vec::with_capacity(w * h)).collect();
   for y in 0..h {
     for x in 0..w {
       let (x, y) = (x as i64, y as i64);
       let dx = (tex.texel(x + 1, y, 0) - tex.texel(x - 1, y, 0)) * 0.5 * strength;
       let dy = (tex.texel(x, y + 1, 0) - tex.texel(x, y - 1, 0)) * 0.5 * strength;
       let inv_len = 1. / (dx * dx + dy * dy + 1.).sqrt();
-      out.extend_from_slice(&[
-        -dx * inv_len * 0.5 + 0.5,
-        -dy * inv_len * 0.5 + 0.5,
-        inv_len * 0.5 + 0.5,
-      ]);
+      planes[0].push(-dx * inv_len * 0.5 + 0.5);
+      planes[1].push(-dy * inv_len * 0.5 + 0.5);
+      planes[2].push(inv_len * 0.5 + 0.5);
     }
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
     channels: 3,
-    storage: TexStorage::Dense(Rc::new(out)),
+    storage: TexStorage::from_plane_vecs(planes),
     ..tex
   })))
 }
@@ -730,10 +687,10 @@ mod tests {
     assert!(err.to_string().contains("Invalid texture usage"));
     let tex = &t.texture;
     assert_eq!((tex.width, tex.height, tex.channels), (4, 2, 1));
-    assert_eq!(tex.as_dense().len(), 8);
+    assert_eq!(tex.as_interleaved().len(), 8);
     for y in 0..2 {
       for x in 0..4 {
-        assert_eq!(tex.as_dense()[y * 4 + x], (x as f32 + 0.5) / 4.);
+        assert_eq!(tex.as_interleaved()[y * 4 + x], (x as f32 + 0.5) / 4.);
       }
     }
   }
@@ -751,7 +708,7 @@ uv_only = texture(4, 2, |uv| uv.x)
       crate::Value::Texture(t) => t,
       other => panic!("expected texture, got {other:?}"),
     };
-    let ix = get("ix").as_dense().to_vec();
+    let ix = get("ix").as_interleaved().to_vec();
     for y in 0..2 {
       for x in 0..4 {
         let base = (y * 4 + x) * 2;
@@ -759,7 +716,7 @@ uv_only = texture(4, 2, |uv| uv.x)
       }
     }
     // A closure declaring only `uv` still works; the extra args are dropped.
-    assert_eq!(get("uv_only").as_dense()[0], 0.125);
+    assert_eq!(get("uv_only").as_interleaved()[0], 0.125);
   }
 
   #[test]
@@ -780,8 +737,8 @@ s2 = texture(4, 2, |uv| 1.)
     assert_eq!(t.usage, Some(crate::TextureUsage::Albedo));
     assert_eq!(t.extra_slices.len(), 2);
     assert_eq!((t.texture.width, t.texture.height, t.texture.channels), (4, 2, 1));
-    assert_eq!(t.texture.as_dense()[0], 0.5 / 4.);
-    assert_eq!(t.extra_slices[1].as_dense()[0], 1.);
+    assert_eq!(t.texture.as_interleaved()[0], 0.5 / 4.);
+    assert_eq!(t.extra_slices[1].as_interleaved()[0], 1.);
 
     let err = parse_and_eval_program(r#"[texture(2, 2, |uv| 0.)] | render_texture_stack(name="x")"#)
       .unwrap_err();
@@ -864,15 +821,15 @@ t = texture(4, 2, |uv| uv.x)
     for y in 0..2 {
       for x in 0..4 {
         let base = (y * 4 + x) * 3;
-        assert_eq!(rgb.as_dense()[base], (x as f32 + 0.5) / 4.);
-        assert_eq!(rgb.as_dense()[base + 1], (y as f32 + 0.5) / 2.);
-        assert_eq!(rgb.as_dense()[base + 2], (x + y) as f32);
+        assert_eq!(rgb.as_interleaved()[base], (x as f32 + 0.5) / 4.);
+        assert_eq!(rgb.as_interleaved()[base + 1], (y as f32 + 0.5) / 2.);
+        assert_eq!(rgb.as_interleaved()[base + 2], (x + y) as f32);
       }
     }
 
     let doubled = &rendered[1].texture;
     assert_eq!(doubled.channels, 1);
-    assert_eq!(doubled.as_dense()[1], 2. * (1.5 / 4.));
+    assert_eq!(doubled.as_interleaved()[1], 2. * (1.5 / 4.));
   }
 
   #[test]
@@ -891,12 +848,12 @@ texture(4, 4, |uv| 0.5) | height_to_normal | render_texture(name="flat_n")
     // Repeat wrap leaks the impulse across the seam to (7,0); clamp doesn't.
     let wrapped = &rendered[0].texture;
     let clamped = &rendered[1].texture;
-    assert!(wrapped.as_dense()[7] > 0.);
-    assert_eq!(clamped.as_dense()[7], 0.);
+    assert!(wrapped.as_interleaved()[7] > 0.);
+    assert_eq!(clamped.as_interleaved()[7], 0.);
 
     let flat_n = &rendered[2].texture;
     assert_eq!(flat_n.channels, 3);
-    for px in flat_n.as_dense().chunks(3) {
+    for px in flat_n.as_interleaved().chunks(3) {
       assert_eq!(px, &[0.5, 0.5, 1.0]);
     }
   }
@@ -917,14 +874,14 @@ r(a) | render_texture(name="colored")
     .unwrap();
     let rendered = ctx.rendered_textures.into_inner();
     assert_eq!(rendered.len(), 4);
-    let px = |i: usize| rendered[i].texture.as_dense();
+    let px = |i: usize| rendered[i].texture.as_interleaved();
     assert_eq!(px(0)[0], 0.25 + 1.);
     assert_eq!(px(1)[0], 0.25);
     assert_eq!(px(1)[1], 0.75);
     assert_eq!(px(2)[1], 0.75);
     let colored = &rendered[3].texture;
     assert_eq!(colored.channels, 3);
-    assert!(colored.as_dense()[0] < colored.as_dense()[3]);
+    assert!(colored.as_interleaved()[0] < colored.as_interleaved()[3]);
 
     let err = parse_and_eval_program(r#"texture(2, 2, |uv| 0.) + texture(4, 2, |uv| 0.)"#)
       .unwrap_err();
@@ -955,11 +912,11 @@ t | render_texture(name="rgba")
 
     let alpha = &rendered[0].texture;
     assert_eq!(alpha.channels, 1);
-    assert!(alpha.as_dense().iter().all(|&p| p == 0.5));
+    assert!(alpha.as_interleaved().iter().all(|&p| p == 0.5));
 
     let rgba = &rendered[1].texture;
     assert_eq!((rgba.width, rgba.height, rgba.channels), (2, 2, 4));
-    assert_eq!(rgba.as_dense()[0..4], [0.25, 0.25, 1., 0.5]);
+    assert_eq!(rgba.as_interleaved()[0..4], [0.25, 0.25, 1., 0.5]);
   }
 
   /// `render_texture` pushes to `rendered_textures` as a side effect, so it must not be

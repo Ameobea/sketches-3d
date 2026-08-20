@@ -71,6 +71,8 @@ mod resolve;
 mod seq;
 #[cfg(test)]
 mod tex_view_tests;
+#[cfg(test)]
+mod texture_goldens;
 pub mod texture_encode;
 pub mod ty;
 pub mod type_infer;
@@ -875,55 +877,93 @@ impl TextureUsage {
 }
 
 pub struct MipLevel {
-  pub pixels: Vec<f32>,
+  pub planes: Vec<Vec<f32>>,
   pub width: usize,
   pub height: usize,
 }
 
 /// Lazily-built box-filtered mip chain for minified blit sampling (holds levels 1.., since
-/// level 0 is the texture itself). Revalidated against the handle's live `base_ptr()` on
-/// read, so `Clone` shares it while struct-updates that swap in new pixels self-invalidate;
-/// ABA-safe because the handle's own storage keeps the compared allocation alive. A view
-/// shares its base's `base_ptr()` and would wrongly match, so `with_view` clears the cache.
+/// level 0 is the texture itself). Revalidated against the handle's live `storage_id()` on
+/// read, so `Clone` shares it while struct-updates that swap in new storage self-invalidate;
+/// ids are never reused, so there is no ABA to reason about.
 #[derive(Clone, Default)]
 pub struct MipCache(pub(crate) RefCell<Option<MipChain>>);
 
 #[derive(Clone)]
 pub struct MipChain {
-  pub(crate) src: usize,
+  pub(crate) src: u64,
   pub(crate) levels: Rc<Vec<MipLevel>>,
 }
 
-/// Backing pixel storage for a `TextureHandle`: either a dense row-major interleaved
-/// buffer or a zero-copy strided view into one. Handles are immutable, so eager ops that
-/// materialize views today and lazy/fused execution tomorrow are observationally
+fn next_tex_storage_id() -> u64 {
+  use std::sync::atomic::{AtomicU64, Ordering};
+  static NEXT: AtomicU64 = AtomicU64::new(1);
+  NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Backing pixel storage for a `TextureHandle`: one dense row-major f32 plane per channel
+/// (SoA), or a zero-copy spatial view over shared planes. Handles are immutable, so eager
+/// ops that materialize views today and lazy/fused execution tomorrow are observationally
 /// identical — nothing may expose buffer identity or in-place mutation.
+///
+/// `id` is a never-reused identity for caches (mip cache, host cache-replay checks); every
+/// construction stamps a fresh one, so struct-updating a handle with new storage can't
+/// accidentally inherit a stale identity.
 #[derive(Clone)]
-pub enum TexStorage {
-  Dense(Rc<Vec<f32>>),
+pub struct TexStorage {
+  id: u64,
+  pub(crate) kind: TexKind,
+}
+
+#[derive(Clone)]
+pub(crate) enum TexKind {
+  /// Each plane has len = width * height.
+  Planes(Vec<Rc<Vec<f32>>>),
   View(TexView),
 }
 
-/// Strided view over a dense base buffer (never over another view — composition happens
-/// at construction time, so read depth is constant). `chan_map` rather than a channel
-/// stride so permutation/duplication swizzles (`.bgr`, `.rrr`) are expressible; duplicate
-/// entries give zero-copy channel broadcast.
+impl TexStorage {
+  pub(crate) fn planes(planes: Vec<Rc<Vec<f32>>>) -> Self {
+    TexStorage {
+      id: next_tex_storage_id(),
+      kind: TexKind::Planes(planes),
+    }
+  }
+
+  pub(crate) fn from_plane_vecs(planes: Vec<Vec<f32>>) -> Self {
+    Self::planes(planes.into_iter().map(Rc::new).collect())
+  }
+
+  pub(crate) fn view(v: TexView) -> Self {
+    TexStorage {
+      id: next_tex_storage_id(),
+      kind: TexKind::View(v),
+    }
+  }
+
+  pub fn id(&self) -> u64 {
+    self.id
+  }
+}
+
+/// Spatial strided view over full-size shared planes (never over another view —
+/// composition happens at construction time, so read depth is constant). Covers crop and
+/// flip only: channel select/permute/duplicate swizzles need no view at all, they permute
+/// the plane list.
 #[derive(Clone)]
 pub struct TexView {
-  base: Rc<Vec<f32>>,
-  /// Flat f32 index of view texel (0,0), channel-base.
-  origin: isize,
-  /// f32 units per +1 view x; negative = horizontal flip.
-  x_pitch: isize,
-  /// f32 units per +1 view y; negative = vertical flip.
-  y_pitch: isize,
-  /// Per-channel offset within a texel; entries 0..handle.channels are meaningful.
-  chan_map: [u8; 4],
+  pub(crate) planes: Vec<Rc<Vec<f32>>>,
+  /// Plane element index of view texel (0,0).
+  pub(crate) origin: isize,
+  /// Elements per +1 view x; negative = horizontal flip.
+  pub(crate) x_pitch: isize,
+  /// Elements per +1 view y; negative = vertical flip.
+  pub(crate) y_pitch: isize,
 }
 
 #[derive(Clone)]
 pub struct TextureHandle {
-  /// Dense storage is row-major interleaved f32; len = width * height * channels. Row y
+  /// Planar storage: one row-major f32 plane per channel, each len = width * height. Row y
   /// maps to v = (y + 0.5) / height.
   pub storage: TexStorage,
   pub width: usize,
@@ -946,87 +986,97 @@ pub struct TextureHandle {
 
 impl TextureHandle {
   pub fn is_dense(&self) -> bool {
-    matches!(self.storage, TexStorage::Dense(_))
+    matches!(self.storage.kind, TexKind::Planes(_))
   }
 
-  pub fn dense_pixels(&self) -> Option<&Rc<Vec<f32>>> {
-    match &self.storage {
-      TexStorage::Dense(px) => Some(px),
-      TexStorage::View(_) => None,
+  /// Fast path: the plane list when storage is canonical (non-view).
+  pub fn planes(&self) -> Option<&[Rc<Vec<f32>>]> {
+    match &self.storage.kind {
+      TexKind::Planes(p) => Some(p),
+      TexKind::View(_) => None,
     }
   }
 
-  /// The materialize choke point: no-op clone for dense storage, interleaving copy for
-  /// views.
-  pub fn as_dense(&self) -> Rc<Vec<f32>> {
-    match &self.storage {
-      TexStorage::Dense(px) => Rc::clone(px),
-      TexStorage::View(_) => {
-        let mut out = Vec::with_capacity(self.width * self.height * self.channels);
-        for y in 0..self.height {
-          for x in 0..self.width {
-            for c in 0..self.channels {
-              out.push(self.texel_raw(x, y, c));
+  /// The materialize choke point: no-op clones for planar storage, per-plane strided copy
+  /// for views.
+  pub fn as_planes(&self) -> Vec<Rc<Vec<f32>>> {
+    match &self.storage.kind {
+      TexKind::Planes(p) => p.clone(),
+      TexKind::View(v) => (0..self.channels)
+        .map(|c| {
+          let src: &[f32] = &v.planes[c];
+          let mut out = Vec::with_capacity(self.width * self.height);
+          for y in 0..self.height {
+            let row = v.origin + y as isize * v.y_pitch;
+            for x in 0..self.width {
+              out.push(src[(row + x as isize * v.x_pitch) as usize]);
             }
           }
-        }
-        Rc::new(out)
-      }
+          Rc::new(out)
+        })
+        .collect(),
     }
   }
 
-  /// Handle with guaranteed-dense storage; ops materialize at entry through this.
+  /// Row-major interleaved copy; the JS/GPU boundary format, never used internally.
+  pub fn as_interleaved(&self) -> Vec<f32> {
+    let planes = self.as_planes();
+    let n = self.width * self.height;
+    let mut out = Vec::with_capacity(n * self.channels);
+    for i in 0..n {
+      for p in &planes {
+        out.push(p[i]);
+      }
+    }
+    out
+  }
+
+  /// Handle with guaranteed-planar storage; ops materialize at entry through this.
   pub(crate) fn dense_clone(&self) -> TextureHandle {
     if self.is_dense() {
       self.clone()
     } else {
       TextureHandle {
-        storage: TexStorage::Dense(self.as_dense()),
+        storage: TexStorage::planes(self.as_planes()),
         mips: MipCache::default(),
         ..self.clone()
       }
     }
   }
 
-  /// Identity of the underlying dense allocation; mip caches key on this and the host
-  /// uses it for cache-replay identity checks.
-  pub fn base_ptr(&self) -> usize {
-    (match &self.storage {
-      TexStorage::Dense(px) => Rc::as_ptr(px),
-      TexStorage::View(v) => Rc::as_ptr(&v.base),
-    }) as usize
+  /// Never-reused storage identity; mip caches key on this and the host uses it for
+  /// cache-replay identity checks.
+  pub fn storage_id(&self) -> u64 {
+    self.storage.id()
   }
 
   /// Unwrapped in-bounds texel read; the wrap-aware funnel is `texel` (builtins/texture.rs).
   #[inline]
   pub(crate) fn texel_raw(&self, x: usize, y: usize, chan: usize) -> f32 {
-    match &self.storage {
-      TexStorage::Dense(px) => px[(y * self.width + x) * self.channels + chan],
-      TexStorage::View(v) => {
-        let ix =
-          v.origin + y as isize * v.y_pitch + x as isize * v.x_pitch + v.chan_map[chan] as isize;
-        v.base[ix as usize]
+    match &self.storage.kind {
+      TexKind::Planes(p) => p[chan][y * self.width + x],
+      TexKind::View(v) => {
+        v.planes[chan][(v.origin + y as isize * v.y_pitch + x as isize * v.x_pitch) as usize]
       }
     }
   }
 
-  /// Dense-equivalent view parts; the composition point that keeps views one level deep.
+  /// View-equivalent parts; the composition point that keeps views one level deep.
   fn view_parts(&self) -> TexView {
-    match &self.storage {
-      TexStorage::Dense(px) => TexView {
-        base: Rc::clone(px),
+    match &self.storage.kind {
+      TexKind::Planes(p) => TexView {
+        planes: p.clone(),
         origin: 0,
-        x_pitch: self.channels as isize,
-        y_pitch: (self.width * self.channels) as isize,
-        chan_map: [0, 1, 2, 3],
+        x_pitch: 1,
+        y_pitch: self.width as isize,
       },
-      TexStorage::View(v) => v.clone(),
+      TexKind::View(v) => v.clone(),
     }
   }
 
   fn with_view(&self, v: TexView, width: usize, height: usize, channels: usize) -> TextureHandle {
     TextureHandle {
-      storage: TexStorage::View(v),
+      storage: TexStorage::view(v),
       width,
       height,
       channels,
@@ -1043,15 +1093,25 @@ impl TextureHandle {
     self.with_view(v, w, h, self.channels)
   }
 
-  /// O(1) channel select/permute/duplicate; `sel` entries are validated against
-  /// `self.channels` by the caller.
+  /// O(1) channel select/permute/duplicate: a plane-list permutation, zero-copy in both
+  /// storage kinds. `sel` entries are validated against `self.channels` by the caller.
   pub(crate) fn swizzle_view(&self, sel: &[u8]) -> TextureHandle {
-    let old = self.view_parts();
-    let mut chan_map = [0u8; 4];
-    for (i, &s) in sel.iter().enumerate() {
-      chan_map[i] = old.chan_map[s as usize];
+    let pick = |planes: &[Rc<Vec<f32>>]| -> Vec<Rc<Vec<f32>>> {
+      sel.iter().map(|&s| Rc::clone(&planes[s as usize])).collect()
+    };
+    let storage = match &self.storage.kind {
+      TexKind::Planes(p) => TexStorage::planes(pick(p)),
+      TexKind::View(v) => TexStorage::view(TexView {
+        planes: pick(&v.planes),
+        ..v.clone()
+      }),
+    };
+    TextureHandle {
+      storage,
+      channels: sel.len(),
+      mips: MipCache::default(),
+      ..self.clone()
     }
-    self.with_view(TexView { chan_map, ..old }, self.width, self.height, sel.len())
   }
 
   pub(crate) fn flip_view(&self, flip_x: bool, flip_y: bool) -> TextureHandle {

@@ -1,0 +1,12 @@
+n = 64
+rgb = texture(n, n, |uv| v3(uv.x, uv.y, fract(uv.x * 3.)))
+rgb.bgr | render_texture(name="swz_bgr")
+rgb.rrr | render_texture(name="swz_rrr")
+rgb.g | render_texture(name="swz_g")
+crop(8, 4, 32, 24, rgb) | render_texture(name="crop")
+rgb[4..36, 8..40] | render_texture(name="crop_ix")
+flip_x(rgb) | render_texture(name="flip_x")
+flip_y(rgb).rg | render_texture(name="flipped_swz")
+concat_channels(rgb.g, rgb.r, 1.) | render_texture(name="concat")
+materialize(rgb.bgr) | render_texture(name="materialized")
+blur(1.5, rgb.bgr) | render_texture(name="view_fed_op")

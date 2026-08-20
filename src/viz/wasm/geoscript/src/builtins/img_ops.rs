@@ -5,10 +5,10 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use super::texture::{
-  blur_tex, premultiplied_dense, resolve_tex_range, texture_map_chan, texture_reduce, texture_zip,
-  unpremultiply, ReduceKind, MAX_TEXTURE_DIM,
+  blur_tex, premultiplied_planes, resolve_tex_range, texture_map_chan, texture_reduce,
+  texture_zip, unpremultiply_planes, ReduceKind, MAX_TEXTURE_DIM,
 };
-use crate::{ArgRef, ErrorStack, Sym, TexStorage, TextureHandle, Value};
+use crate::{ArgRef, ErrorStack, Sym, TexStorage, TextureHandle, TextureWrap, Value};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ResizeFilter {
@@ -120,48 +120,53 @@ fn build_weights(in_len: usize, out_len: usize, filter: ResizeFilter) -> Vec<(i6
 }
 
 /// Source offsets are resolved once per (output position, tap), not per texel: the wrap is
-/// invariant across the other axis and the channels, and dominates the multiply-add it guards.
-fn resize_pass(src: &TextureHandle, out_len: usize, horizontal: bool, filter: ResizeFilter) -> Vec<f32> {
-  let ch = src.channels;
-  let (in_len, other) = if horizontal {
-    (src.width, src.height)
-  } else {
-    (src.height, src.width)
-  };
-  let px: &[f32] = src.dense_pixels().unwrap();
+/// invariant across the other axis and the planes, and dominates the multiply-add it
+/// guards. The resolved taps are then replayed for every plane.
+fn resize_pass(
+  planes: &[Vec<f32>],
+  sw: usize,
+  sh: usize,
+  wrap: TextureWrap,
+  out_len: usize,
+  horizontal: bool,
+  filter: ResizeFilter,
+) -> Vec<Vec<f32>> {
+  let (in_len, other) = if horizontal { (sw, sh) } else { (sh, sw) };
   let (ow, oh) = if horizontal {
     (out_len, other)
   } else {
     (other, out_len)
   };
   // Stride between consecutive taps, and between consecutive `fixed` positions.
-  let (tap_stride, fixed_stride) = if horizontal { (ch, src.width * ch) } else { (src.width * ch, ch) };
+  let (tap_stride, fixed_stride) = if horizontal { (1, sw) } else { (sw, 1) };
   let taps: Vec<(Vec<usize>, Vec<f32>)> = build_weights(in_len, out_len, filter)
     .into_iter()
     .map(|(lo, weights)| {
       let offsets = (0..weights.len())
-        .map(|i| src.wrap_coord(lo + i as i64, in_len) * tap_stride)
+        .map(|i| wrap.coord(lo + i as i64, in_len) * tap_stride)
         .collect();
       (offsets, weights)
     })
     .collect();
 
-  let mut out = vec![0f32; ow * oh * ch];
-  for y in 0..oh {
-    for x in 0..ow {
-      let (pos, fixed) = if horizontal { (x, y) } else { (y, x) };
-      let (offsets, weights) = &taps[pos];
-      let base = (y * ow + x) * ch;
-      let fixed_base = fixed * fixed_stride;
-      for (&off, &w) in offsets.iter().zip(weights) {
-        let s = fixed_base + off;
-        for c in 0..ch {
-          out[base + c] += w * px[s + c];
+  planes
+    .iter()
+    .map(|px| {
+      let mut out = vec![0f32; ow * oh];
+      for y in 0..oh {
+        for x in 0..ow {
+          let (pos, fixed) = if horizontal { (x, y) } else { (y, x) };
+          let (offsets, weights) = &taps[pos];
+          let base = y * ow + x;
+          let fixed_base = fixed * fixed_stride;
+          for (&off, &w) in offsets.iter().zip(weights) {
+            out[base] += w * px[fixed_base + off];
+          }
         }
       }
-    }
-  }
-  out
+      out
+    })
+    .collect()
 }
 
 pub(crate) fn resize_impl(
@@ -181,22 +186,18 @@ pub(crate) fn resize_impl(
   let (w, h) = (width as usize, height as usize);
   let ch = tex.channels;
 
-  let src = premultiplied_dense(tex);
-  let mid = TextureHandle {
-    storage: TexStorage::Dense(Rc::new(resize_pass(&src, w, true, filter))),
-    width: w,
-    mips: Default::default(),
-    ..src
-  };
-  let mut out = resize_pass(&mid, h, false, filter);
+  let src = premultiplied_planes(tex);
+  let mid = resize_pass(&src, tex.width, tex.height, tex.wrap, w, true, filter);
+  let mut out = resize_pass(&mid, w, tex.height, tex.wrap, h, false, filter);
   if ch == 4 {
-    unpremultiply(&mut out);
+    unpremultiply_planes(&mut out);
   }
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::Dense(Rc::new(out)),
+    storage: TexStorage::from_plane_vecs(out),
+    width: w,
     height: h,
     mips: Default::default(),
-    ..mid
+    ..(**tex).clone()
   })))
 }
 
@@ -228,34 +229,35 @@ fn vhgw_line(src: &[f32], out: &mut [f32], r: usize, dilate: bool, g: &mut Vec<f
 /// `r == 0` is an identity pass (window width 1), so callers composing morphology don't
 /// need to special-case it.
 fn morph_pass(dilate: bool, r: usize, tex: &TextureHandle) -> TextureHandle {
-  let (w, h, ch) = (tex.width, tex.height, tex.channels);
+  let (w, h) = (tex.width, tex.height);
+  let wrap = tex.wrap;
 
-  let mut cur = tex.dense_clone();
+  let mut planes: Vec<Vec<f32>> = tex.as_planes().iter().map(|p| p.to_vec()).collect();
   let (mut g, mut hbuf) = (Vec::new(), Vec::new());
   let mut padded = vec![0f32; 0];
   let mut line_out = vec![0f32; 0];
   for horizontal in [true, false] {
     let (n, other) = if horizontal { (w, h) } else { (h, w) };
-    let mut out = vec![0f32; w * h * ch];
     padded.resize(n + 2 * r, 0.);
     line_out.resize(n, 0.);
-    // `cur` is always dense here, and only the `r` entries at each end of the line can
-    // wrap, so the interior strides the buffer directly instead of paying `texel`'s
-    // rem_euclid per element (same split `blur_tex`'s `pass` uses).
-    let stride = if horizontal { ch } else { w * ch };
-    for o in 0..other {
-      let o_base = if horizontal { o * w * ch } else { o * ch };
-      for c in 0..ch {
-        let px: &[f32] = cur.dense_pixels().unwrap();
+    // Only the `r` entries at each end of the line can wrap, so the interior strides the
+    // plane directly instead of paying rem_euclid per element (same split `blur_tex`'s
+    // `pass` uses).
+    let stride = if horizontal { 1 } else { w };
+    for px in &mut planes {
+      let mut out = vec![0f32; w * h];
+      let tap = |px: &[f32], x: i64, y: i64| px[wrap.coord(y, h) * w + wrap.coord(x, w)];
+      for o in 0..other {
+        let o_base = if horizontal { o * w } else { o };
         for i in 0..n {
-          padded[r + i] = px[o_base + i * stride + c];
+          padded[r + i] = px[o_base + i * stride];
         }
         for i in 0..r {
           let (lo, hi) = (i as i64 - r as i64, (n + i) as i64);
           let (a, b) = if horizontal {
-            (cur.texel(lo, o as i64, c), cur.texel(hi, o as i64, c))
+            (tap(px, lo, o as i64), tap(px, hi, o as i64))
           } else {
-            (cur.texel(o as i64, lo, c), cur.texel(o as i64, hi, c))
+            (tap(px, o as i64, lo), tap(px, o as i64, hi))
           };
           padded[i] = a;
           padded[r + n + i] = b;
@@ -263,17 +265,17 @@ fn morph_pass(dilate: bool, r: usize, tex: &TextureHandle) -> TextureHandle {
         vhgw_line(&padded, &mut line_out, r, dilate, &mut g, &mut hbuf);
         for (i, &v) in line_out.iter().enumerate() {
           let (x, y) = if horizontal { (i, o) } else { (o, i) };
-          out[(y * w + x) * ch + c] = v;
+          out[y * w + x] = v;
         }
       }
+      *px = out;
     }
-    cur = TextureHandle {
-      storage: TexStorage::Dense(Rc::new(out)),
-      mips: Default::default(),
-      ..cur
-    };
   }
-  cur
+  TextureHandle {
+    storage: TexStorage::from_plane_vecs(planes),
+    mips: Default::default(),
+    ..tex.clone()
+  }
 }
 
 fn morph_radius(name: &str, radius: i64) -> Result<usize, ErrorStack> {
@@ -440,25 +442,18 @@ pub(crate) fn concat_channels_impl(
     )));
   }
 
+  // The SoA payoff: texture sources contribute their planes by Rc clone — zero copy.
   let (w, h) = (t0.width, t0.height);
-  let mut out = Vec::with_capacity(w * h * total_ch);
-  for y in 0..h {
-    for x in 0..w {
-      for src in &srcs {
-        match src {
-          ChannelSrc::Tex(t) => {
-            for c in 0..t.channels {
-              out.push(t.texel_raw(x, y, c));
-            }
-          }
-          ChannelSrc::Const(v) => out.push(*v),
-        }
-      }
+  let mut planes: Vec<Rc<Vec<f32>>> = Vec::with_capacity(total_ch);
+  for src in &srcs {
+    match src {
+      ChannelSrc::Tex(t) => planes.extend(t.as_planes()),
+      ChannelSrc::Const(v) => planes.push(Rc::new(vec![*v; w * h])),
     }
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::Dense(Rc::new(out)),
+    storage: TexStorage::planes(planes),
     channels: total_ch,
     mips: Default::default(),
     ..t0.clone()
@@ -671,16 +666,16 @@ flat = texture(7, 3, |uv| 0.25) | resize(5, 9)
     .unwrap();
     let up = get_tex(&ctx, "up");
     assert_eq!((up.width, up.height), (16, 16));
-    let ud = up.as_dense();
+    let ud = up.as_interleaved();
     assert!(ud[0] < ud[7] && ud[7] < ud[15]);
     let down = get_tex(&ctx, "down");
     assert_eq!((down.width, down.height), (4, 4));
     // Box-downsampling a linear ramp: each output pixel is the mean of its 2px column pair.
-    let dd = down.as_dense();
+    let dd = down.as_interleaved();
     assert!((dd[0] - (0.5 / 8. + 1.5 / 8.) / 2.).abs() < 1e-5, "{}", dd[0]);
     let nn = get_tex(&ctx, "nn");
-    assert_eq!(nn.as_dense().len(), 16);
-    for px in get_tex(&ctx, "flat").as_dense().iter() {
+    assert_eq!(nn.as_interleaved().len(), 16);
+    for px in get_tex(&ctx, "flat").as_interleaved().iter() {
       assert!((px - 0.25).abs() < 1e-5, "{px}");
     }
   }
@@ -696,7 +691,7 @@ d = resize(8, 8, t, filter="mitchell")
     )
     .unwrap();
     let d = get_tex(&ctx, "d");
-    let px = &d.as_dense()[(4 * 8 + 6) * 4..(4 * 8 + 6) * 4 + 4];
+    let px = &d.as_interleaved()[(4 * 8 + 6) * 4..(4 * 8 + 6) * 4 + 4];
     assert!(px[1] < 0.01, "green bled into opaque side: {px:?}");
     assert!(px[2] > 0.9, "blue should stay saturated: {px:?}");
   }
@@ -714,7 +709,7 @@ inv_e = erode(1, 1. - imp)
     )
     .unwrap();
     let d = get_tex(&ctx, "d");
-    let dd = d.as_dense();
+    let dd = d.as_interleaved();
     // 3x3 box around (0,0), wrapping to the far edges.
     for y in 0..8i64 {
       for x in 0..8i64 {
@@ -724,10 +719,10 @@ inv_e = erode(1, 1. - imp)
     }
     // Erosion after dilation (close) restores the single impulse plus nothing extra
     // is guaranteed only for shapes >= the SE; here just sanity-check counts.
-    let ed = get_tex(&ctx, "e").as_dense();
+    let ed = get_tex(&ctx, "e").as_interleaved();
     assert_eq!(ed.iter().filter(|&&v| v == 1.).count(), 1);
-    assert_eq!(get_tex(&ctx, "big").as_dense().iter().filter(|&&v| v == 1.).count(), 25);
-    let inv = get_tex(&ctx, "inv_e").as_dense();
+    assert_eq!(get_tex(&ctx, "big").as_interleaved().iter().filter(|&&v| v == 1.).count(), 25);
+    let inv = get_tex(&ctx, "inv_e").as_interleaved();
     assert_eq!(inv.iter().filter(|&&v| v == 0.).count(), 9);
   }
 
@@ -743,7 +738,7 @@ rgba = texture(2, 1, |uv| v4(0.5, 0.5, 0.5, 0.25)) | texture_levels(0., 1., 0., 
 "#,
     )
     .unwrap();
-    let px = |name: &str| get_tex(&ctx, name).as_dense().to_vec();
+    let px = |name: &str| get_tex(&ctx, name).as_interleaved().to_vec();
     assert_eq!(px("lv"), [0., 0.25, 0.75, 1.]);
     assert_eq!(px("invl"), [0.875, 0.625, 0.375, 0.125]);
     let gam = px("gam");
@@ -762,10 +757,10 @@ outd = input_image_levels("lv2", g, default={in_hi: 0.5})
 "#,
     )
     .unwrap();
-    let g = get_tex(&ctx, "g").as_dense();
-    let out = get_tex(&ctx, "out").as_dense();
+    let g = get_tex(&ctx, "g").as_interleaved();
+    let out = get_tex(&ctx, "out").as_interleaved();
     assert_eq!(&g[..], &out[..], "identity levels must round-trip pixels");
-    let outd = get_tex(&ctx, "outd").as_dense();
+    let outd = get_tex(&ctx, "outd").as_interleaved();
     assert_eq!(outd[0], 0.25, "in_hi=0.5 doubles the black end");
     assert_eq!(outd[3], 1.);
 
@@ -797,22 +792,22 @@ opaque = concat_channels(1., 0., 0.5, m)
 "#,
     )
     .unwrap();
-    let rgb = get_tex(&ctx, "rgb").as_dense();
-    let m = get_tex(&ctx, "m").as_dense();
+    let rgb = get_tex(&ctx, "rgb").as_interleaved();
+    let m = get_tex(&ctx, "m").as_interleaved();
     let rgba = get_tex(&ctx, "rgba");
     assert_eq!(rgba.channels, 4);
-    let rd = rgba.as_dense();
+    let rd = rgba.as_interleaved();
     for i in 0..8 {
       assert_eq!(&rd[i * 4..i * 4 + 3], &rgb[i * 3..i * 3 + 3], "rgb at {i}");
       assert_eq!(rd[i * 4 + 3], m[i], "alpha at {i}");
     }
-    assert_eq!(get_tex(&ctx, "piped").as_dense(), rd, "partial application fills the last slot");
+    assert_eq!(get_tex(&ctx, "piped").as_interleaved(), rd, "partial application fills the last slot");
     let ga = get_tex(&ctx, "gray_a");
     assert_eq!(ga.channels, 2);
-    assert_eq!(&ga.as_dense()[..4], &[m[0], 1., m[1], 1.]);
+    assert_eq!(&ga.as_interleaved()[..4], &[m[0], 1., m[1], 1.]);
     let op = get_tex(&ctx, "opaque");
     assert_eq!((op.channels, op.width, op.height), (4, 4, 2));
-    assert_eq!(&op.as_dense()[..4], &[1., 0., 0.5, m[0]]);
+    assert_eq!(&op.as_interleaved()[..4], &[1., 0., 0.5, m[0]]);
   }
 
   #[test]
@@ -825,7 +820,7 @@ d = concat_channels(materialize(t.bgr), materialize(flip_x(t).r))
 "#,
     )
     .unwrap();
-    assert_eq!(get_tex(&ctx, "v").as_dense(), get_tex(&ctx, "d").as_dense());
+    assert_eq!(get_tex(&ctx, "v").as_interleaved(), get_tex(&ctx, "d").as_interleaved());
   }
 
   #[test]
@@ -855,7 +850,7 @@ out = blit(masked, base, filter="nearest")
     assert_eq!(get_tex(&ctx, "masked").channels, 4);
     let out = get_tex(&ctx, "out");
     assert_eq!(out.channels, 3);
-    for px in out.as_dense().iter() {
+    for px in out.as_interleaved().iter() {
       assert!((px - 0.5).abs() < 1e-6, "alpha 0.5 over black base: got {px}");
     }
   }
@@ -905,6 +900,6 @@ out = blit(masked, base, filter="nearest")
       "t = texture(4, 4, |uv| uv.x)\nd = dilate(0, t)",
     )
     .unwrap();
-    assert_eq!(get_tex(&ctx, "t").base_ptr(), get_tex(&ctx, "d").base_ptr());
+    assert_eq!(get_tex(&ctx, "t").storage_id(), get_tex(&ctx, "d").storage_id());
   }
 }

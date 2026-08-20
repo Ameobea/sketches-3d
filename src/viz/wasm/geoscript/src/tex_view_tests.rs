@@ -1,11 +1,14 @@
 use std::rc::Rc;
 
-use crate::{Mat4, TexStorage, TextureHandle, TextureWrap};
+use crate::{Mat4, TexKind, TexStorage, TextureHandle, TextureWrap};
 
+/// Interleaved-semantic fill: value at (x, y, c) = ((y*w + x)*ch + c) as f32.
 fn tex(w: usize, h: usize, ch: usize) -> TextureHandle {
-  let px: Vec<f32> = (0..w * h * ch).map(|i| i as f32).collect();
+  let planes: Vec<Vec<f32>> = (0..ch)
+    .map(|c| (0..w * h).map(|i| (i * ch + c) as f32).collect())
+    .collect();
   TextureHandle {
-    storage: TexStorage::Dense(Rc::new(px)),
+    storage: TexStorage::from_plane_vecs(planes),
     width: w,
     height: h,
     channels: ch,
@@ -19,13 +22,16 @@ fn tex(w: usize, h: usize, ch: usize) -> TextureHandle {
 }
 
 fn dense_of(t: &TextureHandle) -> Vec<f32> {
-  t.as_dense().to_vec()
+  t.as_interleaved()
 }
 
 #[test]
-fn as_dense_is_noop_for_dense() {
+fn as_planes_is_noop_for_planar() {
   let t = tex(4, 4, 3);
-  assert_eq!(Rc::as_ptr(&t.as_dense()) as usize, t.base_ptr());
+  for (a, b) in t.as_planes().iter().zip(t.planes().unwrap()) {
+    assert!(Rc::ptr_eq(a, b));
+  }
+  assert_eq!(t.storage_id(), t.clone().storage_id());
 }
 
 #[test]
@@ -77,29 +83,22 @@ fn view_composition_stays_flat() {
     .swizzle_view(&[2, 0])
     .swizzle_view(&[1, 1]);
   // Equivalent single-step reference: materialize each step separately.
-  let step = TextureHandle {
-    storage: TexStorage::Dense(t.flip_view(true, false).as_dense()),
-    ..t.clone()
-  }
-  .crop_view(1, 1, 2, 2);
-  let step = TextureHandle {
-    storage: TexStorage::Dense(step.as_dense()),
-    width: 2,
-    height: 2,
-    ..t.clone()
-  }
-  .swizzle_view(&[2, 0]);
-  let step = TextureHandle {
-    storage: TexStorage::Dense(step.as_dense()),
-    width: 2,
-    height: 2,
-    channels: 2,
-    ..t.clone()
-  }
-  .swizzle_view(&[1, 1]);
+  let step = t.flip_view(true, false).dense_clone().crop_view(1, 1, 2, 2);
+  let step = step.dense_clone().swizzle_view(&[2, 0]);
+  let step = step.dense_clone().swizzle_view(&[1, 1]);
   assert_eq!(dense_of(&composed), dense_of(&step));
-  // Composition flattened to a single view over the original dense base.
-  assert_eq!(composed.base_ptr(), t.base_ptr());
+  // Composition flattened to a single view whose planes are the ORIGINAL allocations:
+  // [2,0] then [1,1] selects base plane 0 for both output channels, with zero copies.
+  let base_planes = t.planes().unwrap();
+  match &composed.storage.kind {
+    TexKind::View(v) => {
+      assert_eq!(v.planes.len(), 2);
+      for p in &v.planes {
+        assert!(Rc::ptr_eq(p, &base_planes[0]));
+      }
+    }
+    TexKind::Planes(_) => panic!("composed crop/flip must stay a view"),
+  }
 }
 
 #[test]
@@ -123,7 +122,7 @@ fn dense_clone_materializes() {
   let d = v.dense_clone();
   assert!(d.is_dense());
   assert_eq!(dense_of(&d), dense_of(&v));
-  assert_ne!(d.base_ptr(), t.base_ptr());
+  assert_ne!(d.storage_id(), t.storage_id());
 }
 
 #[test]
@@ -170,15 +169,16 @@ xy = t.xy
 "
     ));
     let t = get_tex(&ctx, "t");
-    let td = t.as_dense();
+    let td = t.as_interleaved();
     let r = get_tex(&ctx, "r");
     assert_eq!((r.channels, r.width, r.height), (1, 4, 3));
-    assert!(!r.is_dense());
-    assert_eq!(r.as_dense()[..4], [td[0], td[3], td[6], td[9]]);
+    // Zero-copy: the swizzle's plane IS the base's plane allocation.
+    assert!(Rc::ptr_eq(&r.planes().unwrap()[0], &t.planes().unwrap()[0]));
+    assert_eq!(r.as_interleaved()[..4], [td[0], td[3], td[6], td[9]]);
     let bgr = get_tex(&ctx, "bgr");
-    assert_eq!(bgr.as_dense()[..3], [td[2], td[1], td[0]]);
+    assert_eq!(bgr.as_interleaved()[..3], [td[2], td[1], td[0]]);
     let rrr = get_tex(&ctx, "rrr");
-    assert_eq!(rrr.as_dense()[..3], [td[0], td[0], td[0]]);
+    assert_eq!(rrr.as_interleaved()[..3], [td[0], td[0], td[0]]);
     assert_eq!(get_tex(&ctx, "xy").channels, 2);
 
     let err = parse_and_eval_program("texture(2, 2, |uv| v2(uv.x, uv.y)).b").unwrap_err();
@@ -204,10 +204,10 @@ open_end = g[2..]
 "
     ));
     let g = get_tex(&ctx, "g");
-    let gd = g.as_dense();
+    let gd = g.as_interleaved();
     let row = get_tex(&ctx, "row");
     assert_eq!((row.width, row.height), (4, 1));
-    assert_eq!(row.as_dense()[..], gd[4..8]);
+    assert_eq!(row.as_interleaved()[..], gd[4..8]);
     assert_eq!(get_f(&ctx, "px"), gd[6]);
     let t = get_tex(&ctx, "t");
     assert_eq!(get_f(&ctx, "chan"), t.texel_raw(2, 1, 1));
@@ -215,13 +215,13 @@ open_end = g[2..]
     assert_eq!(get_f(&ctx, "px_comma"), gd[6]);
     let crop2d = get_tex(&ctx, "crop2d");
     assert_eq!((crop2d.width, crop2d.height), (2, 2));
-    assert_eq!(crop2d.as_dense()[..], [gd[4], gd[5], gd[8], gd[9]]);
+    assert_eq!(crop2d.as_interleaved()[..], [gd[4], gd[5], gd[8], gd[9]]);
     let row_seg = get_tex(&ctx, "row_seg");
     assert_eq!((row_seg.width, row_seg.height), (2, 1));
-    assert_eq!(row_seg.as_dense()[..], gd[5..7]);
+    assert_eq!(row_seg.as_interleaved()[..], gd[5..7]);
     let col = get_tex(&ctx, "col");
     assert_eq!((col.width, col.height), (1, 2));
-    assert_eq!(col.as_dense()[..], [gd[3], gd[7]]);
+    assert_eq!(col.as_interleaved()[..], [gd[3], gd[7]]);
     assert_eq!(get_f(&ctx, "lut_px"), 2.5 / 4.);
     let open_end = get_tex(&ctx, "open_end");
     assert_eq!((open_end.width, open_end.height), (4, 2));
@@ -253,20 +253,20 @@ mat = materialize(fx)
 "
     ));
     let g = get_tex(&ctx, "g");
-    let gd = g.as_dense();
+    let gd = g.as_interleaved();
     let fx = get_tex(&ctx, "fx");
     assert!(!fx.is_dense());
-    assert_eq!(fx.as_dense()[..4], [gd[3], gd[2], gd[1], gd[0]]);
+    assert_eq!(fx.as_interleaved()[..4], [gd[3], gd[2], gd[1], gd[0]]);
     let fy = get_tex(&ctx, "fy");
-    assert_eq!(fy.as_dense()[..4], gd[12..16]);
+    assert_eq!(fy.as_interleaved()[..4], gd[12..16]);
     let mat = get_tex(&ctx, "mat");
     assert!(mat.is_dense());
-    assert_eq!(mat.as_dense()[..], fx.as_dense()[..]);
+    assert_eq!(mat.as_interleaved()[..], fx.as_interleaved()[..]);
     // materialize on dense is identity
     let ctx = eval("g = texture(2, 2, |uv| uv.x)\nm = materialize(g)");
     assert_eq!(
-      get_tex(&ctx, "g").base_ptr(),
-      get_tex(&ctx, "m").base_ptr()
+      get_tex(&ctx, "g").storage_id(),
+      get_tex(&ctx, "m").storage_id()
     );
   }
 
@@ -297,8 +297,8 @@ map_m = mv -> |val| val.x
       ("n_v", "n_m"),
       ("map_v", "map_m"),
     ] {
-      let av = get_tex(&ctx, a).as_dense();
-      let bv = get_tex(&ctx, b).as_dense();
+      let av = get_tex(&ctx, a).as_interleaved();
+      let bv = get_tex(&ctx, b).as_interleaved();
       assert_eq!(av[..], bv[..], "{a} != {b}");
     }
   }
@@ -331,7 +331,7 @@ mx = max(0.5, g)
 mnt = min(g, 1. - g)
 ",
     );
-    let px0 = |name: &str| get_tex(&ctx, name).as_dense()[0];
+    let px0 = |name: &str| get_tex(&ctx, name).as_interleaved()[0];
     assert!((px0("add_s") - 1.25).abs() < 1e-6);
     assert!((px0("sub_s") - 0.).abs() < 1e-6);
     assert!((px0("rsub_s") - 0.75).abs() < 1e-6);
@@ -339,12 +339,12 @@ mnt = min(g, 1. - g)
     assert!((px0("rdiv_s") - 4.).abs() < 1e-6);
     assert!((px0("sub_t") - 0.).abs() < 1e-6);
     assert!((px0("div_t") - 0.25 / 1.25).abs() < 1e-6);
-    let tint = get_tex(&ctx, "tint").as_dense();
+    let tint = get_tex(&ctx, "tint").as_interleaved();
     assert_eq!(tint[0..3], [0.25, 1., 1.]);
-    assert_eq!(get_tex(&ctx, "tint2").as_dense()[0..3], [0.25, 1., 1.]);
-    assert_eq!(get_tex(&ctx, "vadd").as_dense()[0..3], [1.25, 0.5, 2.]);
-    assert_eq!(get_tex(&ctx, "vsub").as_dense()[0..3], [0.75, 0.5, -1.]);
-    assert_eq!(get_tex(&ctx, "vdiv").as_dense()[0..3], [0.125, 0.25, 1.]);
+    assert_eq!(get_tex(&ctx, "tint2").as_interleaved()[0..3], [0.25, 1., 1.]);
+    assert_eq!(get_tex(&ctx, "vadd").as_interleaved()[0..3], [1.25, 0.5, 2.]);
+    assert_eq!(get_tex(&ctx, "vsub").as_interleaved()[0..3], [0.75, 0.5, -1.]);
+    assert_eq!(get_tex(&ctx, "vdiv").as_interleaved()[0..3], [0.125, 0.25, 1.]);
     assert!((px0("p") - 0.0625).abs() < 1e-6);
     assert!((px0("cl") - 0.3).abs() < 1e-6);
     assert!((px0("ab") - 0.25).abs() < 1e-6);
@@ -407,28 +407,28 @@ sh2 = sharpen(g, amt=0.3, sigma=1.)
     )
     .unwrap();
     let g = get_tex(&ctx, "g");
-    let gd = g.as_dense();
+    let gd = g.as_interleaved();
     let c = get_tex(&ctx, "c");
     assert_eq!((c.width, c.height), (4, 3));
-    assert_eq!(c.as_dense()[0], gd[8 + 2]);
+    assert_eq!(c.as_interleaved()[0], gd[8 + 2]);
     assert!(!c.is_dense(), "crop must stay a view");
     let inv = get_tex(&ctx, "inv");
-    assert!((inv.as_dense()[0] - (1. - gd[0])).abs() < 1e-6);
-    let nd = get_tex(&ctx, "norm").as_dense();
+    assert!((inv.as_interleaved()[0] - (1. - gd[0])).abs() < 1e-6);
+    let nd = get_tex(&ctx, "norm").as_interleaved();
     assert!((nd[0] - 0.).abs() < 1e-6 && (nd[7] - 1.).abs() < 1e-6);
     // A constant channel has no range to stretch; it must map to 0, not NaN.
-    assert!(get_tex(&ctx, "flat").as_dense().iter().all(|&v| v == 0.));
+    assert!(get_tex(&ctx, "flat").as_interleaved().iter().all(|&v| v == 0.));
     // Opening removes the lone impulse; closing preserves it.
-    assert!(get_tex(&ctx, "opened").as_dense().iter().all(|&v| v == 0.));
-    assert_eq!(get_tex(&ctx, "closed").as_dense()[0], 1.);
+    assert!(get_tex(&ctx, "opened").as_interleaved().iter().all(|&v| v == 0.));
+    assert_eq!(get_tex(&ctx, "closed").as_interleaved()[0], 1.);
     // Morphological gradient of an impulse: a 3x3 ring plus center.
     assert_eq!(
-      get_tex(&ctx, "grad").as_dense().iter().filter(|&&v| v == 1.).count(),
+      get_tex(&ctx, "grad").as_interleaved().iter().filter(|&&v| v == 1.).count(),
       9
     );
-    assert_eq!(get_tex(&ctx, "th").as_dense()[0], 1.);
+    assert_eq!(get_tex(&ctx, "th").as_interleaved()[0], 1.);
     // Blackhat is tophat's dual: on the inverted impulse it isolates the same texel.
-    assert_eq!(get_tex(&ctx, "bh").as_dense()[0], 1.);
+    assert_eq!(get_tex(&ctx, "bh").as_interleaved()[0], 1.);
     assert_eq!(get_tex(&ctx, "sh").width, 8);
     assert_eq!(get_tex(&ctx, "sh2").width, 8);
 
@@ -440,7 +440,7 @@ sh2 = sharpen(g, amt=0.3, sigma=1.)
       true,
     )
     .unwrap();
-    let nd = get_tex(&ctx, "n3").as_dense();
+    let nd = get_tex(&ctx, "n3").as_interleaved();
     let (mut mn, mut mx) = ([1f32; 3], [0f32; 3]);
     for px in nd.chunks(3) {
       for c in 0..3 {
@@ -466,7 +466,7 @@ out = blit(checker | scale(0.5) | trans_global(0.25, 0.25), base)
 ",
     );
     let out = get_tex(&ctx, "out");
-    let px = out.as_dense()[0];
+    let px = out.as_interleaved()[0];
     assert!((px - 0.5).abs() < 0.1, "expected ~0.5 from mips, got {px}");
   }
 }
