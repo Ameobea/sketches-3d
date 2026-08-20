@@ -142,7 +142,7 @@ fn map_extend(x: f32, lo: f32, hi: f32, extend: Extend) -> f32 {
     return lo;
   }
   match extend {
-    Extend::Clamp => x.clamp(lo, hi),
+    Extend::Clamp => crate::builtins::clampf(x, lo, hi),
     Extend::Repeat => lo + (x - lo).rem_euclid(hi - lo),
     Extend::Mirror => {
       let span = hi - lo;

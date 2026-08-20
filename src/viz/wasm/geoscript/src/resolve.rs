@@ -309,6 +309,7 @@ impl Resolver {
       return None;
     }
     Some(ResolvedBody {
+      id: crate::ast::next_resolved_body_id(),
       n_slots: cctx.next_slot as u16,
       captures: cctx.captures,
       param_slots,

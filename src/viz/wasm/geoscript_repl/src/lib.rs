@@ -247,6 +247,9 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<Strin
     .current_module
     .borrow_mut()
     .replace(root_module.unwrap_or_else(|| "_root".to_owned()));
+  // Vectorize reports accumulate from const folding onward; body ids are per-parse, so
+  // stale entries from earlier runs would otherwise pile up.
+  ctx.geo_ctx.tex_vectorize.reports.borrow_mut().clear();
   if let Err(err) = optimize_ast(&ctx.geo_ctx, program) {
     *ctx.geo_ctx.current_module.borrow_mut() = prev_module;
     ctx.last_result = Err(err);
@@ -329,6 +332,41 @@ pub fn geoscript_repl_get_used_async_deps(_ctx: *const GeoscriptReplCtx) -> u32 
 pub fn geoscript_repl_clear_const_eval_cache(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
   ctx.geo_ctx.const_eval_cache.borrow_mut().entries.clear();
+}
+
+#[derive(SerJson)]
+struct VectorizeReportJson {
+  vectorized: bool,
+  reason: Option<String>,
+  line: u32,
+  col: u32,
+}
+
+/// Texel-closure vectorizer outcomes from the last run, as a JSON array of
+/// `{vectorized, reason, line, col}` — the "did this closure vectorize, and if not, why"
+/// signal (a silent bail is a ~60× per-texel cliff).
+#[wasm_bindgen]
+pub fn geoscript_repl_get_vectorize_reports(ctx: *const GeoscriptReplCtx) -> String {
+  let ctx = unsafe { &*ctx };
+  let reports = ctx.geo_ctx.tex_vectorize.reports.borrow();
+  let mut entries: Vec<VectorizeReportJson> = reports
+    .values()
+    .map(|r| VectorizeReportJson {
+      vectorized: r.vectorized,
+      reason: r.reason.clone(),
+      line: r.loc.0,
+      col: r.loc.1,
+    })
+    .collect();
+  entries.sort_unstable_by_key(|r| (r.line, r.col));
+  SerJson::serialize_json(&entries)
+}
+
+/// Kill switch for in-browser A/B and bisecting.
+#[wasm_bindgen]
+pub fn geoscript_repl_set_no_vectorize(ctx: *const GeoscriptReplCtx, no_vectorize: bool) {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.tex_vectorize.no_vectorize.set(no_vectorize);
 }
 
 /// Reset per-run state. Caches, source map, id counter, and the symbol interner

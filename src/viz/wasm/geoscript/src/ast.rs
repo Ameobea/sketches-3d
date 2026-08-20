@@ -334,7 +334,7 @@ pub enum MapLiteralEntry {
 }
 
 impl MapLiteralEntry {
-  fn expr(&self) -> &Expr {
+  pub(crate) fn expr(&self) -> &Expr {
     match self {
       MapLiteralEntry::KeyValue { key: _, value } => value,
       MapLiteralEntry::Splat { expr } => expr,
@@ -706,11 +706,20 @@ pub enum CaptureFrom {
 /// `Expr::Closure` node and copied into `Closure` values created from it.
 #[derive(Debug)]
 pub struct ResolvedBody {
+  /// Monotonic never-reused identity; keys the vectorizer's plan cache (ABA-safe by
+  /// construction, unlike pointer comparison).
+  pub id: u64,
   pub n_slots: u16,
   pub captures: Vec<(Sym, CaptureFrom)>,
   /// Starting frame slot per param; pattern params occupy a contiguous run of slots in
   /// `visit_idents` order.
   pub param_slots: Vec<u16>,
+}
+
+pub(crate) fn next_resolved_body_id() -> u64 {
+  use std::sync::atomic::{AtomicU64, Ordering};
+  static NEXT: AtomicU64 = AtomicU64::new(1);
+  NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Clone, Debug)]
@@ -865,11 +874,14 @@ pub(crate) fn maybe_init_op_def_shorthands() {
 }
 
 impl BinOp {
+  /// Takes operands by value so texture arms can reuse uniquely-owned buffers in place;
+  /// callers that retain their values clone (an `Rc` bump), which correctly disables the
+  /// in-place path.
   pub fn apply(
     &self,
     ctx: &EvalCtx,
-    lhs: &Value,
-    rhs: &Value,
+    lhs: Value,
+    rhs: Value,
     pre_resolved_def_ix: Option<usize>,
   ) -> Result<Value, ErrorStack> {
     match *self {
@@ -877,34 +889,20 @@ impl BinOp {
         // eval as a pipeline operator if the rhs is a callable
         if let Some(callable) = rhs.as_callable() {
           return ctx
-            .invoke_callable(callable, &[lhs.clone()], EMPTY_KWARGS)
+            .invoke_callable(callable, &[lhs], EMPTY_KWARGS)
             .map_err(|err| err.wrap("Error invoking callable in pipeline"));
         }
       }
-      BinOp::Range => return eval_range(lhs, Some(rhs), false),
-      BinOp::RangeInclusive => return eval_range(lhs, Some(rhs), true),
-      BinOp::Nullish => return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }.clone()),
+      BinOp::Range => return eval_range(&lhs, Some(&rhs), false),
+      BinOp::RangeInclusive => return eval_range(&lhs, Some(&rhs), true),
+      BinOp::Nullish => return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }),
       _ => (),
     }
 
-    unsafe {
+    {
       let def_ix = match pre_resolved_def_ix {
         Some(pre_resolved_def_ix) => pre_resolved_def_ix,
-        None => {
-          let (fn_sig_entry_ix, args_flipped) = (addr_of!(BINOP_DEF_IX_TABLE)
-            as *const (usize, bool))
-            .add(*self as usize)
-            .read();
-          let (arg1, arg2) = if args_flipped { (rhs, lhs) } else { (lhs, rhs) };
-          let resolved = (addr_of!(BINOP_RESOLVED_DEF_TABLE) as *const u8)
-            .add((*self as usize) * 256 + arg1.type_flag_ix() * 16 + arg2.type_flag_ix())
-            .read();
-          if resolved != 0 {
-            (resolved - 1) as usize
-          } else {
-            get_binop_def_ix(ctx, fn_sig_entry_ix, arg1, arg2)?
-          }
-        }
+        None => self.resolve_def_ix(ctx, &lhs, &rhs)?,
       };
 
       match self {
@@ -913,24 +911,49 @@ impl BinOp {
         BinOp::Mul => mul_impl(def_ix, lhs, rhs),
         BinOp::Div => div_impl(def_ix, lhs, rhs),
         BinOp::Mod => mod_impl(def_ix, lhs, rhs),
-        BinOp::Gt => numeric_bool_op_impl::<{ BoolOp::Gt }>(def_ix, lhs, rhs),
-        BinOp::Lt => numeric_bool_op_impl::<{ BoolOp::Lt }>(def_ix, lhs, rhs),
-        BinOp::Gte => numeric_bool_op_impl::<{ BoolOp::Gte }>(def_ix, lhs, rhs),
-        BinOp::Lte => numeric_bool_op_impl::<{ BoolOp::Lte }>(def_ix, lhs, rhs),
-        BinOp::Eq => eq_impl(def_ix, lhs, rhs),
-        BinOp::Neq => neq_impl(def_ix, lhs, rhs),
-        BinOp::And => and_impl(def_ix, lhs, rhs),
-        BinOp::Or => or_impl(def_ix, lhs, rhs),
-        BinOp::BitAnd => bit_and_impl(ctx, def_ix, lhs, rhs),
+        BinOp::Gt => numeric_bool_op_impl::<{ BoolOp::Gt }>(def_ix, &lhs, &rhs),
+        BinOp::Lt => numeric_bool_op_impl::<{ BoolOp::Lt }>(def_ix, &lhs, &rhs),
+        BinOp::Gte => numeric_bool_op_impl::<{ BoolOp::Gte }>(def_ix, &lhs, &rhs),
+        BinOp::Lte => numeric_bool_op_impl::<{ BoolOp::Lte }>(def_ix, &lhs, &rhs),
+        BinOp::Eq => eq_impl(def_ix, &lhs, &rhs),
+        BinOp::Neq => neq_impl(def_ix, &lhs, &rhs),
+        BinOp::And => and_impl(def_ix, &lhs, &rhs),
+        BinOp::Or => or_impl(def_ix, &lhs, &rhs),
+        BinOp::BitAnd => bit_and_impl(ctx, def_ix, &lhs, &rhs),
         BinOp::Map => {
           // this operator acts the same as `lhs | map(rhs)`
-          map_impl(ctx, def_ix, rhs, lhs)
+          map_impl(ctx, def_ix, &rhs, &lhs)
         }
         // treating as bit-or
-        BinOp::Pipeline => bit_or_impl(ctx, def_ix, lhs, rhs),
+        BinOp::Pipeline => bit_or_impl(ctx, def_ix, &lhs, &rhs),
         BinOp::Range | BinOp::RangeInclusive | BinOp::Nullish => {
           unreachable!("previously special-cased")
         }
+      }
+    }
+  }
+
+  /// Def resolution exactly as the interpreter performs it (flip table + resolved-def cache
+  /// + first-match signature scan); the vectorizer uses this with phantom typed values so it
+  /// accepts and rejects precisely what the scalar path does.
+  pub(crate) fn resolve_def_ix(
+    &self,
+    ctx: &EvalCtx,
+    lhs: &Value,
+    rhs: &Value,
+  ) -> Result<usize, ErrorStack> {
+    unsafe {
+      let (fn_sig_entry_ix, args_flipped) = (addr_of!(BINOP_DEF_IX_TABLE) as *const (usize, bool))
+        .add(*self as usize)
+        .read();
+      let (arg1, arg2) = if args_flipped { (rhs, lhs) } else { (lhs, rhs) };
+      let resolved = (addr_of!(BINOP_RESOLVED_DEF_TABLE) as *const u8)
+        .add((*self as usize) * 256 + arg1.type_flag_ix() * 16 + arg2.type_flag_ix())
+        .read();
+      if resolved != 0 {
+        Ok((resolved - 1) as usize)
+      } else {
+        get_binop_def_ix(ctx, fn_sig_entry_ix, arg1, arg2)
       }
     }
   }
@@ -976,7 +999,7 @@ impl PrefixOp {
     }
   }
 
-  pub fn apply(&self, ctx: &EvalCtx, val: &Value) -> Result<Value, ErrorStack> {
+  pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
     let def_ix = unsafe {
       let resolved = (addr_of!(UNOP_RESOLVED_DEF_TABLE) as *const u8)
         .add((*self as usize) * 16 + val.type_flag_ix())
@@ -987,14 +1010,14 @@ impl PrefixOp {
         let fn_sig_entry_ix = (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
           .add(*self as usize)
           .read();
-        get_unop_def_ix(ctx, fn_sig_entry_ix, val)?
+        get_unop_def_ix(ctx, fn_sig_entry_ix, &val)?
       }
     };
 
     match self {
       PrefixOp::Neg => neg_impl(def_ix, val),
-      PrefixOp::Pos => pos_impl(def_ix, val),
-      PrefixOp::Not => not_impl(def_ix, val),
+      PrefixOp::Pos => pos_impl(def_ix, &val),
+      PrefixOp::Not => not_impl(def_ix, &val),
     }
   }
 }

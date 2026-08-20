@@ -69,6 +69,7 @@ pub mod path_building;
 pub mod preprocess;
 mod resolve;
 mod seq;
+pub mod tex_vectorize;
 #[cfg(test)]
 mod tex_view_tests;
 #[cfg(test)]
@@ -1481,6 +1482,13 @@ impl Value {
     }
   }
 
+  fn into_texture(self) -> Option<Rc<TextureHandle>> {
+    match self {
+      Value::Texture(tex) => Some(tex),
+      _ => None,
+    }
+  }
+
   fn as_int(&self) -> Option<i64> {
     match self {
       Value::Int(i) => Some(*i),
@@ -1869,7 +1877,7 @@ pub(crate) fn get_args(
 
 /// Specialized version of `get_args` for more efficient binary operator lookup.  Assumes that each
 /// def in `defs` has exactly two args.
-fn get_binop_def_ix(
+pub(crate) fn get_binop_def_ix(
   ctx: &EvalCtx,
   fn_entry_ix: usize,
   lhs: &Value,
@@ -2628,6 +2636,8 @@ pub struct EvalCtx {
   pub fold_settings_unknown: Cell<bool>,
   pub fold_rng_unknown: Cell<bool>,
   pub fold_settings_deferred_unsafe: Cell<bool>,
+  /// Texel-closure vectorizer state: plan cache, kill/verify switches, per-body diagnostics.
+  pub tex_vectorize: crate::tex_vectorize::VectorizeState,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -2681,6 +2691,7 @@ impl Default for EvalCtx {
       fold_settings_unknown: Cell::new(false),
       fold_rng_unknown: Cell::new(false),
       fold_settings_deferred_unsafe: Cell::new(false),
+      tex_vectorize: crate::tex_vectorize::VectorizeState::default(),
     }
   }
 }
@@ -2941,7 +2952,7 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        op.apply(self, &lhs, &rhs, *pre_resolved_def_ix)
+        op.apply(self, lhs, rhs, *pre_resolved_def_ix)
           .map(ControlFlow::Continue)
           .map_err(|err| {
             self.locate_err(
@@ -2957,7 +2968,7 @@ impl EvalCtx {
           ControlFlow::Continue(val) => val,
           early_exit => return Ok(early_exit),
         };
-        op.apply(self, &val)
+        op.apply(self, val)
           .map(ControlFlow::Continue)
           .map_err(|err| {
             self.locate_err(

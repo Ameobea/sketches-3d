@@ -126,7 +126,7 @@ fn const_eval_cache_store(ctx: &EvalCtx, lookup: ConstEvalCacheLookup, value: Va
     .insert(lookup.key, value, rng_end_state);
 }
 
-fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> bool {
+pub(crate) fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> bool {
   if callable_is_dyn_for_const_eval(callable, allow_rng_const_eval) {
     return false;
   }
@@ -1322,7 +1322,7 @@ fn fold_associative_literal_chain(
       if *rhs_op == op {
         if let Some(rhs_lhs_val) = rhs_lhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_val, &rhs_lhs_val, rhs_rhs.as_ref()) {
-            let new_val = op.apply(ctx, &lhs_val, &rhs_lhs_val, None).map_err(|err| {
+            let new_val = op.apply(ctx, lhs_val.clone(), rhs_lhs_val.clone(), None).map_err(|err| {
               let (line, col) = ctx.resolve_loc(lhs_loc);
               err.with_loc(line, col)
             })?;
@@ -1367,7 +1367,7 @@ fn fold_associative_literal_chain(
       if *lhs_op == op {
         if let Some(lhs_rhs_val) = lhs_rhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_rhs_val, &rhs_val, lhs_lhs.as_ref()) {
-            let new_val = op.apply(ctx, &lhs_rhs_val, &rhs_val, None).map_err(|err| {
+            let new_val = op.apply(ctx, lhs_rhs_val.clone(), rhs_val.clone(), None).map_err(|err| {
               let (line, col) = ctx.resolve_loc(rhs_loc);
               err.with_loc(line, col)
             })?;
@@ -1709,7 +1709,7 @@ fn fold_constants<'a>(
       }
 
       let val = op
-        .apply(ctx, lhs_val, rhs_val, *pre_resolved_def_ix)
+        .apply(ctx, lhs_val.clone(), rhs_val.clone(), *pre_resolved_def_ix)
         .map_err(|err| {
           let (line, col) = ctx.resolve_loc(*loc);
           err.with_loc(line, col)
@@ -1764,7 +1764,7 @@ fn fold_constants<'a>(
           return Ok(());
         }
       }
-      let val = op.apply(ctx, val)?;
+      let val = op.apply(ctx, val.clone())?;
       if let Some(lookup) = cache_lookup {
         const_eval_cache_store(ctx, lookup, val.clone());
       }

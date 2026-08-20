@@ -82,6 +82,7 @@ pub(crate) mod ramp;
 pub(crate) mod sampling;
 pub(crate) mod load_image;
 pub(crate) mod spectral_noise;
+pub(crate) mod tex_kernels;
 pub(crate) mod texture;
 pub(crate) mod trace_path;
 
@@ -199,7 +200,7 @@ fn eval_numeric_bool_op(
   }
 }
 
-pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // vec3 + vec3
@@ -321,35 +322,62 @@ pub(crate) fn add_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       Ok(Value::Vec4(Rc::new(a.add_scalar(b))))
     }
     // texture + texture
-    12 => texture::texture_zip(
-      lhs.as_texture().unwrap(),
-      rhs.as_texture().unwrap(),
+    12 => texture::texture_zip_owned(
+      lhs.into_texture().unwrap(),
+      rhs.into_texture().unwrap(),
       "+",
       |x, y| x + y,
     ),
     // texture + num / num + texture
     13 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(lhs.as_texture().unwrap(), |x| {
-        x + s
-      }))
+      Ok(texture::texture_map_unary_owned(
+        lhs.into_texture().unwrap(),
+        move |x| x + s,
+      ))
     }
     14 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(rhs.as_texture().unwrap(), |x| {
-        x + s
-      }))
+      Ok(texture::texture_map_unary_owned(
+        rhs.into_texture().unwrap(),
+        move |x| x + s,
+      ))
     }
     // texture + vecN / vecN + texture
     15 | 17 | 19 => {
-      let (v, n) = as_vec_comps(rhs);
-      texture::texture_zip_vec(lhs.as_texture().unwrap(), &v[..n], "+", |a, b| a + b)
+      let (v, n) = as_vec_comps(&rhs);
+      texture::texture_zip_vec_owned(lhs.into_texture().unwrap(), &v[..n], "+", |a, b| a + b)
     }
     16 | 18 | 20 => {
-      let (v, n) = as_vec_comps(lhs);
-      texture::texture_zip_vec(rhs.as_texture().unwrap(), &v[..n], "+", |a, b| a + b)
+      let (v, n) = as_vec_comps(&lhs);
+      texture::texture_zip_vec_owned(rhs.into_texture().unwrap(), &v[..n], "+", |a, b| a + b)
     }
     _ => unimplemented!(),
+  }
+}
+
+/// Total clamp: bit-identical to `f32::clamp` for valid bounds (NaN in → NaN out), but never
+/// panics on inverted or NaN bounds — std's assert would abort the whole interpreter on
+/// user-supplied bounds.
+#[inline]
+pub(crate) fn clampf(x: f32, lo: f32, hi: f32) -> f32 {
+  if x < lo {
+    lo
+  } else if x > hi {
+    hi
+  } else {
+    x
+  }
+}
+
+#[inline]
+fn clampi(x: i64, lo: i64, hi: i64) -> i64 {
+  if x < lo {
+    lo
+  } else if x > hi {
+    hi
+  } else {
+    x
   }
 }
 
@@ -366,8 +394,8 @@ fn as_vec_comps(v: &Value) -> ([f32; 4], usize) {
 pub(crate) fn sub_impl(
   ctx: &EvalCtx,
   def_ix: usize,
-  lhs: &Value,
-  rhs: &Value,
+  lhs: Value,
+  rhs: Value,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -442,39 +470,41 @@ pub(crate) fn sub_impl(
       Ok(Value::Vec4(Rc::new(a.add_scalar(-b))))
     }
     // texture - texture
-    11 => texture::texture_zip(
-      lhs.as_texture().unwrap(),
-      rhs.as_texture().unwrap(),
+    11 => texture::texture_zip_owned(
+      lhs.into_texture().unwrap(),
+      rhs.into_texture().unwrap(),
       "-",
       |x, y| x - y,
     ),
     // texture - num / num - texture
     12 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(lhs.as_texture().unwrap(), |x| {
-        x - s
-      }))
+      Ok(texture::texture_map_unary_owned(
+        lhs.into_texture().unwrap(),
+        move |x| x - s,
+      ))
     }
     13 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(rhs.as_texture().unwrap(), |x| {
-        s - x
-      }))
+      Ok(texture::texture_map_unary_owned(
+        rhs.into_texture().unwrap(),
+        move |x| s - x,
+      ))
     }
     // texture - vecN / vecN - texture
     14 | 16 | 18 => {
-      let (v, n) = as_vec_comps(rhs);
-      texture::texture_zip_vec(lhs.as_texture().unwrap(), &v[..n], "-", |a, b| a - b)
+      let (v, n) = as_vec_comps(&rhs);
+      texture::texture_zip_vec_owned(lhs.into_texture().unwrap(), &v[..n], "-", |a, b| a - b)
     }
     15 | 17 | 19 => {
-      let (v, n) = as_vec_comps(lhs);
-      texture::texture_zip_vec(rhs.as_texture().unwrap(), &v[..n], "-", |a, b| b - a)
+      let (v, n) = as_vec_comps(&lhs);
+      texture::texture_zip_vec_owned(rhs.into_texture().unwrap(), &v[..n], "-", |a, b| b - a)
     }
     _ => unimplemented!(),
   }
 }
 
-pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+pub(crate) fn mul_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // vec3 * vec3
@@ -570,34 +600,34 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
     // texture * num
     16 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_scale(lhs.as_texture().unwrap(), s))
+      Ok(texture::texture_scale_owned(lhs.into_texture().unwrap(), s))
     }
     // num * texture
     17 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_scale(rhs.as_texture().unwrap(), s))
+      Ok(texture::texture_scale_owned(rhs.into_texture().unwrap(), s))
     }
     // texture * texture
-    18 => texture::texture_zip(
-      lhs.as_texture().unwrap(),
-      rhs.as_texture().unwrap(),
+    18 => texture::texture_zip_owned(
+      lhs.into_texture().unwrap(),
+      rhs.into_texture().unwrap(),
       "*",
       |x, y| x * y,
     ),
     // texture * vecN / vecN * texture
     19 | 21 | 23 => {
-      let (v, n) = as_vec_comps(rhs);
-      texture::texture_zip_vec(lhs.as_texture().unwrap(), &v[..n], "*", |a, b| a * b)
+      let (v, n) = as_vec_comps(&rhs);
+      texture::texture_zip_vec_owned(lhs.into_texture().unwrap(), &v[..n], "*", |a, b| a * b)
     }
     20 | 22 | 24 => {
-      let (v, n) = as_vec_comps(lhs);
-      texture::texture_zip_vec(rhs.as_texture().unwrap(), &v[..n], "*", |a, b| a * b)
+      let (v, n) = as_vec_comps(&lhs);
+      texture::texture_zip_vec_owned(rhs.into_texture().unwrap(), &v[..n], "*", |a, b| a * b)
     }
     _ => unimplemented!(),
   }
 }
 
-pub(crate) fn div_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+pub(crate) fn div_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // vec3 / vec3
@@ -656,39 +686,41 @@ pub(crate) fn div_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       Ok(Value::Vec4(Rc::new(a / b)))
     }
     // texture / texture
-    9 => texture::texture_zip(
-      lhs.as_texture().unwrap(),
-      rhs.as_texture().unwrap(),
+    9 => texture::texture_zip_owned(
+      lhs.into_texture().unwrap(),
+      rhs.into_texture().unwrap(),
       "/",
       |x, y| x / y,
     ),
     // texture / num / num / texture
     10 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(lhs.as_texture().unwrap(), |x| {
-        x / s
-      }))
+      Ok(texture::texture_map_unary_owned(
+        lhs.into_texture().unwrap(),
+        move |x| x / s,
+      ))
     }
     11 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary(rhs.as_texture().unwrap(), |x| {
-        s / x
-      }))
+      Ok(texture::texture_map_unary_owned(
+        rhs.into_texture().unwrap(),
+        move |x| s / x,
+      ))
     }
     // texture / vecN / vecN / texture
     12 | 14 | 16 => {
-      let (v, n) = as_vec_comps(rhs);
-      texture::texture_zip_vec(lhs.as_texture().unwrap(), &v[..n], "/", |a, b| a / b)
+      let (v, n) = as_vec_comps(&rhs);
+      texture::texture_zip_vec_owned(lhs.into_texture().unwrap(), &v[..n], "/", |a, b| a / b)
     }
     13 | 15 | 17 => {
-      let (v, n) = as_vec_comps(lhs);
-      texture::texture_zip_vec(rhs.as_texture().unwrap(), &v[..n], "/", |a, b| b / a)
+      let (v, n) = as_vec_comps(&lhs);
+      texture::texture_zip_vec_owned(rhs.into_texture().unwrap(), &v[..n], "/", |a, b| b / a)
     }
     _ => unimplemented!(),
   }
 }
 
-pub(crate) fn mod_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value, ErrorStack> {
+pub(crate) fn mod_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // int % int
@@ -701,6 +733,26 @@ pub(crate) fn mod_impl(def_ix: usize, lhs: &Value, rhs: &Value) -> Result<Value,
       let a = lhs.as_float().unwrap();
       let b = rhs.as_float().unwrap();
       Ok(Value::Float(a % b))
+    }
+    2 => texture::texture_zip_owned(
+      lhs.into_texture().unwrap(),
+      rhs.into_texture().unwrap(),
+      "%",
+      |x, y| x % y,
+    ),
+    3 => {
+      let s = rhs.as_float().unwrap();
+      Ok(texture::texture_map_unary_owned(
+        lhs.into_texture().unwrap(),
+        move |x| x % s,
+      ))
+    }
+    4 => {
+      let s = lhs.as_float().unwrap();
+      Ok(texture::texture_map_unary_owned(
+        rhs.into_texture().unwrap(),
+        move |x| s % x,
+      ))
     }
     _ => unimplemented!(),
   }
@@ -976,7 +1028,7 @@ pub(crate) fn warp_impl(
   }
 }
 
-pub(crate) fn neg_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> {
+pub(crate) fn neg_impl(def_ix: usize, val: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
       // negate int
@@ -1008,6 +1060,10 @@ pub(crate) fn neg_impl(def_ix: usize, val: &Value) -> Result<Value, ErrorStack> 
       let value = val.as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(-*value)))
     }
+    6 => Ok(texture::texture_map_unary_owned(
+      val.into_texture().unwrap(),
+      |x| -x,
+    )),
     _ => unimplemented!(),
   }
 }
@@ -1710,7 +1766,7 @@ fn call_impl(
 }
 
 /// `tileable` arg → tiling period in `pos` units: `false` → None, `true` → 1.
-fn resolve_tile_period(val: &Value) -> Result<Option<f32>, ErrorStack> {
+pub(crate) fn resolve_tile_period(val: &Value) -> Result<Option<f32>, ErrorStack> {
   match val {
     Value::Bool(false) => Ok(None),
     Value::Bool(true) => Ok(Some(1.)),
@@ -5437,6 +5493,9 @@ fn normalize_impl(
       let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(v.normalize()))
     }
+    2 => Ok(texture::texture_normalize_vec(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+    )),
     _ => unimplemented!(),
   }
 }
@@ -5458,6 +5517,10 @@ fn distance_impl(
       let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float((*a - *b).magnitude()))
     }
+    2 => texture::texture_distance(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
+    ),
     _ => unimplemented!(),
   }
 }
@@ -5479,6 +5542,10 @@ fn dot_impl(
       let b = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(a.dot(b)))
     }
+    2 => texture::texture_dot(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
+    ),
     _ => unimplemented!(),
   }
 }
@@ -5539,6 +5606,9 @@ fn len_impl(
       let m = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       Ok(Value::Int(m.mesh.vertices.len() as i64))
     }
+    5 => Ok(texture::texture_len(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+    )),
     _ => unimplemented!(),
   }
 }
@@ -6878,6 +6948,17 @@ fn lerp_impl(
       let b = arg_refs[2].resolve(args, kwargs).as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(a.lerp(b, t))))
     }
+    4 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let a = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
+      let b = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
+      texture::texture_zip(a, b, "lerp", move |x, y| x + (y - x) * t)
+    }
+    5 => texture::texture_lerp(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
+      arg_refs[2].resolve(args, kwargs).as_texture().unwrap(),
+    ),
     _ => unimplemented!(),
   }
 }
@@ -7014,6 +7095,10 @@ fn round_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.round(), value.y.round())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.round()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7040,6 +7125,10 @@ fn floor_impl(
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.floor(), value.y.floor())))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.floor()))
     }
     _ => unimplemented!(),
   }
@@ -7068,6 +7157,10 @@ fn ceil_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.ceil(), value.y.ceil())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.ceil()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7095,6 +7188,10 @@ fn fract_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.fract(), value.y.fract())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.fract()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7121,6 +7218,10 @@ fn trunc_impl(
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.trunc(), value.y.trunc())))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.trunc()))
     }
     _ => unimplemented!(),
   }
@@ -7187,6 +7288,10 @@ fn exp_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.exp(), value.y.exp())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.exp()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7240,6 +7345,10 @@ fn log2_impl(
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.log2(), value.y.log2())))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.log2()))
     }
     _ => unimplemented!(),
   }
@@ -7295,6 +7404,10 @@ fn tan_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.tan(), value.y.tan())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.tan()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7322,6 +7435,10 @@ fn cos_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.cos(), value.y.cos())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.cos()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7348,6 +7465,10 @@ fn sin_impl(
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.sin(), value.y.sin())))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.sin()))
     }
     _ => unimplemented!(),
   }
@@ -7457,6 +7578,10 @@ fn acos_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.acos(), value.y.acos())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.acos()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7483,6 +7608,10 @@ fn asin_impl(
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.asin(), value.y.asin())))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.asin()))
     }
     _ => unimplemented!(),
   }
@@ -7511,6 +7640,10 @@ fn atan_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.atan(), value.y.atan())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.atan()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -7530,6 +7663,22 @@ fn atan2_impl(
     1 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Float(v.y.atan2(v.x)))
+    }
+    2 => texture::texture_zip(
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
+      "atan2",
+      |y, x| y.atan2(x),
+    ),
+    3 => {
+      let y = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      Ok(texture::texture_map_unary(y, move |v| v.atan2(x)))
+    }
+    4 => {
+      let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
+      let x = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(x, move |v| y.atan2(v)))
     }
     _ => unimplemented!(),
   }
@@ -9282,6 +9431,18 @@ fn vec2_impl(
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(x, x)))
     }
+    2 => texture::texture_construct(
+      "vec2",
+      &[
+        arg_refs[0].resolve(args, kwargs),
+        arg_refs[1].resolve(args, kwargs),
+      ],
+    ),
+    3 => texture::texture_splat(
+      "vec2",
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      2,
+    ),
     _ => unimplemented!(),
   }
 }
@@ -9313,6 +9474,19 @@ fn vec3_impl(
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(x, x, x)))
     }
+    4 => texture::texture_construct(
+      "vec3",
+      &[
+        arg_refs[0].resolve(args, kwargs),
+        arg_refs[1].resolve(args, kwargs),
+        arg_refs[2].resolve(args, kwargs),
+      ],
+    ),
+    5 => texture::texture_splat(
+      "vec3",
+      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+      3,
+    ),
     _ => unimplemented!(),
   }
 }
@@ -9344,6 +9518,24 @@ fn vec4_impl(
     3 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       Vec4::new(x, x, x, x)
+    }
+    4 => {
+      return texture::texture_construct(
+        "vec4",
+        &[
+          arg_refs[0].resolve(args, kwargs),
+          arg_refs[1].resolve(args, kwargs),
+          arg_refs[2].resolve(args, kwargs),
+          arg_refs[3].resolve(args, kwargs),
+        ],
+      )
+    }
+    5 => {
+      return texture::texture_splat(
+        "vec4",
+        arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
+        4,
+      )
     }
     _ => unimplemented!(),
   };
@@ -9923,6 +10115,10 @@ fn sqrt_impl(
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(value.x.sqrt(), value.y.sqrt())))
     }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| x.sqrt()))
+    }
     _ => unimplemented!(),
   }
 }
@@ -9952,6 +10148,10 @@ fn sigmoid_impl(
         1.0 / (1.0 + (-value.x).exp()),
         1.0 / (1.0 + (-value.y).exp()),
       )))
+    }
+    3 => {
+      let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+      Ok(texture::texture_map_unary(t, |x| 1.0 / (1.0 + (-x).exp())))
     }
     _ => unimplemented!(),
   }
@@ -10083,14 +10283,14 @@ fn clamp_impl(
       let min = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
-      Ok(Value::Int(value.clamp(min, max)))
+      Ok(Value::Int(clampi(value, min, max)))
     }
     1 => {
       // float, float, float
       let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.clamp(min, max)))
+      Ok(Value::Float(clampf(value, min, max)))
     }
     2 => {
       // float, float, vec3
@@ -10098,9 +10298,9 @@ fn clamp_impl(
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.clamp(min, max),
-        value.y.clamp(min, max),
-        value.z.clamp(min, max),
+        clampf(value.x, min, max),
+        clampf(value.y, min, max),
+        clampf(value.z, min, max),
       )))
     }
     3 => {
@@ -10109,8 +10309,8 @@ fn clamp_impl(
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(
-        value.x.clamp(min, max),
-        value.y.clamp(min, max),
+        clampf(value.x, min, max),
+        clampf(value.y, min, max),
       )))
     }
     4 => {
@@ -10118,7 +10318,7 @@ fn clamp_impl(
       let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(value, |x| x.clamp(min, max)))
+      Ok(texture::texture_map_unary(value, |x| clampf(x, min, max)))
     }
     _ => unimplemented!(),
   }
@@ -10498,7 +10698,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "neg" => builtin_fn!(neg, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);
-    neg_impl(def_ix, val)
+    neg_impl(def_ix, val.clone())
   }),
   "pos" => builtin_fn!(pos, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);
@@ -10519,27 +10719,27 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "add" => builtin_fn!(add, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    add_impl(def_ix, lhs, rhs)
+    add_impl(def_ix, lhs.clone(), rhs.clone())
   }),
   "sub" => builtin_fn!(sub, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    sub_impl(ctx, def_ix, lhs, rhs)
+    sub_impl(ctx, def_ix, lhs.clone(), rhs.clone())
   }),
   "mul" => builtin_fn!(mul, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    mul_impl(def_ix, lhs, rhs)
+    mul_impl(def_ix, lhs.clone(), rhs.clone())
   }),
   "div" => builtin_fn!(div, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    div_impl(def_ix, lhs, rhs)
+    div_impl(def_ix, lhs.clone(), rhs.clone())
   }),
   "mod" => builtin_fn!(max, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
-    mod_impl(def_ix, lhs, rhs)
+    mod_impl(def_ix, lhs.clone(), rhs.clone())
   }),
   "max" => builtin_fn!(max, |def_ix, arg_refs, args, kwargs, _ctx| {
     max_impl(def_ix, arg_refs, args, kwargs)
@@ -11316,11 +11516,11 @@ mod combine_flag_tests {
     // A seamed operand's NO_WELD must survive the combine regardless of side (def_ix 4 = mesh +
     // mesh).
     for (lhs, rhs) in [(&plain, &seamed), (&seamed, &plain)] {
-      let out = add_impl(4, lhs, rhs).unwrap();
+      let out = add_impl(4, lhs.clone(), rhs.clone()).unwrap();
       assert!(out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));
     }
     // Two plain operands stay weldable.
-    let out = add_impl(4, &plain, &plain).unwrap();
+    let out = add_impl(4, plain.clone(), plain.clone()).unwrap();
     assert!(!out.as_mesh().unwrap().mesh.has_flag(mesh_flags::NO_WELD));
   }
 }
