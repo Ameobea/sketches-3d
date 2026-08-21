@@ -257,6 +257,36 @@ mod tests {
   }
 
   #[test]
+  fn test_exit_position_diagnostics() {
+    for (src, needle, line) in [
+      ("f = |x| { 1 + if x { return 1 } else { 2 } }", "only allowed as a statement", 1),
+      ("f = |x| {\n  if x > 0 { break 1 }\n  x\n}", "outside of a block", 2),
+      ("if true { return 1 }", "outside of a function", 1),
+    ] {
+      let result = analyze(src);
+      let hit = result
+        .diagnostics
+        .iter()
+        .find(|d| d.message.contains(needle))
+        .unwrap_or_else(|| panic!("expected {needle:?} for {src:?}, got: {:?}", result.diagnostics));
+      assert_eq!(hit.start_line, line, "wrong line for {src:?}: {hit:?}");
+      assert!(hit.end_col > hit.start_col, "empty span for {src:?}: {hit:?}");
+    }
+  }
+
+  /// Positional features run on the raw tree (the desugar lives in `optimize_ast`), so a
+  /// binding after a rewritten conditional is still visible where the user wrote it.
+  #[test]
+  fn test_exits_do_not_disturb_scope_analysis() {
+    let result = analyze("f = |x| {\n  if x { return 1 }\n  y = 2\n  y + 1\n}");
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_undefined_variable() {
     let result = analyze("y = x + 1");
     assert!(

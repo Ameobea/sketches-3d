@@ -299,10 +299,8 @@ impl GuardCtx<'_> {
         }
       }
       Statement::Expr(e) => self.visit_expr(e),
-      Statement::Return { value } | Statement::Break { value } => {
-        if let Some(v) = value {
-          self.visit_expr(v);
-        }
+      Statement::Return { .. } | Statement::Break { .. } => {
+        unreachable!("exits are desugared in `optimize_ast`")
       }
     }
   }
@@ -310,19 +308,9 @@ impl GuardCtx<'_> {
 
 /// Extracts the switching functions of `input` as a synthesized closure with the same params and
 /// captured scope whose body re-runs the original top-level statements and returns all guards as
-/// an array of scalars.  `None` when the closure has no liftable guards (or an early `return`/
-/// `break` makes appending a result expression unsound).
+/// an array of scalars.  `None` when the closure has no liftable guards.
 pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> {
   let captured = input.captured_env_scope();
-  if input
-    .body
-    .0
-    .iter()
-    .any(|s| matches!(s, Statement::Return { .. } | Statement::Break { .. }))
-  {
-    return None;
-  }
-
   let mut gcx = GuardCtx {
     ctx,
     captures: Rc::clone(&captured),

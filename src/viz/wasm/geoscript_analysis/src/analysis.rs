@@ -349,7 +349,7 @@ impl<'a> AnalysisWalker<'a> {
       Statement::Expr(expr) => {
         self.walk_expr(expr);
       }
-      Statement::Return { value } => {
+      Statement::Return { value, .. } => {
         let exit_ty = match value {
           Some(expr) => self.walk_expr(expr),
           None => AbstractType::Concrete(ArgType::Nil),
@@ -366,7 +366,7 @@ impl<'a> AnalysisWalker<'a> {
           self.validate_return_against_declared(&exit_ty, declared_ty, loc);
         }
       }
-      Statement::Break { value } => {
+      Statement::Break { value, .. } => {
         let exit_ty = match value {
           Some(expr) => self.walk_expr(expr),
           None => AbstractType::Concrete(ArgType::Nil),

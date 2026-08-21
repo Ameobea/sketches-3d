@@ -26,7 +26,7 @@ use crate::{
   get_args,
   noise::{fbm_1d, fbm_2d, fbm_2d_tileable, fbm_3d},
   seq::EagerSeq,
-  seq_as_eager, ArgRef, ArgType, Callable, Closure, ControlFlow, ErrorStack, EvalCtx, FrameEnv,
+  seq_as_eager, ArgRef, ArgType, Callable, Closure, ErrorStack, EvalCtx, FrameEnv,
   GetArgsOutput, SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
@@ -1042,11 +1042,7 @@ impl<'a> Compiler<'a> {
       captures: &cur.captures,
       self_ref: &cur.self_ref,
     };
-    match self.ctx.eval_expr_env(expr, &frame) {
-      Ok(ControlFlow::Continue(v)) => Ok(v),
-      Ok(_) => bail("return/break escaped a uniform subtree", expr.loc()),
-      Err(e) => Err(CErr::Err(e)),
-    }
+    self.ctx.eval_expr_env(expr, &frame).map_err(CErr::Err)
   }
 
   fn emit_uniform(&mut self, expr: &Expr) -> Result<AbsVal, CErr> {
@@ -1521,7 +1517,7 @@ impl<'a> Compiler<'a> {
       };
       self.bind_slot(slot, bound, param.type_hint, loc)?;
     }
-    self.compile_body(&inner.body.0, loc)
+    self.compile_statements(&inner.body.0, loc)
   }
 
   /// Bind a frame slot to an abstract value (inlined-closure params), checking its hint.
@@ -1623,7 +1619,7 @@ impl<'a> Compiler<'a> {
       self.bind_slot(slot, bound, param.type_hint, loc)?;
     }
     self.lit_depth += 1;
-    let result = self.compile_body(&stmts, loc);
+    let result = self.compile_statements(&stmts, loc);
     self.lit_depth -= 1;
     let result = result?;
     self.check_return_hint(&result, *return_type_hint, loc)?;
@@ -2584,26 +2580,14 @@ impl<'a> Compiler<'a> {
         Statement::DestructureAssignment { rhs, .. } => {
           return bail("destructuring assignment (not yet vectorized)", rhs.loc())
         }
-        Statement::Return { value } => {
-          return bail(
-            "`return` inside an expression operand; move it into its own statement",
-            value.as_ref().map_or(loc, |v| v.loc()),
-          )
+        Statement::Return { .. } | Statement::Break { .. } => {
+          unreachable!("exits are desugared in `optimize_ast`")
         }
-        Statement::Break { .. } => unreachable!("pre-filter rejects break"),
       }
     }
     last.ok_or_else(|| CErr::Bail("empty closure body".into(), loc))
   }
 
-  /// Closure-body entry: `return` is desugared away first (see `desugar_returns`).
-  fn compile_body(&mut self, stmts: &[Statement], loc: SourceLoc) -> Result<AbsVal, CErr> {
-    if stmts.iter().any(stmt_has_return) {
-      let stmts = desugar_returns(stmts, loc)?;
-      return self.compile_statements(&stmts, loc);
-    }
-    self.compile_statements(stmts, loc)
-  }
 }
 
 /// A baked partial application flattened to its innermost callee plus the bound args as
@@ -2690,11 +2674,13 @@ impl Renamer<'_> {
           .map(|v| v.iter().map(|s| self.base + s).collect::<Vec<_>>().into()),
       },
       Statement::Expr(e) => Statement::Expr(self.expr(e)?),
-      Statement::Return { value } => Statement::Return {
+      Statement::Return { value, loc } => Statement::Return {
         value: value.as_ref().map(|e| self.expr(e)).transpose()?,
+        loc: *loc,
       },
-      Statement::Break { value } => Statement::Break {
+      Statement::Break { value, loc } => Statement::Break {
         value: value.as_ref().map(|e| self.expr(e)).transpose()?,
+        loc: *loc,
       },
     })
   }
@@ -2855,181 +2841,16 @@ impl Renamer<'_> {
 // `return` desugar
 // ---------------------------------------------------------------------------------------
 
-fn expr_has_return(expr: &Expr) -> bool {
-  let mut found = false;
-  walk_expr_shallow(expr, &mut |e| {
-    if let Expr::Block { statements, .. } = e {
-      found |= statements.iter().any(|s| matches!(s, Statement::Return { .. }));
-    }
-  });
-  found
-}
-
-fn stmt_has_return(stmt: &Statement) -> bool {
-  matches!(stmt, Statement::Return { .. }) || stmt.exprs().any(expr_has_return)
-}
-
-/// Binding target of an assignment whose rhs contains a `return`.
-#[derive(Clone, Copy)]
-struct Target {
-  name: Sym,
-  name_loc: SourceLoc,
-  type_hint: Option<ArgType>,
-  slot: Option<u16>,
-}
-
-fn arm_statements(arm: &Expr) -> Vec<Statement> {
-  match arm {
-    Expr::Block { statements, .. } => statements.clone(),
-    other => vec![Statement::Expr(other.clone())],
-  }
-}
-
-/// Makes an arm's fall-through value bind `target`; a returning arm's value is the closure
-/// result instead and is left alone.
-fn rebind_last(body: &mut Vec<Statement>, target: Option<Target>, loc: SourceLoc) -> Result<(), CErr> {
-  let Some(t) = target else { return Ok(()) };
-  match body.pop() {
-    Some(Statement::Expr(expr)) => body.push(Statement::Assignment {
-      name: t.name,
-      name_loc: t.name_loc,
-      expr,
-      type_hint: t.type_hint,
-      slot: t.slot,
-    }),
-    Some(ret @ Statement::Return { .. }) => body.push(ret),
-    Some(_) => return bail("conditional arm ends with an assignment", loc),
-    None => return bail("empty conditional arm", loc),
-  }
-  Ok(())
-}
-
-/// Every `{ }` binds fresh slots, so nothing after a statement can observe it except whether
-/// it returned: `if c { return a }; rest` is exactly `if c { a } else { rest }`. The rest of
-/// the list moves into each non-returning arm (recursively), statements after an
-/// unconditional `return` are dropped, and the existing conditional lowering — guards for
-/// uniform conditions, speculative select for varying ones — supplies the semantics.
-fn desugar_returns(stmts: &[Statement], loc: SourceLoc) -> Result<Vec<Statement>, CErr> {
-  let mut out = Vec::with_capacity(stmts.len());
-  for (i, stmt) in stmts.iter().enumerate() {
-    let rest = &stmts[i + 1..];
-    let (target, expr) = match stmt {
-      // A bare `return` reaches here as `None` or, post-optimizer, as a `Nil` literal.
-      Statement::Return { value: None }
-      | Statement::Return {
-        value: Some(Expr::Literal { value: Value::Nil, .. }),
-      } => return bail("valueless `return` in texel closure", loc),
-      Statement::Return { value: Some(v) } => {
-        if expr_has_return(v) {
-          return bail("`return` nested inside a return value", v.loc());
-        }
-        out.push(Statement::Expr(v.clone()));
-        return Ok(out);
-      }
-      Statement::Break { .. } => return bail("`break` in texel closure", loc),
-      Statement::DestructureAssignment { rhs, .. } if expr_has_return(rhs) => {
-        return bail("`return` inside a destructuring assignment", rhs.loc())
-      }
-      Statement::Assignment {
-        name,
-        name_loc,
-        expr,
-        type_hint,
-        slot,
-      } if expr_has_return(expr) => (
-        Some(Target {
-          name: *name,
-          name_loc: *name_loc,
-          type_hint: *type_hint,
-          slot: *slot,
-        }),
-        expr,
-      ),
-      Statement::Expr(expr) if expr_has_return(expr) => (None, expr),
-      _ => {
-        out.push(stmt.clone());
-        continue;
-      }
-    };
-    match expr {
-      Expr::Conditional {
-        cond,
-        then,
-        else_if_exprs: else_ifs,
-        else_expr,
-        loc: cloc,
-      } => {
-        if expr_has_return(cond) || else_ifs.iter().any(|(c, _)| expr_has_return(c)) {
-          return bail("`return` inside a condition", expr.loc());
-        }
-        let arm = |a: &Expr| -> Result<Expr, CErr> {
-          let mut body = arm_statements(a);
-          rebind_last(&mut body, target, a.loc())?;
-          body.extend_from_slice(rest);
-          Ok(Expr::Block {
-            statements: desugar_returns(&body, a.loc())?,
-            loc: a.loc(),
-            end_loc: a.loc(),
-          })
-        };
-        let then = Box::new(arm(then)?);
-        let else_if_exprs = else_ifs
-          .iter()
-          .map(|(c, e)| Ok((c.clone(), arm(e)?)))
-          .collect::<Result<Vec<_>, CErr>>()?;
-        let else_expr = match else_expr {
-          Some(e) => Some(Box::new(arm(e)?)),
-          // Untaken texels fall through with Nil: harmless when nothing follows (the
-          // else-less bail fires), never when that Nil gets bound to a name.
-          None if target.is_some() && !rest.is_empty() => {
-            return bail("assignment from an else-less conditional that returns", *cloc)
-          }
-          None if rest.is_empty() => None,
-          None => Some(Box::new(Expr::Block {
-            statements: desugar_returns(rest, loc)?,
-            loc: *cloc,
-            end_loc: *cloc,
-          })),
-        };
-        out.push(Statement::Expr(Expr::Conditional {
-          cond: cond.clone(),
-          then,
-          else_if_exprs,
-          else_expr,
-          loc: *cloc,
-        }));
-        return Ok(out);
-      }
-      Expr::Block { statements, .. } => {
-        let mut body = statements.clone();
-        rebind_last(&mut body, target, expr.loc())?;
-        body.extend_from_slice(rest);
-        out.extend(desugar_returns(&body, loc)?);
-        return Ok(out);
-      }
-      _ => {
-        return bail(
-          "`return` inside an expression operand; move it into its own statement",
-          expr.loc(),
-        )
-      }
-    }
-  }
-  Ok(out)
-}
-
 // ---------------------------------------------------------------------------------------
 // Pre-filter
 // ---------------------------------------------------------------------------------------
 
 /// Syntactic whole-body bails: effectful/rng literal builtin calls anywhere (incl. nested
-/// closure bodies — the effect fence backstops non-literal callees at run time), `break` in
-/// the body proper, and — for the texel closure itself (`xy_params`) — any reference to the
-/// `x_ix`/`y_ix` params.
+/// closure bodies — the effect fence backstops non-literal callees at run time) and, for the
+/// texel closure itself (`xy_params`), any reference to the `x_ix`/`y_ix` params.
 fn prefilter(closure: &Closure, xy_from: Option<usize>) -> Result<(), CErr> {
   let mut bad: Option<(String, SourceLoc)> = None;
   for stmt in &closure.body.0 {
-    check_stmt_break(stmt, &mut bad);
     stmt.traverse_exprs(&mut |e: &Expr| {
       if bad.is_some() {
         return;
@@ -3168,25 +2989,6 @@ fn walk_expr_shallow(expr: &Expr, cb: &mut impl FnMut(&Expr)) {
   }
 }
 
-/// `break` scan over the body's own statements (nested closure bodies excluded — they get
-/// their own walk when inlined). `return` is handled by `desugar_returns`.
-fn check_stmt_break(stmt: &Statement, bad: &mut Option<(String, SourceLoc)>) {
-  let loc_of = |value: &Option<Expr>| value.as_ref().map(|e| e.loc()).unwrap_or_default();
-  if let Statement::Break { value } = stmt {
-    bad.get_or_insert_with(|| ("`break` in texel closure".into(), loc_of(value)));
-    return;
-  }
-  walk_stmt_shallow(stmt, &mut |e| {
-    if let Expr::Block { statements, .. } = e {
-      for s in statements {
-        if let Statement::Break { value } = s {
-          bad.get_or_insert_with(|| ("`break` in texel closure".into(), loc_of(value)));
-        }
-      }
-    }
-  });
-}
-
 // ---------------------------------------------------------------------------------------
 // Uniform evaluation + validation (per run)
 // ---------------------------------------------------------------------------------------
@@ -3303,8 +3105,7 @@ fn eval_uniforms_inner(
           self_ref: &self_ref,
         };
         match ctx.eval_expr_env(expr, &frame) {
-          Ok(ControlFlow::Continue(v)) => v,
-          Ok(_) => return Err(UniErr::Abort),
+          Ok(v) => v,
           Err(_) if step.speculative => return Err(UniErr::Abort),
           Err(e) => return Err(UniErr::Err(e)),
         }
@@ -4138,7 +3939,7 @@ fn compile(
   }
 
   let body_loc = body_loc(closure);
-  let result = compiler.compile_body(&closure.body.0, body_loc);
+  let result = compiler.compile_statements(&closure.body.0, body_loc);
   compiler.pop_frame();
   if !fence.verify_or_restore(ctx) {
     return bail("uniform subtree performed an observable effect", body_loc);
@@ -5662,7 +5463,8 @@ f(5) | render_texture(name="b")
   /// lower through the same arms as vec3; a 4-channel body must vectorize end to end.
   /// `return` desugars to nested conditionals: top-level, varying/uniform conditions,
   /// else-if ladders, nested arms, inside inlined helpers (incl. a mask-valued one),
-  /// assignment and block forms, vec arms, generator entry.
+  /// assignment and block forms, else-less assignment, `break` out of a block, vec arms,
+  /// generator entry.
   #[test]
   fn early_returns_bit_identical() {
     let src = r#"
@@ -5691,7 +5493,7 @@ o6 = h -> |v| helper(v) + 1.
 o7 = h -> |v| { y = if v > 0.3 { return 0. } else { v * 4. }
 y + 1. }
 o8 = h -> |v| { y = { if v > 0.3 { return 0. }
-v * 4. }
+v * 5. }
 y + 1. }
 o9 = rgb -> |c| { if len(c) > 1. { return c * 0.5 }
 c.bgr }
@@ -5700,6 +5502,11 @@ o11 = h -> |v| { if v > 0.5 { return v } else { return v * 2. } }
 o12 = h -> |v| { if v > 0.4 { z = v * 3.
 if z > 2. { return z } else { return z * 0.5 } }
 v }
+o13 = h -> |v| { y = if v > 5. { return 1. }
+v }
+o14 = h -> |v| { y = { if v > 0.5 { break 1. }
+v }
+y }
 g = texture(16, 16, |uv| { if uv.x > uv.y { return uv.x }
 uv.y * 2. })
 o1 | render_texture(name="o1")
@@ -5714,6 +5521,8 @@ o9 | render_texture(name="o9")
 o10 | render_texture(name="o10")
 o11 | render_texture(name="o11")
 o12 | render_texture(name="o12")
+o13 | render_texture(name="o13")
+o14 | render_texture(name="o14")
 g | render_texture(name="g")
 "#;
     let (vec_ctx, scalar_ctx) = eval_both(src);
@@ -5721,8 +5530,8 @@ g | render_texture(name="g")
     let reps = reports(&vec_ctx);
     assert_eq!(
       vectorized_count(&vec_ctx),
-      15,
-      "every return body must vectorize (12 maps + 3 generators): {reps:?}"
+      17,
+      "every return body must vectorize (14 maps + 3 generators): {reps:?}"
     );
   }
 
@@ -5764,15 +5573,9 @@ slices | render_texture_stack(name="s")
   #[test]
   fn return_bails_report_reasons() {
     for (body, needle) in [
+      // Desugars to `if v > 5. { nil } else { v }`.
       ("{ if v > 5. { return }
-v }", "valueless"),
-      ("v + if v > 0.5 { return 1. } else { 0. }", "operand"),
-      ("{ y = if v > 5. { return 1. }
-v }", "else-less"),
-      ("{ if (if v > 5. { return 1. } else { false }) { 2. } else { v } }", "inside a condition"),
-      ("{ y = { if v > 0.5 { break 1. }
-v }
-y }", "break"),
+v }", "non-numeric arm"),
     ] {
       let src = format!("t = texture(16, 16, |uv| uv.x)\n(t -> |v| {body}) | render_texture(name=\"o\")");
       let (ctx, scalar_ctx) = eval_both(&src);

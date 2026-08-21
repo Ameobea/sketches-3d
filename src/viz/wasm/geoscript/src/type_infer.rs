@@ -23,28 +23,16 @@ use crate::{
 };
 
 /// Scope stack for type inference.  Mirrors the shape of [`crate::ast::ScopeTracker`] but
-/// carries only type information.  Also tracks the return-type accumulation of any enclosing
-/// closures so `Statement::Return` can contribute at arbitrary depth, and break-exit
-/// accumulation for enclosing explicit blocks (`None` entries are closure-body barriers —
-/// `break` cannot escape a closure).
+/// carries only type information.
 #[derive(Default, Debug)]
 pub struct TypeEnv {
   frames: Vec<FxHashMap<Sym, AbstractType>>,
-  closure_return_stack: Vec<ClosureReturnTracker>,
-  block_break_stack: Vec<Option<Vec<AbstractType>>>,
-}
-
-#[derive(Debug)]
-struct ClosureReturnTracker {
-  exit_types: Vec<AbstractType>,
 }
 
 impl TypeEnv {
   pub fn new() -> Self {
     TypeEnv {
       frames: vec![FxHashMap::default()],
-      closure_return_stack: Vec::new(),
-      block_break_stack: Vec::new(),
     }
   }
 
@@ -579,14 +567,14 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
       ..
     } => {
       infer_expr(ctx, env, cond);
-      let then_ty = infer_branch_expr(ctx, env, then);
+      let then_ty = infer_expr(ctx, env, then);
       let mut branches: Vec<AbstractType> = vec![then_ty];
       for (c, e) in else_if_exprs {
         infer_expr(ctx, env, c);
-        branches.push(infer_branch_expr(ctx, env, e));
+        branches.push(infer_expr(ctx, env, e));
       }
       if let Some(else_expr) = else_expr {
-        branches.push(infer_branch_expr(ctx, env, else_expr));
+        branches.push(infer_expr(ctx, env, else_expr));
       } else {
         branches.push(AbstractType::Concrete(ArgType::Nil));
       }
@@ -598,71 +586,35 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
 
     Expr::Block { statements, .. } => {
       env.push_scope();
-      env.block_break_stack.push(Some(Vec::new()));
-      let (result, unreachable) = infer_statement_list(ctx, env, statements);
-      let break_exits = env.block_break_stack.pop().unwrap().unwrap();
+      let result = infer_statement_list(ctx, env, statements);
       env.pop_scope();
-      // When the fall-through is unreachable the block's type comes solely from its break
-      // exits; a *reachable* Unknown fall-through must stay Unknown (it absorbs in
-      // merge_types), so it can't double as the unreachable sentinel.
-      let mut exits = break_exits.into_iter();
-      let mut acc = if unreachable {
-        exits.next().unwrap_or(AbstractType::Unknown)
-      } else {
-        result
-      };
-      for t in exits {
-        acc = merge_types(&acc, &t);
-      }
-      acc
+      result
     }
   }
 }
 
-/// Walks a statement list: the trailing-expression type (Nil if none) plus whether the
-/// fall-through result is unreachable (list ends in `return`/`break`).
+/// A statement list's type is its trailing expression's (Nil if it doesn't end in one).
 fn infer_statement_list(
   ctx: &EvalCtx,
   env: &mut TypeEnv,
   statements: &[Statement],
-) -> (AbstractType, bool) {
+) -> AbstractType {
   let stmt_count = statements.len();
   let mut result = AbstractType::Concrete(ArgType::Nil);
-  let mut unreachable = false;
   for (i, stmt) in statements.iter().enumerate() {
     if i + 1 == stmt_count {
-      match stmt {
-        Statement::Expr(expr) => {
-          result = infer_expr(ctx, env, expr);
-          continue;
-        }
-        Statement::Return { .. } | Statement::Break { .. } => unreachable = true,
-        _ => {}
+      if let Statement::Expr(expr) = stmt {
+        result = infer_expr(ctx, env, expr);
+        continue;
       }
     }
     infer_statement(ctx, env, stmt);
   }
-  (result, unreachable)
+  result
 }
 
-/// Mirrors runtime branch transparency: a conditional branch block is NOT a break target,
-/// so `break` inside it contributes to the nearest enclosing explicit block instead.
-fn infer_branch_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType {
-  let Expr::Block { statements, .. } = expr else {
-    return infer_expr(ctx, env, expr);
-  };
-  env.push_scope();
-  let (result, unreachable) = infer_statement_list(ctx, env, statements);
-  env.pop_scope();
-  if unreachable {
-    AbstractType::Unknown
-  } else {
-    result
-  }
-}
-
-/// Infer a statement's effect on the environment.  Side-effects on `env` (bindings from
-/// assignments, closure-return tracking) persist; the statement itself has no return value.
+/// Infer a statement's effect on the environment.  Bindings from assignments persist; the
+/// statement itself has no return value.
 pub fn infer_statement(ctx: &EvalCtx, env: &mut TypeEnv, stmt: &Statement) {
   match stmt {
     Statement::Assignment {
@@ -685,23 +637,8 @@ pub fn infer_statement(ctx: &EvalCtx, env: &mut TypeEnv, stmt: &Statement) {
     Statement::Expr(expr) => {
       infer_expr(ctx, env, expr);
     }
-    Statement::Return { value } => {
-      let exit_ty = match value {
-        Some(expr) => infer_expr(ctx, env, expr),
-        None => AbstractType::Concrete(ArgType::Nil),
-      };
-      if let Some(tracker) = env.closure_return_stack.last_mut() {
-        tracker.exit_types.push(exit_ty);
-      }
-    }
-    Statement::Break { value } => {
-      let exit_ty = match value {
-        Some(expr) => infer_expr(ctx, env, expr),
-        None => AbstractType::Concrete(ArgType::Nil),
-      };
-      if let Some(Some(exits)) = env.block_break_stack.last_mut() {
-        exits.push(exit_ty);
-      }
+    Statement::Return { .. } | Statement::Break { .. } => {
+      unreachable!("exits are desugared in `optimize_ast`")
     }
   }
 }
@@ -980,55 +917,12 @@ fn infer_closure(
     }
   }
 
-  env.closure_return_stack.push(ClosureReturnTracker {
-    exit_types: Vec::new(),
-  });
-  env.block_break_stack.push(None);
-
-  // Walk body statements.  If the last statement is a trailing expression, its type becomes
-  // the implicit return; if it's a `Return`, the implicit tail is unreachable.
-  let mut implicit_return = AbstractType::Concrete(ArgType::Nil);
-  let mut implicit_is_unreachable = false;
-  let stmt_count = body.0.len();
-  for (i, stmt) in body.0.iter().enumerate() {
-    let is_last = i + 1 == stmt_count;
-    if is_last {
-      match stmt {
-        Statement::Expr(expr) => {
-          implicit_return = infer_expr(ctx, env, expr);
-          continue;
-        }
-        Statement::Return { .. } => {
-          implicit_is_unreachable = true;
-        }
-        _ => {}
-      }
-    }
-    infer_statement(ctx, env, stmt);
-  }
-
-  env.block_break_stack.pop();
-  let tracker = env
-    .closure_return_stack
-    .pop()
-    .expect("closure return stack balanced");
+  let implicit_return = infer_statement_list(ctx, env, &body.0);
   env.pop_scope();
 
-  let return_ty = if let Some(declared) = return_type_hint {
-    AbstractType::Concrete(declared)
-  } else {
-    let mut acc = if implicit_is_unreachable {
-      AbstractType::Unknown
-    } else {
-      implicit_return
-    };
-    for t in &tracker.exit_types {
-      acc = match &acc {
-        AbstractType::Unknown => t.clone(),
-        _ => merge_types(&acc, t),
-      };
-    }
-    acc
+  let return_ty = match return_type_hint {
+    Some(declared) => AbstractType::Concrete(declared),
+    None => implicit_return,
   };
 
   AbstractType::Callable(CallableType {
@@ -1051,9 +945,12 @@ mod tests {
   use crate::ast::TopLevelStatement;
   use crate::parse_program_src;
 
+  /// Inference runs on desugared trees only (the pass is the first step of `optimize_ast`),
+  /// so exercise it the way production does.
   fn infer_first_rhs(src: &str) -> AbstractType {
     let ctx = EvalCtx::default();
-    let ast = parse_program_src(&ctx, src).unwrap();
+    let mut ast = parse_program_src(&ctx, src).unwrap();
+    crate::desugar::desugar_exits(&ctx, &mut ast).unwrap();
     let TopLevelStatement::Statement(Statement::Assignment { expr, .. }) = &ast.statements[0]
     else {
       panic!("expected assignment statement");
@@ -1075,10 +972,12 @@ mod tests {
     let ty = format!("{:?}", infer_first_rhs("v = { break 'done' }"));
     assert!(ty.contains("String") && !ty.contains("Nil"), "got {ty}");
 
-    // Closure bodies are a break barrier.
+    // Closure bodies are a break barrier: a break inside a nested closure's own block cannot
+    // reach the outer block. (A break with no block inside the closure is a static error —
+    // see `desugar::tests::rejects_exits_in_operands`.)
     let ty = format!(
       "{:?}",
-      infer_first_rhs("v = {\n  f = |x| { if x { break 1.5 }\n  2 }\n  9\n}")
+      infer_first_rhs("v = {\n  f = |x| { { if x { break 1.5 }\n  2 } }\n  9\n}")
     );
     assert!(ty.contains("Int") && !ty.contains("Float"), "got {ty}");
 

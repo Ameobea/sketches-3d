@@ -261,18 +261,8 @@ impl<'a> DerivCtx<'a> {
             return Ok(pt);
           }
         }
-        Statement::Return { value } => {
-          return match value {
-            Some(e) => self.diff_expr(e),
-            None => Err(ErrorStack::new(
-              "autodiff: differentiated closure cannot `return` without a value",
-            )),
-          };
-        }
-        Statement::Break { .. } => {
-          return Err(ErrorStack::new(
-            "autodiff: `break` is not supported inside a differentiated closure",
-          ))
+        Statement::Return { .. } | Statement::Break { .. } => {
+          unreachable!("exits are desugared in `optimize_ast`")
         }
         Statement::DestructureAssignment { rhs, .. } => {
           return Err(self.err(

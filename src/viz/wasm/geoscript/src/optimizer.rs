@@ -817,14 +817,14 @@ fn hash_statement(
       hash_expr(rhs, hasher, uses, config)
     }
     Statement::Expr(expr) => hash_expr(expr, hasher, uses, config),
-    Statement::Return { value } => {
+    Statement::Return { value, .. } => {
       std::mem::discriminant(value).hash(hasher);
       if let Some(expr) = value {
         hash_expr(expr, hasher, uses, config)?;
       }
       Some(())
     }
-    Statement::Break { value } => {
+    Statement::Break { value, .. } => {
       std::mem::discriminant(value).hash(hasher);
       if let Some(expr) = value {
         hash_expr(expr, hasher, uses, config)?;
@@ -2435,7 +2435,7 @@ fn fold_constants<'a>(
     Expr::Block {
       statements,
       loc,
-      end_loc,
+      end_loc: _,
     } => {
       let mut block_scope = ScopeTracker::wrap(&*local_scope);
 
@@ -2503,39 +2503,11 @@ fn fold_constants<'a>(
       let Ok(evaled) = ctx.eval_standalone_stmts(&fold_stmts, n_slots, &cap_vals) else {
         return Ok(());
       };
-      match evaled {
-        crate::ControlFlow::Continue(val) => {
-          fold_stat("block");
-          *expr = Expr::Literal {
-            value: val,
-            loc: *loc,
-          }
-        }
-        crate::ControlFlow::Return(retval) => {
-          *expr = Expr::Block {
-            statements: vec![Statement::Return {
-              value: Some(Expr::Literal {
-                value: retval,
-                loc: *loc,
-              }),
-            }],
-            loc: *loc,
-            end_loc: *end_loc,
-          };
-        }
-        crate::ControlFlow::Break(val) => {
-          *expr = Expr::Block {
-            statements: vec![Statement::Break {
-              value: Some(Expr::Literal {
-                value: val,
-                loc: *loc,
-              }),
-            }],
-            loc: *loc,
-            end_loc: *end_loc,
-          };
-        }
-      }
+      fold_stat("block");
+      *expr = Expr::Literal {
+        value: evaled,
+        loc: *loc,
+      };
 
       Ok(())
     }
@@ -2639,13 +2611,13 @@ fn optimize_statement<'a>(
 
       Ok(())
     }
-    Statement::Return { value } => {
+    Statement::Return { value, .. } => {
       if let Some(expr) = value {
         optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?
       }
       Ok(())
     }
-    Statement::Break { value } => {
+    Statement::Break { value, .. } => {
       if let Some(expr) = value {
         optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?
       }
@@ -2962,6 +2934,7 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
 }
 
 pub fn optimize_ast(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorStack> {
+  crate::desugar::desugar_exits(ctx, ast)?;
   // Pre-resolve so closures created while const folding evaluates const subtrees already run
   // on the frame-based path; re-resolve at the end because folding rewrites closure bodies
   // (capture inlining, literal-closure folding).
@@ -3398,7 +3371,9 @@ fn = || {
   };
   let expr = match &closure_body.0[0] {
     Statement::Expr(expr) => expr.clone(),
-    Statement::Return { value: Some(expr) } => expr.clone(),
+    Statement::Return {
+      value: Some(expr), ..
+    } => expr.clone(),
     _ => unreachable!(),
   };
   let expr = match expr {
@@ -3540,7 +3515,9 @@ fn = |x| 1 + (1 + (1 + x))
 
   let expr = match &closure_body.0[0] {
     Statement::Expr(expr) => expr,
-    Statement::Return { value: Some(expr) } => expr,
+    Statement::Return {
+      value: Some(expr), ..
+    } => expr,
     _ => unreachable!(),
   };
   match expr {
@@ -3586,7 +3563,9 @@ fn test_assoc_constant_folding_folds_mesh_scale_chain() {
   };
   let expr = match &closure_body.0[0] {
     Statement::Expr(expr) => expr,
-    Statement::Return { value: Some(expr) } => expr,
+    Statement::Return {
+      value: Some(expr), ..
+    } => expr,
     _ => unreachable!(),
   };
   match expr {

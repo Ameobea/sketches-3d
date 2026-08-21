@@ -173,10 +173,8 @@ impl Resolver {
         *slots = Some(Rc::from(slot_vec));
       }
       Statement::Expr(e) => self.walk_expr(e, None),
-      Statement::Return { value } | Statement::Break { value } => {
-        if let Some(e) = value {
-          self.walk_expr(e, None);
-        }
+      Statement::Return { .. } | Statement::Break { .. } => {
+        unreachable!("exits are desugared in `optimize_ast`")
       }
     }
   }

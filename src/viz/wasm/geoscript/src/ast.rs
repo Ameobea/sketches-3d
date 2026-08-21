@@ -227,9 +227,11 @@ pub enum Statement {
   Expr(Expr),
   Return {
     value: Option<Expr>,
+    loc: SourceLoc,
   },
   Break {
     value: Option<Expr>,
+    loc: SourceLoc,
   },
 }
 
@@ -287,8 +289,8 @@ impl Statement {
       Statement::Assignment { expr, .. } => (Some(expr), None),
       Statement::DestructureAssignment { lhs: _, rhs, .. } => (Some(rhs), None),
       Statement::Expr(expr) => (Some(expr), None),
-      Statement::Return { value } => (value.as_ref(), None),
-      Statement::Break { value } => (value.as_ref(), None),
+      Statement::Return { value, .. } => (value.as_ref(), None),
+      Statement::Break { value, .. } => (value.as_ref(), None),
     };
     first.into_iter().chain(second)
   }
@@ -299,8 +301,8 @@ impl Statement {
       Statement::Assignment { expr, .. } => (Some(expr), None),
       Statement::DestructureAssignment { lhs: _, rhs, .. } => (Some(rhs), None),
       Statement::Expr(expr) => (Some(expr), None),
-      Statement::Return { value } => (value.as_mut(), None),
-      Statement::Break { value } => (value.as_mut(), None),
+      Statement::Return { value, .. } => (value.as_mut(), None),
+      Statement::Break { value, .. } => (value.as_mut(), None),
     };
     first.into_iter().chain(second)
   }
@@ -2093,7 +2095,10 @@ fn parse_return_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Stat
     None
   };
 
-  Ok(Statement::Return { value })
+  Ok(Statement::Return {
+    value,
+    loc: ctx.add_source_loc(line, col),
+  })
 }
 
 fn parse_break_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<Statement, ErrorStack> {
@@ -2115,7 +2120,10 @@ fn parse_break_statement(ctx: &EvalCtx, return_stmt: Pair<Rule>) -> Result<State
     None
   };
 
-  Ok(Statement::Break { value })
+  Ok(Statement::Break {
+    value,
+    loc: ctx.add_source_loc(line, col),
+  })
 }
 
 fn parse_export_statement(
