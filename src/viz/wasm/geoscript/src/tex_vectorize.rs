@@ -18,12 +18,16 @@ use arrayvec::ArrayVec;
 use fxhash::{FxHashMap, FxHasher};
 
 use crate::{
-  ast::{BinOp, CaptureFrom, Expr, FunctionCall, FunctionCallTarget, PrefixOp, Statement, VarRes},
+  ast::{
+    BinOp, CaptureFrom, DestructurePattern, Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry,
+    PrefixOp, ResolvedBody, Statement, VarRes,
+  },
   builtins::{fn_defs::fn_sigs, resolve_tile_period, tex_kernels as kern},
   get_args,
   noise::{fbm_1d, fbm_2d, fbm_2d_tileable, fbm_3d},
-  ArgRef, ArgType, Callable, Closure, ControlFlow, ErrorStack, EvalCtx, FrameEnv, GetArgsOutput,
-  SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
+  seq::EagerSeq,
+  seq_as_eager, ArgRef, ArgType, Callable, Closure, ControlFlow, ErrorStack, EvalCtx, FrameEnv,
+  GetArgsOutput, SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
 const MIN_TEXELS: usize = 64;
@@ -31,6 +35,14 @@ const MAX_CACHED_PLANS: usize = 512;
 const REG_BYTE_BUDGET: u64 = 512 << 20;
 /// Bail once a body's counters approach the `u16` register/uniform index space.
 const MAX_PLAN_SLOTS: usize = 60_000;
+/// Longest sequence a texel body may loop over (each element unrolls its body once).
+const MAX_UNROLL: usize = 256;
+/// Sequence builtins lowered structurally at compile time; `fn` args may be closure literals.
+const SEQ_BUILTINS: &[&str] = &[
+  "map", "fold", "reduce", "scan", "any", "all", "collect", "first", "last", "take", "skip", "reverse",
+  "flatten", "chain",
+];
+const SEQ_BAILS: &[&str] = &["filter", "fold_while", "for_each", "take_while", "skip_while"];
 
 #[derive(Clone)]
 enum PlanEntry {
@@ -208,6 +220,9 @@ enum UniSrc {
   UniRef(u16),
   /// `.field` of an earlier uniform-table value, re-evaluated per run.
   SwizzleOf { of: u16, field: String },
+  /// Element `ix` of an earlier uniform-table sequence (length pinned by `UniShape::Seq`;
+  /// lazy sequences are consumed once per run).
+  SeqElem { of: u16, ix: u16 },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -225,6 +240,9 @@ enum UniShape {
   Bool,
   /// Used as a raw `Value` (fbm params); validated at the use site.
   Any,
+  /// A sequence unrolled to exactly `len` elements: the count is plan structure, so a
+  /// different length on a cache-hit run evicts the plan and recompiles.
+  Seq { len: u16 },
 }
 
 struct UniStep {
@@ -398,6 +416,23 @@ impl VV {
 enum AbsVal {
   U(u16),
   V(VV),
+  /// Sequence with compile-time-known elements; loops over it unroll.
+  Seq(AbsSeq),
+}
+
+/// `eager` mirrors the scalar path's indexability: array literals and `collect`/`reverse`
+/// results take `[]`, `->`/`map`/`take`/… results don't.
+#[derive(Clone)]
+struct AbsSeq {
+  els: Rc<Vec<AbsVal>>,
+  eager: bool,
+}
+
+/// A callback position's callee: a closure literal (inlined by slot renaming, so its
+/// captures may be varying) or a uniform callable value.
+enum Cb {
+  Lit(Rc<Expr>),
+  Callable { c: Rc<Callable>, uix: Option<u16> },
 }
 
 /// `Src` with `Const` by bit pattern, so it can key a map (and order operands).
@@ -450,6 +485,9 @@ enum SlotState {
   Unset,
   Uniform,
   Varying(VV),
+  Seq(AbsSeq),
+  /// Closure literal with varying captures: only callable, inlined by slot renaming.
+  Lit(Rc<Expr>),
 }
 
 /// Observable-effect fence: uniform subtrees run through the interpreter once instead of
@@ -668,6 +706,8 @@ struct Compiler<'a> {
   plan_frames: Vec<FrameSpec>,
   /// `ResolvedBody` ids of closures currently being inlined (recursion guard).
   inline_stack: Vec<u64>,
+  /// Nesting depth of closure-literal inlines (unrolled loop bodies).
+  lit_depth: usize,
   uses_uv: bool,
   /// Guard every step/uniform emitted right now carries (innermost uniform-cond arm).
   guard: Option<u16>,
@@ -710,6 +750,12 @@ impl<'a> Compiler<'a> {
       captures,
       self_ref,
     });
+  }
+
+  /// Frames grow when closure literals are inlined into them; the plan's mirror must match.
+  fn pop_frame(&mut self) {
+    let f = self.frames.pop().unwrap();
+    self.plan_frames[f.plan_frame as usize].n_slots = f.slot_abs.len() as u16;
   }
 
   fn alloc_reg(&mut self) -> u16 {
@@ -841,6 +887,9 @@ impl<'a> Compiler<'a> {
       AbsVal::U(uix) => self.uni_val(*uix).clone(),
       AbsVal::V(vv) if vv.mask => Value::Bool(false),
       AbsVal::V(vv) => phantom(vv.chans.len() as u8),
+      AbsVal::Seq(_) => Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(Vec::new()),
+      })),
     }
   }
 
@@ -850,6 +899,7 @@ impl<'a> Compiler<'a> {
         .ok_or_else(|| CErr::Bail("non-numeric uniform operand in varying expression".into(), SourceLoc::default())),
       AbsVal::V(vv) if vv.mask => bail("bool used where a number is expected", SourceLoc::default()),
       AbsVal::V(vv) => Ok(vv.chans.len() as u8),
+      AbsVal::Seq(_) => bail("sequence used where a number is expected", SourceLoc::default()),
     }
   }
 
@@ -859,6 +909,7 @@ impl<'a> Compiler<'a> {
     match v {
       AbsVal::V(vv) if vv.mask => Ok(vv.chans[0]),
       AbsVal::V(_) => bail("expected a bool, found a varying number", loc),
+      AbsVal::Seq(_) => bail("expected a bool, found a sequence", loc),
       AbsVal::U(uix) => {
         if !matches!(self.uni_val(*uix), Value::Bool(_)) {
           return bail("expected a bool, found a non-bool uniform", loc);
@@ -909,6 +960,7 @@ impl<'a> Compiler<'a> {
         Src::Uni(*uix, c.min(ar - 1))
       }
       AbsVal::V(vv) => vv.chans[c as usize],
+      AbsVal::Seq(_) => unreachable!("arity() rejects sequences"),
     }
   }
 
@@ -916,14 +968,17 @@ impl<'a> Compiler<'a> {
   // Uniform-subtree classification
   // -------------------------------------------------------------------------------------
 
-  fn slot_is_varying(&self, slot: u16) -> bool {
-    matches!(self.cur().slot_abs[slot as usize], SlotState::Varying(_))
+  fn slot_is_abstract(&self, slot: u16) -> bool {
+    !matches!(
+      self.cur().slot_abs[slot as usize],
+      SlotState::Unset | SlotState::Uniform
+    )
   }
 
   fn expr_is_uniform(&self, expr: &Expr) -> bool {
     match expr {
       Expr::Ident { res, .. } => match res {
-        VarRes::Local(slot) => !self.slot_is_varying(*slot),
+        VarRes::Local(slot) => !self.slot_is_abstract(*slot),
         _ => true,
       },
       Expr::Literal { .. } => true,
@@ -942,7 +997,7 @@ impl<'a> Compiler<'a> {
       }
       Expr::Call { call, .. } => {
         let target_uniform = match call.target_res {
-          VarRes::Local(slot) => !self.slot_is_varying(slot),
+          VarRes::Local(slot) => !self.slot_is_abstract(slot),
           _ => true,
         };
         target_uniform
@@ -951,7 +1006,7 @@ impl<'a> Compiler<'a> {
       }
       Expr::Closure { resolved, .. } => resolved.as_ref().is_some_and(|meta| {
         meta.captures.iter().all(|(_, from)| match from {
-          CaptureFrom::Local(slot) => !self.slot_is_varying(*slot),
+          CaptureFrom::Local(slot) => !self.slot_is_abstract(*slot),
           _ => true,
         })
       }),
@@ -1018,6 +1073,8 @@ impl<'a> Compiler<'a> {
       Expr::Ident { res, .. } => match res {
         VarRes::Local(slot) => match &self.cur().slot_abs[*slot as usize] {
           SlotState::Varying(vv) => Ok(AbsVal::V(vv.clone())),
+          SlotState::Seq(s) => Ok(AbsVal::Seq(s.clone())),
+          SlotState::Lit(_) => bail("closure used as a value in a texel body (only calls are supported)", loc),
           _ => unreachable!("non-varying ident reached varying compile"),
         },
         _ => unreachable!(),
@@ -1037,6 +1094,10 @@ impl<'a> Compiler<'a> {
             return self.lower_compare(*op, lhs, rhs, loc)
           }
           BinOp::And | BinOp::Or => return self.lower_logic(*op, lhs, rhs, loc),
+          BinOp::Map => {
+            let l = self.compile_expr(lhs)?;
+            return self.lower_seq_call("map", std::slice::from_ref(&**rhs), &FxHashMap::default(), Some(l), loc);
+          }
           other => return bail(format!("unsupported operator `{other:?}` on varying values"), loc),
         };
         let l = self.compile_expr(lhs)?;
@@ -1068,9 +1129,39 @@ impl<'a> Compiler<'a> {
         else_expr,
         ..
       } => self.lower_conditional(cond, then, else_if_exprs, else_expr.as_deref(), loc),
-      Expr::FieldAccess { .. } => bail("indexing a varying value", loc),
+      Expr::FieldAccess {
+        lhs, field, field2, ..
+      } => {
+        let l = self.compile_expr(lhs)?;
+        let AbsVal::Seq(s) = &l else {
+          return bail("indexing a varying value", loc);
+        };
+        if field2.is_some() {
+          return bail("two-index access on a sequence", loc);
+        }
+        if !s.eager {
+          return bail("indexing a lazy sequence (the scalar path requires `collect` first)", loc);
+        }
+        let f = self.compile_expr(field)?;
+        let Some(Value::Int(i)) = self.const_uniform_value(&f) else {
+          return bail("sequence index must be an int literal", loc);
+        };
+        match usize::try_from(i).ok().and_then(|i| s.els.get(i)) {
+          Some(e) => Ok(e.clone()),
+          None => bail(format!("sequence index {i} out of bounds (len {})", s.els.len()), loc),
+        }
+      }
       Expr::Range { .. } => bail("range over a varying value", loc),
-      Expr::ArrayLiteral { .. } => bail("array literal containing varying values", loc),
+      Expr::ArrayLiteral { elements, .. } => {
+        let mut els = Vec::with_capacity(elements.len());
+        for e in elements {
+          els.push(self.compile_expr(e)?);
+        }
+        Ok(AbsVal::Seq(AbsSeq {
+          els: Rc::new(els),
+          eager: true,
+        }))
+      }
       Expr::MapLiteral { .. } => bail("map literal containing varying values", loc),
       Expr::Closure { .. } => bail("closure capturing a varying value", loc),
       Expr::Literal { .. } => unreachable!("literals are uniform"),
@@ -1134,6 +1225,7 @@ impl<'a> Compiler<'a> {
     // non-final statement is varying); swizzle it through the interpreter, once per run.
     let vv = match v {
       AbsVal::V(vv) => vv,
+      AbsVal::Seq(_) => return bail("swizzle on a sequence", loc),
       AbsVal::U(uix) => {
         let val = self
           .ctx
@@ -1174,34 +1266,33 @@ impl<'a> Compiler<'a> {
     Ok(VV::num(chans))
   }
 
-  fn lower_pipeline(
-    &mut self,
-    lhs: AbsVal,
-    rhs: &Expr,
-    loc: SourceLoc,
-  ) -> Result<AbsVal, CErr> {
+  fn lower_pipeline(&mut self, lhs: AbsVal, rhs: &Expr, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    if let Expr::Call { call, .. } = rhs {
+      if let Some((c, args, kwargs)) = self.peek_flat(call, loc) {
+        if let Some(name) = seq_dispatch(&c, loc)? {
+          return self.lower_seq_call(name, &args, &kwargs, Some(lhs), loc);
+        }
+      }
+    }
     if !self.expr_is_uniform(rhs) {
       return bail("varying callee in pipeline", loc);
     }
-    // A literal callable is baked into the AST — no per-run identity to validate. Anything
-    // else re-resolves per run through the uniform table.
-    if let Expr::Literal {
-      value: Value::Callable(c),
-      ..
-    } = rhs
-    {
-      return self.lower_callable_call(&c.clone(), None, vec![lhs], FxHashMap::default(), loc);
+    let cb = self.callback(rhs, loc)?;
+    if let Cb::Callable { c, uix: None } = &cb {
+      let (inner, args, kwargs) = flatten_partial(c, loc);
+      if let Some(name) = seq_dispatch(&inner, loc)? {
+        return self.lower_seq_call(name, &args, &kwargs, Some(lhs), loc);
+      }
     }
-    let val = self.eval_uniform_now(rhs)?;
-    let Value::Callable(c) = &val else {
-      return bail("pipeline into a non-callable varying combination", loc);
-    };
-    let c = c.clone();
-    let uix = self.push_uni(UniSrc::Expr(rhs.clone()), val, None, None);
-    self.lower_callable_call(&c, Some(uix), vec![lhs], FxHashMap::default(), loc)
+    self.invoke(&cb, vec![lhs], loc)
   }
 
   fn lower_call(&mut self, call: &FunctionCall, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    if let Some((c, args, kwargs)) = self.peek_flat(call, loc) {
+      if let Some(name) = seq_dispatch(&c, loc)? {
+        return self.lower_seq_call(name, &args, &kwargs, None, loc);
+      }
+    }
     let mut args = Vec::with_capacity(call.args.len());
     for a in &call.args {
       args.push(self.compile_expr(a)?);
@@ -1224,7 +1315,11 @@ impl<'a> Compiler<'a> {
           (c, Some(uix))
         }
         VarRes::Local(slot) => {
-          if self.slot_is_varying(slot) {
+          if let SlotState::Lit(lit) = &self.cur().slot_abs[slot as usize] {
+            let lit = Rc::clone(lit);
+            return self.inline_literal(&lit, args, kwargs, loc);
+          }
+          if self.slot_is_abstract(slot) {
             return bail("varying call target", loc);
           }
           let val = self.cur().mirror.borrow()[slot as usize].clone();
@@ -1304,6 +1399,23 @@ impl<'a> Compiler<'a> {
         }));
         Ok(VV::num(dst.iter().map(|r| Src::Reg(*r)).collect()))
       }
+      Callable::PartiallyAppliedFn(_) => {
+        if callee_uix.is_some() {
+          return bail("partially-applied callable from a non-literal value", loc);
+        }
+        let (inner, bound, bound_kw) = flatten_partial(callable, loc);
+        let mut all = Vec::with_capacity(bound.len() + args.len());
+        for e in &bound {
+          all.push(self.compile_expr(e)?);
+        }
+        all.extend(args);
+        let mut kw = FxHashMap::default();
+        for (k, e) in &bound_kw {
+          kw.insert(*k, self.compile_expr(e)?);
+        }
+        kw.extend(kwargs);
+        self.lower_callable_call(&inner, None, all, kw, loc)
+      }
       _ => bail("unsupported callee kind on varying values", loc),
     }
   }
@@ -1345,27 +1457,35 @@ impl<'a> Compiler<'a> {
 
     let result = self.bind_and_compile_inline(inner, args, kwargs, loc);
 
-    self.frames.pop();
+    self.pop_frame();
     self.inline_stack.pop();
     let result = result?;
+    self.check_return_hint(&result, inner.return_type_hint, loc)?;
+    Ok(result)
+  }
 
-    if let Some(hint) = inner.return_type_hint {
-      match &result {
-        AbsVal::V(vv) => {
-          if !Self::hint_fits(hint, vv) {
-            return bail("return type hint mismatch on inlined closure", loc);
-          }
+  fn check_return_hint(&mut self, result: &AbsVal, hint: Option<ArgType>, loc: SourceLoc) -> Result<(), CErr> {
+    let Some(hint) = hint else { return Ok(()) };
+    match result {
+      AbsVal::V(vv) => {
+        if !Self::hint_fits(hint, vv) {
+          return bail("return type hint mismatch on inlined closure", loc);
         }
-        AbsVal::U(uix) => {
-          if hint.validate_val(self.uni_val(*uix)).is_err() {
-            return bail("return type hint violation on inlined closure", loc);
-          }
-          let entry = &mut self.unis[*uix as usize];
-          entry.hint = entry.hint.or(Some(hint));
+      }
+      AbsVal::U(uix) => {
+        if hint.validate_val(self.uni_val(*uix)).is_err() {
+          return bail("return type hint violation on inlined closure", loc);
+        }
+        let entry = &mut self.unis[*uix as usize];
+        entry.hint = entry.hint.or(Some(hint));
+      }
+      AbsVal::Seq(_) => {
+        if !matches!(hint, ArgType::Any | ArgType::Sequence) {
+          return bail("return type hint mismatch on inlined closure", loc);
         }
       }
     }
-    Ok(result)
+    Ok(())
   }
 
   fn bind_and_compile_inline(
@@ -1399,33 +1519,115 @@ impl<'a> Compiler<'a> {
           None => return bail("partial application of an inlined closure", loc),
         },
       };
-      if let Some(hint) = param.type_hint {
-        match &bound {
-          AbsVal::U(uix) => {
-            if hint.validate_val(self.uni_val(*uix)).is_err() {
-              return bail("param type hint violation on inlined closure", loc);
-            }
-          }
-          AbsVal::V(vv) => {
-            if !Self::hint_fits(hint, vv) {
-              return bail("param type hint mismatch on inlined closure", loc);
-            }
-          }
+      self.bind_slot(slot, bound, param.type_hint, loc)?;
+    }
+    self.compile_body(&inner.body.0, loc)
+  }
+
+  /// Bind a frame slot to an abstract value (inlined-closure params), checking its hint.
+  fn bind_slot(&mut self, slot: u16, bound: AbsVal, hint: Option<ArgType>, loc: SourceLoc) -> Result<(), CErr> {
+    match bound {
+      AbsVal::U(src_uix) => {
+        if hint.is_some_and(|h| h.validate_val(self.uni_val(src_uix)).is_err()) {
+          return bail("param type hint violation on inlined closure", loc);
         }
+        let val = self.uni_val(src_uix).clone();
+        self.cur().mirror.borrow_mut()[slot as usize] = val.clone();
+        self.push_uni(UniSrc::UniRef(src_uix), val, Some(slot), hint);
+        self.cur_mut().slot_abs[slot as usize] = SlotState::Uniform;
       }
-      match bound {
-        AbsVal::U(src_uix) => {
-          let val = self.uni_val(src_uix).clone();
-          self.cur().mirror.borrow_mut()[slot as usize] = val.clone();
-          self.push_uni(UniSrc::UniRef(src_uix), val, Some(slot), param.type_hint);
-          self.cur_mut().slot_abs[slot as usize] = SlotState::Uniform;
+      AbsVal::V(vv) => {
+        if hint.is_some_and(|h| !Self::hint_fits(h, &vv)) {
+          return bail("param type hint mismatch on inlined closure", loc);
         }
-        AbsVal::V(vv) => {
-          self.cur_mut().slot_abs[slot as usize] = SlotState::Varying(vv);
+        self.cur_mut().slot_abs[slot as usize] = SlotState::Varying(vv);
+      }
+      AbsVal::Seq(seq) => {
+        if hint.is_some_and(|h| !matches!(h, ArgType::Any | ArgType::Sequence)) {
+          return bail("param type hint mismatch on inlined closure", loc);
         }
+        self.cur_mut().slot_abs[slot as usize] = SlotState::Seq(seq);
       }
     }
-    self.compile_statements(&inner.body.0, loc)
+    Ok(())
+  }
+
+  /// Inline a closure literal by renaming its slots into the current frame: body locals get
+  /// fresh slots appended to the frame, captures resolve to the enclosing frame's own
+  /// locals/captures (so they may be varying), and the renamed statements compile in place.
+  fn inline_literal(
+    &mut self,
+    lit: &Expr,
+    args: Vec<AbsVal>,
+    kwargs: FxHashMap<Sym, AbsVal>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    let Expr::Closure {
+      params,
+      body,
+      return_type_hint,
+      resolved: Some(meta),
+      ..
+    } = lit
+    else {
+      return bail("unresolved closure literal", loc);
+    };
+    if self.lit_depth >= MAX_INLINE_DEPTH {
+      return bail("closure inlining too deep", loc);
+    }
+    let base = self.cur().slot_abs.len();
+    let n_slots = base + meta.n_slots as usize;
+    if n_slots > MAX_PLAN_SLOTS.min(u16::MAX as usize) {
+      return bail("texel body too large to vectorize", loc);
+    }
+    let mut caps = Vec::with_capacity(meta.captures.len());
+    for (_, from) in &meta.captures {
+      caps.push(match from {
+        CaptureFrom::Local(s) => VarRes::Local(*s),
+        CaptureFrom::Capture(ix) => VarRes::Capture(*ix),
+        CaptureFrom::SelfRef | CaptureFrom::DefScope(_) => {
+          return bail("closure literal referencing its enclosing closure", loc)
+        }
+      });
+    }
+    let ren = Renamer {
+      base: base as u16,
+      caps: &caps,
+    };
+    let stmts = body.0.iter().map(|s| ren.stmt(s)).collect::<Result<Vec<_>, CErr>>()?;
+    {
+      let f = self.cur_mut();
+      f.slot_abs.resize(n_slots, SlotState::Unset);
+      f.mirror.borrow_mut().resize(n_slots, Value::Nil);
+    }
+    let mut pos = 0usize;
+    for (i, param) in params.iter().enumerate() {
+      let DestructurePattern::Ident(name) = &param.ident else {
+        return bail("destructuring param on inlined closure", loc);
+      };
+      let slot = base as u16 + meta.param_slots[i];
+      let bound = if let Some(v) = kwargs.get(name) {
+        v.clone()
+      } else if pos < args.len() {
+        pos += 1;
+        args[pos - 1].clone()
+      } else {
+        match &param.default_val {
+          Some(d) => {
+            let d = ren.expr(d)?;
+            self.compile_expr(&d)?
+          }
+          None => return bail("partial application of an inlined closure", loc),
+        }
+      };
+      self.bind_slot(slot, bound, param.type_hint, loc)?;
+    }
+    self.lit_depth += 1;
+    let result = self.compile_body(&stmts, loc);
+    self.lit_depth -= 1;
+    let result = result?;
+    self.check_return_hint(&result, *return_type_hint, loc)?;
+    Ok(result)
   }
 
   fn lower_builtin(
@@ -1441,7 +1643,7 @@ impl<'a> Compiler<'a> {
       "sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "exp", "log2", "floor", "ceil",
       "round", "fract", "trunc", "sigmoid", "abs", "pow", "atan2", "min", "max", "clamp",
       "smoothstep", "lerp", "len", "dot", "distance", "normalize", "vec2", "vec3", "vec4", "fbm",
-      "linearstep", "remap",
+      "linearstep", "remap", "add", "sub", "mul", "div",
     ];
     if !WHITELIST.contains(name) {
       return bail(format!("builtin `{name}` is not vectorizable"), loc);
@@ -1474,6 +1676,17 @@ impl<'a> Compiler<'a> {
     };
 
     match (*name, def_ix) {
+      // The named arithmetic builtins share the operators' signature tables.
+      ("add" | "sub" | "mul" | "div", _) => {
+        let (a, b) = (arg(self, 0), arg(self, 1));
+        let (op, kind) = match *name {
+          "add" => (BinOp::Add, OpKind::Add),
+          "sub" => (BinOp::Sub, OpKind::Sub),
+          "mul" => (BinOp::Mul, OpKind::Mul),
+          _ => (BinOp::Div, OpKind::Div),
+        };
+        self.lower_arith(op, kind, a, b, loc)
+      }
       ("sin", _) => { let x = arg(self, 0); self.elementwise(OpKind::Sin, &x) }
       ("cos", _) => { let x = arg(self, 0); self.elementwise(OpKind::Cos, &x) }
       ("tan", _) => { let x = arg(self, 0); self.elementwise(OpKind::Tan, &x) }
@@ -1745,7 +1958,7 @@ impl<'a> Compiler<'a> {
     let uni_of = |v: AbsVal, what: &str| -> Result<u16, CErr> {
       match v {
         AbsVal::U(uix) => Ok(uix),
-        AbsVal::V(_) => bail(format!("varying fbm `{what}` parameter"), loc),
+        AbsVal::V(_) | AbsVal::Seq(_) => bail(format!("varying fbm `{what}` parameter"), loc),
       }
     };
 
@@ -1832,20 +2045,326 @@ impl<'a> Compiler<'a> {
   /// ops, so unobservable — and combines the masks arithmetically.
   fn lower_logic(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr, loc: SourceLoc) -> Result<AbsVal, CErr> {
     let l = self.compile_expr(lhs)?;
+    self.lower_logic_abs(op, l, |c| c.compile_expr(rhs), loc)
+  }
+
+  fn lower_logic_abs(
+    &mut self,
+    op: BinOp,
+    l: AbsVal,
+    rhs: impl FnOnce(&mut Self) -> Result<AbsVal, CErr>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
     if let AbsVal::U(_) = l {
       let settled = Value::Bool(op == BinOp::Or);
       let settled = AbsVal::U(self.push_uni(UniSrc::Const(settled.clone()), settled, None, None));
       return if op == BinOp::And {
-        self.lower_select(l, |c| c.compile_expr(rhs), |_| Ok(settled), loc)
+        self.lower_select(l, rhs, |_| Ok(settled), loc)
       } else {
-        self.lower_select(l, |_| Ok(settled), |c| c.compile_expr(rhs), loc)
+        self.lower_select(l, |_| Ok(settled), rhs, loc)
       };
     }
     let lm = self.mask_src(&l, loc)?;
-    let r = self.speculative(|c| c.compile_expr(rhs), loc)?;
+    let r = self.speculative(rhs, loc)?;
     let rm = self.mask_src(&r, loc)?;
     let kind = if op == BinOp::And { OpKind::And } else { OpKind::Or };
     Ok(VV::mask(self.push_op(kind, lm, rm, Src::Const(0.))))
+  }
+
+  // -------------------------------------------------------------------------------------
+  // Sequences: loops unroll at compile time
+  // -------------------------------------------------------------------------------------
+
+  /// Read-only callee lookup for dispatch decisions; records no uniform.
+  fn peek_callee(&self, call: &FunctionCall) -> Option<Rc<Callable>> {
+    let val = match &call.target {
+      FunctionCallTarget::Literal(c) => return Some(Rc::clone(c)),
+      FunctionCallTarget::Name(_) => match call.target_res {
+        VarRes::Capture(ix) => self.cur().captures[ix as usize].clone(),
+        VarRes::Local(slot) if !self.slot_is_abstract(slot) => {
+          self.cur().mirror.borrow()[slot as usize].clone()
+        }
+        _ => return None,
+      },
+    };
+    match val {
+      Value::Callable(c) => Some(c),
+      _ => None,
+    }
+  }
+
+  /// `peek_callee` plus, for literal targets only (baked, so the bound values are plan
+  /// constants), partial-application flattening with the call's own args appended.
+  fn peek_flat(&self, call: &FunctionCall, loc: SourceLoc) -> Option<(Rc<Callable>, Vec<Expr>, FxHashMap<Sym, Expr>)> {
+    let c = self.peek_callee(call)?;
+    let (c, mut args, mut kwargs) = match call.target {
+      FunctionCallTarget::Literal(_) => flatten_partial(&c, loc),
+      FunctionCallTarget::Name(_) => (c, Vec::new(), FxHashMap::default()),
+    };
+    args.extend(call.args.iter().cloned());
+    kwargs.extend(call.kwargs.iter().map(|(k, v)| (*k, v.clone())));
+    Some((c, args, kwargs))
+  }
+
+  /// A callback-position expression as a callee. A literal callable is baked into the AST
+  /// (no per-run identity to validate); any other uniform re-resolves per run.
+  fn callback(&mut self, e: &Expr, loc: SourceLoc) -> Result<Cb, CErr> {
+    match e {
+      Expr::Closure { .. } => Ok(Cb::Lit(Rc::new(e.clone()))),
+      Expr::Ident {
+        res: VarRes::Local(slot),
+        ..
+      } if matches!(self.cur().slot_abs[*slot as usize], SlotState::Lit(_)) => {
+        let SlotState::Lit(lit) = &self.cur().slot_abs[*slot as usize] else { unreachable!() };
+        Ok(Cb::Lit(Rc::clone(lit)))
+      }
+      Expr::Literal {
+        value: Value::Callable(c),
+        ..
+      } => Ok(Cb::Callable {
+        c: Rc::clone(c),
+        uix: None,
+      }),
+      _ => {
+        if !self.expr_is_uniform(e) {
+          return bail("varying callee", loc);
+        }
+        let val = self.eval_uniform_now(e)?;
+        let Value::Callable(c) = &val else {
+          return bail("callee is not a callable", loc);
+        };
+        let c = Rc::clone(c);
+        let uix = self.push_uni(UniSrc::Expr(e.clone()), val, None, None);
+        Ok(Cb::Callable { c, uix: Some(uix) })
+      }
+    }
+  }
+
+  fn invoke(&mut self, cb: &Cb, args: Vec<AbsVal>, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    match cb {
+      Cb::Lit(lit) => self.inline_literal(lit, args, FxHashMap::default(), loc),
+      Cb::Callable { c, uix } => self.lower_callable_call(c, *uix, args, FxHashMap::default(), loc),
+    }
+  }
+
+  fn int_uniform(&mut self, i: i64) -> AbsVal {
+    AbsVal::U(self.push_uni(UniSrc::Const(Value::Int(i)), Value::Int(i), None, None))
+  }
+
+  /// Elements of a sequence-valued abstract value. A uniform sequence is consumed once at
+  /// compile time (under the effect fence): a literal's elements become plan constants, any
+  /// other's are re-read per run with the length pinned (a change evicts and recompiles).
+  fn seq_elements(&mut self, v: &AbsVal, loc: SourceLoc) -> Result<AbsSeq, CErr> {
+    let uix = match v {
+      AbsVal::Seq(s) => return Ok(s.clone()),
+      AbsVal::V(_) => return bail("sequence operation on a varying number", loc),
+      AbsVal::U(uix) => *uix,
+    };
+    let seq = match self.uni_val(uix) {
+      Value::Sequence(seq) => Rc::clone(seq),
+      Value::Texture(_) => return bail("per-texel map over a captured texture inside a texel body", loc),
+      _ => return bail("sequence operation on a non-sequence", loc),
+    };
+    let eager = seq_as_eager(&*seq).is_some();
+    let mut items = Vec::new();
+    for item in seq.consume(self.ctx).take(MAX_UNROLL + 1) {
+      items.push(item.map_err(CErr::Err)?);
+    }
+    if items.len() > MAX_UNROLL {
+      return bail(
+        format!("sequence longer than {MAX_UNROLL} elements (or unbounded) in a texel body"),
+        loc,
+      );
+    }
+    let constant = self.const_uniform_value(v).is_some();
+    if !constant {
+      self.unis[uix as usize].shape = UniShape::Seq {
+        len: items.len() as u16,
+      };
+    }
+    let els = items
+      .into_iter()
+      .enumerate()
+      .map(|(ix, item)| {
+        let src = if constant {
+          UniSrc::Const(item.clone())
+        } else {
+          UniSrc::SeqElem { of: uix, ix: ix as u16 }
+        };
+        AbsVal::U(self.push_uni(src, item, None, None))
+      })
+      .collect();
+    Ok(AbsSeq {
+      els: Rc::new(els),
+      eager,
+    })
+  }
+
+  /// Structural lowering of a sequence builtin: the sequence's elements are known at compile
+  /// time, so every callback invocation compiles once per element with the interpreter's
+  /// exact argument convention (`map`/`fold`/`scan` pass the index; `reduce` numbers it
+  /// from the second element; `any`/`all` pass only the element and short-circuit).
+  fn lower_seq_call(
+    &mut self,
+    name: &'static str,
+    args: &[Expr],
+    kwargs: &FxHashMap<Sym, Expr>,
+    piped: Option<AbsVal>,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    enum Arg<'a> {
+      Expr(&'a Expr),
+      Abs(AbsVal),
+    }
+    let defs = fn_sigs()
+      .entries
+      .iter()
+      .find(|(n, _)| *n == name)
+      .expect("known builtin")
+      .1
+      .signatures[0]
+      .arg_defs;
+    // Positionals fill the params kwargs didn't name, in order; the piped value comes last.
+    let (mut pos, mut piped) = (0usize, piped);
+    let mut bound: Vec<Arg> = Vec::with_capacity(defs.len());
+    for d in defs {
+      bound.push(if let Some(e) = kwargs.get(&d.interned_name) {
+        Arg::Expr(e)
+      } else if pos < args.len() {
+        pos += 1;
+        Arg::Expr(&args[pos - 1])
+      } else if let Some(p) = piped.take() {
+        Arg::Abs(p)
+      } else {
+        return bail(format!("missing argument `{}` to `{name}`", d.name), loc);
+      });
+    }
+    if pos < args.len() || piped.is_some() {
+      return bail(format!("too many arguments to `{name}`"), loc);
+    }
+    let val = |c: &mut Self, a: &Arg| -> Result<AbsVal, CErr> {
+      match a {
+        Arg::Abs(v) => Ok(v.clone()),
+        Arg::Expr(e) => c.compile_expr(e),
+      }
+    };
+    let seq = |c: &mut Self, a: &Arg| -> Result<AbsSeq, CErr> {
+      let v = val(c, a)?;
+      c.seq_elements(&v, loc)
+    };
+    let cb = |c: &mut Self, a: &Arg| -> Result<Cb, CErr> {
+      match a {
+        Arg::Expr(e) => c.callback(e, loc),
+        Arg::Abs(_) => bail("piped value in a callable position", loc),
+      }
+    };
+    let lazy = |els: Vec<AbsVal>| {
+      AbsVal::Seq(AbsSeq {
+        els: Rc::new(els),
+        eager: false,
+      })
+    };
+    match name {
+      "map" => {
+        let (f, s) = (cb(self, &bound[0])?, seq(self, &bound[1])?);
+        let mut els = Vec::with_capacity(s.els.len());
+        for (i, e) in s.els.iter().enumerate() {
+          let ix = self.int_uniform(i as i64);
+          els.push(self.invoke(&f, vec![e.clone(), ix], loc)?);
+        }
+        Ok(lazy(els))
+      }
+      "fold" | "scan" => {
+        let (mut acc, f, s) = (val(self, &bound[0])?, cb(self, &bound[1])?, seq(self, &bound[2])?);
+        let mut out = Vec::with_capacity(s.els.len());
+        for (i, e) in s.els.iter().enumerate() {
+          let ix = self.int_uniform(i as i64);
+          acc = self.invoke(&f, vec![acc, e.clone(), ix], loc)?;
+          out.push(acc.clone());
+        }
+        Ok(if name == "fold" { acc } else { lazy(out) })
+      }
+      "reduce" => {
+        let (f, s) = (cb(self, &bound[0])?, seq(self, &bound[1])?);
+        let Some((first, rest)) = s.els.split_first() else {
+          return bail("reduce over an empty sequence", loc);
+        };
+        let mut acc = first.clone();
+        for (i, e) in rest.iter().enumerate() {
+          let ix = self.int_uniform(i as i64);
+          acc = self.invoke(&f, vec![acc, e.clone(), ix], loc)?;
+        }
+        Ok(acc)
+      }
+      "any" | "all" => {
+        let (f, s) = (cb(self, &bound[0])?, seq(self, &bound[1])?);
+        let op = if name == "any" { BinOp::Or } else { BinOp::And };
+        self.fold_logic(op, &f, &s.els, 0, loc)
+      }
+      "collect" => {
+        let s = seq(self, &bound[0])?;
+        Ok(AbsVal::Seq(AbsSeq { els: s.els, eager: true }))
+      }
+      "reverse" => {
+        let s = seq(self, &bound[0])?;
+        let mut els = (*s.els).clone();
+        els.reverse();
+        Ok(AbsVal::Seq(AbsSeq {
+          els: Rc::new(els),
+          eager: true,
+        }))
+      }
+      "first" | "last" => {
+        let s = seq(self, &bound[0])?;
+        let e = if name == "first" { s.els.first() } else { s.els.last() };
+        e.cloned()
+          .ok_or_else(|| CErr::Bail(format!("`{name}` of an empty sequence"), loc))
+      }
+      "take" | "skip" => {
+        let (count, s) = (val(self, &bound[0])?, seq(self, &bound[1])?);
+        let Some(Value::Int(n)) = self.const_uniform_value(&count) else {
+          return bail(format!("`{name}` count must be an int literal"), loc);
+        };
+        let n = usize::try_from(n).unwrap_or(0).min(s.els.len());
+        let els = if name == "take" { &s.els[..n] } else { &s.els[n..] };
+        Ok(lazy(els.to_vec()))
+      }
+      "flatten" => {
+        let s = seq(self, &bound[0])?;
+        let mut els = Vec::new();
+        for e in s.els.iter() {
+          let is_seq = match e {
+            AbsVal::Seq(_) => true,
+            AbsVal::U(uix) => matches!(self.uni_val(*uix), Value::Sequence(_)),
+            AbsVal::V(_) => false,
+          };
+          if is_seq {
+            els.extend(self.seq_elements(e, loc)?.els.iter().cloned());
+          } else {
+            els.push(e.clone());
+          }
+        }
+        Ok(lazy(els))
+      }
+      "chain" => {
+        let s = seq(self, &bound[0])?;
+        let mut els = Vec::new();
+        for e in s.els.iter() {
+          els.extend(self.seq_elements(e, loc)?.els.iter().cloned());
+        }
+        Ok(lazy(els))
+      }
+      _ => unreachable!("not a structural sequence builtin"),
+    }
+  }
+
+  fn fold_logic(&mut self, op: BinOp, cb: &Cb, els: &[AbsVal], k: usize, loc: SourceLoc) -> Result<AbsVal, CErr> {
+    if k == els.len() {
+      let v = Value::Bool(op == BinOp::And);
+      return Ok(AbsVal::U(self.push_uni(UniSrc::Const(v.clone()), v, None, None)));
+    }
+    let l = self.invoke(cb, vec![els[k].clone()], loc)?;
+    self.lower_logic_abs(op, l, |c| c.fold_logic(op, cb, els, k + 1, loc), loc)
   }
 
   /// `else if` chains fold right-to-left: the tail is re-expressed as a nested conditional,
@@ -1959,6 +2478,7 @@ impl<'a> Compiler<'a> {
     let is_mask = |c: &Self, v: &AbsVal| match v {
       AbsVal::V(vv) => vv.mask,
       AbsVal::U(uix) => matches!(c.uni_val(*uix), Value::Bool(_)),
+      AbsVal::Seq(_) => false,
     };
     if is_mask(self, t) {
       if !is_mask(self, e) {
@@ -2017,6 +2537,11 @@ impl<'a> Compiler<'a> {
             self.cur().mirror.borrow_mut()[*slot as usize] = val.clone();
             self.push_uni(UniSrc::Expr(expr.clone()), val, Some(*slot), *type_hint);
             self.cur_mut().slot_abs[*slot as usize] = SlotState::Uniform;
+          } else if let Expr::Closure { .. } = expr {
+            if type_hint.is_some_and(|h| !matches!(h, ArgType::Any | ArgType::Callable)) {
+              return bail("type hint mismatch on closure assignment", expr.loc());
+            }
+            self.cur_mut().slot_abs[*slot as usize] = SlotState::Lit(Rc::new(expr.clone()));
           } else {
             match self.compile_expr(expr)? {
               AbsVal::V(vv) => {
@@ -2024,6 +2549,12 @@ impl<'a> Compiler<'a> {
                   return bail("type hint mismatch on varying assignment", expr.loc());
                 }
                 self.cur_mut().slot_abs[*slot as usize] = SlotState::Varying(vv);
+              }
+              AbsVal::Seq(seq) => {
+                if type_hint.is_some_and(|h| !matches!(h, ArgType::Any | ArgType::Sequence)) {
+                  return bail("type hint mismatch on sequence assignment", expr.loc());
+                }
+                self.cur_mut().slot_abs[*slot as usize] = SlotState::Seq(seq);
               }
               // Classified varying but valued uniform (a block with a varying non-final
               // statement and a uniform final expression).
@@ -2053,13 +2584,438 @@ impl<'a> Compiler<'a> {
         Statement::DestructureAssignment { rhs, .. } => {
           return bail("destructuring assignment (not yet vectorized)", rhs.loc())
         }
-        Statement::Return { .. } | Statement::Break { .. } => {
-          unreachable!("pre-filter rejects return/break")
+        Statement::Return { value } => {
+          return bail(
+            "`return` inside an expression operand; move it into its own statement",
+            value.as_ref().map_or(loc, |v| v.loc()),
+          )
         }
+        Statement::Break { .. } => unreachable!("pre-filter rejects break"),
       }
     }
     last.ok_or_else(|| CErr::Bail("empty closure body".into(), loc))
   }
+
+  /// Closure-body entry: `return` is desugared away first (see `desugar_returns`).
+  fn compile_body(&mut self, stmts: &[Statement], loc: SourceLoc) -> Result<AbsVal, CErr> {
+    if stmts.iter().any(stmt_has_return) {
+      let stmts = desugar_returns(stmts, loc)?;
+      return self.compile_statements(&stmts, loc);
+    }
+    self.compile_statements(stmts, loc)
+  }
+}
+
+/// A baked partial application flattened to its innermost callee plus the bound args as
+/// literal exprs, in the runtime's order (bound args first; outer kwargs override inner).
+fn flatten_partial(c: &Rc<Callable>, loc: SourceLoc) -> (Rc<Callable>, Vec<Expr>, FxHashMap<Sym, Expr>) {
+  let Callable::PartiallyAppliedFn(p) = &**c else {
+    return (Rc::clone(c), Vec::new(), FxHashMap::default());
+  };
+  let (inner, mut args, mut kwargs) = flatten_partial(&p.inner, loc);
+  let lit = |v: &Value| Expr::Literal { value: v.clone(), loc };
+  args.extend(p.args.iter().map(lit));
+  kwargs.extend(p.kwargs.iter().map(|(k, v)| (*k, lit(v))));
+  (inner, args, kwargs)
+}
+
+fn builtin_name(c: &Callable) -> Option<&'static str> {
+  let Callable::Builtin { fn_entry_ix, .. } = c else { return None };
+  Some(fn_sigs().entries[*fn_entry_ix].0)
+}
+
+/// `Some(name)` for a structural sequence builtin; a bail for the sequence ops that can't
+/// unroll (varying length or early exit); `None` otherwise.
+fn seq_dispatch(c: &Callable, loc: SourceLoc) -> Result<Option<&'static str>, CErr> {
+  let Some(name) = builtin_name(c) else { return Ok(None) };
+  if SEQ_BAILS.contains(&name) {
+    return bail(format!("`{name}` is not vectorizable (varying-length or early-exit sequence op)"), loc);
+  }
+  Ok(SEQ_BUILTINS.contains(&name).then_some(name))
+}
+
+/// Slot renaming for inlining a closure literal into the frame that created it: the
+/// literal's own slots shift by `base`, its captures become the enclosing frame's
+/// locals/captures, and nested literals' capture specs are re-pointed the same way (their
+/// bodies, which address their own frames, are left alone).
+struct Renamer<'a> {
+  base: u16,
+  caps: &'a [VarRes],
+}
+
+impl Renamer<'_> {
+  fn res(&self, r: VarRes, loc: SourceLoc) -> Result<VarRes, CErr> {
+    Ok(match r {
+      VarRes::Local(s) => VarRes::Local(self.base + s),
+      VarRes::Capture(ix) => self.caps[ix as usize],
+      VarRes::SelfRef => return bail("recursive closure literal", loc),
+      VarRes::Unresolved => VarRes::Unresolved,
+    })
+  }
+
+  fn cap(&self, from: CaptureFrom, loc: SourceLoc) -> Result<CaptureFrom, CErr> {
+    Ok(match from {
+      CaptureFrom::Local(s) => CaptureFrom::Local(self.base + s),
+      CaptureFrom::Capture(ix) => match self.caps[ix as usize] {
+        VarRes::Local(s) => CaptureFrom::Local(s),
+        VarRes::Capture(i) => CaptureFrom::Capture(i),
+        _ => return bail("unresolvable capture in a nested closure literal", loc),
+      },
+      CaptureFrom::SelfRef | CaptureFrom::DefScope(_) => {
+        return bail("nested closure capturing the inlined closure", loc)
+      }
+    })
+  }
+
+  fn stmt(&self, s: &Statement) -> Result<Statement, CErr> {
+    Ok(match s {
+      Statement::Assignment {
+        name,
+        name_loc,
+        expr,
+        type_hint,
+        slot,
+      } => Statement::Assignment {
+        name: *name,
+        name_loc: *name_loc,
+        expr: self.expr(expr)?,
+        type_hint: *type_hint,
+        slot: slot.map(|s| self.base + s),
+      },
+      Statement::DestructureAssignment { lhs, rhs, slots } => Statement::DestructureAssignment {
+        lhs: lhs.clone(),
+        rhs: self.expr(rhs)?,
+        slots: slots
+          .as_ref()
+          .map(|v| v.iter().map(|s| self.base + s).collect::<Vec<_>>().into()),
+      },
+      Statement::Expr(e) => Statement::Expr(self.expr(e)?),
+      Statement::Return { value } => Statement::Return {
+        value: value.as_ref().map(|e| self.expr(e)).transpose()?,
+      },
+      Statement::Break { value } => Statement::Break {
+        value: value.as_ref().map(|e| self.expr(e)).transpose()?,
+      },
+    })
+  }
+
+  fn boxed(&self, e: &Expr) -> Result<Box<Expr>, CErr> {
+    Ok(Box::new(self.expr(e)?))
+  }
+
+  fn expr(&self, e: &Expr) -> Result<Expr, CErr> {
+    Ok(match e {
+      Expr::Ident { name, res, loc } => Expr::Ident {
+        name: *name,
+        res: self.res(*res, *loc)?,
+        loc: *loc,
+      },
+      Expr::Call { call, loc } => Expr::Call {
+        call: FunctionCall {
+          target: call.target.clone(),
+          // The optimizer folds const captures into literal targets and leaves `target_res`
+          // stale, so it only means something for `Name` targets.
+          target_res: match call.target {
+            FunctionCallTarget::Literal(_) => call.target_res,
+            FunctionCallTarget::Name(_) => self.res(call.target_res, *loc)?,
+          },
+          args: call.args.iter().map(|a| self.expr(a)).collect::<Result<_, _>>()?,
+          kwargs: call
+            .kwargs
+            .iter()
+            .map(|(k, v)| Ok((*k, self.expr(v)?)))
+            .collect::<Result<_, CErr>>()?,
+        },
+        loc: *loc,
+      },
+      Expr::Closure {
+        params,
+        body,
+        return_type_hint,
+        resolved,
+        loc,
+        end_loc,
+      } => Expr::Closure {
+        params: Rc::clone(params),
+        body: Rc::clone(body),
+        return_type_hint: *return_type_hint,
+        resolved: match resolved {
+          Some(m) => Some(Rc::new(ResolvedBody {
+            id: m.id,
+            n_slots: m.n_slots,
+            captures: m
+              .captures
+              .iter()
+              .map(|(n, f)| Ok((*n, self.cap(*f, *loc)?)))
+              .collect::<Result<_, CErr>>()?,
+            param_slots: m.param_slots.clone(),
+          })),
+          None => None,
+        },
+        loc: *loc,
+        end_loc: *end_loc,
+      },
+      Expr::BinOp {
+        op,
+        lhs,
+        rhs,
+        pre_resolved_def_ix,
+        loc,
+      } => Expr::BinOp {
+        op: *op,
+        lhs: self.boxed(lhs)?,
+        rhs: self.boxed(rhs)?,
+        pre_resolved_def_ix: *pre_resolved_def_ix,
+        loc: *loc,
+      },
+      Expr::PrefixOp { op, expr, loc } => Expr::PrefixOp {
+        op: *op,
+        expr: self.boxed(expr)?,
+        loc: *loc,
+      },
+      Expr::Range {
+        start,
+        end,
+        inclusive,
+        loc,
+      } => Expr::Range {
+        start: self.boxed(start)?,
+        end: end.as_ref().map(|e| self.boxed(e)).transpose()?,
+        inclusive: *inclusive,
+        loc: *loc,
+      },
+      Expr::StaticFieldAccess { lhs, field, loc } => Expr::StaticFieldAccess {
+        lhs: self.boxed(lhs)?,
+        field: field.clone(),
+        loc: *loc,
+      },
+      Expr::FieldAccess {
+        lhs,
+        field,
+        field2,
+        loc,
+      } => Expr::FieldAccess {
+        lhs: self.boxed(lhs)?,
+        field: self.boxed(field)?,
+        field2: field2.as_ref().map(|e| self.boxed(e)).transpose()?,
+        loc: *loc,
+      },
+      Expr::ArrayLiteral { elements, loc } => Expr::ArrayLiteral {
+        elements: elements.iter().map(|e| self.expr(e)).collect::<Result<_, _>>()?,
+        loc: *loc,
+      },
+      Expr::MapLiteral { entries, loc } => Expr::MapLiteral {
+        entries: entries
+          .iter()
+          .map(|en| {
+            Ok(match en {
+              MapLiteralEntry::KeyValue { key, value } => MapLiteralEntry::KeyValue {
+                key: key.clone(),
+                value: self.expr(value)?,
+              },
+              MapLiteralEntry::Splat { expr } => MapLiteralEntry::Splat {
+                expr: self.expr(expr)?,
+              },
+            })
+          })
+          .collect::<Result<_, CErr>>()?,
+        loc: *loc,
+      },
+      Expr::Literal { .. } => e.clone(),
+      Expr::Conditional {
+        cond,
+        then,
+        else_if_exprs,
+        else_expr,
+        loc,
+      } => Expr::Conditional {
+        cond: self.boxed(cond)?,
+        then: self.boxed(then)?,
+        else_if_exprs: else_if_exprs
+          .iter()
+          .map(|(c, b)| Ok((self.expr(c)?, self.expr(b)?)))
+          .collect::<Result<_, CErr>>()?,
+        else_expr: else_expr.as_ref().map(|e| self.boxed(e)).transpose()?,
+        loc: *loc,
+      },
+      Expr::Block {
+        statements,
+        loc,
+        end_loc,
+      } => Expr::Block {
+        statements: statements.iter().map(|s| self.stmt(s)).collect::<Result<_, _>>()?,
+        loc: *loc,
+        end_loc: *end_loc,
+      },
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------------------
+// `return` desugar
+// ---------------------------------------------------------------------------------------
+
+fn expr_has_return(expr: &Expr) -> bool {
+  let mut found = false;
+  walk_expr_shallow(expr, &mut |e| {
+    if let Expr::Block { statements, .. } = e {
+      found |= statements.iter().any(|s| matches!(s, Statement::Return { .. }));
+    }
+  });
+  found
+}
+
+fn stmt_has_return(stmt: &Statement) -> bool {
+  matches!(stmt, Statement::Return { .. }) || stmt.exprs().any(expr_has_return)
+}
+
+/// Binding target of an assignment whose rhs contains a `return`.
+#[derive(Clone, Copy)]
+struct Target {
+  name: Sym,
+  name_loc: SourceLoc,
+  type_hint: Option<ArgType>,
+  slot: Option<u16>,
+}
+
+fn arm_statements(arm: &Expr) -> Vec<Statement> {
+  match arm {
+    Expr::Block { statements, .. } => statements.clone(),
+    other => vec![Statement::Expr(other.clone())],
+  }
+}
+
+/// Makes an arm's fall-through value bind `target`; a returning arm's value is the closure
+/// result instead and is left alone.
+fn rebind_last(body: &mut Vec<Statement>, target: Option<Target>, loc: SourceLoc) -> Result<(), CErr> {
+  let Some(t) = target else { return Ok(()) };
+  match body.pop() {
+    Some(Statement::Expr(expr)) => body.push(Statement::Assignment {
+      name: t.name,
+      name_loc: t.name_loc,
+      expr,
+      type_hint: t.type_hint,
+      slot: t.slot,
+    }),
+    Some(ret @ Statement::Return { .. }) => body.push(ret),
+    Some(_) => return bail("conditional arm ends with an assignment", loc),
+    None => return bail("empty conditional arm", loc),
+  }
+  Ok(())
+}
+
+/// Every `{ }` binds fresh slots, so nothing after a statement can observe it except whether
+/// it returned: `if c { return a }; rest` is exactly `if c { a } else { rest }`. The rest of
+/// the list moves into each non-returning arm (recursively), statements after an
+/// unconditional `return` are dropped, and the existing conditional lowering — guards for
+/// uniform conditions, speculative select for varying ones — supplies the semantics.
+fn desugar_returns(stmts: &[Statement], loc: SourceLoc) -> Result<Vec<Statement>, CErr> {
+  let mut out = Vec::with_capacity(stmts.len());
+  for (i, stmt) in stmts.iter().enumerate() {
+    let rest = &stmts[i + 1..];
+    let (target, expr) = match stmt {
+      // A bare `return` reaches here as `None` or, post-optimizer, as a `Nil` literal.
+      Statement::Return { value: None }
+      | Statement::Return {
+        value: Some(Expr::Literal { value: Value::Nil, .. }),
+      } => return bail("valueless `return` in texel closure", loc),
+      Statement::Return { value: Some(v) } => {
+        if expr_has_return(v) {
+          return bail("`return` nested inside a return value", v.loc());
+        }
+        out.push(Statement::Expr(v.clone()));
+        return Ok(out);
+      }
+      Statement::Break { .. } => return bail("`break` in texel closure", loc),
+      Statement::DestructureAssignment { rhs, .. } if expr_has_return(rhs) => {
+        return bail("`return` inside a destructuring assignment", rhs.loc())
+      }
+      Statement::Assignment {
+        name,
+        name_loc,
+        expr,
+        type_hint,
+        slot,
+      } if expr_has_return(expr) => (
+        Some(Target {
+          name: *name,
+          name_loc: *name_loc,
+          type_hint: *type_hint,
+          slot: *slot,
+        }),
+        expr,
+      ),
+      Statement::Expr(expr) if expr_has_return(expr) => (None, expr),
+      _ => {
+        out.push(stmt.clone());
+        continue;
+      }
+    };
+    match expr {
+      Expr::Conditional {
+        cond,
+        then,
+        else_if_exprs: else_ifs,
+        else_expr,
+        loc: cloc,
+      } => {
+        if expr_has_return(cond) || else_ifs.iter().any(|(c, _)| expr_has_return(c)) {
+          return bail("`return` inside a condition", expr.loc());
+        }
+        let arm = |a: &Expr| -> Result<Expr, CErr> {
+          let mut body = arm_statements(a);
+          rebind_last(&mut body, target, a.loc())?;
+          body.extend_from_slice(rest);
+          Ok(Expr::Block {
+            statements: desugar_returns(&body, a.loc())?,
+            loc: a.loc(),
+            end_loc: a.loc(),
+          })
+        };
+        let then = Box::new(arm(then)?);
+        let else_if_exprs = else_ifs
+          .iter()
+          .map(|(c, e)| Ok((c.clone(), arm(e)?)))
+          .collect::<Result<Vec<_>, CErr>>()?;
+        let else_expr = match else_expr {
+          Some(e) => Some(Box::new(arm(e)?)),
+          // Untaken texels fall through with Nil: harmless when nothing follows (the
+          // else-less bail fires), never when that Nil gets bound to a name.
+          None if target.is_some() && !rest.is_empty() => {
+            return bail("assignment from an else-less conditional that returns", *cloc)
+          }
+          None if rest.is_empty() => None,
+          None => Some(Box::new(Expr::Block {
+            statements: desugar_returns(rest, loc)?,
+            loc: *cloc,
+            end_loc: *cloc,
+          })),
+        };
+        out.push(Statement::Expr(Expr::Conditional {
+          cond: cond.clone(),
+          then,
+          else_if_exprs,
+          else_expr,
+          loc: *cloc,
+        }));
+        return Ok(out);
+      }
+      Expr::Block { statements, .. } => {
+        let mut body = statements.clone();
+        rebind_last(&mut body, target, expr.loc())?;
+        body.extend_from_slice(rest);
+        out.extend(desugar_returns(&body, loc)?);
+        return Ok(out);
+      }
+      _ => {
+        return bail(
+          "`return` inside an expression operand; move it into its own statement",
+          expr.loc(),
+        )
+      }
+    }
+  }
+  Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2067,13 +3023,13 @@ impl<'a> Compiler<'a> {
 // ---------------------------------------------------------------------------------------
 
 /// Syntactic whole-body bails: effectful/rng literal builtin calls anywhere (incl. nested
-/// closure bodies — the effect fence backstops non-literal callees at run time), `return`/
-/// `break` in the body proper, and — for the texel closure itself (`xy_params`) — any
-/// reference to the `x_ix`/`y_ix` params.
+/// closure bodies — the effect fence backstops non-literal callees at run time), `break` in
+/// the body proper, and — for the texel closure itself (`xy_params`) — any reference to the
+/// `x_ix`/`y_ix` params.
 fn prefilter(closure: &Closure, xy_from: Option<usize>) -> Result<(), CErr> {
   let mut bad: Option<(String, SourceLoc)> = None;
   for stmt in &closure.body.0 {
-    check_stmt_control_flow(stmt, &mut bad);
+    check_stmt_break(stmt, &mut bad);
     stmt.traverse_exprs(&mut |e: &Expr| {
       if bad.is_some() {
         return;
@@ -2212,97 +3168,23 @@ fn walk_expr_shallow(expr: &Expr, cb: &mut impl FnMut(&Expr)) {
   }
 }
 
-/// Return/break scan over the body's own statements; does not descend into nested closure
-/// bodies (those run through the interpreter or get their own walk when inlined).
-fn check_stmt_control_flow(stmt: &Statement, bad: &mut Option<(String, SourceLoc)>) {
-  if bad.is_some() {
+/// `break` scan over the body's own statements (nested closure bodies excluded — they get
+/// their own walk when inlined). `return` is handled by `desugar_returns`.
+fn check_stmt_break(stmt: &Statement, bad: &mut Option<(String, SourceLoc)>) {
+  let loc_of = |value: &Option<Expr>| value.as_ref().map(|e| e.loc()).unwrap_or_default();
+  if let Statement::Break { value } = stmt {
+    bad.get_or_insert_with(|| ("`break` in texel closure".into(), loc_of(value)));
     return;
   }
-  match stmt {
-    Statement::Return { value } => {
-      *bad = Some((
-        "early `return` in texel closure".into(),
-        value.as_ref().map(|e| e.loc()).unwrap_or_default(),
-      ))
-    }
-    Statement::Break { value } => {
-      *bad = Some((
-        "`break` in texel closure".into(),
-        value.as_ref().map(|e| e.loc()).unwrap_or_default(),
-      ))
-    }
-    _ => {
-      for e in stmt.exprs() {
-        check_expr_control_flow(e, bad);
-      }
-    }
-  }
-}
-
-fn check_expr_control_flow(expr: &Expr, bad: &mut Option<(String, SourceLoc)>) {
-  if bad.is_some() {
-    return;
-  }
-  match expr {
-    Expr::Block { statements, .. } => {
+  walk_stmt_shallow(stmt, &mut |e| {
+    if let Expr::Block { statements, .. } = e {
       for s in statements {
-        check_stmt_control_flow(s, bad);
+        if let Statement::Break { value } = s {
+          bad.get_or_insert_with(|| ("`break` in texel closure".into(), loc_of(value)));
+        }
       }
     }
-    Expr::BinOp { lhs, rhs, .. } => {
-      check_expr_control_flow(lhs, bad);
-      check_expr_control_flow(rhs, bad);
-    }
-    Expr::PrefixOp { expr, .. } => check_expr_control_flow(expr, bad),
-    Expr::Range { start, end, .. } => {
-      check_expr_control_flow(start, bad);
-      if let Some(e) = end {
-        check_expr_control_flow(e, bad);
-      }
-    }
-    Expr::StaticFieldAccess { lhs, .. } => check_expr_control_flow(lhs, bad),
-    Expr::FieldAccess {
-      lhs, field, field2, ..
-    } => {
-      check_expr_control_flow(lhs, bad);
-      check_expr_control_flow(field, bad);
-      if let Some(f) = field2 {
-        check_expr_control_flow(f, bad);
-      }
-    }
-    Expr::Call { call, .. } => {
-      for a in &call.args {
-        check_expr_control_flow(a, bad);
-      }
-      for a in call.kwargs.values() {
-        check_expr_control_flow(a, bad);
-      }
-    }
-    Expr::Conditional {
-      cond,
-      then,
-      else_if_exprs,
-      else_expr,
-      ..
-    } => {
-      check_expr_control_flow(cond, bad);
-      check_expr_control_flow(then, bad);
-      for (c, e) in else_if_exprs {
-        check_expr_control_flow(c, bad);
-        check_expr_control_flow(e, bad);
-      }
-      if let Some(e) = else_expr {
-        check_expr_control_flow(e, bad);
-      }
-    }
-    Expr::ArrayLiteral { elements, .. } => {
-      for e in elements {
-        check_expr_control_flow(e, bad);
-      }
-    }
-    // Closure bodies deliberately skipped.
-    Expr::MapLiteral { .. } | Expr::Closure { .. } | Expr::Ident { .. } | Expr::Literal { .. } => {}
-  }
+  });
 }
 
 // ---------------------------------------------------------------------------------------
@@ -2312,6 +3194,8 @@ fn check_expr_control_flow(expr: &Expr, bad: &mut Option<(String, SourceLoc)>) {
 enum UniErr {
   /// Fall back to the scalar loop (validation surprise or observable effect).
   Abort,
+  /// A pinned sequence length changed: evict and recompile under this run's values.
+  Recompile,
   Err(ErrorStack),
 }
 
@@ -2372,8 +3256,9 @@ fn eval_uniforms_inner(
   let mut frame_callees: Vec<Option<Rc<Callable>>> = vec![None; plan.frames.len()];
   let mut vals: Vec<Value> = Vec::with_capacity(plan.unis.len());
   let mut memo = vec![None; plan.guards.len()];
+  let mut seqs: FxHashMap<u16, Rc<Vec<Value>>> = FxHashMap::default();
 
-  for step in &plan.unis {
+  for (uix, step) in plan.unis.iter().enumerate() {
     if let Some(g) = step.guard {
       match guard_on(plan, &vals, &mut memo, g) {
         Some(true) => {}
@@ -2435,7 +3320,25 @@ fn eval_uniforms_inner(
           Err(e) => return Err(UniErr::Err(e)),
         }
       }
+      UniSrc::SeqElem { of, ix } => match seqs.get(of) {
+        Some(items) => items[*ix as usize].clone(),
+        None => return Err(UniErr::Abort),
+      },
     };
+    if let UniShape::Seq { len } = step.shape {
+      let Value::Sequence(seq) = &val else {
+        return Err(UniErr::Abort);
+      };
+      let items = seq
+        .consume(ctx)
+        .take(len as usize + 1)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| if step.speculative { UniErr::Abort } else { UniErr::Err(e) })?;
+      if items.len() != len as usize {
+        return Err(UniErr::Recompile);
+      }
+      seqs.insert(uix as u16, Rc::new(items));
+    }
     if let Some(hint) = &step.hint {
       if hint.validate_val(&val).is_err() {
         return Err(UniErr::Abort);
@@ -2498,7 +3401,8 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>, guards: Vec<bool>) -> Option
         Value::Bool(b) => chans[i] = [*b as u8 as f32; 4],
         _ => return None,
       },
-      UniShape::Any => {}
+      // Length-checked during evaluation, where the consumed elements are needed anyway.
+      UniShape::Any | UniShape::Seq { .. } => {}
     }
   }
 
@@ -3188,6 +4092,7 @@ fn compile(
     frames: Vec::new(),
     plan_frames: Vec::new(),
     inline_stack: vec![meta.id],
+    lit_depth: 0,
     uses_uv: false,
     guard: None,
     guards: Vec::new(),
@@ -3233,7 +4138,8 @@ fn compile(
   }
 
   let body_loc = body_loc(closure);
-  let result = compiler.compile_statements(&closure.body.0, body_loc);
+  let result = compiler.compile_body(&closure.body.0, body_loc);
+  compiler.pop_frame();
   if !fence.verify_or_restore(ctx) {
     return bail("uniform subtree performed an observable effect", body_loc);
   }
@@ -3243,6 +4149,7 @@ fn compile(
     AbsVal::V(vv) if vv.mask => return bail("texel body evaluates to a bool", body_loc),
     AbsVal::V(vv) => PlanOut::Chans(vv.chans),
     AbsVal::U(uix) => PlanOut::Uniform(uix),
+    AbsVal::Seq(_) => return bail("texel body evaluates to a sequence", body_loc),
   };
 
   let out_regs: Vec<u16> = match &out {
@@ -3546,6 +4453,11 @@ fn try_vectorized(
       }
       Some(PlanEntry::Ok(plan)) => match eval_uniforms(ctx, &plan, closure, cb) {
         Ok((vals, guards)) => (plan, vals, guards),
+        Err(UniErr::Recompile) => {
+          state.plans.borrow_mut().remove(&key);
+          state.plan_order.borrow_mut().retain(|k| *k != key);
+          continue;
+        }
         Err(UniErr::Abort) => {
           abort("uniform subtree changed shape or performed an observable effect");
           return None;
@@ -3758,6 +4670,7 @@ fn render_plan(
         UniSrc::Slot(sl) => format!("local#{sl}"),
         UniSrc::UniRef(u) => format!("= u{u}"),
         UniSrc::SwizzleOf { of, field } => format!("u{of}.{field}"),
+        UniSrc::SeqElem { of, ix } => format!("u{of}[{ix}]"),
       };
       let shape = match step.shape {
         UniShape::Num { ar, int } => match (ar, int) {
@@ -3766,6 +4679,7 @@ fn render_plan(
           (n, _) => format!("vec{n}"),
         },
         UniShape::Bool => "bool".into(),
+        UniShape::Seq { len } => format!("seq[{len}]"),
         UniShape::Builtin(_) => "builtin".into(),
         UniShape::ClosureBody(_) => "closure".into(),
         UniShape::Dynamic(ar) => format!("dynamic→{ar}ch"),
@@ -4029,25 +4943,9 @@ v }) | render_texture(name="o")"#,
       ),
       (
         r#"t = texture(16, 16, |uv| uv.x)
-(t -> |v| (0..3 -> |i| v * float(i)) | last) | render_texture(name="o")"#,
-        "",
-      ),
-      (
-        r#"t = texture(16, 16, |uv| uv.x)
-(t -> |v| { c = || v * 2.
-c() }) | render_texture(name="o")"#,
-        "closure capturing a varying",
-      ),
-      (
-        r#"t = texture(16, 16, |uv| uv.x)
 (t -> |v| { [a, b] = [v, v * 2.]
 a + b }) | render_texture(name="o")"#,
         "destructuring",
-      ),
-      (
-        r#"t = texture(16, 16, |uv| uv.x)
-(t -> |v| { return v * 2. }) | render_texture(name="o")"#,
-        "return",
       ),
       (
         r#"t = texture(16, 16, |uv| uv.x)
@@ -4060,11 +4958,6 @@ v }) | render_texture(name="o")"#,
 t = texture(16, 16, |uv| uv.x)
 (t -> |v| v + randf()) | render_texture(name="o")"#,
         "rng",
-      ),
-      (
-        r#"t = texture(16, 16, |uv| uv.x)
-(t -> |v| [v, v * 2.] | first) | render_texture(name="o")"#,
-        "",
       ),
       (
         r#"t = texture(16, 16, |uv| uv.x)
@@ -4767,6 +5660,261 @@ f(5) | render_texture(name="b")
 
   /// The vec4 overloads (unary math, abs, pow, min/max, clamp, len/dot/distance/normalize)
   /// lower through the same arms as vec3; a 4-channel body must vectorize end to end.
+  /// `return` desugars to nested conditionals: top-level, varying/uniform conditions,
+  /// else-if ladders, nested arms, inside inlined helpers (incl. a mask-valued one),
+  /// assignment and block forms, vec arms, generator entry.
+  #[test]
+  fn early_returns_bit_identical() {
+    let src = r#"
+h = texture(16, 16, |uv| fbm(pos=uv * 3.) * 1.5)
+rgb = texture(16, 16, |uv| v3(uv.x, uv.y, fbm(pos=uv * 4.)))
+cap = 0.25
+flag = true
+helper = |x| { if x > 0.5 { return x * 2. }
+x - 1. }
+pred = |x| { if x > 0.8 { return true }
+x < 0.1 }
+o1 = h -> |v| { return v * 2. }
+o2 = h -> |v| { if v > 0.5 { return 1. }
+v * 2. }
+o3 = h -> |v| { if v > 0.75 { return 3. } else if v > 0.5 { return 2. }
+if v < 0.1 { return 0. }
+v }
+o4 = h -> |v| { if v > 0.2 { if v > 0.6 { return v * 3. }
+w = v * 2.
+if w > 0.9 { return w } }
+v }
+o5 = h -> |v| { if v > 0.5 { return cap }
+if flag { return v + 1. }
+v }
+o6 = h -> |v| helper(v) + 1.
+o7 = h -> |v| { y = if v > 0.3 { return 0. } else { v * 4. }
+y + 1. }
+o8 = h -> |v| { y = { if v > 0.3 { return 0. }
+v * 4. }
+y + 1. }
+o9 = rgb -> |c| { if len(c) > 1. { return c * 0.5 }
+c.bgr }
+o10 = h -> |v| if pred(v) { 1. } else { 0. }
+o11 = h -> |v| { if v > 0.5 { return v } else { return v * 2. } }
+o12 = h -> |v| { if v > 0.4 { z = v * 3.
+if z > 2. { return z } else { return z * 0.5 } }
+v }
+g = texture(16, 16, |uv| { if uv.x > uv.y { return uv.x }
+uv.y * 2. })
+o1 | render_texture(name="o1")
+o2 | render_texture(name="o2")
+o3 | render_texture(name="o3")
+o4 | render_texture(name="o4")
+o5 | render_texture(name="o5")
+o6 | render_texture(name="o6")
+o7 | render_texture(name="o7")
+o8 | render_texture(name="o8")
+o9 | render_texture(name="o9")
+o10 | render_texture(name="o10")
+o11 | render_texture(name="o11")
+o12 | render_texture(name="o12")
+g | render_texture(name="g")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert_eq!(
+      vectorized_count(&vec_ctx),
+      15,
+      "every return body must vectorize (12 maps + 3 generators): {reps:?}"
+    );
+  }
+
+  /// The early-return spelling of the guarded-arm shape keeps its guarantees: the tail
+  /// after `if i == 0 {{ return v }}` is guarded off on the `i == 0` run (its `w[-1]` is
+  /// never evaluated), the value-dependent arm failure recompiles once, and later slices
+  /// hit the cache.
+  #[test]
+  fn uniform_return_guards_skip_tail_and_recompile() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+w = [0.5, 0.25, 0.125]
+f = |i| { h -> |v| { if i == 0 { return v }
+v * w[i - 1] } }
+slices = 0..4 -> f
+slices | render_texture_stack(name="s")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    {
+      let (a, b) = (
+        vec_ctx.rendered_textures.borrow(),
+        scalar_ctx.rendered_textures.borrow(),
+      );
+      assert_bit_identical(
+        &Value::Texture(Rc::clone(&a[0].texture)),
+        &Value::Texture(Rc::clone(&b[0].texture)),
+      )
+      .unwrap();
+      assert_eq!(a[0].extra_slices.len(), 3);
+      for (xs, ys) in a[0].extra_slices.iter().zip(&b[0].extra_slices) {
+        assert_bit_identical(&Value::Texture(Rc::clone(xs)), &Value::Texture(Rc::clone(ys))).unwrap();
+      }
+    }
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized), "{:?}", reports(&vec_ctx));
+    assert_eq!(vec_ctx.tex_vectorize.plans.borrow().len(), 2);
+  }
+
+  /// Shapes the desugar declines (each valid on the scalar path) name the construct.
+  #[test]
+  fn return_bails_report_reasons() {
+    for (body, needle) in [
+      ("{ if v > 5. { return }
+v }", "valueless"),
+      ("v + if v > 0.5 { return 1. } else { 0. }", "operand"),
+      ("{ y = if v > 5. { return 1. }
+v }", "else-less"),
+      ("{ if (if v > 5. { return 1. } else { false }) { 2. } else { v } }", "inside a condition"),
+      ("{ y = { if v > 0.5 { break 1. }
+v }
+y }", "break"),
+    ] {
+      let src = format!("t = texture(16, 16, |uv| uv.x)\n(t -> |v| {body}) | render_texture(name=\"o\")");
+      let (ctx, scalar_ctx) = eval_both(&src);
+      assert_identical_outputs(&ctx, &scalar_ctx);
+      let reps = reports(&ctx);
+      assert!(
+        reps
+          .iter()
+          .any(|r| !r.vectorized && r.reason.as_deref().is_some_and(|s| s.contains(needle))),
+        "expected bail reason containing {needle:?}; reports: {reps:?}\n{src}"
+      );
+    }
+  }
+
+  /// Loops unroll at compile time: `fold`/`reduce`/`->`/`scan`/`any`/`all` over literal
+  /// ranges, varying array literals, captured arrays and ranges; closure literals with
+  /// varying captures (incl. local helpers and `return` inside them), captured closures and
+  /// builtins as callbacks; nested maps + `flatten`; structural ops and eager indexing;
+  /// `reduce`'s index convention; uniform conditions inside loop bodies; loops inside
+  /// inlined helpers; generator entry.
+  #[test]
+  fn loops_unroll_bit_identical() {
+    let src = r#"
+h = texture(16, 16, |uv| fbm(pos=uv * 3.) * 1.5)
+rgb = texture(16, 16, |uv| v3(uv.x, uv.y, fbm(pos=uv * 4.)))
+w = [0.5, 0.25, 0.125]
+n = 3
+add_sq = |acc, x| acc + x * x
+helper_loop = |x| (0..3 -> |o| { x * float(o) }) | reduce(add)
+o1 = h -> |v| fold(0., |acc, o| { acc + sin(v * pow(2., float(o))) * pow(0.5, float(o)) }, 0..4)
+o2 = h -> |v| (0..4 -> |o| { sin(v * float(o + 1)) }) | reduce(add)
+o3 = h -> |v| ([v, v * 2., v * 3.] -> |x| { x * x }) | reduce(max)
+o4 = rgb -> |c| [c.x, c.y, c.z] | reduce(min)
+o5 = h -> |v| { s = (0..3 -> |i| { 0..2 -> |j| { v * float(i) + float(j) } }) | flatten
+s | reduce(add) }
+o6 = h -> |v| (0..4 -> |o| { v * float(o) }) | scan(0., |acc, x| { acc + x }) | last
+o7 = h -> |v| { a = any(|x| x > 0.5, [v, v * 2.])
+b = all(|x| x > 0.1, [v, v * 2.])
+if a && b { 1. } else if a { 0.5 } else { 0. } }
+o8 = h -> |v| { s = [v, v * 2., v * 3., v * 4.]
+s[1] + (s | reverse)[0] + (s | take(2) | last) + (s | skip(3) | first) + (s | collect)[3] }
+o9 = h -> |v| (w -> |x| { x * v }) | reduce(add)
+o10 = h -> |v| fold(v, |acc, i| { acc * w[i] }, 0..3)
+o11 = h -> |v| { f = |x| x * v
+(0..3 -> f) | reduce(add) }
+o12 = h -> |v| fold(0., add_sq, [v, v * 2.])
+o13 = h -> |v| { step = |acc, x| { if x > 0.5 { return acc }
+acc + x }
+fold(0., step, [v, v * 2., v * 3.]) }
+o14 = h -> |v| reduce(|acc, x, i| { acc + x * float(i) }, [v, v * 2., v * 3.])
+o15 = h -> |v| (0..3 -> |o| { if o == 0 { v } else { v * w[o - 1] } }) | reduce(add)
+o16 = h -> |v, uv| ([uv.x, uv.y, v] -> |x, i| { x * float(i + 1) }) | reduce(add)
+o17 = h -> |v| helper_loop(v) + 1.
+o18 = h -> |v| (0..n -> |o| { v * float(o) }) | reduce(add)
+o19 = h -> |v| { step = |acc, x| { if x > v { return acc }
+acc + x }
+fold(0., step, [v * 0.5, v * 2., v * 3.]) }
+o20 = h -> |v| { s = [v, [v * 2., v * 3.], v * 4.] | flatten
+chain([s, [v * 5.]]) | reduce(add) }
+g = texture(16, 16, |uv| fold(0., |acc, o| { acc + fbm(pos=uv * pow(2., float(o))) * pow(0.5, float(o)) }, 0..3))
+o1 | render_texture(name="o1")
+o2 | render_texture(name="o2")
+o3 | render_texture(name="o3")
+o4 | render_texture(name="o4")
+o5 | render_texture(name="o5")
+o6 | render_texture(name="o6")
+o7 | render_texture(name="o7")
+o8 | render_texture(name="o8")
+o9 | render_texture(name="o9")
+o10 | render_texture(name="o10")
+o11 | render_texture(name="o11")
+o12 | render_texture(name="o12")
+o13 | render_texture(name="o13")
+o14 | render_texture(name="o14")
+o15 | render_texture(name="o15")
+o16 | render_texture(name="o16")
+o17 | render_texture(name="o17")
+o18 | render_texture(name="o18")
+o19 | render_texture(name="o19")
+o20 | render_texture(name="o20")
+g | render_texture(name="g")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert_eq!(
+      vectorized_count(&vec_ctx),
+      23,
+      "every loop body must vectorize (20 maps + 3 generators): {reps:?}"
+    );
+  }
+
+  /// A run-time-uniform loop bound pins the unroll count; a different bound on a cache hit
+  /// evicts and recompiles in the same invocation, so every call stays vectorized.
+  #[test]
+  fn seq_length_pin_recompiles() {
+    let src = r#"
+h = texture(16, 16, |uv| uv.x)
+f = |n| { h -> |v| (0..n -> |o| { v * float(o) }) | reduce(add) }
+f(2) | render_texture(name="a")
+f(3) | render_texture(name="b")
+f(4) | render_texture(name="c")
+f(4) | render_texture(name="d")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized), "{:?}", reports(&vec_ctx));
+    // generator + map body: one key each, the map's recompiled in place twice
+    assert_eq!(vec_ctx.tex_vectorize.plans.borrow().len(), 2);
+  }
+
+  #[test]
+  fn seq_bails_report_reasons() {
+    for (body, needle) in [
+      ("(0.. -> |o| { v * float(o) }) | take(3) | reduce(add)", "unbounded"),
+      ("(0..300 -> |o| { v * float(o) }) | reduce(add)", "longer than"),
+      ("fold_while(0., |acc, x| { if acc > 1. { nil } else { acc + x } }, [v, v * 2.])", "fold_while"),
+      ("[v, v * 2.] | filter(|x| x > -1.) | reduce(add)", "filter"),
+    ] {
+      let src = format!("t = texture(16, 16, |uv| uv.x)\n(t -> |v| {body}) | render_texture(name=\"o\")");
+      let (ctx, scalar_ctx) = eval_both(&src);
+      assert_identical_outputs(&ctx, &scalar_ctx);
+      let reps = reports(&ctx);
+      assert!(
+        reps
+          .iter()
+          .any(|r| !r.vectorized && r.reason.as_deref().is_some_and(|s| s.contains(needle))),
+        "expected bail reason containing {needle:?}; reports: {reps:?}\n{src}"
+      );
+    }
+    // Indexing a lazy sequence and returning a closure error on both paths.
+    for body in ["(0..3 -> |o| { v * float(o) })[1]", "{ f = |x| x * v\nf }"] {
+      let src = format!("t = texture(16, 16, |uv| uv.x)\n(t -> |v| {body}) | render_texture(name=\"o\")");
+      for no_vec in [false, true] {
+        let ctx = EvalCtx::default();
+        ctx.tex_vectorize.no_vectorize.set(no_vec);
+        assert!(crate::parse_and_eval_program_with_ctx(src.clone(), &ctx, false).is_err(), "{src}");
+      }
+    }
+  }
+
+
   #[test]
   fn vec4_builtins_vectorize() {
     let src = r#"
@@ -5200,9 +6348,34 @@ mod property_tests {
 
     fn body(&mut self, out_arity: u8) -> String {
       let mut stmts = Vec::new();
+      let mut has_return = false;
       for _ in 0..self.rng.random_range(0..4u32) {
         let name = format!("l{}", self.next_local);
         self.next_local += 1;
+        if self.rng.random_range(0..4u32) == 0 {
+          let (c, r) = (self.cond(2), self.arm(out_arity, 2));
+          stmts.push(if self.rng.random_range(0..2u32) == 0 {
+            format!("if {c} {{ return {r} }}")
+          } else {
+            let (c2, r2) = (self.cond(1), self.arm(out_arity, 1));
+            format!("if {c} {{\n    return {r}\n  }} else if {c2} {{\n    return {r2}\n  }}")
+          });
+          has_return = true;
+          continue;
+        }
+        if self.rng.random_range(0..5u32) == 0 {
+          let ar = self.rng.random_range(1..=4u8);
+          let init = self.expr(ar, 1);
+          self.vars.push(("acc".to_string(), ar));
+          let step = self.expr(ar, 2);
+          self.vars.pop();
+          let k = self.rng.random_range(1..=3u32);
+          stmts.push(format!(
+            "{name} = fold({init}, |acc, o| {{ ({step}) * 0.5 + acc * (0.75 + float(o) * 0.01) }}, 0..{k})"
+          ));
+          self.vars.push((name, ar));
+          continue;
+        }
         if self.rng.random_range(0..3u32) == 0 {
           let c = self.cond(2);
           let hint = if self.rng.random_range(0..2u32) == 0 { ": bool" } else { "" };
@@ -5215,7 +6388,10 @@ mod property_tests {
         stmts.push(format!("{name} = {e}"));
         self.vars.push((name, ar));
       }
-      stmts.push(self.expr(out_arity, 3));
+      // A returning body's fall-through is a select arm, so no bare int leaf. Bound to a
+      // name because a line starting with an operator continues the previous statement.
+      let e = if has_return { self.arm(out_arity, 3) } else { self.expr(out_arity, 3) };
+      stmts.push(format!("res = {e}\n  res"));
       stmts.join("\n  ")
     }
   }
