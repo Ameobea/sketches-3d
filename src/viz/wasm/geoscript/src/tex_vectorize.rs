@@ -126,15 +126,17 @@ pub struct VectorizeReport {
 #[derive(PartialEq, Eq, Hash, Clone, Copy)]
 struct PlanKey {
   body_id: u64,
-  input_arity: u8,
-  generator: bool,
+  /// Hash of the entry-point shape: generator, or the ordered per-input channel counts. A
+  /// plan compiled for `(1ch, 3ch)` must never be replayed for `(3ch, 1ch)`.
+  input_sig: u64,
   capture_sig: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Src {
   Reg(u16),
-  /// Input texture plane (the texel param's channel).
+  /// Plane of the concatenated input textures; each texel param's channels start at a
+  /// compile-time offset into this list. Caps the entry point at 256 input planes.
   In(u8),
   /// Channel of the ctx-cached per-(w,h) uv planes (0 = u, 1 = v); read-only, shared.
   Uv(u8),
@@ -325,6 +327,22 @@ pub(crate) struct Plan {
   peak_regs: u16,
   /// Whether any step or output reads the shared uv planes.
   uses_uv: bool,
+  /// Channel count per input texture, in order; empty for a generator.
+  input_arities: Vec<u8>,
+}
+
+impl Plan {
+  /// Decode a `Src::In` plane index back to (input index, channel within that input).
+  fn input_chan(&self, plane: u8) -> (usize, usize) {
+    let mut plane = plane as usize;
+    for (i, &ar) in self.input_arities.iter().enumerate() {
+      if plane < ar as usize {
+        return (i, plane);
+      }
+      plane -= ar as usize;
+    }
+    unreachable!("plane index past the input planes")
+  }
 }
 
 /// Resolved+validated per-run uniform state; `exec` is infallible given one of these.
@@ -3110,11 +3128,31 @@ fn body_loc(closure: &Closure) -> SourceLoc {
 }
 
 #[derive(Clone, Copy)]
-enum CompileKind {
-  /// `t -> |val, uv, x_ix, y_ix| …`
-  Map { input_arity: u8 },
+enum CompileKind<'a> {
+  /// `t -> |val, uv, x_ix, y_ix| …` (one arity) and
+  /// `texture_zip(fn, [a, b, …])` → `|in0, in1, …, uv, x_ix, y_ix|` (N).
+  Zip { arities: &'a [u8] },
   /// `texture(w, h, |uv, x_ix, y_ix| …)`
   Generator,
+}
+
+impl CompileKind<'_> {
+  fn n_inputs(self) -> usize {
+    match self {
+      CompileKind::Zip { arities } => arities.len(),
+      CompileKind::Generator => 0,
+    }
+  }
+
+  fn sig(self) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = FxHasher::default();
+    match self {
+      CompileKind::Zip { arities } => (1u8, arities).hash(&mut h),
+      CompileKind::Generator => 0u8.hash(&mut h),
+    }
+    h.finish()
+  }
 }
 
 fn compile(
@@ -3123,10 +3161,7 @@ fn compile(
   closure: &Closure,
   kind: CompileKind,
 ) -> Result<(Plan, Vec<Value>), CErr> {
-  let (xy_from, max_params) = match kind {
-    CompileKind::Map { .. } => (2, 4),
-    CompileKind::Generator => (1, 3),
-  };
+  let (xy_from, max_params) = (kind.n_inputs() + 1, kind.n_inputs() + 3);
   prefilter(closure, Some(xy_from))?;
   for param in closure.params.iter() {
     if !matches!(param.ident, crate::ast::DestructurePattern::Ident(_)) {
@@ -3168,16 +3203,21 @@ fn compile(
     Rc::clone(callable),
   );
 
-  // Map: param 0 = texel value (input planes), param 1 = uv. Generator: param 0 = uv.
-  // uv binds to the shared ctx-cached planes — zero ops, zero copies — and only when the
-  // body actually references it, so uniform bodies never build the planes.
-  if let CompileKind::Map { input_arity } = kind {
-    if !closure.params.is_empty() {
-      let mut chans = ArrayVec::new();
-      for c in 0..input_arity {
-        chans.push(Src::In(c));
+  // Params 0..N are the input texels — each a contiguous block of the concatenated input
+  // planes — then uv. uv binds to the shared ctx-cached planes (zero ops, zero copies) and
+  // only when the body actually references it, so uniform bodies never build the planes.
+  if let CompileKind::Zip { arities } = kind {
+    let mut base = 0usize;
+    for (i, &arity) in arities.iter().enumerate() {
+      if i < closure.params.len() {
+        let mut chans = ArrayVec::new();
+        for c in 0..arity as usize {
+          chans.push(Src::In((base + c) as u8));
+        }
+        compiler.cur_mut().slot_abs[meta.param_slots[i] as usize] =
+          SlotState::Varying(VV { chans, mask: false });
       }
-      compiler.cur_mut().slot_abs[meta.param_slots[0] as usize] = SlotState::Varying(VV { chans, mask: false });
+      base += arity as usize;
     }
   }
   let uv_param_ix = xy_from - 1;
@@ -3296,6 +3336,10 @@ fn compile(
       n_folded: compiler.n_folded,
       n_cse: compiler.n_cse,
       n_dead,
+      input_arities: match kind {
+        CompileKind::Zip { arities } => arities.to_vec(),
+        CompileKind::Generator => Vec::new(),
+      },
     },
     compiler.uni_vals,
   ))
@@ -3388,7 +3432,8 @@ fn plan_output_planes(
 
 #[derive(Clone, Copy)]
 enum VecTarget<'a> {
-  Map { tex: &'a TextureHandle },
+  /// One entry for `map`, N for `texture_zip`; all inputs share dims, arities are free.
+  Zip { texs: &'a [&'a TextureHandle] },
   Gen { w: usize, h: usize, wrap: crate::TextureWrap },
 }
 
@@ -3398,7 +3443,17 @@ pub(crate) fn try_vectorized_map(
   cb: &Rc<Callable>,
   tex: &TextureHandle,
 ) -> Option<Result<Value, ErrorStack>> {
-  try_vectorized(ctx, cb, VecTarget::Map { tex })
+  try_vectorized(ctx, cb, VecTarget::Zip { texs: &[tex] })
+}
+
+/// The vectorized fast path for `texture_zip`. `None` ⇒ run the scalar loop. Callers
+/// validate matching dims and a non-empty input list first.
+pub(crate) fn try_vectorized_zip(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  texs: &[&TextureHandle],
+) -> Option<Result<Value, ErrorStack>> {
+  try_vectorized(ctx, cb, VecTarget::Zip { texs })
 }
 
 /// The vectorized fast path for `texture(w, h, generator)`. `None` ⇒ run the scalar loop.
@@ -3438,26 +3493,24 @@ fn try_vectorized(
     return None;
   };
   let (w, h) = match target {
-    VecTarget::Map { tex } => (tex.width, tex.height),
+    VecTarget::Zip { texs } => (texs[0].width, texs[0].height),
     VecTarget::Gen { w, h, .. } => (w, h),
   };
   if w * h < MIN_TEXELS {
     return None;
   }
 
+  let arities: Vec<u8> = match target {
+    VecTarget::Zip { texs } => texs.iter().map(|t| t.channels as u8).collect(),
+    VecTarget::Gen { .. } => Vec::new(),
+  };
   let kind = match target {
-    VecTarget::Map { tex } => CompileKind::Map {
-      input_arity: tex.channels as u8,
-    },
+    VecTarget::Zip { .. } => CompileKind::Zip { arities: &arities },
     VecTarget::Gen { .. } => CompileKind::Generator,
   };
   let key = PlanKey {
     body_id: closure.resolved.id,
-    input_arity: match kind {
-      CompileKind::Map { input_arity } => input_arity,
-      CompileKind::Generator => 0,
-    },
-    generator: matches!(kind, CompileKind::Generator),
+    input_sig: kind.sig(),
     capture_sig: capture_sig(closure),
   };
   // Every invocation records an outcome, cache hits and post-compile aborts included — a
@@ -3477,6 +3530,11 @@ fn try_vectorized(
   };
   let report = |vectorized: bool, reason: Option<String>, loc: (u32, u32)| report_with(vectorized, reason, loc, None);
   let abort = |reason: &str| report(false, Some(format!("aborted to scalar this run: {reason}")), loc);
+
+  if arities.iter().map(|&a| a as usize).sum::<usize>() > 256 {
+    report(false, Some("more than 256 input planes".into()), loc);
+    return None;
+  }
 
   let mut cached = state.plans.borrow().get(&key).cloned();
   let mut fresh = false;
@@ -3536,8 +3594,8 @@ fn try_vectorized(
     abort("uniform shape changed");
     return None;
   };
-  let input = match target {
-    VecTarget::Map { tex } => tex.as_planes(),
+  let input: Vec<Rc<Vec<f32>>> = match target {
+    VecTarget::Zip { texs } => texs.iter().flat_map(|t| t.as_planes()).collect(),
     VecTarget::Gen { .. } => Vec::new(),
   };
   let uv = plan.uses_uv.then(|| uv_planes_for(ctx, w, h));
@@ -3569,11 +3627,11 @@ fn try_vectorized(
   let channels = planes.len();
   let storage = TexStorage::planes(planes);
   Some(Ok(Value::Texture(Rc::new(match target {
-    VecTarget::Map { tex } => TextureHandle {
+    VecTarget::Zip { texs } => TextureHandle {
       channels,
       storage,
       mips: Default::default(),
-      ..tex.clone()
+      ..texs[0].clone()
     },
     VecTarget::Gen { w, h, wrap } => TextureHandle {
       storage,
@@ -3598,7 +3656,14 @@ fn src_name(s: Src, plan: &Plan) -> String {
   const CH: [char; 4] = ['x', 'y', 'z', 'w'];
   match s {
     Src::Reg(r) => format!("r{r}"),
-    Src::In(c) => format!("in.{}", CH[c as usize]),
+    Src::In(c) => {
+      let (i, ch) = plan.input_chan(c);
+      if plan.input_arities.len() == 1 {
+        format!("in.{}", CH[ch])
+      } else {
+        format!("in{i}.{}", CH[ch])
+      }
+    }
     Src::Uv(c) => format!("uv.{}", CH[c as usize]),
     Src::Uni(u, c) => match plan.unis[u as usize].shape {
       UniShape::Num { ar, .. } if ar > 1 => format!("u{u}.{}", CH[c as usize]),
@@ -3657,7 +3722,11 @@ fn render_plan(
   use std::fmt::Write as _;
   let mut o = String::new();
   let what = match kind {
-    CompileKind::Map { input_arity } => format!("map {input_arity}ch"),
+    CompileKind::Zip { arities: [ar] } => format!("map {ar}ch"),
+    CompileKind::Zip { arities } => format!(
+      "zip {}",
+      arities.iter().map(|a| format!("{a}ch")).collect::<Vec<_>>().join(",")
+    ),
     CompileKind::Generator => "generator".into(),
   };
   let peak_bytes = plan.peak_regs as f64 * (w * h * 4) as f64;
@@ -4730,6 +4799,106 @@ o | render_texture(name="o")
   /// DCE drops the unread `normalize` channels; the emission peephole removes `remap`'s
   /// `* 1.0` / `/ 1.0` and folds all-constant ops; `x + 0.0` must survive (−0.0).
   #[test]
+  fn texture_zip_bit_identical() {
+    let src = r#"
+n = 16
+a = texture(n, n, |uv| v4(uv.x, uv.y, fbm(pos=uv * 3.), fbm(pos=uv * 5., seed=2)))
+b = texture(n, n, |uv| v4(fbm(pos=uv * 2.), uv.y, uv.x, fbm(pos=uv * 7., seed=3)))
+blend = |t0: vec4, t1: vec4|: vec4 {
+  if t0.a > 0.7 {
+    t0
+  } else if t1.a < 0.3 {
+    t0 * 0.5
+  } else {
+    v4((t0.rgb + t1.rgb) / 2., 1.)
+  }
+}
+[a, b] | texture_zip(blend) | render_texture(name="blend")
+
+rgb0 = texture(n, n, |uv| v3(uv.x, uv.y, 0.25))
+rgb1 = texture(n, n, |uv| v3(fbm(pos=uv * 4.), uv.x, uv.y))
+mask = texture(n, n, |uv| fbm(pos=uv * 6., seed=9))
+[rgb0, rgb1, mask] | texture_zip(|p, q, m| mix(smoothstep(0.3, 0.7, m), p, q))
+  | render_texture(name="masked")
+
+[mask] | texture_zip(|v, uv| v + uv.x) | render_texture(name="single_input")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    // 5 generators + the 3 zip bodies; the count pins that no body silently went unreported.
+    let reps = reports(&vec_ctx);
+    assert_eq!(reps.len(), 8, "reports: {reps:?}");
+    assert!(
+      reps.iter().all(|r| r.vectorized),
+      "every zip body should vectorize; reports: {reps:?}"
+    );
+  }
+
+  /// The plan cache must key on the ordered input arities: one body, two different input
+  /// shapes. A cache that ignored the shape would replay the first plan's plane offsets
+  /// against the second call's inputs.
+  #[test]
+  fn texture_zip_arity_swap_keys_the_plan_cache() {
+    let src = r#"
+n = 16
+m = texture(n, n, |uv| uv.x)
+c = texture(n, n, |uv| v3(uv.x, uv.y, 0.5))
+f = |a, b| a * b
+[m, c] | texture_zip(f) | render_texture(name="mask_first")
+[c, m] | texture_zip(f) | render_texture(name="color_first")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let outs = vec_ctx.rendered_textures.borrow();
+    assert_eq!(outs.len(), 2);
+    assert!(outs.iter().all(|t| t.texture.channels == 3));
+  }
+
+  /// `Src::In` is a u8 plane index, so past 256 input planes the entry point hands off to
+  /// the scalar path rather than wrapping around.
+  #[test]
+  fn texture_zip_plane_ceiling_bails() {
+    let src = r#"
+tex = |i| texture(8, 8, |uv| v4(uv.x + i, uv.y, 0.5, 0.25))
+(0..65 -> tex) | texture_zip(|a, b| a + b) | render_texture(name="o")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert!(
+      reps.iter().any(|r| !r.vectorized
+        && r.reason.as_deref().is_some_and(|s| s.contains("256 input planes"))),
+      "reports: {reps:?}"
+    );
+  }
+
+  #[test]
+  fn texture_zip_shape_errors() {
+    let cases = [
+      (
+        r#"a = texture(16, 16, |uv| uv.x)
+b = texture(16, 8, |uv| uv.y)
+[a, b] | texture_zip(|x, y| x + y) | render_texture(name="o")"#,
+        "matching dims",
+      ),
+      (
+        r#"a = texture(16, 16, |uv| uv.x)
+[a, 3.] | texture_zip(|x, y| x + y) | render_texture(name="o")"#,
+        "index 1",
+      ),
+      (
+        r#"[] | texture_zip(|x| x) | render_texture(name="o")"#,
+        "at least one texture",
+      ),
+    ];
+    for (src, expected) in cases {
+      let err = crate::parse_and_eval_program(src).expect_err("expected an error");
+      let msg = format!("{err}");
+      assert!(msg.contains(expected), "expected {expected:?} in: {msg}");
+    }
+  }
+
+  #[test]
   fn dce_and_exact_peepholes() {
     let src = r#"
 h = texture(16, 16, |uv| uv.x - 0.5)
@@ -5051,6 +5220,17 @@ mod property_tests {
     }
   }
 
+  /// Source for one `texture_zip` input of the given arity; `i`/`k` vary the pixels.
+  fn zip_src(arity: u8, i: usize, k: usize) -> String {
+    let f = 2. + i as f32 + k as f32 * 0.5;
+    match arity {
+      1 => format!("texture(12, 9, |uv| fbm(pos=uv * {f:?}) * 2.)"),
+      2 => format!("texture(12, 9, |uv| v2(uv.x * {f:?}, fbm(pos=uv * {f:?})))"),
+      3 => format!("texture(12, 9, |uv| v3(uv.x, uv.y * {f:?}, fbm(pos=uv * {f:?})))"),
+      _ => format!("texture(12, 9, |uv| v4(uv.x, uv.y, fbm(pos=uv * {f:?}), {f:?} * 0.1))"),
+    }
+  }
+
   #[test]
   fn differential_fuzz() {
     let n_seeds: u64 = std::env::var("GEOSCRIPT_FUZZ_SEEDS")
@@ -5059,16 +5239,26 @@ mod property_tests {
       .unwrap_or(120);
     let mut skipped = 0u64;
     for seed in 0..n_seeds {
-      // Every third seed fuzzes the generator entry (`texture(w, h, |uv| …)`, no texel
-      // param) instead of the map entry.
-      let generator_shape = seed % 3 == 0;
+      // Seeds rotate through all three entry points: the generator (`texture(w, h, |uv| …)`,
+      // no texel param), the map, and `texture_zip` with 2–4 inputs of mixed arity.
+      let shape = seed % 3;
+      let zip_arities: Vec<u8> = (0..2 + (seed / 3) % 3)
+        .map(|i| 1 + ((seed / 3 + i * 7) % 4) as u8)
+        .collect();
       let mut vars = vec![
         ("uv".to_string(), 2),
         ("cap".to_string(), 1),
         ("cap3".to_string(), 3),
       ];
-      if !generator_shape {
-        vars.push(("v".to_string(), 1));
+      match shape {
+        0 => {}
+        1 => vars.push(("v".to_string(), 1)),
+        _ => vars.extend(
+          zip_arities
+            .iter()
+            .enumerate()
+            .map(|(i, &ar)| (format!("p{i}"), ar)),
+        ),
       }
       let mut g = Gen {
         rng: Pcg32::new(0xcafef00dd15ea5e5 ^ seed, 0xa02bdbf7bb3c0a7 ^ (seed << 17)),
@@ -5082,15 +5272,37 @@ mod property_tests {
       // Every body is invoked twice from one binding — the second invocation takes the
       // plan-cache path, which is where inlined-closure frames and uniform re-evaluation
       // live and where hand-written fixtures had no coverage.
-      let entry = if generator_shape {
-        format!(
+      let entry = match shape {
+        0 => format!(
           "gen = |uv| {{\n  {body}\n}}\nout = texture(12, 9, gen)\nout2 = texture(9, 12, gen)"
-        )
-      } else {
-        format!(
+        ),
+        1 => format!(
           "t = texture(12, 9, |uv| fbm(pos=uv * 3.) * 2.)\nt2 = texture(12, 9, |uv| uv.x * 1.7 - \
            0.3)\nf = |v, uv| {{\n  {body}\n}}\nout = t -> f\nout2 = t2 -> f"
-        )
+        ),
+        // Two same-shaped input sets so `out2` takes the plan-cache path under the same input
+        // signature, the way the map shape reuses one body across `t` and `t2`.
+        _ => {
+          let decls: String = zip_arities
+            .iter()
+            .enumerate()
+            .flat_map(|(i, &ar)| (0..2).map(move |k| format!("z{i}_{k} = {}\n", zip_src(ar, i, k))))
+            .collect();
+          let params: Vec<String> = (0..zip_arities.len()).map(|i| format!("p{i}")).collect();
+          let list = |k: usize| {
+            (0..zip_arities.len())
+              .map(|i| format!("z{i}_{k}"))
+              .collect::<Vec<_>>()
+              .join(", ")
+          };
+          format!(
+            "{decls}f = |{}, uv| {{\n  {body}\n}}\nout = [{}] | texture_zip(f)\nout2 = [{}] | \
+             texture_zip(f)",
+            params.join(", "),
+            list(0),
+            list(1)
+          )
+        }
       };
       let src = format!(
         r#"

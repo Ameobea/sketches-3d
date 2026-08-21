@@ -8,7 +8,7 @@ use geoscript::{
   parse_program_src, parse_program_with_prefix, prelude_for_kind, traverse_fn_calls,
   value_json::{serialize_bindings_to_json, serialize_value_to_json},
   ErrorStack, EvalCtx, GizmoKind, InjectedTextureParams, Mat4, Program, Scope, Sym, TextureFilter,
-  TextureFormat, TextureWrap, Value,
+  TextureFormat, TextureHandle, TextureWrap, Value,
 };
 use mesh::{
   linked_mesh::{mesh_flags, Vec3},
@@ -891,6 +891,14 @@ pub fn geoscript_get_rendered_texture_layers(ctx: *const GeoscriptReplCtx, tex_i
 }
 
 /// All slices concatenated in layer order; len = width*height*channels*layers.
+/// Borrows a texture's channel planes as slices (materializing a view if needed) for the
+/// encoders, which all read SoA directly rather than through an interleaved staging copy.
+fn with_planes<R>(tex: &TextureHandle, f: impl FnOnce(&[&[f32]]) -> R) -> R {
+  let planes = tex.as_planes();
+  let refs: Vec<&[f32]> = planes.iter().map(|p| p.as_slice()).collect();
+  f(&refs)
+}
+
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_texture_pixels(
   ctx: *const GeoscriptReplCtx,
@@ -899,14 +907,13 @@ pub fn geoscript_get_rendered_texture_pixels(
   let ctx = unsafe { &*ctx };
   let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
   let rt = &textures[tex_ix];
-  let px = rt.texture.as_interleaved();
-  if rt.extra_slices.is_empty() {
-    return px;
-  }
-  let mut out = Vec::with_capacity(px.len() * (1 + rt.extra_slices.len()));
-  out.extend_from_slice(&px);
-  for slice in &rt.extra_slices {
-    out.extend_from_slice(&slice.as_interleaved());
+  let tex = &rt.texture;
+  let layer_len = tex.width * tex.height * tex.channels;
+  let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
+  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+    with_planes(slice, |planes| {
+      geoscript::texture_encode::interleave(planes, &mut out[i * layer_len..(i + 1) * layer_len])
+    });
   }
   out
 }
@@ -926,11 +933,9 @@ pub fn geoscript_get_rendered_texture_pixels_rgba(
   let layer_len = tex.width * tex.height * 4;
   let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
   for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
-    geoscript::texture_encode::expand_rgba_f32(
-      &slice.as_interleaved(),
-      tex.channels,
-      &mut out[i * layer_len..(i + 1) * layer_len],
-    );
+    with_planes(slice, |planes| {
+      geoscript::texture_encode::expand_rgba_f32(planes, &mut out[i * layer_len..(i + 1) * layer_len])
+    });
   }
   out
 }
@@ -954,9 +959,12 @@ pub fn geoscript_encode_rendered_texture_pixels(
     TextureFormat::Rg8 => 2,
     _ => return Vec::new(),
   };
-  let mut out = Vec::with_capacity(tex.width * tex.height * (1 + rt.extra_slices.len()) * bpp);
-  for slice in std::iter::once(tex).chain(rt.extra_slices.iter()) {
-    geoscript::texture_encode::encode_unorm8(&slice.as_interleaved(), tex.channels, format, &mut out);
+  let layer_len = tex.width * tex.height * bpp;
+  let mut out = vec![0u8; layer_len * (1 + rt.extra_slices.len())];
+  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+    with_planes(slice, |planes| {
+      geoscript::texture_encode::encode_unorm8(planes, format, &mut out[i * layer_len..(i + 1) * layer_len])
+    });
   }
   out
 }

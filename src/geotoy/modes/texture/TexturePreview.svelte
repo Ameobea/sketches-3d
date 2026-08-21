@@ -255,7 +255,8 @@ void main() {
 
   const uploadTexture = (tex: GeneratedTexture) => {
     const { width, height, layers, channels, data, rgba } = tex;
-    if (!gl || uploadedData === data) return;
+    const px = channels === 3 ? rgba! : data!;
+    if (!gl || uploadedData === px) return;
     // mag NEAREST keeps texels crisp when zoomed in; min uses the mip chain (trilinear
     // when the float-linear ext allows filtering, per-level nearest otherwise)
     const minFilter = floatLinear ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST_MIPMAP_NEAREST;
@@ -263,7 +264,6 @@ void main() {
     // Raw pixels upload direct in a channel-matched format — GL's (0, 0, 1) fill for
     // missing g/b/a matches the display shader's expectations. 3ch is the exception and
     // uses the worker-expanded copy (see `GeneratedTexture.rgba`).
-    const px = channels === 3 ? rgba! : data;
     const ch = channels === 3 ? 4 : channels;
     const [ifmt, fmt] = ch === 1 ? [gl.R32F, gl.RED] : ch === 2 ? [gl.RG32F, gl.RG] : [gl.RGBA32F, gl.RGBA];
     if (layers > 1) {
@@ -308,7 +308,7 @@ void main() {
       }
       setSamplerParams(gl.TEXTURE_2D, minFilter);
     }
-    uploadedData = data;
+    uploadedData = px;
   };
 
   const fitView = (tex: GeneratedTexture) => {

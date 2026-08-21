@@ -360,7 +360,6 @@ const methods = {
     const [width, height, channels] = Geoscript.geoscript_get_rendered_texture_dims(ctxPtr, texIx);
     /** 1 for plain outputs; stacks concatenate their slices in `pixels`. */
     const layers = Geoscript.geoscript_get_rendered_texture_layers(ctxPtr, texIx);
-    const pixels = Geoscript.geoscript_get_rendered_texture_pixels(ctxPtr, texIx);
     const name = Geoscript.geoscript_get_rendered_texture_name(ctxPtr, texIx);
     /** Empty string when no usage was declared. */
     const usage = Geoscript.geoscript_get_rendered_texture_usage(ctxPtr, texIx);
@@ -377,6 +376,15 @@ const methods = {
     /** See `GeneratedTexture.rgba`. */
     const rgba =
       channels === 3 ? Geoscript.geoscript_get_rendered_texture_pixels_rgba(ctxPtr, texIx) : undefined;
+    /** A 3-channel output's raw pixels have no consumer: the 2D preview reads `rgba` and
+     *  every materialization format reads `encoded` or `rgba` — except r32f/rg32f, which
+     *  take channel 0/1 off the raw interleave. Skipping it is the single biggest chunk of
+     *  the export for rgb stacks. */
+    const rawFloatFormat = format === 'r32f' || format === 'rg32f';
+    const pixels =
+      channels === 3 && !rawFloatFormat
+        ? undefined
+        : Geoscript.geoscript_get_rendered_texture_pixels(ctxPtr, texIx);
     return Comlink.transfer(
       {
         width,
@@ -396,7 +404,7 @@ const methods = {
         magFilter,
         format,
       },
-      filterNils([pixels.buffer, encoded?.buffer, rgba?.buffer])
+      filterNils([pixels?.buffer, encoded?.buffer, rgba?.buffer])
     );
   },
   setTextureParams: (ctxPtr: number, entries: TextureParamsEntry[]) => {

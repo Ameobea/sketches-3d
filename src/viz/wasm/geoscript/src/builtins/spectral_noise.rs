@@ -36,8 +36,31 @@ fn fftfreq(i: usize, n: usize) -> f32 {
   }
 }
 
-/// In-place iterative radix-2 Cooley-Tukey; `len` must be a power of two.
-fn fft1d(buf: &mut [[f32; 2]], stride: usize, len: usize, inverse: bool) {
+/// Per-stage twiddle factors for a `len`-point transform, flattened stage-major: stage
+/// `half`'s k-th factor lives at `[half - 1 + k]` (stage sizes 1, 2, 4, … sum to `len - 1`).
+/// Hoisting these out of the butterfly loop is what keeps `sin_cos` off the hot path —
+/// one table serves every row and column of a 2D pass.
+fn twiddles(len: usize, inverse: bool) -> Vec<[f32; 2]> {
+  let sign = if inverse { 1.0f32 } else { -1.0 };
+  let mut tw = Vec::with_capacity(len - 1);
+  let mut half = 1usize;
+  while half < len {
+    let step = sign * PI / half as f32;
+    for k in 0..half {
+      let (s, c) = (step * k as f32).sin_cos();
+      tw.push([c, s]);
+    }
+    half *= 2;
+  }
+  tw
+}
+
+/// In-place iterative radix-2 Cooley-Tukey over a contiguous row; `buf.len()` must be a
+/// power of two and `tw` must come from `twiddles(buf.len(), ..)` for the matching
+/// direction. Butterflies run as paired half-slices so the inner loop carries no bounds
+/// checks or index arithmetic.
+fn fft1d(buf: &mut [[f32; 2]], tw: &[[f32; 2]]) {
+  let len = buf.len();
   let mut j = 0usize;
   for i in 1..len {
     let mut bit = len >> 1;
@@ -47,38 +70,67 @@ fn fft1d(buf: &mut [[f32; 2]], stride: usize, len: usize, inverse: bool) {
     }
     j |= bit;
     if i < j {
-      buf.swap(i * stride, j * stride);
+      buf.swap(i, j);
     }
   }
-  let sign = if inverse { 1.0f32 } else { -1.0 };
-  let mut half = 1usize;
+
+  // Stage 0's twiddle is (1, 0), so it reduces to sum/difference.
+  for pair in buf.chunks_exact_mut(2) {
+    let ([ar, ai], [br, bi]) = (pair[0], pair[1]);
+    pair[0] = [ar + br, ai + bi];
+    pair[1] = [ar - br, ai - bi];
+  }
+
+  let mut half = 2usize;
   while half < len {
-    let step = sign * PI / half as f32;
-    for start in (0..len).step_by(half * 2) {
-      for k in 0..half {
-        let ang = step * k as f32;
-        let (s, c) = ang.sin_cos();
-        let i0 = (start + k) * stride;
-        let i1 = (start + k + half) * stride;
-        let [ar, ai] = buf[i0];
-        let [br, bi] = buf[i1];
+    let stage = &tw[half - 1..half * 2 - 1];
+    for chunk in buf.chunks_exact_mut(half * 2) {
+      let (lo, hi) = chunk.split_at_mut(half);
+      for ((a, b), &[c, s]) in lo.iter_mut().zip(hi.iter_mut()).zip(stage) {
+        let ([ar, ai], [br, bi]) = (*a, *b);
         let tr = br * c - bi * s;
         let ti = br * s + bi * c;
-        buf[i0] = [ar + tr, ai + ti];
-        buf[i1] = [ar - tr, ai - ti];
+        *a = [ar + tr, ai + ti];
+        *b = [ar - tr, ai - ti];
       }
     }
     half *= 2;
   }
 }
 
+/// `src` is `h` rows of `w`; `dst` becomes `w` rows of `h`. Tiled so both sides stay
+/// within cache — a 1024² plane is 8 MB, so the naive version misses on every element.
+fn transpose(src: &[[f32; 2]], dst: &mut [[f32; 2]], h: usize, w: usize) {
+  const TILE: usize = 32;
+  for y0 in (0..h).step_by(TILE) {
+    let y1 = (y0 + TILE).min(h);
+    for x0 in (0..w).step_by(TILE) {
+      let x1 = (x0 + TILE).min(w);
+      for y in y0..y1 {
+        for x in x0..x1 {
+          dst[x * h + y] = src[y * w + x];
+        }
+      }
+    }
+  }
+}
+
+/// Both passes run over contiguous rows: the column pass transposes in and out rather than
+/// striding, which at 1024² is worth far more than the two extra linear passes cost.
 fn fft2d(buf: &mut [[f32; 2]], h: usize, w: usize, inverse: bool) {
+  let tw_w = twiddles(w, inverse);
   for y in 0..h {
-    fft1d(&mut buf[y * w..(y + 1) * w], 1, w, inverse);
+    fft1d(&mut buf[y * w..(y + 1) * w], &tw_w);
   }
+
+  let mut scratch = vec![[0f32; 2]; w * h];
+  transpose(buf, &mut scratch, h, w);
+  let tw_h = if h == w { tw_w } else { twiddles(h, inverse) };
   for x in 0..w {
-    fft1d(&mut buf[x..], w, h, inverse);
+    fft1d(&mut scratch[x * h..(x + 1) * h], &tw_h);
   }
+  transpose(&scratch, buf, w, h);
+
   if inverse {
     let s = 1. / (h * w) as f32;
     for v in buf.iter_mut() {
@@ -106,8 +158,7 @@ fn band_centers() -> ([f32; KR], f32) {
   (core::array::from_fn(|i| c0 + step * i as f32), step)
 }
 
-fn eval_bands_at(bands: &[[f32; KA]; KR], lnr: f32, th: f32) -> f32 {
-  let (cs, step) = band_centers();
+fn eval_bands_at(bands: &[[f32; KA]; KR], cs: &[f32; KR], step: f32, lnr: f32, th: f32) -> f32 {
   let lnr = lnr.clamp(cs[0], cs[KR - 1]);
   let ri = (((lnr - cs[0]) / step).floor().clamp(0., (KR - 2) as f32)) as usize;
   let t = ((lnr - cs[ri]) / step).clamp(0., 1.);
@@ -286,20 +337,32 @@ pub(crate) fn spectral_noise_impl(
   }
   let (w, h) = (width as usize, height as usize);
 
-  // S(f) = bands(f / freq_scale) + kernel lobes; kernels scale with freq_scale too
+  // S(f) = bands(f / freq_scale) + kernel lobes; kernels scale with freq_scale too.
+  // S depends only on |f| and the axis angle mod PI, and index negation maps f -> -f
+  // exactly, so each evaluation fills its mirrored bin too and only half the grid is
+  // actually evaluated.
+  let (cs, step) = band_centers();
+  let fxs: Vec<f32> = (0..w).map(|x| fftfreq(x, w) / freq_scale).collect();
+  let fys: Vec<f32> = (0..h).map(|y| fftfreq(y, h) / freq_scale).collect();
   let mut spec = vec![0f32; w * h];
   let mut e_resid = 0f64;
-  for y in 0..h {
-    let fy = fftfreq(y, h) / freq_scale;
+  for y in 0..=h / 2 {
+    let (fy, y2) = (fys[y], (h - y) % h);
     for x in 0..w {
-      if y == 0 && x == 0 {
+      let x2 = (w - x) % w;
+      // y2 == y is the DC/Nyquist row, whose mirror lands in the same row
+      if (y2 == y && x2 < x) || (y == 0 && x == 0) {
         continue;
       }
-      let fx = fftfreq(x, w) / freq_scale;
+      let fx = fxs[x];
       let r = (fx * fx + fy * fy).sqrt();
-      let s = eval_bands_at(&bands, r.max(1e-9).ln(), fy.atan2(fx).rem_euclid(PI));
+      let s = eval_bands_at(&bands, &cs, step, r.max(1e-9).ln(), fy.atan2(fx).rem_euclid(PI));
       spec[y * w + x] = s;
       e_resid += s as f64;
+      if (y2, x2) != (y, x) {
+        spec[y2 * w + x2] = s;
+        e_resid += s as f64;
+      }
     }
   }
 
@@ -342,14 +405,22 @@ pub(crate) fn spectral_noise_impl(
     }
   }
 
+  // Box-Muller, f32 and keeping BOTH outputs of each uniform pair: the transform is the
+  // FFT's input white noise, so f64 precision and a discarded sine were pure cost.
   let mut rng = Pcg32::seed_from_u64((seed as u64).wrapping_mul(0x9E3779B97F4A7C15) ^ 0x243F6A88);
   let mut buf: Vec<[f32; 2]> = Vec::with_capacity(w * h);
-  for _ in 0..w * h {
-    // Box-Muller
-    let u1: f64 = rng.random::<f64>().max(1e-300);
-    let u2: f64 = rng.random::<f64>();
-    let g: f64 = (-2. * u1.ln()).sqrt() * (2. * std::f64::consts::PI * u2).cos();
-    buf.push([g as f32, 0.]);
+  while buf.len() < w * h {
+    // `random::<f32>()` is uniform on [0, 1) with 24-bit granularity; flooring a zero draw
+    // to one quantum keeps ln finite without inventing a tail sample the generator can't
+    // otherwise produce.
+    let u1 = rng.random::<f32>().max(1. / (1u32 << 24) as f32);
+    let u2 = rng.random::<f32>();
+    let r = (-2. * u1.ln()).sqrt();
+    let (sin, cos) = (2. * PI * u2).sin_cos();
+    buf.push([r * cos, 0.]);
+    if buf.len() < w * h {
+      buf.push([r * sin, 0.]);
+    }
   }
   fft2d(&mut buf, h, w, false);
   for i in 0..w * h {

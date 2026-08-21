@@ -11013,6 +11013,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "erode" => builtin_fn!(erode, |_def_ix, arg_refs, args, kwargs, _ctx| {
     img_ops::dilate_erode_impl(false, arg_refs, args, kwargs)
   }),
+  "texture_zip" => builtin_fn!(texture_zip, |_def_ix, arg_refs, args, kwargs, ctx| {
+    texture::texture_zip_impl(ctx, arg_refs, args, kwargs)
+  }),
   "concat_channels" => builtin_fn!(concat_channels, |_def_ix, arg_refs, args, kwargs, _ctx| {
     img_ops::concat_channels_impl(arg_refs, args, kwargs)
   }),
@@ -11076,6 +11079,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "blit" => builtin_fn!(blit, |_def_ix, arg_refs, args, kwargs, _ctx| {
     blit::blit_impl(arg_refs, args, kwargs)
+  }),
+  "composite" => builtin_fn!(composite, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    blit::composite_impl(arg_refs, args, kwargs)
   }),
   "scatter" => builtin_fn!(scatter, |def_ix, arg_refs, args, kwargs, ctx| {
     blit::scatter_impl(ctx, def_ix, arg_refs, args, kwargs)

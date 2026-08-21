@@ -1022,13 +1022,9 @@ impl TextureHandle {
   /// Row-major interleaved copy; the JS/GPU boundary format, never used internally.
   pub fn as_interleaved(&self) -> Vec<f32> {
     let planes = self.as_planes();
-    let n = self.width * self.height;
-    let mut out = Vec::with_capacity(n * self.channels);
-    for i in 0..n {
-      for p in &planes {
-        out.push(p[i]);
-      }
-    }
+    let refs: Vec<&[f32]> = planes.iter().map(|p| p.as_slice()).collect();
+    let mut out = vec![0f32; self.width * self.height * self.channels];
+    crate::texture_encode::interleave(&refs, &mut out);
     out
   }
 

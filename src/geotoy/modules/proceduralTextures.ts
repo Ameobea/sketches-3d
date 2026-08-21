@@ -123,8 +123,12 @@ const encodePixels = (
     return { data: t.encoded, glFormat, type: THREE.UnsignedByteType };
   }
   const n = t.width * t.height * t.layers;
-  const px = t.data;
   const c = t.channels;
+  if (c === 3 && format === 'rgba32f' && t.rgba) {
+    return { data: t.rgba, glFormat: THREE.RGBAFormat, type: THREE.FloatType };
+  }
+  if (!t.data) throw new Error(`texture "${t.name}": no raw pixels for format ${format}`);
+  const px = t.data;
   switch (format) {
     case 'r8': {
       const out = new Uint8Array(n);

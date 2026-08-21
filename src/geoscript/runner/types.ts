@@ -75,8 +75,9 @@ export interface GeneratedTexture {
   /** Slice count: 1 for `render_texture` outputs, ≥2 for `render_texture_stack`. */
   layers: number;
   /** Row-major interleaved f32 with slices concatenated in layer order;
-   *  len = width·height·channels·layers. */
-  data: Float32Array;
+   *  len = width·height·channels·layers. Absent for 3-channel outputs, whose consumers all
+   *  read `rgba` or `encoded` instead (see the worker's `getRenderedTexture`). */
+  data?: Float32Array;
   /** Pixels pre-encoded (SIMD, in-worker) for the resolved materialization format;
    *  present only when that format is a u8 format. */
   encoded?: Uint8Array;

@@ -209,9 +209,80 @@ fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
 }
 
 struct LevelView<'a> {
-  planes: Vec<&'a [f32]>,
+  planes: [&'a [f32]; 4],
   w: usize,
   h: usize,
+}
+
+fn plane_arr<'a>(planes: impl Iterator<Item = &'a [f32]>) -> [&'a [f32]; 4] {
+  let mut out: [&[f32]; 4] = [&[]; 4];
+  for (slot, p) in out.iter_mut().zip(planes) {
+    *slot = p;
+  }
+  out
+}
+
+/// Stamp alpha → blend weight, matching the general path's `sa <= 0` skip + `min(1)` clamp.
+#[inline(always)]
+fn eff_alpha(a: f32) -> f32 {
+  let a = a.min(1.);
+  if a > 0. {
+    a
+  } else {
+    0.
+  }
+}
+
+/// Plane-aligned 1:1 placement: base texel (x, y) reads stamp texel (x + dx, y + dy) with
+/// no filtering — every tap weight is 1, so the general path's premultiply/normalize round
+/// trip is pure overhead. `composite` constructs this directly; `blit` detects it.
+#[derive(Clone, Copy)]
+struct Aligned {
+  dx: i64,
+  dy: i64,
+}
+
+/// Recognizes an axis-aligned placement that maps stamp texels onto base texels 1:1 at an
+/// integer offset. Tolerances are sub-thousandth-of-a-texel, far below anything visible;
+/// anything looser falls through to the filtered path.
+fn detect_aligned(
+  inv: &Affine2,
+  bw: usize,
+  bh: usize,
+  sw: usize,
+  sh: usize,
+  filter: BlitFilter,
+) -> Option<Aligned> {
+  if inv.a01 != 0. || inv.a10 != 0. {
+    return None;
+  }
+  let sx = |x: i64| (inv.a00 * ((x as f32 + 0.5) / bw as f32) + inv.tx + 0.5) * sw as f32 - 0.5;
+  let sy = |y: i64| (inv.a11 * ((y as f32 + 0.5) / bh as f32) + inv.ty + 0.5) * sh as f32 - 0.5;
+  let (x0, y0) = (sx(0), sy(0));
+  if !x0.is_finite() || !y0.is_finite() || x0.abs() > 1e9 || y0.abs() > 1e9 {
+    return None;
+  }
+  if (sx(1) - x0 - 1.).abs() > 1e-4 || (sy(1) - y0 - 1.).abs() > 1e-4 {
+    return None;
+  }
+  // Reject accumulated drift across the full span, which a two-sample slope check misses.
+  let (nx, ny) = (bw as i64 - 1, bh as i64 - 1);
+  if (sx(nx) - x0 - nx as f32).abs() > 1e-2 || (sy(ny) - y0 - ny as f32).abs() > 1e-2 {
+    return None;
+  }
+  let (dx, dy) = match filter {
+    BlitFilter::Nearest => ((x0 + 0.5).floor(), (y0 + 0.5).floor()),
+    BlitFilter::Bilinear => {
+      if (x0 - x0.round()).abs() > 1e-3 || (y0 - y0.round()).abs() > 1e-3 {
+        return None;
+      }
+      (x0.round(), y0.round())
+    }
+  };
+  Some(Aligned {
+    dx: dx as i64,
+    dy: dy as i64,
+  })
 }
 
 /// Single-level decal sample at stamp-local coords. Accumulates premultiplied so
@@ -280,6 +351,139 @@ fn sample_level(
   }
 }
 
+/// One contiguous row segment, one channel. `op` is the blend; `alpha` is the stamp's
+/// coverage when it has an alpha channel. Both arms are straight-line over slices of equal
+/// length, which is what lets them vectorize.
+#[inline(always)]
+fn blend_run<F: Fn(f32, f32) -> f32>(dst: &mut [f32], src: &[f32], alpha: Option<&[f32]>, op: F) {
+  match alpha {
+    None => {
+      for (d, &s) in dst.iter_mut().zip(src) {
+        *d = op(*d, s);
+      }
+    }
+    Some(a) => {
+      for ((d, &s), &av) in dst.iter_mut().zip(src).zip(a) {
+        let sa = eff_alpha(av);
+        let b = *d;
+        *d = b + (op(b, s) - b) * sa;
+      }
+    }
+  }
+}
+
+/// Straight-alpha `over` into an RGBA base: the output alpha couples all four channels, so
+/// this can't decompose into independent per-channel runs like the other modes.
+fn rgba_over_run(
+  base_planes: &mut [Vec<f32>],
+  bo: usize,
+  stamp: &[Rc<Vec<f32>>],
+  so: usize,
+  len: usize,
+  val_ch: usize,
+  alpha_ix: usize,
+) {
+  let (rgb, rest) = base_planes.split_at_mut(3);
+  let ba_plane = &mut rest[0];
+  for i in 0..len {
+    let sa = eff_alpha(stamp[alpha_ix][so + i]);
+    if sa <= 0. {
+      continue;
+    }
+    let ba = ba_plane[bo + i];
+    let out_a = sa + ba * (1. - sa);
+    if out_a > 1e-8 {
+      for (c, plane) in rgb.iter_mut().enumerate() {
+        let sv = stamp[if val_ch == 1 { 0 } else { c }][so + i];
+        let b = plane[bo + i];
+        plane[bo + i] = (sv * sa + b * ba * (1. - sa)) / out_a;
+      }
+    }
+    ba_plane[bo + i] = out_a;
+  }
+}
+
+/// The 1:1 aligned blit: no affine per pixel, no taps, no normalize. Iterates exactly the
+/// base texels the stamp covers, split into runs contiguous in both buffers.
+#[allow(clippy::too_many_arguments)]
+fn blit_aligned(
+  base_planes: &mut [Vec<f32>],
+  bw: usize,
+  bh: usize,
+  bch: usize,
+  bwrap: TextureWrap,
+  stamp_planes: &[Rc<Vec<f32>>],
+  sw: usize,
+  sh: usize,
+  sch: usize,
+  val_ch: usize,
+  has_alpha: bool,
+  blend: BlendMode,
+  al: Aligned,
+) {
+  // Base texels whose source texel is in bounds; a Repeat base keeps the full (possibly
+  // self-overlapping) span and wraps, matching the general path's write order.
+  let span = |d: i64, s: usize, b: usize| -> (i64, i64) {
+    let (lo, hi) = (-d, s as i64 - d);
+    if bwrap == TextureWrap::Repeat {
+      (lo, hi)
+    } else {
+      (lo.max(0), hi.min(b as i64))
+    }
+  };
+  let (xlo, xhi) = span(al.dx, sw, bw);
+  let (ylo, yhi) = span(al.dy, sh, bh);
+  if xlo >= xhi || ylo >= yhi {
+    return;
+  }
+  let bvc = if bch == 4 { 3 } else { bch };
+  let alpha_ix = sch - 1;
+  let rgba_over = bch == 4 && blend == BlendMode::Over;
+
+  for y in ylo..yhi {
+    let sy = (y + al.dy) as usize;
+    let wy = y.rem_euclid(bh as i64) as usize;
+    let (mut x, bo_row) = (xlo, wy * bw);
+    while x < xhi {
+      let wx = x.rem_euclid(bw as i64);
+      let len = (xhi - x).min(bw as i64 - wx) as usize;
+      let bo = bo_row + wx as usize;
+      let so = sy * sw + (x + al.dx) as usize;
+      let alpha = has_alpha.then(|| &stamp_planes[alpha_ix][so..so + len]);
+
+      if rgba_over {
+        rgba_over_run(base_planes, bo, stamp_planes, so, len, val_ch, alpha_ix);
+      } else {
+        for c in 0..bvc {
+          let src = &stamp_planes[if val_ch == 1 { 0 } else { c }][so..so + len];
+          let dst = &mut base_planes[c][bo..bo + len];
+          match blend {
+            BlendMode::Over => blend_run(dst, src, alpha, |_, s| s),
+            BlendMode::Add => blend_run(dst, src, alpha, |b, s| b + s),
+            BlendMode::Sub => blend_run(dst, src, alpha, |b, s| b - s),
+            BlendMode::Mul => blend_run(dst, src, alpha, |b, s| b * s),
+            BlendMode::Max => blend_run(dst, src, alpha, |b, s| b.max(s)),
+            BlendMode::Min => blend_run(dst, src, alpha, |b, s| b.min(s)),
+          }
+        }
+        if bch == 4 {
+          let dst = &mut base_planes[3][bo..bo + len];
+          match alpha {
+            None => dst.fill(1.),
+            Some(a) => {
+              for (d, &av) in dst.iter_mut().zip(a) {
+                let sa = eff_alpha(av);
+                *d += sa * (1. - *d);
+              }
+            }
+          }
+        }
+      }
+      x += len as i64;
+    }
+  }
+}
+
 /// Blits `stamp` (placed by its transform) into mutable base planes described by the
 /// base's dimensions/wrap. A degenerate (zero-scale) placement is a no-op.
 pub(crate) fn blit_into(
@@ -321,10 +525,31 @@ pub(crate) fn blit_into(
     None
   };
 
-  // (level view, secondary view for trilinear, lerp factor)
   let stamp_planes = stamp.as_planes();
+  if mips.is_none() {
+    if let Some(al) = detect_aligned(&inv, bw, bh, sw, sh, filter) {
+      blit_aligned(
+        base_planes,
+        bw,
+        bh,
+        bch,
+        bwrap,
+        &stamp_planes,
+        sw,
+        sh,
+        stamp.channels,
+        val_ch,
+        has_alpha,
+        blend,
+        al,
+      );
+      return Ok(());
+    }
+  }
+
+  // (level view, secondary view for trilinear, lerp factor)
   let stamp_view = || LevelView {
-    planes: stamp_planes.iter().map(|p| p.as_slice()).collect(),
+    planes: plane_arr(stamp_planes.iter().map(|p| p.as_slice())),
     w: sw,
     h: sh,
   };
@@ -340,7 +565,7 @@ pub(crate) fn blit_into(
         } else {
           let ml = &levels[l - 1];
           LevelView {
-            planes: ml.planes.iter().map(|p| p.as_slice()).collect(),
+            planes: plane_arr(ml.planes.iter().map(|p| p.as_slice())),
             w: ml.width,
             h: ml.height,
           }
@@ -501,6 +726,47 @@ pub(crate) fn blit_impl(
     storage: crate::TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
     ..(**base).clone()
+  })))
+}
+
+/// Per-pixel alpha composite of two same-size textures. Unlike `blit` this carries no
+/// placement at all — texel (x, y) over texel (x, y) — so it always takes the aligned path.
+pub(crate) fn composite_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let top = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let bottom = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
+  let blend = BlendMode::from_name(arg_refs[2].resolve(args, kwargs).as_str().unwrap())?;
+  if (top.width, top.height) != (bottom.width, bottom.height) {
+    return Err(ErrorStack::new(format!(
+      "`composite` requires matching dims; found {}x{} over {}x{}. Use `blit` (with a \
+       placement transform) to composite textures of different sizes.",
+      top.width, top.height, bottom.width, bottom.height
+    )));
+  }
+  let (val_ch, has_alpha) = channel_layout(top.channels, bottom.channels)?;
+  let mut planes: Vec<Vec<f32>> = bottom.as_planes().iter().map(|p| p.to_vec()).collect();
+  blit_aligned(
+    &mut planes,
+    bottom.width,
+    bottom.height,
+    bottom.channels,
+    bottom.wrap,
+    &top.as_planes(),
+    top.width,
+    top.height,
+    top.channels,
+    val_ch,
+    has_alpha,
+    blend,
+    Aligned { dx: 0, dy: 0 },
+  );
+  Ok(Value::Texture(Rc::new(TextureHandle {
+    storage: crate::TexStorage::from_plane_vecs(planes),
+    mips: Default::default(),
+    ..(**bottom).clone()
   })))
 }
 
@@ -722,6 +988,36 @@ turned = blit(grad | rot(pi / 2.) | trans_global(0.5, 0.5), base_v, filter="near
     // lands in the bottom row
     let turned = get_tex(&ctx, "turned");
     assert_eq!(&turned.as_interleaved()[..], &[0.25, 0.75]);
+  }
+
+  /// `composite` is the placement-free whole-image blit: it must agree with a `blit` that
+  /// has been explicitly centered, and reject mismatched dims.
+  #[test]
+  fn composite_matches_centered_blit() {
+    let ctx = parse_and_eval_program(
+      r#"
+bottom = texture(8, 8, |uv| v3(uv.x, uv.y, 0.25))
+top = texture(8, 8, |uv| v4(1., 0., 0.5, uv.x))
+composited = composite(top, bottom)
+blitted = blit(top | trans_global(0.5, 0.5), bottom)
+added = composite(top, bottom, blend="add")
+blit_added = blit(top | trans_global(0.5, 0.5), bottom, blend="add")
+"#,
+    )
+    .unwrap();
+
+    for (a, b) in [("composited", "blitted"), ("added", "blit_added")] {
+      let (pa, pb) = (get_tex(&ctx, a).as_interleaved(), get_tex(&ctx, b).as_interleaved());
+      for (i, (x, y)) in pa.iter().zip(pb.iter()).enumerate() {
+        assert!((x - y).abs() < 1e-6, "{a} vs {b} at {i}: {x} vs {y}");
+      }
+    }
+
+    let err = parse_and_eval_program(
+      "a = texture(8, 8, |uv| uv.x)\nb = texture(4, 4, |uv| uv.x)\nc = composite(a, b)",
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("matching dims"), "{err}");
   }
 
   #[test]

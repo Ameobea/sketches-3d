@@ -5,3 +5,5 @@ config.yml
 *.sqlite-wal
 *.sqlite-shm
 .env
+*.sqlite3-*
+*.bak

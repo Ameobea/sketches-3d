@@ -15,7 +15,7 @@
 
   type PlanTok = { cls: string; text: string };
   const TOK =
-    /(;.*$)|(\br\d+\b)|(\b(?:in|uv)\.[xyzw]\b|\bu\d+(?:\.[xyzw])?\b|\bg\d+\b)|(-?\b\d+(?:\.\d+)?(?:e-?\d+)?\b)/g;
+    /(;.*$)|(\br\d+\b)|(\b(?:in\d*|uv)\.[xyzw]\b|\bu\d+(?:\.[xyzw])?\b|\bg\d+\b)|(-?\b\d+(?:\.\d+)?(?:e-?\d+)?\b)/g;
   const plainToks = (text: string): PlanTok[] => {
     const out: PlanTok[] = [];
     let last = 0;

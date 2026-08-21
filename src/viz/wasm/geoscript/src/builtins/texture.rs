@@ -775,6 +775,116 @@ fn map_texture_scalar(
   })))
 }
 
+pub(crate) fn texture_zip_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let cb = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+  let seq = arg_refs[1].resolve(args, kwargs).as_sequence().unwrap();
+
+  let mut texs: Vec<Rc<TextureHandle>> = Vec::new();
+  for (i, val) in seq.consume(ctx).enumerate() {
+    let val =
+      val.map_err(|err| err.wrap("Error produced by `textures` seq in `texture_zip`"))?;
+    let Value::Texture(tex) = val else {
+      return Err(ErrorStack::new(format!(
+        "Expected texture at index {i} of `textures` in `texture_zip`, found: {val:?}"
+      )));
+    };
+    if let Some(first) = texs.first() {
+      if (tex.width, tex.height) != (first.width, first.height) {
+        return Err(ErrorStack::new(format!(
+          "All textures passed to `texture_zip` must have matching dims; index 0 is {}x{} but \
+           index {i} is {}x{}",
+          first.width, first.height, tex.width, tex.height
+        )));
+      }
+    }
+    texs.push(tex);
+  }
+  if texs.is_empty() {
+    return Err(ErrorStack::new(
+      "`texture_zip` requires at least one texture in `textures`",
+    ));
+  }
+
+  let texs: Vec<&TextureHandle> = texs.iter().map(|t| &**t).collect();
+  if let Some(res) = crate::tex_vectorize::try_vectorized_zip(ctx, cb, &texs) {
+    if !ctx.tex_vectorize.verify.get() {
+      return res;
+    }
+    let vec_val = res?;
+    let scalar_val = zip_texture_scalar(ctx, cb, &texs)?;
+    crate::tex_vectorize::assert_bit_identical(&vec_val, &scalar_val)?;
+    return Ok(vec_val);
+  }
+  zip_texture_scalar(ctx, cb, &texs)
+}
+
+/// Also the differential oracle for the vectorized path, so it must stay a faithful
+/// per-texel interpretation of the same body.
+fn zip_texture_scalar(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  texs: &[&TextureHandle],
+) -> Result<Value, ErrorStack> {
+  let (w, h) = (texs[0].width, texs[0].height);
+  let srcs: Vec<(Vec<Rc<Vec<f32>>>, usize)> =
+    texs.iter().map(|t| (t.as_planes(), t.channels)).collect();
+  let n = texs.len();
+  let mut cb_args = vec![Value::Nil; n + 3];
+  let mut planes: Vec<Vec<f32>> = Vec::new();
+  let mut out_ch = 0usize;
+  for y in 0..h {
+    for x in 0..w {
+      let i = y * w + x;
+      for (arg, (src, ch)) in cb_args.iter_mut().zip(&srcs) {
+        let mut v = [0f32; 4];
+        for (c, out) in v[..*ch].iter_mut().enumerate() {
+          *out = src[c][i];
+        }
+        *arg = channels_value(v, *ch);
+      }
+      cb_args[n] = Value::Vec2(Vec2::new(
+        (x as f32 + 0.5) / w as f32,
+        (y as f32 + 0.5) / h as f32,
+      ));
+      cb_args[n + 1] = Value::Int(x as i64);
+      cb_args[n + 2] = Value::Int(y as i64);
+      let res = ctx
+        .invoke_callable(cb, &cb_args, EMPTY_KWARGS)
+        .map_err(|err| err.wrap("Error produced by callable passed to `texture_zip`"))?;
+      let (px, out_n) = pixel_from_value(&res).ok_or_else(|| {
+        ErrorStack::new(format!(
+          "Expected float, vec2, vec3, or vec4 from callable passed to `texture_zip`, found: \
+           {res:?}"
+        ))
+      })?;
+      if out_ch == 0 {
+        out_ch = out_n;
+        planes = (0..out_n).map(|_| Vec::with_capacity(w * h)).collect();
+      } else if out_n != out_ch {
+        return Err(ErrorStack::new(
+          "callable passed to `texture_zip` returned a mix of float/vec2/vec3/vec4 values",
+        ));
+      }
+      for (c, plane) in planes.iter_mut().enumerate() {
+        plane.push(px[c]);
+      }
+    }
+  }
+
+  // Metadata follows input 0; the other inputs contribute pixels only.
+  Ok(Value::Texture(Rc::new(TextureHandle {
+    channels: out_ch,
+    storage: TexStorage::from_plane_vecs(planes),
+    mips: Default::default(),
+    ..texs[0].clone()
+  })))
+}
+
 pub(crate) fn blur_impl(
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -840,31 +950,63 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
     *wt /= norm;
   }
 
+  // Taps run tap-major (one weight across a whole run) rather than pixel-major so the
+  // inner loop is a flat stride-1 accumulate. Each output still accumulates its taps in
+  // ascending `i`, so results are bit-identical to the pixel-major form.
   let pass = |src: &[f32], dx: i64, dy: i64| -> Vec<f32> {
-    let stride = if dx == 1 { 1 } else { w };
-    let lim = (if dx == 1 { w } else { h }) as i64;
+    let horiz = dx == 1;
     let tap = |x: i64, y: i64| src[wrap.coord(y, h) * w + wrap.coord(x, w)];
+    let edge = |out: &mut [f32], x: i64, y: i64| {
+      let mut acc = weights[0] * tap(x, y);
+      for i in 1..=half {
+        acc += weights[i as usize] * (tap(x - i * dx, y - i * dy) + tap(x + i * dx, y + i * dy));
+      }
+      out[y as usize * w + x as usize] = acc;
+    };
+
     let mut out = vec![0f32; w * h];
-    for y in 0..h {
-      for x in 0..w {
-        let base = y * w + x;
-        let pos = (if dx == 1 { x } else { y }) as i64;
-        if pos >= half && pos + half < lim {
-          // Interior: no tap can wrap, so index directly instead of paying
-          // `wrap.coord`'s rem_euclid + branch per tap.
-          let mut acc = weights[0] * src[base];
-          for i in 1..=half as usize {
-            acc += weights[i] * (src[base - i * stride] + src[base + i * stride]);
+    // Interior = positions whose full kernel is in bounds; empty when the axis is shorter
+    // than the kernel, which then leaves every position on the wrapped path.
+    let interior = |n: usize| {
+      let lo = (half as usize).min(n);
+      (lo, (n as i64 - half).max(lo as i64) as usize)
+    };
+
+    if horiz {
+      let (x0, x1) = interior(w);
+      for y in 0..h {
+        let (s, o) = (&src[y * w..(y + 1) * w], &mut out[y * w..(y + 1) * w]);
+        for (x, slot) in o[x0..x1].iter_mut().enumerate() {
+          *slot = weights[0] * s[x0 + x];
+        }
+        for i in 1..=half as usize {
+          let wt = weights[i];
+          for (x, slot) in o[x0..x1].iter_mut().enumerate() {
+            *slot += wt * (s[x0 + x - i] + s[x0 + x + i]);
           }
-          out[base] = acc;
-        } else {
-          let (x, y) = (x as i64, y as i64);
-          let mut acc = weights[0] * tap(x, y);
-          for i in 1..=half {
-            acc +=
-              weights[i as usize] * (tap(x - i * dx, y - i * dy) + tap(x + i * dx, y + i * dy));
+        }
+        for x in (0..x0).chain(x1..w) {
+          edge(&mut out, x as i64, y as i64);
+        }
+      }
+    } else {
+      let (y0, y1) = interior(h);
+      for y in y0..y1 {
+        let o = &mut out[y * w..(y + 1) * w];
+        for (x, slot) in o.iter_mut().enumerate() {
+          *slot = weights[0] * src[y * w + x];
+        }
+        for i in 1..=half as usize {
+          let wt = weights[i];
+          let (up, dn) = (&src[(y - i) * w..], &src[(y + i) * w..]);
+          for (x, slot) in o.iter_mut().enumerate() {
+            *slot += wt * (up[x] + dn[x]);
           }
-          out[base] = acc;
+        }
+      }
+      for y in (0..y0).chain(y1..h) {
+        for x in 0..w {
+          edge(&mut out, x as i64, y as i64);
         }
       }
     }
@@ -901,18 +1043,48 @@ pub(crate) fn height_to_normal_impl(
     _ => unimplemented!(),
   };
 
+  #[inline(always)]
+  fn encode_normal(dx: f32, dy: f32) -> [f32; 3] {
+    let inv_len = 1. / (dx * dx + dy * dy + 1.).sqrt();
+    [
+      -dx * inv_len * 0.5 + 0.5,
+      -dy * inv_len * 0.5 + 0.5,
+      inv_len * 0.5 + 0.5,
+    ]
+  }
+
   let tex = tex.dense_clone();
   let (w, h) = (tex.width, tex.height);
-  let mut planes: Vec<Vec<f32>> = (0..3).map(|_| Vec::with_capacity(w * h)).collect();
+  let src: &[f32] = &tex.planes().expect("dense_clone yields planar storage")[0];
+  let mut planes: Vec<Vec<f32>> = (0..3).map(|_| vec![0f32; w * h]).collect();
+  let put = |o: usize, n: [f32; 3], planes: &mut [Vec<f32>]| {
+    for (p, v) in planes.iter_mut().zip(n) {
+      p[o] = v;
+    }
+  };
+
+  // Interior taps can't leave the texture, so they index the plane directly instead of
+  // paying the wrap funnel's rem_euclid on all four neighbors.
+  if w >= 3 && h >= 3 {
+    for y in 1..h - 1 {
+      for x in 1..w - 1 {
+        let o = y * w + x;
+        let dx = (src[o + 1] - src[o - 1]) * 0.5 * strength;
+        let dy = (src[o + w] - src[o - w]) * 0.5 * strength;
+        put(o, encode_normal(dx, dy), &mut planes);
+      }
+    }
+  }
+  let interior = |x: usize, y: usize| w >= 3 && h >= 3 && x > 0 && y > 0 && x < w - 1 && y < h - 1;
   for y in 0..h {
     for x in 0..w {
-      let (x, y) = (x as i64, y as i64);
-      let dx = (tex.texel(x + 1, y, 0) - tex.texel(x - 1, y, 0)) * 0.5 * strength;
-      let dy = (tex.texel(x, y + 1, 0) - tex.texel(x, y - 1, 0)) * 0.5 * strength;
-      let inv_len = 1. / (dx * dx + dy * dy + 1.).sqrt();
-      planes[0].push(-dx * inv_len * 0.5 + 0.5);
-      planes[1].push(-dy * inv_len * 0.5 + 0.5);
-      planes[2].push(inv_len * 0.5 + 0.5);
+      if interior(x, y) {
+        continue;
+      }
+      let (xi, yi) = (x as i64, y as i64);
+      let dx = (tex.texel(xi + 1, yi, 0) - tex.texel(xi - 1, yi, 0)) * 0.5 * strength;
+      let dy = (tex.texel(xi, yi + 1, 0) - tex.texel(xi, yi - 1, 0)) * 0.5 * strength;
+      put(y * w + x, encode_normal(dx, dy), &mut planes);
     }
   }
 
@@ -920,7 +1092,7 @@ pub(crate) fn height_to_normal_impl(
     channels: 3,
     storage: TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
-    ..tex
+    ..tex.clone()
   })))
 }
 

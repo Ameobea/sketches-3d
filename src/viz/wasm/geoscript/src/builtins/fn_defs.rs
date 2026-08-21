@@ -14573,6 +14573,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "texture_zip" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "fn",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Callable with signature `|in0, in1, ..., uv: vec2, x_ix: int, y_ix: int|: float | vec2 | vec3 | vec4`, invoked once per pixel.  One leading param per input texture, each typed by that texture\'s channel count (1ch -> float, 2ch -> vec2, ...); channel counts may differ freely between inputs.  Trailing params may be omitted.  The return type sets the output\'s channel count."
+          },
+          ArgDef {
+            name: "textures",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Seq of one or more textures with matching dims (channel counts may differ), zipped per-texel and bound to the callable\'s leading params in order"
+          },
+        ],
+        description: "Combines two or more textures into a new one by invoking a callable once per pixel with the corresponding texel of each input.  \n\nAll inputs must have identical dimensions; channel counts are independent.  The result inherits its dimensions, wrap mode, transform, filters, and format from the FIRST input; the others contribute pixels only.  \n\nA single-element seq is allowed and behaves like `map` over that texture.  \n\nLike `map` over a texture and `texture` generators, the body is auto-vectorized into whole-texture kernel passes when it stays inside the supported set; conditionals lower to an exact per-texel select, so masked/conditional blends are as fast as dedicated builtins would be.  Watch the usual fallback triggers: conditional arms must have matching arity, an int arm (`if c { v } else { 0 }`) falls back (write `0.`), and an `if` without `else` or an early `return` falls back.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
   "concat_channels" => FnDef {
     module: "texture",
     examples: &[],
@@ -15104,6 +15130,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Draws `stamp` into `base` at the placement carried by the stamp's transform (see `trans`/`rot`/`scale` on textures), returning a new texture. The base's own transform and wrap mode are preserved on the result.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "composite" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "top",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture to composite on top. Must match `bottom`'s dimensions; its transform and wrap mode are ignored."
+          },
+          ArgDef {
+            name: "bottom",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture to composite onto. Its transform, wrap mode, and GPU params are preserved on the result."
+          },
+          ArgDef {
+            name: "blend",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("over".to_owned())),
+            description: "One of \"over\", \"add\", \"sub\", \"mul\", \"max\", \"min\". A `top` alpha channel (4-channel always; 2-channel onto a 1-channel bottom) modulates any mode."
+          },
+        ],
+        description: "Per-pixel composite of two same-size textures: texel (x, y) of `top` over texel (x, y) of `bottom`, returning a new texture. This is the whole-image counterpart to `blit`, which places a stamp by its transform and resamples — `composite` has no placement, does no filtering, and needs no `trans_global(0.5, 0.5)` to cover.",
         return_type: &[ArgType::Texture],
       },
     ],
