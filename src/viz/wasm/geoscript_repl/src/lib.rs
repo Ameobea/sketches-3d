@@ -1006,6 +1006,18 @@ pub fn geoscript_get_rendered_light_id(ctx: *const GeoscriptReplCtx, light_ix: u
   ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix].light_id
 }
 
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_light_source_module(
+  ctx: *const GeoscriptReplCtx,
+  light_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.geo_ctx.rendered_lights.inner.borrow()[light_ix]
+    .source_module
+    .clone()
+    .unwrap_or_default()
+}
+
 /// One host-injected handle value (gizmo or control). `value` carries the numeric
 /// payload — 3 floats for `vec3`/`color`, 16 for `transform`, 1 for `float`/`int`/`bool`;
 /// `str_value` carries the `string`/`select` payload.

@@ -74,6 +74,11 @@ export const referencedTabIds = (tree: TreeDef): Set<string> => {
   return out;
 };
 
+/** Names bound by top-level `export <ident> …` statements, in source order (regex-level,
+ *  like `referencedTabIds`). */
+export const exportedNames = (source: string): string[] =>
+  [...source.matchAll(/^[ \t]*export\s+([A-Za-z_][A-Za-z0-9_]*)/gm)].map(m => m[1]);
+
 /**
  * Map from compiled module name → node id, for resolving a rendered mesh's owning node.
  * Covers one tree, so a failure inside a dependency tab's module resolves to nothing — widen

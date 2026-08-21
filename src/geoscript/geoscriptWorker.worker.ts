@@ -235,9 +235,16 @@ const methods = {
   clearConstEvalCache: (ctxPtr: number) => {
     Geoscript.geoscript_repl_clear_const_eval_cache(ctxPtr);
   },
-  setModuleSources: (ctxPtr: number, modules: Record<string, string>) => {
+  setModuleSources: (
+    ctxPtr: number,
+    modules: Record<string, string>,
+    modulePreludes?: Record<string, string>
+  ) => {
     const names = Object.keys(modules);
-    const sources = Object.values(modules);
+    const sources = names.map(name => {
+      const kind = modulePreludes?.[name];
+      return kind ? `${Geoscript.geoscript_repl_get_prelude(kind)}\n${modules[name]}` : modules[name];
+    });
     Geoscript.geoscript_repl_set_module_sources(ctxPtr, names, sources);
   },
   /**
@@ -343,10 +350,14 @@ const methods = {
   getRenderedLightCount: (ctxPtr: number) => {
     return Geoscript.geoscript_get_rendered_light_count(ctxPtr);
   },
-  getRenderedLight: (ctxPtr: number, lightIx: number): { light: Light; lightId: number } => {
+  getRenderedLight: (
+    ctxPtr: number,
+    lightIx: number
+  ): { light: Light; lightId: number; sourceModule: string } => {
     const light = JSON.parse(Geoscript.geoscript_get_rendered_light(ctxPtr, lightIx));
     const lightId = Geoscript.geoscript_get_rendered_light_id(ctxPtr, lightIx);
-    return Comlink.transfer({ light, lightId }, []);
+    const sourceModule = Geoscript.geoscript_get_rendered_light_source_module(ctxPtr, lightIx);
+    return Comlink.transfer({ light, lightId, sourceModule }, []);
   },
   getRenderedTextureCount: (ctxPtr: number) => Geoscript.geoscript_get_rendered_texture_count(ctxPtr),
   getVectorizeReports: (ctxPtr: number): VectorizeReport[] =>

@@ -51,6 +51,8 @@ export interface GeneratedLight {
   type: 'light';
   light: THREE.Light;
   lightId: number;
+  /** Module that rendered this light; empty string for ambient/global lights. */
+  sourceModule: string;
 }
 
 /** Semantic role of a rendered texture output; drives colorspace handling and 3D-preview
@@ -192,6 +194,10 @@ export interface RunGeoscriptOptions {
   onError?: (error: string) => void;
   renderMode?: boolean;
   modules?: Record<string, string>;
+  /** Modules that get a tree kind's prelude prepended (resolved wasm-side), keyed by module
+   *  name. Dependency roots never receive the entry prelude, so a synthesized module that
+   *  wants one asks for it here. */
+  modulePreludes?: Record<string, TreeKind>;
   /**
    * Sources to use to build the ambient scope (cloned for each module evaluation).
    * Typically `[prelude_src, globals_src]`. Empty array clears any existing ambient.

@@ -68,17 +68,31 @@ export interface MeshTabView {
 
 export type TextureChannel = 'rgb' | 'r' | 'g' | 'b' | 'a';
 
+/** A mesh-tab object previewed inside a texture tab: a node subtree's rendered output, or
+ *  one of the node's exported variables. Ids, not names — tab ids and node ids survive
+ *  renames; the module name is resolved at run-build time. */
+export interface TexturePreviewTarget {
+  tabId: string;
+  nodeId: string;
+  exportName?: string;
+}
+
 export interface TextureTabView {
-  /** UV-space point at the viewport center. */
-  center: [number, number];
+  /** UV-space point at the viewport center; absent until the first fit. */
+  center?: [number, number];
   /** Screen px per texel of the selected output. */
-  zoom: number;
+  zoom?: number;
   /** Selected output name; falls back to the first output when absent or stale. */
   output?: string;
   channel?: TextureChannel;
   tiled?: boolean;
   /** Explicit sRGB-display override; unset defers to the output's usage (albedo → on). */
   srgb?: boolean;
+  /** 3D preview: target object, whether the 3D view is showing, and its camera. Editing
+   *  convenience only — persisted like a camera pose, never part of the composition. */
+  preview?: TexturePreviewTarget;
+  preview3d?: boolean;
+  previewCamera?: MeshTabView;
 }
 
 /** Capture and restore are paired through the same mode, so each mode narrows by its kind. */

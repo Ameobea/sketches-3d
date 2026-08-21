@@ -9,6 +9,7 @@ import type { TabView, TreeDef, TreeKind } from 'src/geoscript/geotoyAPIClient';
 import type { GizmoEditorHooks } from 'src/geoscript/gizmoExtensions';
 import type { RunResult } from 'src/geoscript/runner/runner';
 import type { RunStats } from 'src/geoscript/runner/runner';
+import type { PreviewTargetResolution } from 'src/geotoy/modes/texture/previewTarget';
 
 /** One cell of the run-status readout: `short` for the collapsed line, `label: value`
  *  for the expanded breakdown. */
@@ -49,6 +50,7 @@ export interface SceneMenuActions {
   exportScene: () => void;
   toggleRecording: () => void;
   recordingState: 'recording' | 'initializing' | 'not-recording';
+  openPreviewPicker: () => void;
 }
 
 /** Shell/controller-owned actions a mode may place in its `view` menu sections. */
@@ -58,12 +60,19 @@ export interface ViewMenuActions {
   toggleGizmoGhosts: () => void;
   showGizmoGhosts: boolean;
   gizmosExist: boolean;
+  togglePreview3d: () => void;
 }
 
 export interface Mode {
   readonly kind: TreeKind;
-  /** Apply a settled run to this mode's preview. */
-  consume(result: RunResult, tree: TreeDef, moduleNameToNodeId: Record<string, string>): void;
+  /** Apply a settled run to this mode's preview. `preview` is the texture 3D preview's
+   *  resolved target for runs that pulled one in; other modes ignore it. */
+  consume(
+    result: RunResult,
+    tree: TreeDef,
+    moduleNameToNodeId: Record<string, string>,
+    preview?: PreviewTargetResolution | null
+  ): void;
   /** Drop everything the last run produced (cancel, unmount, tab switch). */
   clearScene(): void;
   /** Frame the selected subtree; `null` frames the whole output. */

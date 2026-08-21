@@ -34,7 +34,12 @@
   } from 'src/geoscript/geotoyAPIClient';
   import { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
-  import { buildGeotoyKeymap, type GeotoyKeymapActions } from 'src/geotoy/modules/keymapTable';
+  import {
+    buildCoreKeymap,
+    buildMeshKeymap,
+    buildTextureKeymap,
+    type GeotoyKeymapActions,
+  } from 'src/geotoy/modules/keymapTable';
   import {
     compileTree,
     compileTreeModules,
@@ -74,6 +79,14 @@
   import { SplineController } from 'src/geotoy/modes/mesh/splineController.svelte';
   import { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
   import { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
+  import Preview3dHud from 'src/geotoy/modes/texture/Preview3dHud.svelte';
+  import PreviewObjectPicker from 'src/geotoy/modes/texture/PreviewObjectPicker.svelte';
+  import {
+    buildPreviewModuleSource,
+    PREVIEW_MODULE_NAME,
+    resolvePreviewTarget,
+    type PreviewTargetResolution,
+  } from 'src/geotoy/modes/texture/previewTarget';
   import TexturePlaceholder from 'src/geotoy/modes/texture/TexturePlaceholder.svelte';
   import TexturePreview from 'src/geotoy/modes/texture/TexturePreview.svelte';
   import type { Mode, StatusMetric } from 'src/geotoy/modes/mode';
@@ -357,11 +370,35 @@
     getLastRunTree: () => lastRun?.tree ?? null,
     onRunConsumed: splineController.onRunConsumed,
     getEditorHooks: () => gizmoController.editorHooks,
-    getEnvironment: () => tabs.active.environment,
+    getEnvironment: () =>
+      tabs.active.kind === 'mesh' ? tabs.active.environment : textureMode.previewEnvironment,
   });
-  const textureMode = new TextureMode({ getTreeState: () => treeState });
+  const textureMode = new TextureMode({
+    getTreeState: () => treeState,
+    getActiveTabId: () => tabs.active.id,
+    getTabs: () => tabs.tabs,
+    getMaterialDefs: () => persistence.materialDefinitions.materials,
+    viz: untrack(() => viz),
+    materialRuntime: meshScene.materialRuntime,
+    bootSignal: bootAbort.signal,
+    reapplyEnv: () => meshScene.applyEnv(),
+    onPreviewChanged: () => {
+      persistence.saveDraft();
+      void execution.run();
+    },
+  });
   const modesByKind: Record<TreeKind, Mode> = { mesh: meshScene, texture: textureMode };
   const mode: Mode = $derived(modesByKind[tabs.active.kind]);
+
+  // Per-mode key table: the action surface is built in onMount, so the table reads it lazily.
+  let keymapActions: GeotoyKeymapActions | null = null;
+  $effect(() => {
+    const get = () => keymapActions;
+    keymap.setTable([
+      ...buildCoreKeymap(get),
+      ...(mode.kind === 'mesh' ? buildMeshKeymap(get) : buildTextureKeymap(get)),
+    ]);
+  });
   /**
    * Snapshot of the last successful run: serialized tree, reported gizmos/controls, and
    * the module-name → node-id mapping. Written once per run; effects key on it as their
@@ -455,6 +492,17 @@
 
   let materialEditorOpen = $state(false);
   let environmentSettingsOpen = $state(false);
+  let previewPickerOpen = $state(false);
+
+  /** `P` / view menu: with no target yet, picking one is the only sensible first step. */
+  const togglePreview3d = () => {
+    if (!textureMode.previewTarget) {
+      previewPickerOpen = true;
+      return;
+    }
+    textureMode.setPreview3d(!textureMode.preview3d);
+    logGeotoyEvent('view', 'texture_preview_3d', { on: textureMode.preview3d });
+  };
 
   const toggleMaterialEditorOpen = () => {
     materialEditorOpen = !materialEditorOpen;
@@ -525,6 +573,10 @@
       parts.push(`m:${id}:${JSON.stringify(persistence.materialDefinitions.materials[id])}`);
     }
     parts.push(`dm:${persistence.materialDefinitions.defaultMaterialID ?? ''}`);
+    // The 3D preview changes the run set (target tab pulled in) only while it shows.
+    if (tabs.active.kind === 'texture' && textureMode.preview3d) {
+      parts.push(`pv:${JSON.stringify(textureMode.previewTarget)}`);
+    }
     return parts.join('\x00');
   };
 
@@ -587,6 +639,8 @@
     docEpoch: number;
     /** Every tab the run evaluated; their texture-output indexes sync from the result. */
     runTabIds: string[];
+    /** Texture 3D preview target pulled into this run, if any. */
+    preview: PreviewTargetResolution | null;
   }
 
   const execution = new GeoscriptExecution<ReplRunInput>({
@@ -623,13 +677,27 @@
         return t;
       };
 
+      // Texture tab with the 3D preview up: the target mesh tab joins the run through a
+      // synthesized `<tab>:_preview` module, and palette procedural refs join as render
+      // deps (as in mesh mode) so the previewed object's materials see live maps.
+      let preview: PreviewTargetResolution | null = null;
+      if (tabs.active.kind === 'texture' && textureMode.preview3d && textureMode.previewTarget) {
+        const resolved = resolvePreviewTarget(textureMode.previewTarget, {
+          activeTabId: tabId,
+          tabKinds: new Map(tabs.tabs.map(t => [t.id, t.kind])),
+          treeFor,
+        });
+        textureMode.previewProblem = 'problem' in resolved ? resolved.problem : null;
+        if ('ok' in resolved) preview = resolved.ok;
+      }
+
       // Run set: active tab, plus texture tabs referenced by procedural material textures
-      // (their rendered outputs feed the mesh scene → prepended root imports), plus tabs
-      // referenced by qualified imports anywhere in the set (transitively; the user's own
-      // import drives their evaluation, so no prepend).
+      // (their rendered outputs feed the mesh scene → prepended root imports), plus the
+      // preview target's tab, plus tabs referenced by qualified imports anywhere in the set
+      // (transitively; the user's own import drives their evaluation, so no prepend).
       const runSet: string[] = [tabId];
       const renderDeps: string[] = [];
-      if (tabs.active.kind === 'mesh') {
+      if (tabs.active.kind === 'mesh' || preview) {
         for (const dep of proceduralRefTabIds(defs)) {
           if (tabById.has(dep) && dep !== tabId) {
             runSet.push(dep);
@@ -637,6 +705,7 @@
           }
         }
       }
+      if (preview && !runSet.includes(preview.target.tabId)) runSet.push(preview.target.tabId);
       for (let i = 0; i < runSet.length; i += 1) {
         for (const ref of referencedTabIds(treeFor(runSet[i]))) {
           if (tabById.has(ref) && !runSet.includes(ref)) runSet.push(ref);
@@ -653,9 +722,22 @@
         Object.assign(moduleNameToNodeId, buildModuleNameToNodeId(depTree, depId));
         Object.assign(gizmoValues, buildInjectedValues(depTree, depId));
       }
-      const code =
-        renderDeps.map(id => `import { } from "${qualifyModuleName(ROOT_NODE_NAME, id)}"\n`).join('') +
-        compiled.rootSource;
+      let modulePreludes: Record<string, TreeKind> | undefined;
+      if (preview) {
+        const previewModule = qualifyModuleName(PREVIEW_MODULE_NAME, tabId);
+        modules[previewModule] = buildPreviewModuleSource(preview);
+        // An exported value rendered by the preview module takes its node's ancestor
+        // transforms, as the node's own renders would.
+        moduleNameToNodeId[previewModule] = preview.target.nodeId;
+        // Dependency roots never get the entry prelude; the source tab's default rig is
+        // re-evaluated here unless that tab ejected it (then it renders its own lights).
+        if (!tabById.get(preview.target.tabId)!.preludeEjected) modulePreludes = { [previewModule]: 'mesh' };
+      }
+      const sideEffectImports = [
+        ...renderDeps.map(id => qualifyModuleName(ROOT_NODE_NAME, id)),
+        ...(preview ? [qualifyModuleName(PREVIEW_MODULE_NAME, tabId)] : []),
+      ];
+      const code = sideEffectImports.map(m => `import { } from "${m}"\n`).join('') + compiled.rootSource;
 
       const textureParams: TextureParamsEntry[] = [];
       for (const id of runSet) {
@@ -678,6 +760,7 @@
       return {
         code,
         modules,
+        modulePreludes,
         tabAmbients,
         preludeKind: tabs.active.preludeEjected ? undefined : tabs.active.kind,
         materials: matsByName,
@@ -692,10 +775,11 @@
         tabId,
         docEpoch: runDocEpoch,
         runTabIds: runSet,
+        preview,
         inputKey: computeEvalInputsHash(),
       };
     },
-    consume: (result, { tree, moduleNameToNodeId, tabId, docEpoch: runDocEpoch, runTabIds }) => {
+    consume: (result, { tree, moduleNameToNodeId, tabId, docEpoch: runDocEpoch, runTabIds, preview }) => {
       // A run started before a tab switch or a revert settles against state it wasn't built
       // for; dropping it keeps its geometry out of the new scene, and — the reason this
       // matters beyond a repaint — keeps its stale node list out of the handle/control GC
@@ -724,7 +808,7 @@
         moduleNameToNodeId,
         vectorizeReports: result.vectorizeReports,
       };
-      mode.consume(result, tree, moduleNameToNodeId);
+      mode.consume(result, tree, moduleNameToNodeId, preview);
     },
     onCancelCleanup: () => {
       mode.clearScene();
@@ -948,8 +1032,16 @@
   };
 
   const handleToggleProjection = () => {
-    meshScene.toggleProjection();
-    logGeotoyEvent('view', 'projection_toggle', { projection: meshScene.cameraProjection });
+    let projection: string;
+    if (mode.kind === 'texture') {
+      if (!textureMode.preview3d) return;
+      textureMode.previewScene.toggleProjection();
+      projection = textureMode.previewScene.cameraProjection;
+    } else {
+      meshScene.toggleProjection();
+      projection = meshScene.cameraProjection;
+    }
+    logGeotoyEvent('view', 'projection_toggle', { projection });
     persistence.viewDirty = true;
     persistence.saveDraft();
   };
@@ -1011,6 +1103,8 @@
       orbit: (axis, angle) => orbit(viz, axis, angle),
       toggleProjection: handleToggleProjection,
       toggleRecording,
+      togglePreview3d,
+      preview3dActive: () => textureMode.preview3d,
       setGizmoMode: mode => {
         if (!resolveSelectedNode()) return;
         gizmoController.setMode(mode);
@@ -1066,7 +1160,7 @@
         e?.preventDefault();
       },
     };
-    keymap.setTable(buildGeotoyKeymap(() => actions));
+    keymapActions = actions;
     keymap.install();
 
     window.addEventListener('beforeunload', persistence.saveDraft);
@@ -1104,6 +1198,7 @@
     toggleGizmoGhosts: gizmoController.toggleGhosts,
     showGizmoGhosts: gizmoController.showGhosts,
     gizmosExist: hasAnyGizmos,
+    togglePreview3d,
   });
 
   const sceneMenuActions = $derived({
@@ -1112,6 +1207,7 @@
     exportScene: onExport,
     toggleRecording,
     recordingState: $recordingState,
+    openPreviewPicker: () => (previewPickerOpen = true),
   });
 
   const menus: Menu[] = $derived([
@@ -1219,7 +1315,13 @@
 {/snippet}
 
 {#if mode.kind === 'texture' && !userData?.renderMode}
-  {#if textureMode.textures.length > 0}
+  {#if textureMode.preview3d}
+    <Preview3dHud
+      mode={textureMode}
+      onPick={() => (previewPickerOpen = true)}
+      onShow2d={() => textureMode.setPreview3d(false)}
+    />
+  {:else if textureMode.textures.length > 0}
     <TexturePreview
       mode={textureMode}
       onSetTextureParams={(sourceModule, output, patch) => {
@@ -1268,6 +1370,17 @@
   bind:isOpen={environmentSettingsOpen}
   bind:environment={() => tabs.active.environment, env => tabs.setEnvironment(tabs.active.id, env)}
   me={userData?.me}
+/>
+
+<PreviewObjectPicker
+  bind:isOpen={previewPickerOpen}
+  tabs={tabs.tabs}
+  activeTabId={tabs.active.id}
+  current={textureMode.previewTarget}
+  onPick={target => {
+    textureMode.setPreviewTarget(target);
+    logGeotoyEvent('view', 'texture_preview_pick', { kind: target.exportName ? 'export' : 'node' });
+  }}
 />
 
 {#if !isEditorCollapsed}

@@ -14,6 +14,7 @@ import {
 export interface RunInput {
   code: string;
   modules: Record<string, string>;
+  modulePreludes: RunGeoscriptOptions['modulePreludes'];
   /** Per-tab ambient scopes for the run set, active tab last. */
   tabAmbients: { tabId: string; preludeKind: TreeKind | ''; globalsSource: string }[];
   /** Tree kind whose prelude applies, or `undefined` when the active tab ejected it. */
@@ -233,6 +234,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
       const result = await runGeoscript({
         code: input.code,
         modules: input.modules,
+        modulePreludes: input.modulePreludes,
         tabAmbients: input.tabAmbients,
         ctxPtr: this.ctxPtr!,
         repl: this.repl,

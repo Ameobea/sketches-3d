@@ -2105,10 +2105,9 @@ pub struct RenderedMesh {
   pub mesh_id: u32,
 }
 
-/// `source_module` is captured for cross-run cache dedupe only: when two cached
-/// entries both transitively replay the same dependency, the second hit must
-/// skip items whose origin module is already in `replayed_this_run`. JS never
-/// reads the field for lights or paths.
+/// `source_module` serves cross-run cache dedupe (when two cached entries both
+/// transitively replay the same dependency, the second hit must skip items whose origin
+/// module is already in `replayed_this_run`) and is exposed to JS for per-module filtering.
 #[derive(Clone)]
 pub struct RenderedLight {
   pub light: Light,

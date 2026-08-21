@@ -3,20 +3,20 @@ import { untrack } from 'svelte';
 
 import { scanControlHandleIds, scanGizmoHandleIds } from 'src/geoscript/gizmoScan';
 import type { EnvironmentConfig, MeshTabView, TabView, TreeDef } from 'src/geoscript/geotoyAPIClient';
-import { FallbackMat, HiddenMat, NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
+import { NormalMat, WireframeMat, type MaterialDef } from 'src/geoscript/materials';
 import { populateScene } from 'src/geoscript/runner/geoscriptRunner';
 import type { RunResult } from 'src/geoscript/runner/runner';
 import type { RenderedControl, RenderedObject } from 'src/geoscript/runner/types';
 import { MaterialRuntime } from 'src/geotoy/modules/materialRuntime.svelte';
 import type { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
+import { removeRenderedObject, runtimeMaterialFor, schedulePomRescan } from 'src/geotoy/modules/sceneObjects';
 import type { Viz } from 'src/viz';
 import type { PostprocessingPipelineController } from 'src/viz/postprocessing/defaultPostprocessing';
 import {
+  applyCameraView,
   centerView,
   focusOnSubtree,
-  setProjection,
   toggleProjection as toggleProjectionCamera,
-  untilOrbitControls,
 } from 'src/geotoy/modes/mesh/cameraControls';
 import {
   buildLightHelpers,
@@ -53,7 +53,8 @@ interface MeshSceneDeps {
   onRunConsumed: (controls: RenderedControl[]) => void;
   /** Gizmo affordances surfaced through the `Mode` contract; owned by GizmoController. */
   getEditorHooks: () => GizmoEditorHooks;
-  /** Scene environment of the *active* tab; per-tab and mesh-only. */
+  /** Scene environment to apply: the active mesh tab's, or the texture 3D preview's source
+   *  tab's. This scene is the single owner of `scene.environment` in both modes. */
   getEnvironment: () => EnvironmentConfig | undefined;
 }
 
@@ -78,7 +79,6 @@ export class MeshScene implements Mode {
   cameraProjection = $state<'perspective' | 'orthographic'>('perspective');
 
   private lightHelpers: THREE.Object3D[] = [];
-  private pomRescanQueued = false;
   /** nodeId → last-scanned {source, ids}; skips re-parsing unchanged sources on GC. */
   private readonly handleScanCache = new Map<string, { source: string; ids: Set<string> }>();
   private readonly controlScanCache = new Map<string, { source: string; ids: Set<string> }>();
@@ -162,21 +162,15 @@ export class MeshScene implements Mode {
     });
 
     // Single owner of mesh material assignment: run completions (renderedObjects), build
-    // landings / def edits (byName), and override toggles all converge here. Pending
-    // build → HiddenMat; unknown material name → FallbackMat (matches the runner).
+    // landings / def edits (byName), and override toggles all converge here.
     $effect(() => {
       const overrideMat = this.materialOverride ? OverrideMats[this.materialOverride] : null;
       const byName = this.materialRuntime.byName;
       for (const obj of this.renderedObjects) {
         if (!(obj instanceof THREE.Mesh)) continue;
-        if (overrideMat) {
-          obj.material = overrideMat;
-          continue;
-        }
-        const entry = byName[obj.userData.materialName as string];
-        obj.material = entry ? (entry.material ?? HiddenMat) : FallbackMat;
+        obj.material = overrideMat ?? runtimeMaterialFor(byName, obj.userData.materialName as string);
       }
-      this.schedulePomRescan();
+      schedulePomRescan(deps.viz);
     });
   }
 
@@ -190,7 +184,9 @@ export class MeshScene implements Mode {
     void fetchAndSetTextures(this.loader, key.split(',').map(Number));
   };
 
-  private applyEnv = () =>
+  /** Public so the texture preview can re-push `scene.environment` after it populates
+   *  (fresh CustomShaderMaterials need it), without becoming a second env owner. */
+  applyEnv = () =>
     void applyGeoscriptSceneEnvironment(
       this.deps.viz,
       this.loader,
@@ -198,35 +194,9 @@ export class MeshScene implements Mode {
       id => Textures.textures[id]?.url
     );
 
-  // Material swaps invalidate the bounded-silhouette manager's per-mesh registry.
-  private schedulePomRescan = () => {
-    if (this.pomRescanQueued) return;
-    this.pomRescanQueued = true;
-    queueMicrotask(() => {
-      this.pomRescanQueued = false;
-      this.deps.viz.postprocessingController?.rescanPomMeshes();
-    });
-  };
-
-  private removeRenderedObject(obj: RenderedObject) {
-    const { viz } = this.deps;
-    viz.scene.remove(obj);
-    if (
-      (obj instanceof THREE.DirectionalLight || obj instanceof THREE.SpotLight) &&
-      obj.userData.geotoyTarget instanceof THREE.Object3D
-    ) {
-      if (obj.userData.geotoyTarget) {
-        viz.scene.remove(obj.userData.geotoyTarget);
-      }
-    }
-    if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
-      obj.geometry.dispose();
-    }
-  }
-
   clearScene = () => {
     for (const obj of this.renderedObjects) {
-      this.removeRenderedObject(obj);
+      removeRenderedObject(this.deps.viz.scene, obj);
     }
     this.renderedObjects = [];
     for (const helper of this.lightHelpers) {
@@ -260,7 +230,7 @@ export class MeshScene implements Mode {
     for (const obj of prevObjects) {
       const key = obj.userData.reuseKey as string | undefined;
       if (typeof key === 'string' && populated.reusedKeys.has(key)) continue;
-      this.removeRenderedObject(obj);
+      removeRenderedObject(viz.scene, obj);
     }
 
     const directCounts = new Map<string, number>();
@@ -504,31 +474,11 @@ export class MeshScene implements Mode {
   private restoresInFlight = 0;
 
   setView = async (view: MeshTabView) => {
-    const { viz } = this.deps;
     this.restoresInFlight += 1;
     try {
-      const orbitControls = await untilOrbitControls(viz, this.deps.bootSignal).catch(() => null);
-      if (!orbitControls) return;
-
-      if (view.cameraPosition) {
-        viz.camera.position.set(...view.cameraPosition);
+      if (await applyCameraView(this.deps.viz, view, this.deps.bootSignal)) {
+        this.cameraProjection = view.projection;
       }
-      if (view.target) {
-        orbitControls.target.set(...view.target);
-      }
-      // Position/target are set first so the ortho frustum is sized from the correct distance.
-      this.cameraProjection = view.projection;
-      setProjection(viz, this.cameraProjection);
-      if (viz.camera instanceof THREE.PerspectiveCamera && view.fov !== undefined) {
-        viz.camera.fov = view.fov;
-        viz.camera.updateProjectionMatrix();
-      }
-      if (viz.camera instanceof THREE.OrthographicCamera && view.zoom !== undefined) {
-        viz.camera.zoom = view.zoom;
-        viz.camera.updateProjectionMatrix();
-      }
-      viz.camera.lookAt(orbitControls.target);
-      orbitControls.update();
     } finally {
       this.restoresInFlight -= 1;
     }

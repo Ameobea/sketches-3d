@@ -104,7 +104,8 @@ vec3 l2s(vec3 c) {
 }
 
 void main() {
-  vec2 screen = vec2(gl_FragCoord.x, uCanvasSize.y - gl_FragCoord.y);
+  // y-up: row 0 / uv.y = 0 at the bottom, matching GL texture space and mesh UVs.
+  vec2 screen = gl_FragCoord.xy;
   vec2 uv = uCenter + (screen - uCanvasSize * 0.5) / uTilePx;
   vec2 d = abs(uv - 0.5);
 
@@ -383,7 +384,7 @@ void main() {
     if (!sel || !mode.center || mode.zoom === null) return null;
     return [
       mode.center[0] + (e.clientX - width / 2) / (mode.zoom * sel.width),
-      mode.center[1] + (e.clientY - height / 2) / (mode.zoom * sel.height),
+      mode.center[1] - (e.clientY - height / 2) / (mode.zoom * sel.height),
     ];
   };
 
@@ -396,7 +397,7 @@ void main() {
     mode.zoom = zoom;
     mode.center = [
       anchor[0] - (e.clientX - width / 2) / (zoom * sel.width),
-      anchor[1] - (e.clientY - height / 2) / (zoom * sel.height),
+      anchor[1] + (e.clientY - height / 2) / (zoom * sel.height),
     ];
   };
 
@@ -422,7 +423,7 @@ void main() {
     if (!dragLast || !sel || !mode.center || mode.zoom === null) return;
     mode.center = [
       mode.center[0] - (e.clientX - dragLast[0]) / (mode.zoom * sel.width),
-      mode.center[1] - (e.clientY - dragLast[1]) / (mode.zoom * sel.height),
+      mode.center[1] + (e.clientY - dragLast[1]) / (mode.zoom * sel.height),
     ];
     dragLast = [e.clientX, e.clientY];
   };

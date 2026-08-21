@@ -22,6 +22,9 @@ const loadOne = (uri: string): Promise<void> => {
       .then(bmp => {
         const canvas = new OffscreenCanvas(bmp.width, bmp.height);
         const ctx = canvas.getContext('2d')!;
+        // Row 0 = image bottom: geoscript textures are y-up (uv.y = 0 at row 0, as on a mesh).
+        ctx.translate(0, bmp.height);
+        ctx.scale(1, -1);
         ctx.drawImage(bmp, 0, 0);
         const img = ctx.getImageData(0, 0, bmp.width, bmp.height);
         Loaded.set(uri, { width: bmp.width, height: bmp.height, rgba: img.data });

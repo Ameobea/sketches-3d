@@ -9,7 +9,7 @@ export interface KeymapEntry {
   group?: string;
 }
 
-/** The shell-supplied action surface the keymap table binds to. */
+/** The shell-supplied action surface the keymap tables bind to. */
 export interface GeotoyKeymapActions {
   run: () => void;
   toggleWireframe: () => void;
@@ -31,12 +31,15 @@ export interface GeotoyKeymapActions {
   treeUndo: (event?: KeyboardEvent) => void;
   treeRedo: (event?: KeyboardEvent) => void;
   toggleEditorCollapsed: () => void;
+  togglePreview3d: () => void;
+  /** Texture mode: camera keys only act while the 3D preview is showing. */
+  preview3dActive: () => boolean;
 }
 
-export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | undefined): KeymapEntry[] => [
-  { key: 'w', action: () => getCtx?.()?.toggleWireframe(), label: 'toggle wireframe' },
-  { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
-  { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
+type GetCtx = (() => GeotoyKeymapActions | null | undefined) | undefined;
+
+/** Bindings that mean the same thing in every mode. */
+export const buildCoreKeymap = (getCtx: GetCtx): KeymapEntry[] => [
   { key: 'ctrl+enter', action: () => getCtx?.()?.run(), label: 'run code' },
   {
     key: 'ctrl+e',
@@ -46,59 +49,7 @@ export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | un
     },
     label: 'show/hide editor panel',
   },
-  { key: 'shift+l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
-  { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
-
   { key: '.', action: () => getCtx?.()?.centerView(), label: 'center view on selection', group: 'camera' },
-  {
-    key: 'o',
-    label: 'toggle perspective/orthographic',
-    action: () => getCtx?.()?.toggleProjection(),
-    group: 'camera',
-  },
-  { key: '1', label: 'front/back view', action: () => getCtx?.()?.snapView('z'), group: 'camera' },
-  { key: '2', label: 'top/bottom view', action: () => getCtx?.()?.snapView('y'), group: 'camera' },
-  { key: '3', label: 'right/left view', action: () => getCtx?.()?.snapView('x'), group: 'camera' },
-
-  {
-    key: 'arrowdown',
-    label: 'orbit up',
-    action: () => getCtx?.()?.orbit('vertical', ROTATION_AMOUNT),
-    group: 'camera',
-  },
-  {
-    key: 'arrowup',
-    label: 'orbit down',
-    action: () => getCtx?.()?.orbit('vertical', -ROTATION_AMOUNT),
-    group: 'camera',
-  },
-  {
-    key: 'arrowright',
-    label: 'orbit right',
-    action: () => getCtx?.()?.orbit('horizontal', ROTATION_AMOUNT),
-    group: 'camera',
-  },
-  {
-    key: 'arrowleft',
-    label: 'orbit left',
-    action: () => getCtx?.()?.orbit('horizontal', -ROTATION_AMOUNT),
-    group: 'camera',
-  },
-
-  {
-    key: 'g',
-    label: 'translate gizmo',
-    action: () => getCtx?.()?.setGizmoMode('translate'),
-    group: 'selection',
-  },
-  { key: 'r', label: 'rotate gizmo', action: () => getCtx?.()?.setGizmoMode('rotate'), group: 'selection' },
-  { key: 's', label: 'scale gizmo', action: () => getCtx?.()?.setGizmoMode('scale'), group: 'selection' },
-  {
-    key: 'l',
-    label: 'toggle gizmo space (world/local)',
-    action: () => getCtx?.()?.toggleGizmoSpace(),
-    group: 'selection',
-  },
   { key: '/', label: 'solo selection', action: () => getCtx?.()?.toggleSelectionSolo(), group: 'selection' },
   {
     key: 'escape',
@@ -118,11 +69,75 @@ export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | un
     action: () => getCtx?.()?.startRenameSelected(),
     group: 'selection',
   },
-
   { key: 'ctrl+z', label: 'undo', action: e => getCtx?.()?.treeUndo(e), group: 'history' },
   { key: 'ctrl+y', label: 'redo', action: e => getCtx?.()?.treeRedo(e), group: 'history' },
   { key: 'ctrl+shift+z', label: 'redo', action: e => getCtx?.()?.treeRedo(e), group: 'history' },
+];
 
+/** Orbit-camera bindings; `enabled` gates them (texture mode: only with the 3D preview up). */
+const cameraEntries = (getCtx: GetCtx, enabled: (ctx: GeotoyKeymapActions) => boolean): KeymapEntry[] => {
+  const when = (f: (ctx: GeotoyKeymapActions) => void) => () => {
+    const ctx = getCtx?.();
+    if (ctx && enabled(ctx)) f(ctx);
+  };
+  return [
+    {
+      key: 'o',
+      label: 'toggle perspective/orthographic',
+      action: when(c => c.toggleProjection()),
+      group: 'camera',
+    },
+    { key: '1', label: 'front/back view', action: when(c => c.snapView('z')), group: 'camera' },
+    { key: '2', label: 'top/bottom view', action: when(c => c.snapView('y')), group: 'camera' },
+    { key: '3', label: 'right/left view', action: when(c => c.snapView('x')), group: 'camera' },
+    {
+      key: 'arrowdown',
+      label: 'orbit up',
+      action: when(c => c.orbit('vertical', ROTATION_AMOUNT)),
+      group: 'camera',
+    },
+    {
+      key: 'arrowup',
+      label: 'orbit down',
+      action: when(c => c.orbit('vertical', -ROTATION_AMOUNT)),
+      group: 'camera',
+    },
+    {
+      key: 'arrowright',
+      label: 'orbit right',
+      action: when(c => c.orbit('horizontal', ROTATION_AMOUNT)),
+      group: 'camera',
+    },
+    {
+      key: 'arrowleft',
+      label: 'orbit left',
+      action: when(c => c.orbit('horizontal', -ROTATION_AMOUNT)),
+      group: 'camera',
+    },
+  ];
+};
+
+export const buildMeshKeymap = (getCtx: GetCtx): KeymapEntry[] => [
+  { key: 'w', action: () => getCtx?.()?.toggleWireframe(), label: 'toggle wireframe' },
+  { key: 'shift+w', action: () => getCtx?.()?.toggleWireframeXray(), label: 'toggle wireframe x-ray' },
+  { key: 'n', action: () => getCtx?.()?.toggleNormalMat(), label: 'toggle normal material' },
+  { key: 'shift+l', action: () => getCtx?.()?.toggleLightHelpers(), label: 'toggle light helpers' },
+  { key: 'a', action: () => getCtx?.()?.toggleAxesHelper(), label: 'toggle axes helper' },
+  ...cameraEntries(getCtx, () => true),
+  {
+    key: 'g',
+    label: 'translate gizmo',
+    action: () => getCtx?.()?.setGizmoMode('translate'),
+    group: 'selection',
+  },
+  { key: 'r', label: 'rotate gizmo', action: () => getCtx?.()?.setGizmoMode('rotate'), group: 'selection' },
+  { key: 's', label: 'scale gizmo', action: () => getCtx?.()?.setGizmoMode('scale'), group: 'selection' },
+  {
+    key: 'l',
+    label: 'toggle gizmo space (world/local)',
+    action: () => getCtx?.()?.toggleGizmoSpace(),
+    group: 'selection',
+  },
   {
     key: 'ctrl+shift+p',
     label: 'start/stop recording',
@@ -130,3 +145,19 @@ export const buildGeotoyKeymap = (getCtx?: () => GeotoyKeymapActions | null | un
     group: 'recording',
   },
 ];
+
+export const buildTextureKeymap = (getCtx: GetCtx): KeymapEntry[] => [
+  { key: 'p', action: () => getCtx?.()?.togglePreview3d(), label: 'toggle 3d preview' },
+  ...cameraEntries(getCtx, ctx => ctx.preview3dActive()),
+];
+
+/** Every binding across modes, for label-only listings (pause menu, docs). Keys shared by
+ *  mode tables appear once. */
+export const buildGeotoyKeymap = (getCtx?: GetCtx): KeymapEntry[] => {
+  const seen = new Set<string>();
+  return [...buildCoreKeymap(getCtx), ...buildMeshKeymap(getCtx), ...buildTextureKeymap(getCtx)].filter(e => {
+    if (seen.has(e.key)) return false;
+    seen.add(e.key);
+    return true;
+  });
+};

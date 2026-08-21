@@ -1,5 +1,5 @@
 import type { RenderedObject } from 'src/geoscript/runner/types';
-import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
+import type { MeshTabView, TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { Viz } from 'src/viz';
 import * as THREE from 'three';
 import { DefaultCameraFOV, DefaultCameraPos, DefaultCameraTarget } from 'src/geotoy/types';
@@ -158,6 +158,32 @@ export const toggleProjection = (viz: Viz): 'perspective' | 'orthographic' => {
   const next = viz.camera instanceof THREE.OrthographicCamera ? 'perspective' : 'orthographic';
   setProjection(viz, next);
   return next;
+};
+
+/** Restore a saved pose once orbit controls exist; `false` if the wait was aborted. */
+export const applyCameraView = async (
+  viz: Viz,
+  view: MeshTabView,
+  signal?: AbortSignal
+): Promise<boolean> => {
+  const orbitControls = await untilOrbitControls(viz, signal).catch(() => null);
+  if (!orbitControls) return false;
+
+  if (view.cameraPosition) viz.camera.position.set(...view.cameraPosition);
+  if (view.target) orbitControls.target.set(...view.target);
+  // Position/target first so the ortho frustum is sized from the correct distance.
+  setProjection(viz, view.projection);
+  if (viz.camera instanceof THREE.PerspectiveCamera && view.fov !== undefined) {
+    viz.camera.fov = view.fov;
+    viz.camera.updateProjectionMatrix();
+  }
+  if (viz.camera instanceof THREE.OrthographicCamera && view.zoom !== undefined) {
+    viz.camera.zoom = view.zoom;
+    viz.camera.updateProjectionMatrix();
+  }
+  viz.camera.lookAt(orbitControls.target);
+  orbitControls.update();
+  return true;
 };
 
 const AXES = {

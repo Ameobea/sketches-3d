@@ -78,6 +78,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     materialOverride,
     renderMode = false,
     modules,
+    modulePreludes,
     ambientSources,
     tabAmbients,
     gizmoValues,
@@ -91,7 +92,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
   // Sent even when empty: `set_module_sources` is the only thing that clears the ctx's
   // registered sources, so skipping it would leave a previous run's modules resolvable.
   if (modules) {
-    await repl.setModuleSources(ctxPtr, modules);
+    await repl.setModuleSources(ctxPtr, modules, modulePreludes);
   }
 
   if (tabAmbients !== undefined) {
@@ -336,12 +337,12 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
 
   stats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
   for (let i = 0; i < stats.renderedLightCount; i += 1) {
-    const { light, lightId } = await repl.getRenderedLight(ctxPtr, i);
-    const builtLight = buildLight(light, renderMode);
+    const { light, lightId, sourceModule } = await repl.getRenderedLight(ctxPtr, i);
     renderedObjects.push({
       type: 'light',
-      light: builtLight,
+      light: buildLight(light, renderMode),
       lightId,
+      sourceModule,
     });
   }
 
@@ -482,7 +483,7 @@ export const disposeRunObjects = (result: GeoscriptRunResult) => {
 };
 
 export const populateScene = (
-  scene: THREE.Scene,
+  scene: THREE.Object3D,
   geoscriptOutput: GeoscriptRunResult,
   opts: PopulateSceneOpts = {}
 ): PopulateSceneResult => {

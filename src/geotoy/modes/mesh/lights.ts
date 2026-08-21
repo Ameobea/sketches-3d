@@ -139,7 +139,7 @@ const _meshBox = new THREE.Box3();
  * Fits the shadow frustum and light distance of every directional light flagged with
  * `userData.autoShadowFrustum` to the scene's shadow-casting geometry.
  */
-export const fitAutoShadowFrusta = (scene: THREE.Scene, renderedObjects: RenderedObject[]): void => {
+export const fitAutoShadowFrusta = (scene: THREE.Object3D, renderedObjects: RenderedObject[]): void => {
   const autoLights = renderedObjects.filter(
     (o): o is THREE.DirectionalLight =>
       o instanceof THREE.DirectionalLight && o.userData.autoShadowFrustum === true

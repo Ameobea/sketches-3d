@@ -23,7 +23,8 @@ export class GeotoyKeymap {
       target instanceof HTMLTextAreaElement ||
       (target instanceof HTMLElement &&
         (target.isContentEditable || target.getAttribute('role') === 'textbox'));
-    if (isInputLikeTarget) {
+    // Modal dialogs trap focus, so a target inside one means the user is in the dialog.
+    if (isInputLikeTarget || (target instanceof Element && target.closest('dialog[open]'))) {
       return;
     }
 
