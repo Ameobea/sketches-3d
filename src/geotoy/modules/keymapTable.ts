@@ -32,6 +32,7 @@ export interface GeotoyKeymapActions {
   treeRedo: (event?: KeyboardEvent) => void;
   toggleEditorCollapsed: () => void;
   togglePreview3d: () => void;
+  toggleTextureGrid: () => void;
   /** Texture mode: camera keys only act while the 3D preview is showing. */
   preview3dActive: () => boolean;
 }
@@ -148,16 +149,27 @@ export const buildMeshKeymap = (getCtx: GetCtx): KeymapEntry[] => [
 
 export const buildTextureKeymap = (getCtx: GetCtx): KeymapEntry[] => [
   { key: 'p', action: () => getCtx?.()?.togglePreview3d(), label: 'toggle 3d preview' },
+  {
+    key: 'g',
+    label: 'toggle grid layout',
+    action: () => {
+      const ctx = getCtx?.();
+      if (ctx && !ctx.preview3dActive()) {
+        ctx.toggleTextureGrid();
+      }
+    },
+  },
   ...cameraEntries(getCtx, ctx => ctx.preview3dActive()),
 ];
 
-/** Every binding across modes, for label-only listings (pause menu, docs). Keys shared by
- *  mode tables appear once. */
+/** Every binding across modes, for label-only listings (pause menu, docs). Bindings shared
+ *  by mode tables appear once; a key that means something else per mode lists each meaning. */
 export const buildGeotoyKeymap = (getCtx?: GetCtx): KeymapEntry[] => {
   const seen = new Set<string>();
   return [...buildCoreKeymap(getCtx), ...buildMeshKeymap(getCtx), ...buildTextureKeymap(getCtx)].filter(e => {
-    if (seen.has(e.key)) return false;
-    seen.add(e.key);
+    const k = `${e.key}\0${e.label}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
     return true;
   });
 };

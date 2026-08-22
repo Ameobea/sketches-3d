@@ -86,6 +86,8 @@ export interface TextureTabView {
   output?: string;
   channel?: TextureChannel;
   tiled?: boolean;
+  /** `grid` shows every visible output at once under one shared pan-zoom; absent = single. */
+  layout?: 'single' | 'grid';
   /** Explicit sRGB-display override; unset defers to the output's usage (albedo → on). */
   srgb?: boolean;
   /** 3D preview: target object, whether the 3D view is showing, and its camera. Editing

@@ -3,11 +3,18 @@
   import type { GeneratedTexture } from 'src/geoscript/runner/runner';
   import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import {
+    createTexturePreviewGl,
+    type PreviewCell,
+    type PreviewDraw,
+    type TexturePreviewGl,
+  } from 'src/geotoy/modes/texture/texturePreviewGl';
+  import {
     DEFAULT_FORMAT,
     defaultMagFilter,
     DEFAULT_MIN_FILTER,
     formatOptionsForChannels,
   } from 'src/geotoy/modules/proceduralTextures';
+  import { setTopLeftSlot, topLeftOffset, TopLeftSlot } from 'src/geotoy/modules/topLeftOverlay.svelte';
 
   let {
     mode,
@@ -49,385 +56,153 @@
   };
 
   const CHANNELS: TextureChannel[] = ['rgb', 'r', 'g', 'b', 'a'];
-  const CHANNEL_IX: Record<TextureChannel, number> = { rgb: 0, r: 1, g: 2, b: 3, a: 4 };
-  const WRAP_IX = { repeat: 0, clamp: 1, mirror: 2 } as const;
+
+  let hudHeight = $state(0);
+  $effect(() => setTopLeftSlot(TopLeftSlot.hud, hudHeight));
 
   let canvas: HTMLCanvasElement | undefined = $state();
-  let gl: WebGL2RenderingContext | null = null;
-  let uniforms: Record<string, WebGLUniformLocation | null> = {};
-  let floatLinear = false;
-  let gpuMips = false;
-  let gpuMipsVerified = false;
-  let glTex: WebGLTexture | null = null;
-  let glTexArr: WebGLTexture | null = null;
-  let glTexArrSig: string | null = null;
-  let uploadedData: Float32Array | null = null;
-
-  const dpr = window.devicePixelRatio || 1;
-
-  const FRAG = `#version 300 es
-precision highp float;
-uniform vec2 uCanvasSize;
-uniform vec2 uCenter;
-uniform vec2 uTilePx;
-uniform int uChannels;
-uniform int uChannelSel;
-uniform bool uTiled;
-uniform int uWrap;
-uniform bool uSrgb;
-uniform sampler2D uTex;
-uniform highp sampler2DArray uTexArr;
-uniform bool uIsArray;
-uniform float uStackT;
-out vec4 fragColor;
-
-vec4 sampleSelected(vec2 suv) {
-  // Analytic UV gradients (uv is linear in screen space): keeps mip selection correct
-  // and seam-free across the fract() tile boundary in tiled mode.
-  vec2 gx = vec2(1.0 / uTilePx.x, 0.0);
-  vec2 gy = vec2(0.0, 1.0 / uTilePx.y);
-  if (uIsArray) {
-    float layers = float(textureSize(uTexArr, 0).z);
-    float layer = clamp(uStackT, 0.0, 1.0) * (layers - 1.0);
-    float lo = floor(layer);
-    return mix(
-      textureGrad(uTexArr, vec3(suv, lo), gx, gy),
-      textureGrad(uTexArr, vec3(suv, min(lo + 1.0, layers - 1.0)), gx, gy),
-      fract(layer)
-    );
-  }
-  return textureGrad(uTex, suv, gx, gy);
-}
-
-vec3 l2s(vec3 c) {
-  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c));
-}
-
-void main() {
-  // y-up: row 0 / uv.y = 0 at the bottom, matching GL texture space and mesh UVs.
-  vec2 screen = gl_FragCoord.xy;
-  vec2 uv = uCenter + (screen - uCanvasSize * 0.5) / uTilePx;
-  vec2 d = abs(uv - 0.5);
-
-  float ext = uTiled ? 1.5 : 0.5;
-  vec3 c;
-  if (d.x > ext || d.y > ext) {
-    vec2 cell = floor(screen / 12.0);
-    float ck = mod(cell.x + cell.y, 2.0);
-    c = vec3(0.05 + 0.012 * ck);
-  } else {
-    vec2 suv = uv;
-    if (uWrap == 0) suv = fract(uv);
-    else if (uWrap == 1) suv = clamp(uv, 0.0, 1.0);
-    else { suv = mod(uv, 2.0); suv = 1.0 - abs(suv - 1.0); }
-
-    vec4 t = sampleSelected(suv);
-    c = uChannels == 1 ? vec3(t.r) : t.rgb;
-    if (uChannelSel == 1) c = vec3(c.r);
-    else if (uChannelSel == 2) c = vec3(c.g);
-    else if (uChannelSel == 3) c = vec3(c.b);
-    else if (uChannelSel == 4) c = vec3(uChannels == 4 ? t.a : 1.0);
-    c = clamp(c, 0.0, 1.0);
-    if (uSrgb) c = l2s(c);
-    if (uChannels == 4 && uChannelSel == 0) {
-      // straight-alpha composite over a checkerboard so transparency reads visually
-      vec2 acell = floor(screen / 12.0);
-      vec3 backdrop = vec3(0.25 + 0.1 * mod(acell.x + acell.y, 2.0));
-      c = mix(backdrop, c, clamp(t.a, 0.0, 1.0));
-    }
-  }
-
-  // Unit-tile frame, coverage-blended (max-norm signed distance in device px) so
-  // subpixel pan moves it smoothly instead of popping per side.
-  vec2 bpx = (d - 0.5) * uTilePx;
-  float bd = abs(max(bpx.x, bpx.y));
-  c = mix(c, vec3(0.2), 1.0 - smoothstep(0.5, 1.5, bd));
-  fragColor = vec4(c, 1.0);
-}`;
-
-  const VERT = `#version 300 es
-void main() {
-  vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}`;
-
-  const initGL = (c: HTMLCanvasElement) => {
-    gl = c.getContext('webgl2', { antialias: false, depth: false });
-    if (!gl) return;
-    floatLinear = !!gl.getExtension('OES_texture_float_linear');
-    // generateMipmap on 32F needs the format renderable (float-render ext) AND filterable
-    gpuMips = floatLinear && !!gl.getExtension('EXT_color_buffer_float');
-    const compile = (type: number, src: string) => {
-      const sh = gl!.createShader(type)!;
-      gl!.shaderSource(sh, src);
-      gl!.compileShader(sh);
-      if (!gl!.getShaderParameter(sh, gl!.COMPILE_STATUS)) {
-        console.error('texture preview shader:', gl!.getShaderInfoLog(sh));
-      }
-      return sh;
+  let glr = $state.raw<TexturePreviewGl | null>(null);
+  $effect(() => {
+    if (!canvas) return;
+    glr = createTexturePreviewGl(canvas);
+    return () => {
+      glr?.dispose();
+      glr = null;
     };
-    const prog = gl.createProgram()!;
-    gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
-    gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
-    gl.linkProgram(prog);
-    gl.useProgram(prog);
-    for (const name of [
-      'uCanvasSize',
-      'uCenter',
-      'uTilePx',
-      'uChannels',
-      'uChannelSel',
-      'uTiled',
-      'uWrap',
-      'uSrgb',
-      'uTex',
-      'uTexArr',
-      'uIsArray',
-      'uStackT',
-    ]) {
-      uniforms[name] = gl.getUniformLocation(prog, name);
+  });
+
+  const GUTTER = 2;
+  const shown: GeneratedTexture[] = $derived(
+    mode.layout === 'grid' ? mode.visibleTextures : mode.selected ? [mode.selected] : []
+  );
+  /** Scale reference. Every cell shares one px-per-UV so the same region lines up across the
+   *  grid; taking it from the first shown output rather than the selection is what keeps
+   *  clicking a differently-sized cell from rescaling the whole grid. Single layout shows only
+   *  the selected output, so there it is that output. */
+  const ref: GeneratedTexture | null = $derived(shown[0] ?? null);
+  /** A row up to two outputs, then `ceil(sqrt(n))` columns. Single mode is a one-cell grid,
+   *  so the pointer math is the same in both. */
+  const grid = $derived.by(() => {
+    const n = shown.length;
+    const cols = Math.max(1, n <= 2 ? n : Math.ceil(Math.sqrt(n)));
+    const rows = Math.max(1, Math.ceil(n / cols));
+    return { cols, rows, w: (width - (cols - 1) * GUTTER) / cols, h: (height - (rows - 1) * GUTTER) / rows };
+  });
+  const cells: PreviewCell[] = $derived(
+    shown.map((tex, i) => ({
+      tex,
+      x: (i % grid.cols) * (grid.w + GUTTER),
+      y: Math.floor(i / grid.cols) * (grid.h + GUTTER),
+      w: grid.w,
+      h: grid.h,
+      srgb: mode.srgbFor(tex),
+    }))
+  );
+  /** Cell under a point (CSS px); gutters and empty cells snap to the nearest. */
+  const cellAt = (px: number, py: number) => {
+    const { cols, rows, w, h } = grid;
+    const c = Math.min(cols - 1, Math.max(0, Math.floor(px / (w + GUTTER))));
+    const r = Math.min(rows - 1, Math.max(0, Math.floor(py / (h + GUTTER))));
+    return { index: r * cols + c, cx: c * (w + GUTTER) + w / 2, cy: r * (h + GUTTER) + h / 2 };
+  };
+
+  /** The stack the `t` slider reads out against: the selected output if it is one, else the
+   *  first shown stack. */
+  const stackRef: GeneratedTexture | null = $derived(
+    mode.selected && mode.selected.layers > 1 ? mode.selected : (shown.find(t => t.layers > 1) ?? null)
+  );
+
+  const fitView = () => {
+    // A zero-area cell (editor panel dragged across the whole viewport) would otherwise poison
+    // `zoom` with a non-positive value that the `zoom === null` refit guard can never clear.
+    if (!ref || grid.w <= 0 || grid.h <= 0) {
+      return;
     }
-    gl.uniform1i(uniforms.uTex, 0);
-    gl.uniform1i(uniforms.uTexArr, 1);
-  };
-
-  /** Spec-valid with both float exts, but drivers may still refuse 32F mipgen; probe the
-   * first call (getError is a blocking GPU-process round-trip, so skip once verified) and
-   * latch off to the CPU chain on refusal. */
-  const tryGpuMips = (target: number): boolean => {
-    if (!gpuMips) return false;
-    gl!.generateMipmap(target);
-    if (!gpuMipsVerified) {
-      if (gl!.getError() !== gl!.NO_ERROR) {
-        gpuMips = false;
-        return false;
-      }
-      gpuMipsVerified = true;
-    }
-    return true;
-  };
-
-  /** CPU-fallback 2x2 box-filter mip chain down to 1x1 (WebGL2 floor-size semantics; odd
-   * dims clamp), for when GPU mipgen on 32F targets isn't available. */
-  const buildMips = (
-    data: Float32Array,
-    w: number,
-    h: number,
-    ch: number
-  ): { data: Float32Array; w: number; h: number }[] => {
-    const levels: { data: Float32Array; w: number; h: number }[] = [];
-    let src = data;
-    let sw = w;
-    let sh = h;
-    while (sw > 1 || sh > 1) {
-      const dw = Math.max(1, sw >> 1);
-      const dh = Math.max(1, sh >> 1);
-      const dst = new Float32Array(dw * dh * ch);
-      for (let y = 0; y < dh; y++) {
-        const y0 = Math.min(y * 2, sh - 1) * sw;
-        const y1 = Math.min(y * 2 + 1, sh - 1) * sw;
-        for (let x = 0; x < dw; x++) {
-          const x0 = Math.min(x * 2, sw - 1);
-          const x1 = Math.min(x * 2 + 1, sw - 1);
-          for (let c = 0; c < ch; c++) {
-            dst[(y * dw + x) * ch + c] =
-              0.25 *
-              (src[(y0 + x0) * ch + c] +
-                src[(y0 + x1) * ch + c] +
-                src[(y1 + x0) * ch + c] +
-                src[(y1 + x1) * ch + c]);
-          }
-        }
-      }
-      levels.push({ data: dst, w: dw, h: dh });
-      src = dst;
-      sw = dw;
-      sh = dh;
-    }
-    return levels;
-  };
-
-  const setSamplerParams = (target: number, minFilter: number) => {
-    gl!.texParameteri(target, gl!.TEXTURE_MAG_FILTER, gl!.NEAREST);
-    gl!.texParameteri(target, gl!.TEXTURE_MIN_FILTER, minFilter);
-    gl!.texParameteri(target, gl!.TEXTURE_WRAP_S, gl!.CLAMP_TO_EDGE);
-    gl!.texParameteri(target, gl!.TEXTURE_WRAP_T, gl!.CLAMP_TO_EDGE);
-  };
-
-  const uploadTexture = (tex: GeneratedTexture) => {
-    const { width, height, layers, channels, data, rgba } = tex;
-    const px = channels === 3 ? rgba! : data!;
-    if (!gl || uploadedData === px) return;
-    // mag NEAREST keeps texels crisp when zoomed in; min uses the mip chain (trilinear
-    // when the float-linear ext allows filtering, per-level nearest otherwise)
-    const minFilter = floatLinear ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST_MIPMAP_NEAREST;
-    const levels = 32 - Math.clz32(Math.max(width, height));
-    // Raw pixels upload direct in a channel-matched format — GL's (0, 0, 1) fill for
-    // missing g/b/a matches the display shader's expectations. 3ch is the exception and
-    // uses the worker-expanded copy (see `GeneratedTexture.rgba`).
-    const ch = channels === 3 ? 4 : channels;
-    const [ifmt, fmt] = ch === 1 ? [gl.R32F, gl.RED] : ch === 2 ? [gl.RG32F, gl.RG] : [gl.RGBA32F, gl.RGBA];
-    if (layers > 1) {
-      gl.activeTexture(gl.TEXTURE1);
-      // immutable storage can't be resized, so recreate on dimension/format change
-      const sig = `${width}x${height}x${layers}x${ch}`;
-      if (glTexArr && glTexArrSig !== sig) {
-        gl.deleteTexture(glTexArr);
-        glTexArr = null;
-      }
-      if (!glTexArr) {
-        glTexArr = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
-        gl.texStorage3D(gl.TEXTURE_2D_ARRAY, levels, ifmt, width, height, layers);
-        glTexArrSig = sig;
-      } else {
-        gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
-      }
-      gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, 0, width, height, layers, fmt, gl.FLOAT, px);
-      if (!tryGpuMips(gl.TEXTURE_2D_ARRAY)) {
-        const layerSize = width * height * ch;
-        for (let l = 0; l < layers; l++) {
-          const mips = buildMips(px.subarray(l * layerSize, (l + 1) * layerSize), width, height, ch);
-          for (let i = 0; i < mips.length; i++) {
-            const m = mips[i];
-            gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, i + 1, 0, 0, l, m.w, m.h, 1, fmt, gl.FLOAT, m.data);
-          }
-        }
-      }
-      setSamplerParams(gl.TEXTURE_2D_ARRAY, minFilter);
-      gl.activeTexture(gl.TEXTURE0);
-    } else {
-      if (!glTex) glTex = gl.createTexture();
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, glTex);
-      gl.texImage2D(gl.TEXTURE_2D, 0, ifmt, width, height, 0, fmt, gl.FLOAT, px);
-      if (!tryGpuMips(gl.TEXTURE_2D)) {
-        const mips = buildMips(px, width, height, ch);
-        mips.forEach(({ data, w, h }, i) => {
-          gl!.texImage2D(gl!.TEXTURE_2D, i + 1, ifmt, w, h, 0, fmt, gl!.FLOAT, data);
-        });
-      }
-      setSamplerParams(gl.TEXTURE_2D, minFilter);
-    }
-    uploadedData = px;
-  };
-
-  const fitView = (tex: GeneratedTexture) => {
-    mode.zoom = 0.8 * Math.min(width / tex.width, height / tex.height);
+    mode.zoom = 0.8 * Math.min(grid.w / ref.width, grid.h / ref.height);
     mode.center = [0.5, 0.5];
   };
 
-  const draw = () => {
-    const c = canvas;
-    if (!c || !gl) return;
-    const pw = Math.max(1, Math.round(width * dpr));
-    const ph = Math.max(1, Math.round(height * dpr));
-    if (c.width !== pw || c.height !== ph) {
-      c.width = pw;
-      c.height = ph;
-    }
-    gl.viewport(0, 0, pw, ph);
-
-    const sel = mode.selected;
-    if (!sel || !mode.center || mode.zoom === null) {
-      gl.clearColor(0.05, 0.05, 0.05, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      return;
-    }
-    uploadTexture(sel);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, glTex);
-    gl.activeTexture(gl.TEXTURE1);
-    gl.bindTexture(gl.TEXTURE_2D_ARRAY, glTexArr);
-    gl.uniform1i(uniforms.uIsArray, sel.layers > 1 ? 1 : 0);
-    gl.uniform1f(uniforms.uStackT, mode.stackT);
-    gl.uniform2f(uniforms.uCanvasSize, pw, ph);
-    gl.uniform2f(uniforms.uCenter, mode.center[0], mode.center[1]);
-    gl.uniform2f(uniforms.uTilePx, mode.zoom * sel.width * dpr, mode.zoom * sel.height * dpr);
-    gl.uniform1i(uniforms.uChannels, sel.channels);
-    // A stale 'a' selection on a non-RGBA output falls back to rgb instead of solid white
-    const channel = mode.channel === 'a' && sel.channels !== 4 ? 'rgb' : mode.channel;
-    gl.uniform1i(uniforms.uChannelSel, CHANNEL_IX[channel]);
-    gl.uniform1i(uniforms.uTiled, mode.tiled ? 1 : 0);
-    gl.uniform1i(uniforms.uWrap, WRAP_IX[sel.wrap]);
-    gl.uniform1i(uniforms.uSrgb, mode.srgb ? 1 : 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-  };
-
+  let pending: PreviewDraw | null = null;
   let drawQueued = false;
   const scheduleDraw = () => {
     if (drawQueued) return;
     drawQueued = true;
     requestAnimationFrame(() => {
       drawQueued = false;
-      draw();
+      if (glr && pending) glr.draw(pending);
     });
   };
 
   $effect(() => {
-    if (canvas && !gl) initGL(canvas);
-    void mode.selected;
-    void mode.channel;
-    void mode.tiled;
-    void mode.srgb;
-    void mode.center;
-    void mode.zoom;
-    void mode.stackT;
-    void width;
-    void height;
-    if (mode.selected && (!mode.center || mode.zoom === null)) fitView(mode.selected);
-    scheduleDraw();
+    if (!mode.center || mode.zoom === null) {
+      fitView();
+    }
+    const { center, zoom } = mode;
+    pending = {
+      width,
+      height,
+      cells: ref && center && zoom !== null ? cells : [],
+      center: center ?? [0.5, 0.5],
+      tilePx: ref && zoom !== null ? [zoom * ref.width, zoom * ref.height] : [1, 1],
+      channel: mode.channel,
+      tiled: mode.tiled,
+      stackT: mode.stackT,
+      live: mode.textures,
+    };
+    if (glr) scheduleDraw();
   });
-
-  const uvAt = (e: PointerEvent | WheelEvent): [number, number] | null => {
-    const sel = mode.selected;
-    if (!sel || !mode.center || mode.zoom === null) return null;
-    return [
-      mode.center[0] + (e.clientX - width / 2) / (mode.zoom * sel.width),
-      mode.center[1] - (e.clientY - height / 2) / (mode.zoom * sel.height),
-    ];
-  };
 
   const onWheel = (e: WheelEvent) => {
     e.preventDefault();
-    const sel = mode.selected;
-    const anchor = uvAt(e);
-    if (!sel || !anchor || mode.zoom === null) return;
+    if (!ref || !mode.center || mode.zoom === null) {
+      return;
+    }
+    const { cx, cy } = cellAt(e.clientX, e.clientY);
+    const anchorU = mode.center[0] + (e.clientX - cx) / (mode.zoom * ref.width);
+    const anchorV = mode.center[1] - (e.clientY - cy) / (mode.zoom * ref.height);
     const zoom = Math.min(512, Math.max(0.01, mode.zoom * Math.exp(-e.deltaY * 0.0015)));
     mode.zoom = zoom;
     mode.center = [
-      anchor[0] - (e.clientX - width / 2) / (zoom * sel.width),
-      anchor[1] + (e.clientY - height / 2) / (zoom * sel.height),
+      anchorU - (e.clientX - cx) / (zoom * ref.width),
+      anchorV + (e.clientY - cy) / (zoom * ref.height),
     ];
   };
 
   let shiftHeld = $state(false);
 
   const onStackTInput = (e: Event & { currentTarget: HTMLInputElement }) => {
-    const sel = mode.selected;
     let v = e.currentTarget.valueAsNumber;
     // shift snaps to the nearest exact layer
-    if (shiftHeld && sel && sel.layers > 1) {
-      v = Math.round(v * (sel.layers - 1)) / (sel.layers - 1);
+    if (shiftHeld && stackRef) {
+      v = Math.round(v * (stackRef.layers - 1)) / (stackRef.layers - 1);
     }
     mode.stackT = v;
   };
 
   let dragLast: [number, number] | null = null;
+  let dragDist = 0;
   const onPointerDown = (e: PointerEvent) => {
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
     dragLast = [e.clientX, e.clientY];
+    dragDist = 0;
   };
   const onPointerMove = (e: PointerEvent) => {
-    const sel = mode.selected;
-    if (!dragLast || !sel || !mode.center || mode.zoom === null) return;
+    if (!dragLast || !ref || !mode.center || mode.zoom === null) return;
+    const dx = e.clientX - dragLast[0];
+    const dy = e.clientY - dragLast[1];
+    dragDist += Math.abs(dx) + Math.abs(dy);
     mode.center = [
-      mode.center[0] - (e.clientX - dragLast[0]) / (mode.zoom * sel.width),
-      mode.center[1] + (e.clientY - dragLast[1]) / (mode.zoom * sel.height),
+      mode.center[0] - dx / (mode.zoom * ref.width),
+      mode.center[1] + dy / (mode.zoom * ref.height),
     ];
     dragLast = [e.clientX, e.clientY];
   };
-  const onPointerUp = () => {
+  const onPointerUp = (e: PointerEvent) => {
+    // a click (not a drag) on a grid cell selects its output
+    if (dragLast && dragDist < 4 && cells.length > 1) {
+      const hit = cells[cellAt(e.clientX, e.clientY).index];
+      if (hit) mode.selectedName = hit.tex.name;
+    }
     dragLast = null;
   };
 </script>
@@ -441,11 +216,25 @@ void main() {
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
-  ondblclick={() => mode.selected && fitView(mode.selected)}
+  ondblclick={fitView}
 ></canvas>
 
 <div class="hud" style={`width: ${width}px; height: ${height}px;`}>
-  <div class="stack panel">
+  {#if cells.length > 1}
+    {#each cells as cell (cell.tex.textureId)}
+      <div
+        class="cell"
+        class:selected={cell.tex === mode.selected}
+        style:left="{cell.x}px"
+        style:top="{cell.y}px"
+        style:width="{cell.w}px"
+        style:height="{cell.h}px"
+      >
+        <span class="cell-label">{cell.tex.name}{cell.tex.usage ? ` · ${cell.tex.usage}` : ''}</span>
+      </div>
+    {/each}
+  {/if}
+  <div class="stack panel" bind:offsetHeight={hudHeight} style:top="{topLeftOffset(TopLeftSlot.hud)}px">
     {#if mode.selected}
       {@const sel = mode.selected}
       {#if mode.visibleTextures.length > 1}
@@ -474,13 +263,18 @@ void main() {
         <button class="chip" class:active={mode.srgb} onclick={() => (mode.srgbOverride = !mode.srgb)}>
           srgb
         </button>
+        {#if mode.visibleTextures.length > 1}
+          <button class="chip" class:active={mode.layout === 'grid'} onclick={mode.toggleLayout} title="G">
+            grid
+          </button>
+        {/if}
       </div>
-      {#if sel.layers > 1}
+      {#if stackRef}
         <div class="stack-t" title="stack interpolation index; shift-drag snaps to layers">
           <span class="t-label">t</span>
           <input type="range" min="0" max="1" step="0.001" value={mode.stackT} oninput={onStackTInput} />
           <span class="t-readout">
-            L{(mode.stackT * (sel.layers - 1)).toFixed(2)} / {sel.layers - 1}
+            L{(mode.stackT * (stackRef.layers - 1)).toFixed(2)} / {stackRef.layers - 1}
           </span>
         </div>
       {/if}
@@ -561,9 +355,30 @@ void main() {
     border: 1px solid #2e2e2e;
   }
 
+  .cell {
+    position: absolute;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+  }
+
+  .cell.selected {
+    border-color: #0aa;
+  }
+
+  .cell-label {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    padding: 3px 5px;
+    font-size: 10px;
+    line-height: 1;
+    color: #ddd;
+    background: rgba(13, 13, 13, 0.85);
+    border: 1px solid #2e2e2e;
+  }
+
   .stack {
     position: absolute;
-    top: 6px;
     left: 6px;
     display: flex;
     flex-direction: column;

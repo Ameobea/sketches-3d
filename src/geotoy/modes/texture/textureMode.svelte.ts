@@ -72,7 +72,9 @@ export class TextureMode implements Mode {
    *  output has layers > 1. Session-local (not persisted in the tab view). */
   stackT = $state(0);
   tiled = $state(false);
-  /** Explicit user override; `null` defers to the selected output's usage (albedo → on). */
+  /** `grid` shows every visible output at once under one shared pan-zoom. */
+  layout = $state<'single' | 'grid'>('single');
+  /** Explicit user override; `null` defers to each output's usage (albedo → on). */
   srgbOverride = $state<boolean | null>(null);
   /** UV point at the viewport center + screen px per texel; `null` = fit on next draw. */
   center = $state<[number, number] | null>(null);
@@ -121,7 +123,13 @@ export class TextureMode implements Mode {
     this.visibleTextures.find(t => t.name === this.selectedName) ?? this.visibleTextures[0] ?? null
   );
 
-  readonly srgb: boolean = $derived(this.srgbOverride ?? this.selected?.usage === 'albedo');
+  srgbFor = (t: GeneratedTexture | null): boolean => this.srgbOverride ?? t?.usage === 'albedo';
+
+  readonly srgb: boolean = $derived(this.srgbFor(this.selected));
+
+  toggleLayout = () => {
+    this.layout = this.layout === 'grid' ? 'single' : 'grid';
+  };
 
   /** The target tab's environment while the 3D view shows — lit as in its own scene. */
   readonly previewEnvironment = $derived.by(() => {
@@ -255,13 +263,16 @@ export class TextureMode implements Mode {
 
   buildViewState = (): TabView | null => {
     const camera = (this.preview3d ? this.previewScene.buildViewState() : null) ?? this.previewCamera;
-    if (!this.center && this.zoom === null && !this.previewTarget && !camera) return null;
+    if (!this.center && this.zoom === null && !this.previewTarget && !camera && this.layout === 'single') {
+      return null;
+    }
     return {
       center: this.center ?? undefined,
       zoom: this.zoom ?? undefined,
       output: this.selected?.name,
       channel: this.channel,
       tiled: this.tiled,
+      layout: this.layout === 'grid' ? 'grid' : undefined,
       srgb: this.srgbOverride ?? undefined,
       preview: this.previewTarget ?? undefined,
       preview3d: this.preview3d || undefined,
@@ -276,6 +287,7 @@ export class TextureMode implements Mode {
     this.selectedName = v?.output ?? null;
     this.channel = v?.channel ?? 'rgb';
     this.tiled = v?.tiled ?? false;
+    this.layout = v?.layout ?? 'single';
     this.srgbOverride = v?.srgb ?? null;
     this.previewTarget = v?.preview ?? null;
     this.previewProblem = null;
@@ -313,6 +325,12 @@ export class TextureMode implements Mode {
           label: 'tiled preview',
           state: this.tiled ? 'on' : 'off',
           action: () => (this.tiled = !this.tiled),
+        },
+        {
+          label: 'grid layout',
+          shortcut: 'G',
+          state: this.layout === 'grid' ? 'on' : 'off',
+          action: this.toggleLayout,
         },
         {
           label: 'srgb display',

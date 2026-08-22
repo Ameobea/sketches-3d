@@ -1,15 +1,19 @@
 <script lang="ts">
   import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import { PROBLEM_TEXT } from 'src/geotoy/modes/texture/previewTarget';
+  import { setTopLeftSlot, topLeftOffset, TopLeftSlot } from 'src/geotoy/modules/topLeftOverlay.svelte';
 
   let { mode, onPick, onShow2d }: { mode: TextureMode; onPick: () => void; onShow2d: () => void } = $props();
+
+  let hudHeight = $state(0);
+  $effect(() => setTopLeftSlot(TopLeftSlot.hud, hudHeight));
 
   const note = $derived(
     mode.previewProblem ? PROBLEM_TEXT[mode.previewProblem] : (mode.previewMaterialWarning ?? null)
   );
 </script>
 
-<div class="hud panel">
+<div class="hud panel" bind:offsetHeight={hudHeight} style:top="{topLeftOffset(TopLeftSlot.hud)}px">
   <div class="row">
     <span class="title">3d preview</span>
     <span class="target">{mode.previewTargetLabel}</span>
@@ -27,7 +31,6 @@
 <style>
   .hud {
     position: fixed;
-    top: 6px;
     left: 6px;
     display: flex;
     flex-direction: column;

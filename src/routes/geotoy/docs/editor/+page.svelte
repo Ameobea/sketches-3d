@@ -18,7 +18,7 @@
     <li>
       <h3>{group || 'general'}</h3>
       <ul>
-        {#each entries as { key, label } (key)}
+        {#each entries as { key, label } (`${key}\0${label}`)}
           <li>
             <span class="key">{key}</span>
             :

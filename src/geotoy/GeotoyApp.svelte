@@ -57,6 +57,7 @@
     uploadProceduralTextures,
   } from 'src/geotoy/modules/proceduralTextures';
   import ControlsPanel from 'src/geotoy/panels/ControlsPanel.svelte';
+  import { setTopLeftSlot, TopLeftSlot } from 'src/geotoy/modules/topLeftOverlay.svelte';
   import { GLOBALS_SELECTION_ID } from 'src/geotoy/modules/treeState.svelte';
   import { GeotoyTabs } from 'src/geotoy/modules/tabs.svelte';
   import { togglePreludeEjected as togglePrelude } from 'src/geotoy/modules/preludeEject';
@@ -817,15 +818,57 @@
     },
   });
 
-  // The FPS widget's top-left slot belongs to the texture HUD in texture mode (design §9).
+  let statsHeight = $state(0);
+  // The FPS widget's top-left slot belongs to the texture HUD in texture mode (design §9);
+  // elsewhere it heads the overlay column, so the controls below it stack off its measured height.
   $effect(() => {
-    const stats = document.getElementById('viz-stats');
-    if (!stats || mode.kind !== 'texture') return;
-    stats.style.display = 'none';
+    // `setStatsEnabled` appends a brand-new `#viz-stats` (dropping the old one) every time the
+    // graphics menu's FPS toggle flips, so the element must be re-resolved on mutation rather
+    // than captured once — a stale miss leaves the controls stacked on top of a live FPS meter.
+    const container = viz.renderer.domElement.parentElement;
+    if (!container) {
+      return;
+    }
+    const hidden = mode.kind === 'texture';
+    let tracked: HTMLElement | null = null;
+    const ro = new ResizeObserver(() => {
+      statsHeight = tracked?.offsetHeight ?? 0;
+    });
+    const release = () => {
+      if (tracked) {
+        ro.unobserve(tracked);
+        tracked.style.display = '';
+        tracked = null;
+      }
+      statsHeight = 0;
+    };
+    const sync = () => {
+      const stats = document.getElementById('viz-stats');
+      if (stats === tracked) {
+        return;
+      }
+      release();
+      tracked = stats;
+      if (!stats) {
+        return;
+      }
+      if (hidden) {
+        stats.style.display = 'none';
+        return;
+      }
+      ro.observe(stats);
+      statsHeight = stats.offsetHeight;
+    };
+    sync();
+    const mo = new MutationObserver(sync);
+    mo.observe(container, { childList: true });
     return () => {
-      stats.style.display = '';
+      mo.disconnect();
+      ro.disconnect();
+      release();
     };
   });
+  $effect(() => setTopLeftSlot(TopLeftSlot.stats, statsHeight));
 
   // Installed synchronously during init so its render override lands before the first
   // frame, after the pipeline's own (constructed pre-mount; the resize-cb order and
@@ -1105,6 +1148,7 @@
       toggleProjection: handleToggleProjection,
       toggleRecording,
       togglePreview3d,
+      toggleTextureGrid: textureMode.toggleLayout,
       preview3dActive: () => textureMode.preview3d,
       setGizmoMode: mode => {
         if (!resolveSelectedNode()) return;

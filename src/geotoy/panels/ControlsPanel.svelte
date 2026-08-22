@@ -11,6 +11,7 @@
     controlToSetting,
     type SplinePanelCtx,
   } from 'src/geoscript/controlsUi';
+  import { topLeftOffset, TopLeftSlot } from 'src/geotoy/modules/topLeftOverlay.svelte';
   import type { ControlValue } from 'src/geoscript/geotoyAPIClient';
   import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 
@@ -100,6 +101,8 @@
     }
   }
 
+  const top = $derived(topLeftOffset(TopLeftSlot.controls));
+
   // Ramp/levels edits bypass the ControlPanel's bind, so mirror them into panelState so
   // their sections re-render optimistically between runs.
   const onSectionChange = (key: string, value: RampSpecJson | ImageLevelsJson) => {
@@ -108,7 +111,7 @@
   };
 </script>
 
-<div class="controls-panel">
+<div class="controls-panel" style:top="{top}px" style:max-height="calc(100vh - {top}px - 8px)">
   {#if settings.length > 0}
     <ControlPanel {settings} bind:state={panelState} onChange={handleChange} title="inputs" width={260} />
   {/if}
@@ -130,11 +133,8 @@
 <style>
   .controls-panel {
     position: fixed;
-    /* Offset below the top-left FPS/stats meter (~48px tall) so it isn't covered. */
-    top: 56px;
     left: 8px;
     z-index: 6;
-    max-height: calc(100vh - 64px);
     overflow-y: auto;
     box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
   }
