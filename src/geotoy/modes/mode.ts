@@ -25,6 +25,20 @@ export const runtimeMetric = (stats: RunStats): StatusMetric => {
   return { label: 'Runtime', value: ms, short: ms };
 };
 
+const MB = 1024 * 1024;
+
+/** Const-eval cache occupancy against its cap. Worth a permanent readout: it accumulates
+ *  across runs rather than per-run, and textures push it up fast enough to matter. */
+export const cacheMetric = (stats: RunStats): StatusMetric => {
+  const { bytes, maxBytes, entries } = stats.constEvalCache;
+  const mb = (n: number) => `${(n / MB).toFixed(n < MB ? 2 : 1)} MB`;
+  return {
+    label: 'Const-Eval Cache',
+    value: `${mb(bytes)} / ${mb(maxBytes)} · ${entries} ${entries === 1 ? 'entry' : 'entries'}`,
+    short: `${mb(bytes)} cache`,
+  };
+};
+
 export interface MenuItem {
   label: string;
   /** Right-aligned shortcut column. */

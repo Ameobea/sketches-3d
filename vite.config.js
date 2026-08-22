@@ -2,9 +2,9 @@ import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
 import crossOriginIsolation from 'vite-plugin-cross-origin-isolation';
-import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin';
-import { generatorsPlugin } from './src/viz/levelDef/viteGeneratorsPlugin';
-import { generatedScenesPlugin } from './src/viz/scenes/viteGeneratedScenesPlugin';
+import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin.ts';
+import { generatorsPlugin } from './src/viz/levelDef/viteGeneratorsPlugin.ts';
+import { generatedScenesPlugin } from './src/viz/scenes/viteGeneratedScenesPlugin.ts';
 
 const config = defineConfig({
   plugins: [

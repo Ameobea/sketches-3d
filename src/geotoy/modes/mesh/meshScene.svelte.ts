@@ -29,6 +29,7 @@ import { buildParentMap, collectDescendants, computeMeshCounts } from 'src/geoto
 import { GLOBALS_SELECTION_ID, type TreeState } from 'src/geotoy/modules/treeState.svelte';
 import type { GizmoEditorHooks } from 'src/geoscript/gizmoExtensions';
 import {
+  cacheMetric,
   runtimeMetric,
   type MenuSection,
   type Mode,
@@ -452,6 +453,7 @@ export class MeshScene implements Mode {
     }
     out.push(metric('Total Vertices', stats.totalVtxCount, 'vert'));
     out.push(metric('Total Faces', stats.totalFaceCount, 'face'));
+    out.push(cacheMetric(stats));
     return out;
   }
 

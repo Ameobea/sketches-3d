@@ -3,6 +3,7 @@ import * as Comlink from 'comlink';
 import { compute_convex_hull_mesh, initManifoldWasm, setManifoldWasmURL } from './manifold';
 import type { Light } from 'src/geotoy/modes/mesh/lights';
 import type {
+  ConstEvalCacheStats,
   GizmoValuesByModule,
   TextureParamsEntry,
   VectorizeFlags,
@@ -234,6 +235,10 @@ const methods = {
   },
   clearConstEvalCache: (ctxPtr: number) => {
     Geoscript.geoscript_repl_clear_const_eval_cache(ctxPtr);
+  },
+  getConstEvalCacheStats: (ctxPtr: number): ConstEvalCacheStats => {
+    const [entries, bytes, maxBytes] = Geoscript.geoscript_repl_get_const_eval_cache_stats(ctxPtr);
+    return { entries, bytes, maxBytes };
   },
   setModuleSources: (
     ctxPtr: number,

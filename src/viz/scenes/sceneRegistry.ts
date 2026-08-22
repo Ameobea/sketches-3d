@@ -1,4 +1,4 @@
-import type { SceneMetadata } from './index';
+import type { SceneMetadata } from './index.ts';
 
 export interface SceneRegistryEntry {
   /** Path (relative to project root, via `src/...` alias) of the scene module exporting `processLoadedScene`. */

@@ -4582,11 +4582,92 @@ fn test_const_eval_cache_size_stable_across_runs() {
     for _ in 0..4 {
       let mut ast = crate::parse_program_src(&ctx, code).unwrap();
       optimize_ast(&ctx, &mut ast).unwrap();
-      sizes.push(ctx.const_eval_cache.borrow().entries.len());
+      sizes.push(ctx.const_eval_cache.borrow().len());
     }
     assert!(
       sizes.windows(2).all(|w| w[0] == w[1]),
       "`{code}` grows the const-eval cache across runs: {sizes:?}"
     );
   }
+}
+
+/// Every edit inserts fresh keys holding whole textures, so the entry cap can't bound a
+/// texture-mode session — the byte cap is what keeps the heap flat.
+#[test]
+fn test_const_eval_cache_byte_cap_bounds_texture_growth() {
+  let edit_run = |cap: usize| {
+    let ctx = EvalCtx::default();
+    ctx.const_eval_cache.borrow_mut().max_bytes = cap;
+    let mut retained = Vec::new();
+    for edit in 0..24 {
+      let code = format!(
+        r#"
+n = 64
+a = texture(n, n, |uv| fbm(octaves=3, frequency=4., pos=uv + {edit}. * 0.01, tileable=true))
+b = blur(1.5, a)
+concat_channels(a, b, a) | render_texture(name="out")
+"#
+      );
+      crate::parse_and_eval_program_with_ctx(code, &ctx, false).unwrap();
+      ctx.rendered_textures.inner.borrow_mut().clear();
+      retained.push(ctx.const_eval_cache.borrow().retained_bytes());
+    }
+    retained
+  };
+
+  let cap = 128 * 1024;
+  let uncapped = edit_run(usize::MAX);
+  assert!(
+    *uncapped.last().unwrap() > 4 * cap,
+    "workload no longer grows the cache, so the cap proves nothing: {uncapped:?}"
+  );
+
+  let capped = edit_run(cap);
+  assert!(
+    capped.iter().all(|&b| b <= cap),
+    "byte cap exceeded: {capped:?}"
+  );
+}
+
+/// Re-running unchanged code — what a gizmo drag or slider does every frame — is all hits and
+/// no inserts, so the LRU queue has to be pruned on the lookup path or it grows unbounded.
+#[test]
+fn test_const_eval_cache_lru_queue_bounded_without_inserts() {
+  let ctx = EvalCtx::default();
+  let code = "a = icosphere(1, 2) | translate(1., 0., 0.)\nb = a | scale(2.)\nout = b";
+  let mut peak = 0;
+  for _ in 0..200 {
+    let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+    optimize_ast(&ctx, &mut ast).unwrap();
+    peak = peak.max(ctx.const_eval_cache.borrow().access_queue.len());
+  }
+  let cache = ctx.const_eval_cache.borrow();
+  assert!(
+    peak <= 2 * cache.len() + 65,
+    "lru queue grew to {peak} for {} entries",
+    cache.len()
+  );
+}
+
+/// A swizzle, crop or channel concat is a plane-list permutation over its source's buffers,
+/// so charging each cached handle its full pixel count would multiply-count one allocation.
+#[test]
+fn test_const_eval_cache_charges_shared_planes_once() {
+  let ctx = EvalCtx::default();
+  let code = r#"
+n = 64
+src = texture(n, n, |uv| v3(uv.x, uv.y, 0.5))
+src.bgr | render_texture(name="a")
+crop(0, 0, 32, 32, src) | render_texture(name="b")
+flip_x(src).rg | render_texture(name="c")
+concat_channels(src.g, src.r, src.b) | render_texture(name="d")
+"#;
+  crate::parse_and_eval_program_with_ctx(code.to_owned(), &ctx, false).unwrap();
+
+  let plane = 64 * 64 * size_of::<f32>();
+  let retained = ctx.const_eval_cache.borrow().retained_bytes();
+  assert!(
+    retained < 4 * plane,
+    "{retained} bytes retained for 3 shared planes ({plane} each)"
+  );
 }

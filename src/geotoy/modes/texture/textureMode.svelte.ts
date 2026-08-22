@@ -18,6 +18,7 @@ import type { GeneratedTexture, RunResult, RunStats } from 'src/geoscript/runner
 import type { GeneratedObject } from 'src/geoscript/runner/types';
 import { qualifyModuleName } from 'src/geoscript/treeCodegen';
 import {
+  cacheMetric,
   runtimeMetric,
   type MenuSection,
   type Mode,
@@ -360,6 +361,7 @@ export class TextureMode implements Mode {
         short: `${m} preview ${m === 1 ? 'mesh' : 'meshes'}`,
       });
     }
+    out.push(cacheMetric(stats));
     return out;
   }
 }

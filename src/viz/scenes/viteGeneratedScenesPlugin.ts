@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Plugin } from 'vite';
 
-import { SCENE_REGISTRY, type SceneRegistryEntry } from './sceneRegistry';
+import { SCENE_REGISTRY, type SceneRegistryEntry } from './sceneRegistry.ts';
 
 /**
  * Vite plugin: writes a per-scene SvelteKit page for every entry in

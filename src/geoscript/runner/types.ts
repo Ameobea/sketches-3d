@@ -4,6 +4,14 @@ import type { GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import type { MaterialDef } from '../materials';
 import type { TreeKind } from '../geotoyAPIClient';
 
+/** Cross-run const-eval cache occupancy. Textures dominate it, so it is the number that goes
+ *  wrong first in a long editing session — hence the cap, reported alongside. */
+export interface ConstEvalCacheStats {
+  entries: number;
+  bytes: number;
+  maxBytes: number;
+}
+
 export interface RunStats {
   runtimeMs: number;
   renderedMeshCount: number;
@@ -14,6 +22,7 @@ export interface RunStats {
   totalFaceCount: number;
   /** Async dep names actually used during the eval (from the Rust bitmask). */
   asyncDeps: string[];
+  constEvalCache: ConstEvalCacheStats;
 }
 
 export interface GeneratedMesh {

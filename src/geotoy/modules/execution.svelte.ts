@@ -114,7 +114,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
 
   constructor(opts: ExecutionOpts<T>) {
     this.opts = opts;
-    this.replBox = { repl: opts.workerManager.getWorker() };
+    this.replBox = { repl: opts.workerManager.acquire() };
   }
 
   /** The prelude is an `include_str!` constant, so one fetch per kind is enough. Caches the

@@ -69,6 +69,7 @@ pub mod optimizer;
 pub mod path_building;
 pub mod preprocess;
 mod resolve;
+mod retained_size;
 mod seq;
 pub mod tex_vectorize;
 #[cfg(test)]
@@ -1292,6 +1293,12 @@ impl Debug for Value {
 }
 
 const CONST_EVAL_CACHE_MAX_ENTRIES: usize = 4096;
+/// The entry cap alone cannot bound the heap once textures are cached: a 1024² pipeline
+/// retains ~16 MB per edited run, so reaching 4096 entries would need ~11 GB — the wasm heap
+/// dies first. Sized to hold a large composition's whole pipeline while leaving the linear
+/// memory room for a run's transient working set (interleave + encode buffers alone run to
+/// hundreds of MB for a big stack).
+const CONST_EVAL_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
 
 pub(crate) struct ConstEvalCacheHit {
   pub value: Value,
@@ -1302,13 +1309,24 @@ pub struct ConstEvalCacheEntry {
   pub value: Value,
   rng_end_state: Option<Pcg32>,
   last_access: u64,
+  /// Allocations charged to this entry in `retained`, released when it is evicted.
+  retained_ids: Vec<usize>,
 }
 
 pub struct ConstEvalCache {
-  pub entries: FxHashMap<u128, ConstEvalCacheEntry>,
+  entries: FxHashMap<u128, ConstEvalCacheEntry>,
   access_tick: u64,
+  /// Lazily-invalidated LRU order: a key's live position is its last occurrence, matched by
+  /// stamp. Compacted once stale duplicates outnumber the entries.
   access_queue: VecDeque<(u128, u64)>,
+  /// Size of every distinct allocation the cache retains, and how many entries hold it.
+  /// Sharing is the norm rather than the exception — a swizzle, crop or channel concat is a
+  /// plane-list permutation over its source's buffers — so bytes are counted once and freed
+  /// only when the last entry holding them goes.
+  retained: FxHashMap<usize, (usize, u32)>,
+  retained_bytes: usize,
   max_entries: usize,
+  max_bytes: usize,
 }
 
 impl Default for ConstEvalCache {
@@ -1317,21 +1335,95 @@ impl Default for ConstEvalCache {
       entries: FxHashMap::default(),
       access_tick: 0,
       access_queue: VecDeque::new(),
+      retained: FxHashMap::default(),
+      retained_bytes: 0,
       max_entries: CONST_EVAL_CACHE_MAX_ENTRIES,
+      max_bytes: CONST_EVAL_CACHE_MAX_BYTES,
     }
   }
 }
 
 impl ConstEvalCache {
-  pub(crate) fn get(&mut self, key: u128) -> Option<ConstEvalCacheHit> {
+  pub fn len(&self) -> usize {
+    self.entries.len()
+  }
+
+  pub fn retained_bytes(&self) -> usize {
+    self.retained_bytes
+  }
+
+  pub fn max_bytes(&self) -> usize {
+    self.max_bytes
+  }
+
+  pub fn clear(&mut self) {
+    self.entries.clear();
+    self.access_queue.clear();
+    self.retained.clear();
+    self.retained_bytes = 0;
+  }
+
+  fn tick(&mut self) -> u64 {
     self.access_tick = self.access_tick.wrapping_add(1);
-    let stamp = self.access_tick;
+    self.access_tick
+  }
+
+  fn charge(&mut self, value: &Value) -> Vec<usize> {
+    let allocs = crate::retained_size::retained_allocs(value);
+    let mut ids = Vec::with_capacity(allocs.len());
+    for (addr, bytes) in allocs {
+      let slot = self.retained.entry(addr).or_insert_with(|| {
+        self.retained_bytes += bytes;
+        (bytes, 0)
+      });
+      slot.1 += 1;
+      ids.push(addr);
+    }
+    ids
+  }
+
+  fn release(&mut self, ids: &[usize]) {
+    for addr in ids {
+      let Some(slot) = self.retained.get_mut(addr) else {
+        continue;
+      };
+      slot.1 -= 1;
+      if slot.1 == 0 {
+        self.retained_bytes -= slot.0;
+        self.retained.remove(addr);
+      }
+    }
+  }
+
+  fn evict(&mut self, key: u128) {
+    if let Some(entry) = self.entries.remove(&key) {
+      let ids = entry.retained_ids;
+      self.release(&ids);
+    }
+  }
+
+  /// Both paths push a stamp, and a run that only hits never inserts — so pruning has to
+  /// happen on lookup too, or the queue outgrows the cache it orders. Amortized: the
+  /// threshold scales with the live entry count.
+  fn maybe_compact(&mut self) {
+    if self.access_queue.len() <= 2 * self.entries.len() + 64 {
+      return;
+    }
+    let entries = &self.entries;
+    self
+      .access_queue
+      .retain(|(key, stamp)| entries.get(key).map(|e| e.last_access) == Some(*stamp));
+  }
+
+  pub(crate) fn get(&mut self, key: u128) -> Option<ConstEvalCacheHit> {
+    let stamp = self.tick();
     let (value, rng_end_state) = {
       let entry = self.entries.get_mut(&key)?;
       entry.last_access = stamp;
       (entry.value.clone(), entry.rng_end_state.clone())
     };
     self.access_queue.push_back((key, stamp));
+    self.maybe_compact();
     Some(ConstEvalCacheHit {
       value,
       rng_end_state,
@@ -1343,38 +1435,49 @@ impl ConstEvalCache {
       return;
     }
 
-    if let Some(entry) = self.entries.get_mut(&key) {
-      self.access_tick = self.access_tick.wrapping_add(1);
-      let stamp = self.access_tick;
-      entry.value = value;
-      entry.rng_end_state = rng_end_state;
-      entry.last_access = stamp;
-      self.access_queue.push_back((key, stamp));
-      return;
+    let stamp = self.tick();
+    let retained_ids = self.charge(&value);
+    match self.entries.get_mut(&key) {
+      Some(entry) => {
+        let stale = std::mem::replace(&mut entry.retained_ids, retained_ids);
+        entry.value = value;
+        entry.rng_end_state = rng_end_state;
+        entry.last_access = stamp;
+        self.release(&stale);
+      }
+      None => {
+        self.entries.insert(
+          key,
+          ConstEvalCacheEntry {
+            value,
+            rng_end_state,
+            last_access: stamp,
+            retained_ids,
+          },
+        );
+      }
     }
+    self.access_queue.push_back((key, stamp));
+    self.maybe_compact();
 
-    self.access_tick = self.access_tick.wrapping_add(1);
-    self.entries.insert(
-      key,
-      ConstEvalCacheEntry {
-        value,
-        rng_end_state,
-        last_access: self.access_tick,
-      },
-    );
-    self.access_queue.push_back((key, self.access_tick));
-
-    while self.entries.len() > self.max_entries {
+    // Evicts LRU-first until both caps hold, sparing only the entry just inserted — the
+    // current fold needs it. A value that alone exceeds `max_bytes` therefore ends up as the
+    // sole survivor; keeping it beats recomputing it, and nothing smaller could have brought
+    // the total under cap anyway.
+    while self.entries.len() > 1
+      && (self.entries.len() > self.max_entries || self.retained_bytes > self.max_bytes)
+    {
       let Some((old_key, stamp)) = self.access_queue.pop_front() else {
         break;
       };
-      let should_remove = match self.entries.get(&old_key) {
-        Some(entry) => entry.last_access == stamp,
-        None => false,
-      };
-      if should_remove {
-        self.entries.remove(&old_key);
+      if self.entries.get(&old_key).map(|e| e.last_access) != Some(stamp) {
+        continue;
       }
+      if old_key == key {
+        self.access_queue.push_back((old_key, stamp));
+        continue;
+      }
+      self.evict(old_key);
     }
   }
 }

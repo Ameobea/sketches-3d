@@ -12,7 +12,12 @@ import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import depthExactVertexBody from './depthExactVertex.glsl?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
-import { buildTriplanarDefsFragment, type SampleGrad, type TriplanarMappingParams } from './triplanarMapping';
+import {
+  buildTriplanarDefsFragment,
+  triplanarFn,
+  type SampleGrad,
+  type TriplanarMappingParams,
+} from './triplanarMapping';
 import { buildReverseColorRampGenerator, ReverseColorRampCommonFunctions } from './reverseColorRamp';
 import {
   buildPomDefs,
@@ -889,6 +894,9 @@ export const buildCustomShaderArgs = (
   const stackRoughnessMap = roughnessMap instanceof THREE.DataArrayTexture;
   const stackPomHeightMap = pomHeightMap instanceof THREE.DataArrayTexture;
   const hasStacks = stackMap || stackNormalMap || stackRoughnessMap || stackPomHeightMap;
+  // A stack `pomHeightMap` is sampled by POM's own `sampleStackLod0`, never through the triplanar
+  // entry points, so it must not pull in their `sampler2DArray` copies.
+  const triplanarStacks = stackMap || stackNormalMap || stackRoughnessMap;
 
   // Only LINEAR-magnified slots need the snap; the triplanar functions are shared across slots, so
   // they go by any-of.
@@ -1244,7 +1252,7 @@ export const buildCustomShaderArgs = (
       if (useTriplanarMapping) {
         return /* glsl */ `
         #ifdef USE_MAP
-          sampledDiffuseColor_ = triplanarTextureFixContrast(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, mapMeanColor);
+          sampledDiffuseColor_ = ${triplanarFn('triplanarTextureFixContrast', stackMap)}(map, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, mapMeanColor);
         #endif`;
       }
 
@@ -1288,7 +1296,7 @@ export const buildCustomShaderArgs = (
     const inner = (() => {
       if (useTriplanarMapping && roughnessMap) {
         return /* glsl */ `
-          vec3 texelRoughness = triplanarTexture(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, roughnessMapMeanColor).xyz;
+          vec3 texelRoughness = ${triplanarFn('triplanarTexture', stackRoughnessMap)}(roughnessMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, roughnessMapMeanColor).xyz;
         `;
       }
 
@@ -1387,7 +1395,7 @@ export const buildCustomShaderArgs = (
           ? '(viewMatrix * vec4(perturbedNormal, 0.)).xyz'
           : '(viewMatrix * modelMatrix * vec4(perturbedNormal, 0.)).xyz';
         return /* glsl */ `
-          vec3 perturbedNormal = triplanarTextureNormalMap(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, normalScale, normalMapMeanColor).xyz;
+          vec3 perturbedNormal = ${triplanarFn('triplanarTextureNormalMap', stackNormalMap)}(normalMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, normalScale, normalMapMeanColor).xyz;
           normal = normalize(${transform});
           `;
       }
@@ -1947,7 +1955,7 @@ ${
             ? buildTileBreakSampleExpr(sampler, uv, tileBreaking, mean)
             : sample2D(sampler, uv, sharp, grad),
         tileBreaking ? 'neyret' : 'none',
-        hasStacks ? (s, u, _mean, grad) => sampleStk(s, u, sharp, grad) : undefined
+        triplanarStacks ? (s, u, _mean, grad) => sampleStk(s, u, sharp, grad) : undefined
       )
     : ''
 }
@@ -2149,7 +2157,7 @@ void main() {
   normal = dot(normal, normal) > 0.5 ? normal : nonPerturbedNormal;`
       : ''
   }
-  ${pom ? buildPomNormalApply(pomTexturing, !!normalMap, !!pom.applyReliefNormal) : ''}
+  ${pom ? buildPomNormalApply(pomTexturing, !!normalMap, !!pom.applyReliefNormal, stackNormalMap) : ''}
 
 	#include <clearcoat_normal_fragment_begin>
 	// #include <clearcoat_normal_fragment_maps>
@@ -2394,7 +2402,15 @@ export const buildCustomShader = (
   mat.defines.PHYSICAL = '1';
   mat.defines.USE_UV = '1';
   if (props.map) {
-    (mat as any).map = props.map;
+    // `material.map` is only set to have three define `USE_MAP`; three also copies it onto the
+    // shared shadow `MeshDepthMaterial`, whose `map` is a `sampler2D`, so a stack would get bound
+    // to `TEXTURE_2D` after the array bind (INVALID_OPERATION, and no depth-pass alpha test to
+    // lose since the stack slots don't cut out).
+    if (props.map instanceof THREE.DataArrayTexture) {
+      mat.defines.USE_MAP = '1';
+    } else {
+      (mat as any).map = props.map;
+    }
     mat.uniforms.map.value = props.map;
   }
   if (props.normalMap) {

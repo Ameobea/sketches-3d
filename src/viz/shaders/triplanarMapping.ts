@@ -24,16 +24,21 @@ export interface SampleGrad {
 }
 type SampleExprBuilder = (sampler: string, uv: string, mean: string, grad: SampleGrad) => string;
 
+/** Name of a triplanar entry point for a slot; stack-backed slots get the `sampler2DArray` copy. */
+export const triplanarFn = (base: string, stack: boolean): string => (stack ? `${base}Stack` : base);
+
 /**
  * `buildSampleExpr` substitutes the per-axis texture fetch (e.g. a
  * tile-breaking wrapper); `mean` is a GLSL expression for the texture's
  * precomputed mean color. `tileBreakingMode` controls how
  * `getCombinedTriplanarTapCount` reports per-axis cost.
  *
- * With `stackSampleExpr`, a second copy of every sampler-taking function is emitted
- * overloaded on `sampler2DArray`, sampling via that builder (e.g. `sampleStack(..., _stackT)`,
- * declared by the caller's stack-helpers block). GLSL overload resolution picks by the
- * declared type of the texture uniform, so call sites are identical for singles and stacks.
+ * With `stackSampleExpr`, a `Stack`-suffixed copy of every sampler-taking function is emitted
+ * over `sampler2DArray`, sampling via that builder (e.g. `sampleStack(..., _stackT)`, declared by
+ * the caller's stack-helpers block). The copies are *not* GLSL overloads of the `sampler2D` ones:
+ * ANGLE's D3D backend passes samplers as `const uint` sampler-array indices and only disambiguates
+ * overloads on float4/int/uint/struct params, so two functions differing only in sampler type
+ * collapse to one HLSL signature and fail to compile on Windows. Call sites pick via `triplanarFn`.
  */
 export const buildTriplanarDefsFragment = (
   { contrastPreservationFactor, sharpenFactor }: TriplanarMappingParams,
@@ -44,7 +49,7 @@ export const buildTriplanarDefsFragment = (
   const perAxisTapCountExpr = (axisUv: string) =>
     tileBreakingMode === 'neyret' ? `getNeyretTapCount(${axisUv})` : '1.0';
 
-  const samplerFns = (samplerType: string, sample: SampleExprBuilder) => {
+  const samplerFns = (samplerType: string, sample: SampleExprBuilder, suffix: string) => {
     const axis = (sw: string) => `pos.${sw} * uvScale`;
     const grad = (sw: string): SampleGrad => ({
       dx: `_dpdx.${sw} * uvScale`,
@@ -52,11 +57,13 @@ export const buildTriplanarDefsFragment = (
       res: '_res',
     });
     const sampleAxis = (sw: string) => sample('map', axis(sw), 'meanColor', grad(sw));
+    const resExpr =
+      samplerType === 'sampler2DArray' ? 'vec2(textureSize(map, 0).xy)' : 'vec2(textureSize(map, 0))';
     const prelude = /* glsl */ `
     vec3 _dpdx = dFdx(pos), _dpdy = dFdy(pos);
-    vec2 _res = texRes(map);`;
+    vec2 _res = ${resExpr};`;
     return /* glsl */ `
-  vec4 triplanarTexture(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
+  vec4 triplanarTexture${suffix}(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);${prelude}
 
     vec4 outColor = vec4(0.);
@@ -79,7 +86,7 @@ export const buildTriplanarDefsFragment = (
   // analytic floor normal instead. Each projection's (u,v) is a fixed pair of world axes —
   // yz / zx / xy — so tangent x perturbs along u's axis and tangent y along v's, on back
   // faces too (a height-field normal only depends on ∂p/∂u, ∂p/∂v, not the frame's handedness).
-  vec3 triplanarNormalMapPerturbation(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
+  vec3 triplanarNormalMapPerturbation${suffix}(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);${prelude}
     if (weights.x < 0.01) {
       weights.x = 0.;
@@ -103,12 +110,12 @@ export const buildTriplanarDefsFragment = (
     return normalX * weights.x + normalY * weights.y + normalZ * weights.z;
   }
 
-  vec4 triplanarTextureNormalMap(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
-    vec3 perturbation = triplanarNormalMapPerturbation(map, pos, uvScale, normal, normalScale, meanColor);
+  vec4 triplanarTextureNormalMap${suffix}(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec2 normalScale, vec4 meanColor) {
+    vec3 perturbation = triplanarNormalMapPerturbation${suffix}(map, pos, uvScale, normal, normalScale, meanColor);
     return vec4(normalize(perturbation + normal), 1.0);
   }
 
-  vec4 triplanarTextureFixContrast(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
+  vec4 triplanarTextureFixContrast${suffix}(${samplerType} map, vec3 pos, vec2 uvScale, vec3 normal, vec4 meanColor) {
     vec3 weights = generateTriplanarWeights(normal);${prelude}
 
     vec4 outColor = vec4(0.);
@@ -137,8 +144,6 @@ export const buildTriplanarDefsFragment = (
   };
 
   return /* glsl */ `
-  vec2 texRes(sampler2D s) { return vec2(textureSize(s, 0)); }
-  vec2 texRes(sampler2DArray s) { return vec2(textureSize(s, 0).xy); }
   // sharpenFactor < 1 smooths, > 1 sharpens
   vec3 generateTriplanarWeights(vec3 normal) {
     vec3 weights = abs(normal);
@@ -159,6 +164,6 @@ export const buildTriplanarDefsFragment = (
     if (w.z > 0.01) total += ${perAxisTapCountExpr('pos.xy * uvScale')};
     return total;
   }
-${samplerFns('sampler2D', buildSampleExpr)}
-${stackSampleExpr ? samplerFns('sampler2DArray', stackSampleExpr) : ''}`;
+${samplerFns('sampler2D', buildSampleExpr, '')}
+${stackSampleExpr ? samplerFns('sampler2DArray', stackSampleExpr, 'Stack') : ''}`;
 };

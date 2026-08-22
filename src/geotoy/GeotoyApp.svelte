@@ -112,6 +112,9 @@
 
   /** Full-width bottom bar: tab strip + run bar. */
   const BOTTOM_BAR_HEIGHT = 32;
+  /** Only used with the editor collapsed: there is no panel to expand into, so the run
+   *  output falls back to overlaying at a readable fixed width. */
+  const COLLAPSED_RUN_OUTPUT_WIDTH = 520;
 
   const storedPanelSize = (orientation: 'vertical' | 'horizontal'): number =>
     orientation === 'horizontal'
@@ -290,8 +293,6 @@
       barHeight: BOTTOM_BAR_HEIGHT,
       /** In vertical the run bar sizes to content instead. */
       runBarWidth: horizontal && !isEditorCollapsed ? panelSize : null,
-      /** Run output anchors to the bar when it's panel-width, else to a readable default. */
-      runOutputWidth: horizontal && !isEditorCollapsed ? panelSize : 520,
     };
   });
 
@@ -1168,7 +1169,7 @@
     return () => {
       bootAbort.abort();
       clearTimeout(controlRunTimer);
-      workerManager.terminate();
+      workerManager.release();
       execution.dispose();
       keymap.dispose();
 
@@ -1383,6 +1384,10 @@
   }}
 />
 
+{#snippet runOutputPane()}
+  <RunOutput err={runErr} metrics={runMetrics} vectorize={vectorizeSummary} />
+{/snippet}
+
 {#if !isEditorCollapsed}
   <div
     class={['root', layoutOrientation === 'horizontal' ? 'horizontal' : '']}
@@ -1494,6 +1499,9 @@
         />
       </div>
     </div>
+    {#if runOutputVisible && !userData?.renderMode}
+      <div class="run-output-inline">{@render runOutputPane()}</div>
+    {/if}
   </div>
 {/if}
 
@@ -1511,12 +1519,12 @@
       />
     </div>
   {/if}
-  {#if runOutputVisible}
+  {#if runOutputVisible && isEditorCollapsed}
     <div
       class="run-output-anchor"
-      style={`bottom: ${BOTTOM_BAR_HEIGHT}px; width: ${layout.runOutputWidth}px;`}
+      style={`bottom: ${BOTTOM_BAR_HEIGHT}px; width: ${COLLAPSED_RUN_OUTPUT_WIDTH}px;`}
     >
-      <RunOutput err={runErr} metrics={runMetrics} vectorize={vectorizeSummary} />
+      {@render runOutputPane()}
     </div>
   {/if}
   <div class="bottom-bar" style={`height: ${BOTTOM_BAR_HEIGHT}px;`}>
@@ -1643,6 +1651,15 @@
     max-width: 100vw;
     z-index: 4;
     font-family: 'IBM Plex Mono', 'Hack', 'Roboto Mono', 'Courier New', Courier, monospace;
+  }
+
+  /* In the panel's flow rather than over it, so expanding shortens the editor instead of
+   * hiding it. Capped so an open plan listing can't squeeze the editor out entirely. */
+  .run-output-inline {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    max-height: 60%;
   }
 
   .dragger {

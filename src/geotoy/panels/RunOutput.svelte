@@ -142,6 +142,8 @@
   .run-output {
     display: flex;
     flex-direction: column;
+    /* Shrinkable so an enclosing flex cap wins over the max-heights below. */
+    min-height: 0;
     max-height: 260px;
     overflow-y: auto;
     overflow-x: hidden;

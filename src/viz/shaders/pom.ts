@@ -1,3 +1,5 @@
+import { triplanarFn } from './triplanarMapping';
+
 export const POM_BOUNDED_SILHOUETTE_FLAG = 'pomBoundedSilhouette';
 
 /** `'stack'` = a `DataArrayTexture` heightmap sampled through `sampleStackLod0`. */
@@ -1068,7 +1070,8 @@ export const buildPomSelfShadowApply = (): string => /* glsl */ `
 export const buildPomNormalApply = (
   pomTexturing: PomTexturing,
   hasNormalMap: boolean,
-  applyReliefNormal: boolean
+  applyReliefNormal: boolean,
+  stackNormalMap: boolean
 ): string => {
   if (!hasNormalMap) {
     return applyReliefNormal
@@ -1081,7 +1084,7 @@ export const buildPomNormalApply = (
     // instead of the geometric normal.
     return /* glsl */ `
   vec3 _pomNormalDetailW = normalize(
-    triplanarNormalMapPerturbation(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), _pomNormalW, normalScale, normalMapMeanColor)
+    ${triplanarFn('triplanarNormalMapPerturbation', stackNormalMap)}(normalMap, triplanarSamplePos, vec2(uvTransform[0][0], uvTransform[1][1]), _pomNormalW, normalScale, normalMapMeanColor)
     + _pomNormalW
   );
   normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);

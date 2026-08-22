@@ -328,10 +328,23 @@ pub fn geoscript_repl_get_used_async_deps(_ctx: *const GeoscriptReplCtx) -> u32 
   }
 }
 
+/// `[entries, retained_bytes, max_bytes]` for the cross-run const-eval cache. The cap is
+/// reported alongside the occupancy so the host readout doesn't duplicate the constant.
+#[wasm_bindgen]
+pub fn geoscript_repl_get_const_eval_cache_stats(ctx: *const GeoscriptReplCtx) -> Vec<f64> {
+  let ctx = unsafe { &*ctx };
+  let cache = ctx.geo_ctx.const_eval_cache.borrow();
+  vec![
+    cache.len() as f64,
+    cache.retained_bytes() as f64,
+    cache.max_bytes() as f64,
+  ]
+}
+
 #[wasm_bindgen]
 pub fn geoscript_repl_clear_const_eval_cache(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
-  ctx.geo_ctx.const_eval_cache.borrow_mut().entries.clear();
+  ctx.geo_ctx.const_eval_cache.borrow_mut().clear();
 }
 
 #[derive(SerJson)]
@@ -899,18 +912,30 @@ fn with_planes<R>(tex: &TextureHandle, f: impl FnOnce(&[&[f32]]) -> R) -> R {
   f(&refs)
 }
 
+/// Slice handles for an output, with the `rendered_textures` borrow already released. The
+/// encoders below allocate the whole output buffer up front, and an allocation failure on
+/// wasm aborts without unwinding — a borrow held across one stays taken for the life of the
+/// instance and panics every subsequent `reset`, turning one oversized run into a dead tab.
+fn texture_slices(ctx: &GeoscriptReplCtx, tex_ix: usize) -> Vec<Rc<TextureHandle>> {
+  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
+  let rt = &textures[tex_ix];
+  std::iter::once(&rt.texture)
+    .chain(rt.extra_slices.iter())
+    .map(Rc::clone)
+    .collect()
+}
+
 #[wasm_bindgen]
 pub fn geoscript_get_rendered_texture_pixels(
   ctx: *const GeoscriptReplCtx,
   tex_ix: usize,
 ) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
-  let rt = &textures[tex_ix];
-  let tex = &rt.texture;
+  let slices = texture_slices(ctx, tex_ix);
+  let tex = &slices[0];
   let layer_len = tex.width * tex.height * tex.channels;
-  let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
-  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+  let mut out = vec![0f32; layer_len * slices.len()];
+  for (i, slice) in slices.iter().enumerate() {
     with_planes(slice, |planes| {
       geoscript::texture_encode::interleave(planes, &mut out[i * layer_len..(i + 1) * layer_len])
     });
@@ -927,12 +952,11 @@ pub fn geoscript_get_rendered_texture_pixels_rgba(
   tex_ix: usize,
 ) -> Vec<f32> {
   let ctx = unsafe { &*ctx };
-  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
-  let rt = &textures[tex_ix];
-  let tex = &rt.texture;
+  let slices = texture_slices(ctx, tex_ix);
+  let tex = &slices[0];
   let layer_len = tex.width * tex.height * 4;
-  let mut out = vec![0f32; layer_len * (1 + rt.extra_slices.len())];
-  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+  let mut out = vec![0f32; layer_len * slices.len()];
+  for (i, slice) in slices.iter().enumerate() {
     with_planes(slice, |planes| {
       geoscript::texture_encode::expand_rgba_f32(planes, &mut out[i * layer_len..(i + 1) * layer_len])
     });
@@ -949,9 +973,8 @@ pub fn geoscript_encode_rendered_texture_pixels(
   tex_ix: usize,
 ) -> Vec<u8> {
   let ctx = unsafe { &*ctx };
-  let textures = ctx.geo_ctx.rendered_textures.inner.borrow();
-  let rt = &textures[tex_ix];
-  let tex = &rt.texture;
+  let slices = texture_slices(ctx, tex_ix);
+  let tex = &slices[0];
   let format = tex.format.unwrap_or(TextureFormat::Rgba8);
   let bpp = match format {
     TextureFormat::Rgba8 => 4,
@@ -960,8 +983,8 @@ pub fn geoscript_encode_rendered_texture_pixels(
     _ => return Vec::new(),
   };
   let layer_len = tex.width * tex.height * bpp;
-  let mut out = vec![0u8; layer_len * (1 + rt.extra_slices.len())];
-  for (i, slice) in std::iter::once(tex).chain(rt.extra_slices.iter()).enumerate() {
+  let mut out = vec![0u8; layer_len * slices.len()];
+  for (i, slice) in slices.iter().enumerate() {
     with_planes(slice, |planes| {
       geoscript::texture_encode::encode_unorm8(planes, format, &mut out[i * layer_len..(i + 1) * layer_len])
     });

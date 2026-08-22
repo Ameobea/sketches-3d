@@ -32,6 +32,7 @@ const buildEmptyRunStats = (): RunStats => ({
   totalVtxCount: 0,
   totalFaceCount: 0,
   asyncDeps: [],
+  constEvalCache: { entries: 0, bytes: 0, maxBytes: 0 },
 });
 
 const getOverrideMat = (materialOverride: 'wireframe' | 'wireframe-xray' | 'normal' | null | undefined) => {
@@ -177,6 +178,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     ...buildEmptyRunStats(),
     runtimeMs: evalResult.durationMs,
     asyncDeps: bitmaskToAsyncDepNames(evalResult.usedDepsBitmask),
+    constEvalCache: await repl.getConstEvalCacheStats(ctxPtr),
   };
   const vectorizeReports = await repl.getVectorizeReports(ctxPtr);
   const renderedObjects: GeneratedObject[] = [];
