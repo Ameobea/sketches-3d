@@ -189,7 +189,7 @@ async function setupPage(
 
 interface RenderOpts {
   /** Output image post-processing. If unset, AVIF q70 (legacy thumbnail behavior). */
-  encode?: (raw: Buffer) => Promise<Buffer>;
+  encode?: (raw: Uint8Array) => Promise<Buffer>;
   /** Viewport dimensions. */
   width?: number;
   height?: number;
@@ -376,7 +376,7 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
     return res.status(400).send('width/height must be in [16, 4096]');
   }
 
-  const encode = (raw: Buffer): Promise<Buffer> => {
+  const encode = (raw: Uint8Array): Promise<Buffer> => {
     switch (format) {
       case 'png':
         return sharp(raw).png({ compressionLevel: 8 }).toBuffer();

@@ -1,5 +1,5 @@
 # Use the official Puppeteer image, pinning to a specific version
-FROM ghcr.io/puppeteer/puppeteer:24.11.2
+FROM ghcr.io/puppeteer/puppeteer:25.8.0
 
 # The official image runs as the non-root 'pptruser'.
 # We will set the working directory inside the user's home.
