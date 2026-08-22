@@ -227,6 +227,9 @@
                       }
                     ]
                   },
+                  "stackIndex": {
+                    "type": "number"
+                  },
                   "map": {
                     "type": "string"
                   },
@@ -620,6 +623,9 @@
                         "additionalProperties": false
                       }
                     ]
+                  },
+                  "stackIndexShader": {
+                    "type": "string"
                   },
                   "roughnessShader": {
                     "anyOf": [

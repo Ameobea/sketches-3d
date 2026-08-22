@@ -4,7 +4,7 @@
   import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import {
     DEFAULT_FORMAT,
-    DEFAULT_MAG_FILTER,
+    defaultMagFilter,
     DEFAULT_MIN_FILTER,
     formatOptionsForChannels,
   } from 'src/geotoy/modules/proceduralTextures';
@@ -37,7 +37,7 @@
   const MAG_FILTERS = ['nearest', 'linear'];
   const PARAM_DEFAULTS = {
     minFilter: DEFAULT_MIN_FILTER,
-    magFilter: DEFAULT_MAG_FILTER,
+    magFilter: defaultMagFilter(),
     format: DEFAULT_FORMAT,
   };
 
@@ -523,7 +523,7 @@ void main() {
       <span class="label">mag filter</span>
       <select
         class="value"
-        value={sel.magFilter ?? DEFAULT_MAG_FILTER}
+        value={sel.magFilter ?? defaultMagFilter()}
         onchange={e => setParam('magFilter', e.currentTarget.value)}
       >
         {#each MAG_FILTERS as f (f)}
@@ -636,6 +636,7 @@ void main() {
     position: absolute;
     right: 6px;
     bottom: 6px;
+    pointer-events: auto;
     display: grid;
     grid-template-columns: auto auto;
     gap: 3px 12px;

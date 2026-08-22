@@ -3,14 +3,10 @@
     onResume: () => void;
   }
 
-  enum Menu {
-    Main,
-    Graphics,
-    Gameplay,
-    Controls,
-    Audio,
-    Login,
-  }
+  // Not an `enum`: oxc (vite's TS transform) drops non-exported enums a script block doesn't itself
+  // reference, and this one is only used from the instance script and template.
+  const Menu = { Main: 0, Graphics: 1, Gameplay: 2, Controls: 3, Audio: 4, Login: 5 } as const;
+  type Menu = (typeof Menu)[keyof typeof Menu];
 </script>
 
 <script lang="ts">
@@ -31,7 +27,7 @@
   import type { AuthAPI } from './AuthAPI';
   import { APIError, login, logout, me, register } from 'src/geoscript/geotoyAPIClient';
 
-  let activeMenu = Menu.Main;
+  let activeMenu: Menu = Menu.Main;
 
   export let ctx: PauseMenuCtx;
   export let viz: Viz;

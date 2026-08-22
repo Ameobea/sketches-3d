@@ -73,13 +73,7 @@ export const inlineGeotoyMaterialTextures = async (
       );
     }
     const key = geotoyTextureKey(texId, cfg);
-    synthesized[key] = {
-      url: tex.url,
-      magFilter: 'linear',
-      minFilter: 'linearMipLinear',
-      anisotropy: 16,
-      ...cfg,
-    };
+    synthesized[key] = { url: tex.url, ...cfg };
     props[slot] = key;
   }
   return { ...def, props } as MaterialDef;

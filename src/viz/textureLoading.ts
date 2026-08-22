@@ -1,7 +1,11 @@
 import * as Comlink from 'comlink';
 import * as THREE from 'three';
 
+import { getDefaultAnisotropy, getDefaultMagFilter } from './conf';
 import { getNormalGenWorkers, getTextureCrossfadeWorkers } from './workerPool';
+
+const defaultMagFilter = () =>
+  getDefaultMagFilter() === 'linear' ? THREE.LinearFilter : THREE.NearestFilter;
 
 export interface TextureArgs {
   mapping?: THREE.Mapping | undefined;
@@ -34,11 +38,11 @@ export const loadTexture = (
     mapping = THREE.UVMapping,
     wrapS = THREE.RepeatWrapping,
     wrapT = THREE.RepeatWrapping,
-    magFilter = THREE.NearestFilter,
+    magFilter = defaultMagFilter(),
     minFilter = THREE.NearestMipMapLinearFilter,
     format,
     type,
-    anisotropy = 1,
+    anisotropy = getDefaultAnisotropy(),
     colorSpace = THREE.NoColorSpace,
     name = '',
     generateMipmaps = true,
@@ -185,11 +189,11 @@ export const generateNormalMapFromTexture = async (
     mapping = THREE.UVMapping,
     wrapS = THREE.RepeatWrapping,
     wrapT = THREE.RepeatWrapping,
-    magFilter = THREE.NearestFilter,
+    magFilter = defaultMagFilter(),
     minFilter = THREE.NearestMipMapLinearFilter,
     format = THREE.RGBAFormat,
     type = THREE.UnsignedByteType,
-    anisotropy = 1,
+    anisotropy = getDefaultAnisotropy(),
   }: TextureArgs = {},
   packNormalGBA = false
 ): Promise<THREE.Texture> => {
@@ -250,11 +254,11 @@ export const genCrossfadedTexture = async (
     mapping = THREE.UVMapping,
     wrapS = THREE.RepeatWrapping,
     wrapT = THREE.RepeatWrapping,
-    magFilter = THREE.NearestFilter,
+    magFilter = defaultMagFilter(),
     minFilter = THREE.NearestMipMapLinearFilter,
     format = THREE.RGBAFormat,
     type = THREE.UnsignedByteType,
-    anisotropy = 1,
+    anisotropy = getDefaultAnisotropy(),
   }: TextureArgs = {}
 ): Promise<THREE.Texture> => {
   const workersP = getTextureCrossfadeWorkers();

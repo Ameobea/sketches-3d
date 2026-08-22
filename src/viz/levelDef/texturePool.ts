@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { getDefaultAnisotropy, getDefaultMagFilter } from 'src/viz/conf';
 import { loadTexture } from 'src/viz/textureLoading';
 import type { TextureDef } from './types';
 
@@ -35,9 +36,9 @@ const FORMAT_MAP = {
 const toTextureArgs = (def: TextureDef, name: string) => ({
   wrapS: WRAPPING_MAP[def.wrapS ?? 'repeat'],
   wrapT: WRAPPING_MAP[def.wrapT ?? 'repeat'],
-  magFilter: MAG_FILTER_MAP[def.magFilter ?? 'nearest'],
+  magFilter: MAG_FILTER_MAP[def.magFilter ?? getDefaultMagFilter()],
   minFilter: MIN_FILTER_MAP[def.minFilter ?? 'nearestMipLinear'],
-  anisotropy: def.anisotropy ?? 1,
+  anisotropy: def.anisotropy ?? getDefaultAnisotropy(),
   colorSpace: COLOR_SPACE_MAP[def.colorSpace ?? ''],
   format: def.format ? FORMAT_MAP[def.format] : undefined,
   name,

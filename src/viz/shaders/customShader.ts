@@ -12,7 +12,7 @@ import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import depthExactVertexBody from './depthExactVertex.glsl?raw';
 import noiseShaders from './noise.frag?raw';
 import tileBreakingNeyretFragment from './tileBreakingNeyret.frag?raw';
-import { buildTriplanarDefsFragment, type TriplanarMappingParams } from './triplanarMapping';
+import { buildTriplanarDefsFragment, type SampleGrad, type TriplanarMappingParams } from './triplanarMapping';
 import { buildReverseColorRampGenerator, ReverseColorRampCommonFunctions } from './reverseColorRamp';
 import {
   buildPomDefs,
@@ -37,6 +37,7 @@ import { getTextureMeanColor } from './meanTextureColor';
 import VERTEX_LIGHTING_FRAGMENT from './vertexLighting.frag?raw';
 import PLAYER_SHADOW_FRAGMENT from './playerShadow.frag?raw';
 
+import { GraphicsQuality, loadVizConfig } from 'src/viz/conf';
 import type { CascadedShadowMap } from 'src/viz/shadows/CascadedShadowMap';
 import { runPOMAssertions } from './pomAssertions';
 
@@ -102,6 +103,44 @@ vec4 sampleStackLod0(sampler2DArray s, vec2 uv, float t) {
   vec4 a = textureLod(s, vec3(uv, lo), 0.);
   vec4 b = textureLod(s, vec3(uv, min(lo + 1., layers - 1.)), 0.);
   return mix(a, b, fract(layer));
+}
+`;
+
+// Nearest-texel look on LINEAR-filtered textures (hardware anisotropic filtering is dropped whenever a
+// texture uses a NEAREST filter, so the sharp look is done here instead): snap the sample to a texel
+// center of the mip level the hardware will pick — minor-axis LOD, ratio-capped by the anisotropy —
+// which is exact nearest while magnified and nearest-within-level under minification, while the
+// unsnapped gradients passed to textureGrad keep the hardware's own LOD and anisotropic taps.
+const buildSharpSamplerGlsl = (anisotropy: number) => /* glsl */ `
+const float SHARP_INV_ANISO2 = ${(1 / (anisotropy * anisotropy)).toExponential(6)};
+vec2 sharpUv(vec2 uv, vec2 res, vec2 dx, vec2 dy) {
+  vec2 tx = dx * res, ty = dy * res;
+  float px = dot(tx, tx), py = dot(ty, ty);
+  // level = floor(0.5 * log2(footprint²)) via the float exponent: no transcendentals
+  float f2 = max(max(min(px, py), max(px, py) * SHARP_INV_ANISO2), 1e-12);
+  int level = max((int(floatBitsToUint(f2) >> 23u) - 127) >> 1, 0);
+  vec2 resL = res * uintBitsToFloat(uint(127 - level) << 23u);
+  return (floor(uv * resL) + 0.5) / resL;
+}
+vec4 sampleSharp(sampler2D s, vec2 uv, vec2 res, vec2 dx, vec2 dy) {
+  return textureGrad(s, sharpUv(uv, res, dx, dy), dx, dy);
+}
+vec4 sampleSharp(sampler2D s, vec2 uv) {
+  return sampleSharp(s, uv, vec2(textureSize(s, 0)), dFdx(uv), dFdy(uv));
+}
+`;
+const SHARP_STACK_SAMPLER_GLSL = /* glsl */ `
+vec4 sampleStackSharp(sampler2DArray s, vec2 uv, float t, vec2 res, vec2 dx, vec2 dy) {
+  float layers = float(textureSize(s, 0).z);
+  float layer = clamp(t, 0., 1.) * (layers - 1.);
+  float lo = floor(layer);
+  vec2 p = sharpUv(uv, res, dx, dy);
+  vec4 a = textureGrad(s, vec3(p, lo), dx, dy);
+  vec4 b = textureGrad(s, vec3(p, min(lo + 1., layers - 1.)), dx, dy);
+  return mix(a, b, fract(layer));
+}
+vec4 sampleStackSharp(sampler2DArray s, vec2 uv, float t) {
+  return sampleStackSharp(s, uv, t, vec2(textureSize(s, 0).xy), dFdx(uv), dFdy(uv));
 }
 `;
 
@@ -786,6 +825,7 @@ export const buildCustomShaderArgs = (
     normalMapType,
     useDisplacementNormals,
     roughnessMap,
+    metalnessMap,
     stackIndex = 0,
     pomHeightMap,
     emissiveIntensity,
@@ -849,6 +889,33 @@ export const buildCustomShaderArgs = (
   const stackRoughnessMap = roughnessMap instanceof THREE.DataArrayTexture;
   const stackPomHeightMap = pomHeightMap instanceof THREE.DataArrayTexture;
   const hasStacks = stackMap || stackNormalMap || stackRoughnessMap || stackPomHeightMap;
+
+  // Only LINEAR-magnified slots need the snap; the triplanar functions are shared across slots, so
+  // they go by any-of.
+  const slotTextures: Record<string, THREE.Texture | undefined> = {
+    map,
+    roughnessMap,
+    normalMap,
+    clearcoatNormalMap,
+    metalnessMap,
+  };
+  // LINEAR-magnified slots get the texel-center snap above Low quality (textures default to LINEAR
+  // there so hardware anisotropic filtering stays on); Low keeps plain sampling everywhere.
+  const sharpQuality = loadVizConfig().graphics.quality > GraphicsQuality.Low;
+  const linearMag = (t?: THREE.Texture) => t?.magFilter === THREE.LinearFilter;
+  const sharpSlot = (sampler: string) => sharpQuality && linearMag(slotTextures[sampler]);
+  const sharp = sharpQuality && Object.values(slotTextures).some(linearMag);
+  const sharpAnisotropy = Math.max(
+    1,
+    ...Object.values(slotTextures).map(t => (linearMag(t) ? t!.anisotropy : 1))
+  );
+  const gradArgs = (g?: SampleGrad) => (g ? `, ${g.res}, ${g.dx}, ${g.dy}` : '');
+  const sample2D = (sampler: string, uv: string, on = sharpSlot(sampler), grad?: SampleGrad) =>
+    on ? `sampleSharp(${sampler}, ${uv}${gradArgs(grad)})` : `texture2D( ${sampler}, ${uv} )`;
+  const sampleStk = (sampler: string, uv: string, on = sharpSlot(sampler), grad?: SampleGrad) =>
+    on
+      ? `sampleStackSharp(${sampler}, ${uv}, _stackT${gradArgs(grad)})`
+      : `sampleStack(${sampler}, ${uv}, _stackT)`;
 
   const uniforms = THREE.UniformsUtils.merge([
     UniformsLib.common,
@@ -1184,7 +1251,7 @@ export const buildCustomShaderArgs = (
       if (!tileBreaking) {
         return /* glsl */ `
         #ifdef USE_MAP
-          vec4 sampledDiffuseColor = ${stackMap ? `sampleStack(map, ${mapUvSym}, _stackT)` : `texture2D( map, ${mapUvSym} )`};
+          vec4 sampledDiffuseColor = ${stackMap ? sampleStk('map', mapUvSym) : sample2D('map', mapUvSym)};
           sampledDiffuseColor_ = sampledDiffuseColor;
         #endif`;
       }
@@ -1229,7 +1296,7 @@ export const buildCustomShaderArgs = (
         return /* glsl */ `vec3 texelRoughness = ${buildTileBreakSampleExpr('roughnessMap', mapUvSym, tileBreaking)}.xyz;`;
       else
         return /* glsl */ `
-      vec4 texelRoughness = ${stackRoughnessMap ? `sampleStack(roughnessMap, ${mapUvSym}, _stackT)` : `texture2D( roughnessMap, ${mapUvSym} )`};
+      vec4 texelRoughness = ${stackRoughnessMap ? sampleStk('roughnessMap', mapUvSym) : sample2D('roughnessMap', mapUvSym)};
       `;
     })();
 
@@ -1331,13 +1398,13 @@ export const buildCustomShaderArgs = (
 
     ${normalMapSuffix}
   `;
-      else if (stackNormalMap)
+      else if (stackNormalMap || sharpSlot('normalMap'))
         // The chunk body verbatim with the sample swapped; the trailing normalize handles
         // the shortened mix of adjacent slices' encoded normals.
         return spliceChunk(
           'normal_fragment_maps',
           'texture2D( normalMap, vNormalMapUv )',
-          'sampleStack(normalMap, vNormalMapUv, _stackT)'
+          stackNormalMap ? sampleStk('normalMap', 'vNormalMapUv') : sample2D('normalMap', 'vNormalMapUv')
         );
       else return '#include <normal_fragment_maps>';
     })();
@@ -1389,7 +1456,7 @@ export const buildCustomShaderArgs = (
         return /* glsl */ `
 #ifdef USE_CLEARCOAT_NORMALMAP
 
-	vec3 clearcoatMapN = texture2D( clearcoatNormalMap, vClearcoatNormalMapUv ).xyz * 2.0 - 1.0;
+	vec3 clearcoatMapN = ${sample2D('clearcoatNormalMap', 'vClearcoatNormalMapUv')}.xyz * 2.0 - 1.0;
 	clearcoatMapN.xy *= clearcoatNormalScale;
 
 	clearcoatNormal = normalize( tbn2 * clearcoatMapN );
@@ -1859,6 +1926,7 @@ ${useNoise2 ? noise2Shaders : ''}
 
 // Helpers emitted before user shaders so user shaders can call them.
 ${hasStacks ? STACK_HELPERS_GLSL : ''}
+${sharp ? buildSharpSamplerGlsl(sharpAnisotropy) + (hasStacks ? SHARP_STACK_SAMPLER_GLSL : '') : ''}
 ${hasStacks && !stackIndexShader ? 'uniform float stackIndex;' : ''}
 ${
   tileBreaking?.type === 'neyret'
@@ -1874,9 +1942,12 @@ ${
         typeof useTriplanarMapping === 'boolean'
           ? buildDefaultTriplanarParams()
           : { ...buildDefaultTriplanarParams(), ...useTriplanarMapping },
-        (sampler, uv, mean) => buildTileBreakSampleExpr(sampler, uv, tileBreaking, mean),
+        (sampler, uv, mean, grad) =>
+          tileBreaking
+            ? buildTileBreakSampleExpr(sampler, uv, tileBreaking, mean)
+            : sample2D(sampler, uv, sharp, grad),
         tileBreaking ? 'neyret' : 'none',
-        hasStacks
+        hasStacks ? (s, u, _mean, grad) => sampleStk(s, u, sharp, grad) : undefined
       )
     : ''
 }
@@ -2067,7 +2138,7 @@ void main() {
 	#include <alphamap_fragment>
 	#include <alphatest_fragment>
   ${buildRoughnessMapFragment()}
-	#include <metalnessmap_fragment>
+	${sharpSlot('metalnessMap') ? spliceChunk('metalnessmap_fragment', 'texture2D( metalnessMap, vMetalnessMapUv )', sample2D('metalnessMap', 'vMetalnessMapUv')) : '#include <metalnessmap_fragment>'}
 	#include <normal_fragment_begin>
   ${buildNormalMapFragment()}
   ${

@@ -226,11 +226,11 @@ export const TextureDefSchema = z.object({
   wrapS: z.enum(['repeat', 'clamp', 'mirror']).optional(),
   /** Default: 'repeat' */
   wrapT: z.enum(['repeat', 'clamp', 'mirror']).optional(),
-  /** Default: 'nearest' */
+  /** Default: 'linear' above low graphics quality (customShader snaps to texel centers for the nearest look), else 'nearest' */
   magFilter: z.enum(['nearest', 'linear']).optional(),
   /** Default: 'nearestMipLinear' */
   minFilter: z.enum(['nearest', 'nearestMipNearest', 'nearestMipLinear', 'linearMipLinear']).optional(),
-  /** Default: 1 */
+  /** Default: by graphics quality (low 1 / medium 8 / high 16) */
   anisotropy: z.number().optional(),
   /** Default: '' (`NoColorSpace`) */
   colorSpace: z.enum(['srgb', '']).optional(),

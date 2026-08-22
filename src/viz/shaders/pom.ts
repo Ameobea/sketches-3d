@@ -1088,26 +1088,34 @@ export const buildPomNormalApply = (
   `;
   }
 
-  // Single-axis swizzle; axis picked from base normal to match `_pomGenUv`
-  // and avoid the perturbed-normal axis-flip seam.
+  // Mesh UVs: tangent x/y perturb along the measured world gradients of u/v (the UV frame
+  // is orthogonal for conformal unwraps, so the gradients double as ∂p/∂u, ∂p/∂v).
+  if (pomTexturing === 'tangent') {
+    return /* glsl */ `
+  {
+    vec2 _pgT = (texture2D(normalMap, _pomGenUv).xy * 2.0 - 1.0) * normalScale;
+    vec3 _pgP = _pgT.x * _pomGradU / max(length(_pomGradU), 1e-8)
+              + _pgT.y * _pomGradV / max(length(_pomGradV), 1e-8);
+    normal = normalize((viewMatrix * vec4(normalize(_pgP + _pomNormalW), 0.)).xyz);
+  }
+  `;
+  }
+
+  // Generated UVs: single-axis projection picked from the base normal to match `generateUV`
+  // (yz / xz / xy), so tangent x maps to u's world axis and tangent y to v's.
   return /* glsl */ `
   {
-    vec3 _pgN = vWorldNormal;
-    vec3 _pgA = abs(_pgN);
+    vec3 _pgA = abs(vWorldNormal);
     vec2 _pgT = (texture2D(normalMap, _pomGenUv).xy * 2.0 - 1.0) * normalScale;
     vec3 _pgP;
     if (_pgA.x >= _pgA.y && _pgA.x >= _pgA.z) {
-      _pgT.x *= sign(_pgN.x);
-      _pgP = vec3(0.0, _pgT.y, _pgT.x);
+      _pgP = vec3(0.0, _pgT.x, _pgT.y);
     } else if (_pgA.y >= _pgA.z) {
-      _pgT.x *= sign(_pgN.y);
       _pgP = vec3(_pgT.x, 0.0, _pgT.y);
     } else {
-      _pgT.x *= sign(_pgN.z);
       _pgP = vec3(_pgT.x, _pgT.y, 0.0);
     }
-    vec3 _pomNormalDetailW = normalize(_pgP + _pomNormalW);
-    normal = normalize((viewMatrix * vec4(_pomNormalDetailW, 0.)).xyz);
+    normal = normalize((viewMatrix * vec4(normalize(_pgP + _pomNormalW), 0.)).xyz);
   }
   `;
 };

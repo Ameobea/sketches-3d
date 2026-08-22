@@ -135,6 +135,23 @@ export const loadVizConfig = (): VizConfig => {
   return merged;
 };
 
+const ANISOTROPY_BY_QUALITY: Record<GraphicsQuality, number> = {
+  [GraphicsQuality.Low]: 1,
+  [GraphicsQuality.Medium]: 8,
+  [GraphicsQuality.High]: 16,
+};
+
+/** Texture anisotropy for the current graphics quality (three clamps to the GPU limit). */
+export const getDefaultAnisotropy = (): number => ANISOTROPY_BY_QUALITY[loadVizConfig().graphics.quality];
+
+/**
+ * Default texture magnification filter. Hardware anisotropic filtering is dropped when any filter is
+ * NEAREST, so above low quality textures default to LINEAR and `customShader` snaps to texel centers
+ * for the nearest look; low keeps plain NEAREST (no AF, no shader work).
+ */
+export const getDefaultMagFilter = (): 'linear' | 'nearest' =>
+  loadVizConfig().graphics.quality > GraphicsQuality.Low ? 'linear' : 'nearest';
+
 export const getVizConfig = async (): Promise<TransparentWritable<VizConfig>> => {
   if (localStorage.getItem('vizConfig')) {
     const vizConfig = loadVizConfig();

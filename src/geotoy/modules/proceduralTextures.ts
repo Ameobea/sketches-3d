@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 
+import { getDefaultAnisotropy, getDefaultMagFilter } from 'src/viz/conf';
+
 import type { MaterialDef } from 'src/geoscript/materials';
 import type { TextureOutputMeta } from 'src/geoscript/geotoyAPIClient';
 import type { GeneratedTexture } from 'src/geoscript/runner/types';
@@ -64,7 +66,7 @@ const FILTERS: Record<string, THREE.TextureFilter> = {
 
 /** Unset filters fall back to the app-wide `loadTexture` defaults. */
 export const DEFAULT_MIN_FILTER = 'nearest_mipmap_linear';
-export const DEFAULT_MAG_FILTER = 'nearest';
+export const defaultMagFilter = (): string => getDefaultMagFilter();
 export const DEFAULT_FORMAT = 'rgba8';
 
 /** Format options valid for a given synthesis channel count, default first. `rgba8`
@@ -99,9 +101,10 @@ export const getProceduralTexture = (handle: string): THREE.DataTexture | THREE.
       ? new THREE.DataArrayTexture(gray(2), 1, 1, 2)
       : new THREE.DataTexture(gray(1), 1, 1);
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.magFilter = FILTERS[DEFAULT_MAG_FILTER] as THREE.MagnificationTextureFilter;
+    tex.magFilter = FILTERS[defaultMagFilter()] as THREE.MagnificationTextureFilter;
     tex.minFilter = FILTERS[DEFAULT_MIN_FILTER];
     tex.generateMipmaps = true;
+    tex.anisotropy = getDefaultAnisotropy();
     tex.needsUpdate = true;
     registry.set(handle, tex);
   }
@@ -229,9 +232,10 @@ export const uploadProceduralTextures = (textures: GeneratedTexture[]) => {
     // Tightly-packed u8 rows aren't 4-byte multiples in general.
     tex.unpackAlignment = format === 'r8' || format === 'rg8' ? 1 : 4;
     tex.minFilter = FILTERS[minName] ?? FILTERS[DEFAULT_MIN_FILTER];
-    tex.magFilter = (FILTERS[t.magFilter ?? DEFAULT_MAG_FILTER] ??
-      FILTERS[DEFAULT_MAG_FILTER]) as THREE.MagnificationTextureFilter;
+    tex.magFilter = (FILTERS[t.magFilter ?? defaultMagFilter()] ??
+      FILTERS[defaultMagFilter()]) as THREE.MagnificationTextureFilter;
     tex.wrapS = tex.wrapT = WRAP[t.wrap];
+    tex.anisotropy = getDefaultAnisotropy();
     tex.needsUpdate = true;
   }
 };
