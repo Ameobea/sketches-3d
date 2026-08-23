@@ -802,6 +802,7 @@ pub(crate) fn input_ramp_impl(
 ) -> Result<Value, ErrorStack> {
   let fn_name: &'static str = if color { "input_color_ramp" } else { "input_ramp" };
   let c = super::input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let has_override = c.injected.is_some();
   let expected_scalar = !color;
 
   let injected = c
@@ -860,7 +861,8 @@ pub(crate) fn input_ramp_impl(
     step: None,
     style: None,
     options: Vec::new(),
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }

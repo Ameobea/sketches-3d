@@ -123,7 +123,10 @@ pub(crate) fn load_image_impl(
     let has_alpha = rgba.chunks_exact(4).any(|px| px[3] != 255);
     if has_alpha {
       4
-    } else if rgba.chunks_exact(4).all(|px| px[0] == px[1] && px[1] == px[2]) {
+    } else if rgba
+      .chunks_exact(4)
+      .all(|px| px[0] == px[1] && px[1] == px[2])
+    {
       1
     } else {
       3
@@ -159,7 +162,7 @@ pub(crate) fn load_image_impl(
   })))
 }
 
-#[cfg(test)]
+#[cfg(all(not(target_arch = "wasm32"), test))]
 mod tests {
   use crate::{parse_and_eval_program, TextureHandle, Value};
   use base64::Engine;
@@ -212,7 +215,11 @@ mod tests {
     assert_eq!(auto.channels, 3);
     assert!((auto.as_interleaved()[0] - 1.).abs() < 1e-6);
     // sRGB 128/255 decodes to ~0.2158 linear
-    assert!((auto.as_interleaved()[1] - 0.2158).abs() < 1e-3, "{}", auto.as_interleaved()[1]);
+    assert!(
+      (auto.as_interleaved()[1] - 0.2158).abs() < 1e-3,
+      "{}",
+      auto.as_interleaved()[1]
+    );
     assert_eq!(auto.as_interleaved()[2], 0.);
 
     let forced = get_tex(&ctx, "forced");
@@ -278,7 +285,12 @@ field = scatter(
     assert_eq!((t.width, t.height, t.channels), (64, 64, 1));
     let n = t.as_interleaved().len() as f64;
     let mean = t.as_interleaved().iter().map(|&v| v as f64).sum::<f64>() / n;
-    let var = t.as_interleaved().iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
+    let var = t
+      .as_interleaved()
+      .iter()
+      .map(|&v| (v as f64 - mean).powi(2))
+      .sum::<f64>()
+      / n;
     assert!(mean.abs() < 0.15, "mean {mean}");
     assert!((var.sqrt() - 1.).abs() < 0.25, "std {}", var.sqrt());
   }

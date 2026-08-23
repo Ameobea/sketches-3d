@@ -611,6 +611,7 @@ dependencies = [
  "fxhash",
  "geoscript",
  "nanoserde",
+ "pest",
 ]
 
 [[package]]

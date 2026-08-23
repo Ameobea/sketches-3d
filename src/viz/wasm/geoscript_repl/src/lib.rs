@@ -943,6 +943,17 @@ pub fn geoscript_get_rendered_texture_pixels(
   out
 }
 
+/// Per-channel value stats of the first slice: `[min, max, mean, std, nonfinite, q_0 … q_256]`
+/// per channel, concatenated (see `TexStats::to_wire`).
+#[wasm_bindgen]
+pub fn geoscript_get_rendered_texture_stats(
+  ctx: *const GeoscriptReplCtx,
+  tex_ix: usize,
+) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  texture_slices(ctx, tex_ix)[0].stats().to_wire()
+}
+
 /// RGBA-expanded f32 pixels (all slices concatenated; gray → rgb, b zero-filled, a=1).
 /// Fetched by the host only for 3-channel textures — the one channel count whose raw
 /// pixels can't be uploaded to a GPU-mippable float format directly.
@@ -1252,7 +1263,9 @@ struct RenderedControlWire {
   step: Option<f64>,
   style: Option<String>,
   options: Vec<String>,
-  histogram: Option<Vec<u32>>,
+  /// Per-channel stats table (see `TexStats::to_wire`) for `image_levels`; null otherwise.
+  stats: Option<Vec<f32>>,
+  has_override: bool,
 }
 
 #[wasm_bindgen]
@@ -1287,7 +1300,8 @@ pub fn geoscript_repl_get_rendered_control(
       step: None,
       style: None,
       options: Vec::new(),
-      histogram: None,
+      stats: None,
+      has_override: c.has_override,
     }
     .serialize_json();
   }
@@ -1325,7 +1339,8 @@ pub fn geoscript_repl_get_rendered_control(
     step: c.step,
     style: c.style.clone(),
     options: c.options.clone(),
-    histogram: c.histogram.clone(),
+    stats: c.stats.as_ref().map(|s| s.to_wire()),
+    has_override: c.has_override,
   }
   .serialize_json()
 }
@@ -1839,7 +1854,7 @@ mod tests {
     let (_, default_px, control_json) = run(p, None);
     assert!((default_px - 0.5 / 8.).abs() < 1e-6);
     assert!(control_json.contains("\"kind\":\"image_levels\""), "{control_json}");
-    assert!(control_json.contains("\"histogram\":["), "{control_json}");
+    assert!(control_json.contains("\"stats\":["), "{control_json}");
 
     let (_, a_px, a_json) = run(p, Some([0., 1., 0., 0.5, 1.]));
     assert!((a_px - 0.5 * 0.5 / 8.).abs() < 1e-6, "{a_px}");
@@ -2006,6 +2021,7 @@ mod tests {
     let wire = geoscript_repl_get_rendered_control(p, 0);
     assert!(wire.contains("image_levels"), "{wire}");
     assert!(wire.contains("\"value\":[0.0,1.0,0.0,1.0,1.0]"), "identity in wire order: {wire}");
+    assert!(wire.contains("\"has_override\":false"), "{wire}");
 
     // in_hi=0.5 doubles the black end, proving slot 1 drives in_hi and not some other param.
     #[derive(SerJson)]
@@ -2028,6 +2044,9 @@ mod tests {
     unsafe { (*p).last_result.as_ref().unwrap() };
     let json = geoscript_repl_get_last_value_json(p, 4);
     assert!(json.contains("0.25"), "in_hi=0.5 must double the black end: {json}");
+    // No reset between runs here, so the second eval's control is the last entry.
+    let wire = geoscript_repl_get_rendered_control(p, geoscript_repl_get_rendered_control_count(p) - 1);
+    assert!(wire.contains("\"has_override\":true"), "{wire}");
   }
 
   #[test]

@@ -37,6 +37,37 @@ export interface DefinitionLocation {
   end_col: number;
 }
 
+/** One `input_*` site to rewrite; payload in the injection-wire shape (`controlValueToWire`). */
+export interface InputDefaultRequest {
+  handle_id: string;
+  kind: string;
+  value: number[];
+  str_value: string | null;
+}
+
+/** UTF-16 offsets into the source the request was planned against. */
+export interface SourceEdit {
+  from: number;
+  to: number;
+  insert: string;
+}
+
+export interface RewriteInputDefaultsResult {
+  edits: SourceEdit[];
+  errors: { handle_id: string; message: string }[];
+}
+
+/** Splices non-overlapping edits (all relative to `src`) into a new string. */
+export const applySourceEdits = (src: string, edits: SourceEdit[]): string => {
+  let out = '';
+  let cursor = 0;
+  for (const e of [...edits].sort((a, b) => a.from - b.from)) {
+    out += src.slice(cursor, e.from) + e.insert;
+    cursor = e.to;
+  }
+  return out + src.slice(cursor);
+};
+
 export class AnalysisClient {
   private worker: Worker;
   private proxy: Comlink.Remote<AnalysisWorkerMethods>;
@@ -88,6 +119,14 @@ export class AnalysisClient {
     await this.initPromise;
     const json = await this.proxy.gotoDefinition(src, line, col, includePrelude, ambientSrc);
     return json ? JSON.parse(json) : null;
+  }
+
+  async rewriteInputDefaults(
+    src: string,
+    requests: InputDefaultRequest[]
+  ): Promise<RewriteInputDefaultsResult> {
+    await this.initPromise;
+    return JSON.parse(await this.proxy.rewriteInputDefaults(src, JSON.stringify(requests)));
   }
 
   terminate(): void {

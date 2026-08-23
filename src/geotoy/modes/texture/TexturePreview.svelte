@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { TextureChannel, TextureOutputGpuParams } from 'src/geoscript/geotoyAPIClient';
   import type { GeneratedTexture } from 'src/geoscript/runner/runner';
-  import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
+  import { shownChannels, type TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
   import {
     createTexturePreviewGl,
     type PreviewCell,
@@ -15,6 +15,8 @@
     formatOptionsForChannels,
   } from 'src/geotoy/modules/proceduralTextures';
   import { setTopLeftSlot, topLeftOffset, TopLeftSlot } from 'src/geotoy/modules/topLeftOverlay.svelte';
+  import ValueHistogram from 'src/viz/UI/ValueHistogram.svelte';
+  import { padWindow } from 'src/geoscript/textureStats';
 
   let {
     mode,
@@ -96,6 +98,7 @@
       w: grid.w,
       h: grid.h,
       srgb: mode.srgbFor(tex),
+      range: mode.displayWindow(tex),
     }))
   );
   /** Cell under a point (CSS px); gutters and empty cells snap to the nearest. */
@@ -179,6 +182,59 @@
     mode.stackT = v;
   };
 
+  const p3 = (v: number) => (Number.isFinite(v) ? v.toPrecision(3) : String(v));
+  /** Constant 9-char width so the readout doesn't resize the panel as the pointer moves. */
+  const fw = (v: number) =>
+    (Number.isFinite(v) ? (Math.abs(v) < 1e4 ? v.toFixed(3) : v.toExponential(2)) : String(v)).padStart(9);
+
+  /** Stats rows + histogram window for the selected output under the current channel. */
+  const statsView = $derived.by(() => {
+    const sel = mode.selected;
+    if (!sel || !mode.statsPanel || !sel.stats.length) return null;
+    const channels = shownChannels(sel, mode.channel).filter(c => sel.stats[c]);
+    const rows = channels.map(c => ({ c, name: sel.channels === 1 ? 'value' : 'rgba'[c], s: sel.stats[c] }));
+    let lo = 0;
+    let hi = 1;
+    let nonfinite = 0;
+    for (const { s } of rows) {
+      lo = Math.min(lo, s.min);
+      hi = Math.max(hi, s.max);
+      nonfinite += s.nonfinite;
+    }
+    return { channels, rows, lo, hi, win: padWindow(lo, hi), nonfinite };
+  });
+
+  /** `u, v → values` for the texel under a viewport point, wrapped like the shader. */
+  const readoutAt = (px: number, py: number): string | null => {
+    if (!ref || !mode.center || mode.zoom === null || !cells.length) return null;
+    const { index, cx, cy } = cellAt(px, py);
+    const t = cells[index]?.tex;
+    if (!t) return null;
+    const u = mode.center[0] + (px - cx) / (mode.zoom * ref.width);
+    const v = mode.center[1] - (py - cy) / (mode.zoom * ref.height);
+    const ext = mode.tiled ? 1.5 : 0.5;
+    if (Math.abs(u - 0.5) > ext || Math.abs(v - 0.5) > ext) return null;
+    const wrap = (x: number) =>
+      t.wrap === 'repeat'
+        ? x - Math.floor(x)
+        : t.wrap === 'clamp'
+          ? Math.min(1, Math.max(0, x))
+          : 1 - Math.abs((((x % 2) + 2) % 2) - 1);
+    const wu = wrap(u);
+    const wv = wrap(v);
+    const px4 = t.channels === 3 ? t.rgba : t.data;
+    if (!px4) return null;
+    const ch = t.channels === 3 ? 4 : t.channels;
+    const x = Math.min(t.width - 1, Math.floor(wu * t.width));
+    const y = Math.min(t.height - 1, Math.floor(wv * t.height));
+    const layer = t.layers > 1 ? Math.round(mode.stackT * (t.layers - 1)) : 0;
+    const base = ((layer * t.height + y) * t.width + x) * ch;
+    const vals = shownChannels(t, mode.channel).map(c => fw(px4[base + c]));
+    const name = t !== mode.selected ? `${t.name} · ` : '';
+    return `${name}${wu.toFixed(3)}, ${wv.toFixed(3)} →${vals.join('')}`;
+  };
+  let hover = $state<string | null>(null);
+
   let dragLast: [number, number] | null = null;
   let dragDist = 0;
   const onPointerDown = (e: PointerEvent) => {
@@ -187,6 +243,7 @@
     dragDist = 0;
   };
   const onPointerMove = (e: PointerEvent) => {
+    hover = readoutAt(e.clientX, e.clientY);
     if (!dragLast || !ref || !mode.center || mode.zoom === null) return;
     const dx = e.clientX - dragLast[0];
     const dy = e.clientY - dragLast[1];
@@ -216,6 +273,7 @@
   onpointerdown={onPointerDown}
   onpointermove={onPointerMove}
   onpointerup={onPointerUp}
+  onpointerleave={() => (hover = null)}
   ondblclick={fitView}
 ></canvas>
 
@@ -263,6 +321,14 @@
         <button class="chip" class:active={mode.srgb} onclick={() => (mode.srgbOverride = !mode.srgb)}>
           srgb
         </button>
+        <button
+          class="chip"
+          class:active={mode.range === 'fit'}
+          title="display range: the data's min–max (auto for 1-channel outputs without a usage) vs. the 0–1 image contract"
+          onclick={() => (mode.displayRange = mode.range === 'fit' ? 'unit' : 'fit')}
+        >
+          fit
+        </button>
         {#if mode.visibleTextures.length > 1}
           <button class="chip" class:active={mode.layout === 'grid'} onclick={mode.toggleLayout} title="G">
             grid
@@ -298,6 +364,38 @@
       {/if}
       <span class="label">wrap</span>
       <span class="value">{sel.wrap}</span>
+      {#if statsView}
+        {#each statsView.rows as row (row.c)}
+          <span class="label">{row.name}</span>
+          <span class="value num">
+            {p3(row.s.min)} … {p3(row.s.max)} · μ {p3(row.s.mean)} · σ {p3(row.s.std)}
+          </span>
+        {/each}
+        {#if statsView.nonfinite > 0}
+          <span class="label warn">non-finite</span>
+          <span class="value warn">{statsView.nonfinite} texels</span>
+        {/if}
+        <button class="label disclosure" onclick={mode.toggleStatsHistogram}>
+          {mode.statsHistogram ? '▾' : '▸'} histogram
+        </button>
+        <span class="value num">
+          {mode.statsHistogram ? `${p3(statsView.lo)} … ${p3(statsView.hi)}` : ''}
+        </span>
+        {#if mode.statsHistogram}
+          <div class="hist">
+            <ValueHistogram
+              stats={sel.stats}
+              lo={statsView.win[0]}
+              hi={statsView.win[1]}
+              width={200}
+              height={44}
+              channels={statsView.channels}
+            />
+          </div>
+        {/if}
+        <span class="label">cursor</span>
+        <span class="value num pre">{hover ?? '—'}</span>
+      {/if}
       <span class="label">format</span>
       <select class="value" value={fmt} onchange={e => setParam('format', e.currentTarget.value)}>
         {#each formatOptionsForChannels(sel.channels) as f (f)}
@@ -470,6 +568,36 @@
 
   .value.accent {
     color: #0ff;
+  }
+
+  .value.num {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .value.pre {
+    white-space: pre;
+  }
+
+  .warn {
+    color: #e9a23b;
+  }
+
+  .disclosure {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .disclosure:hover {
+    color: #ddd;
+  }
+
+  .hist {
+    grid-column: 1 / -1;
   }
 
   select.value {

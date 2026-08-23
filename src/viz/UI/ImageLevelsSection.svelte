@@ -2,18 +2,24 @@
   import type { RenderedControl } from 'src/geoscript/runner/types';
   import type { ImageLevelsJson } from 'src/geoscript/geotoyAPIClient';
   import { controlKey } from 'src/geoscript/controlsUi';
-  import { dragAlongBar, redrawOn } from 'src/viz/UI/controlSection';
+  import ValueHistogram from 'src/viz/UI/ValueHistogram.svelte';
+  import { padWindow } from 'src/geoscript/textureStats';
+  import { dragAlongBar } from 'src/viz/UI/controlSection';
+  import RowMenu from 'src/viz/UI/RowMenu.svelte';
+  import type { SettingAction } from 'src/viz/UI/ControlPanel';
   import 'src/viz/UI/controlSection.css';
 
   let {
     controls,
     getValue,
     onChange,
+    actions,
   }: {
     controls: RenderedControl[];
     /** Optimistic value for a control key (panel state), so edits render immediately. */
     getValue: (key: string) => ImageLevelsJson | null;
     onChange: (key: string, levels: ImageLevelsJson) => void;
+    actions?: (c: RenderedControl) => SettingAction[];
   } = $props();
 
   // In-flight edit, rendered locally until released (the commit re-runs the program).
@@ -24,11 +30,20 @@
       .filter(c => c.kind === 'image_levels')
       .map(c => {
         const key = controlKey(c);
+        // Histogram window: the unit interval widened to the data, so [0, 1] inputs look as
+        // before while signed / Gaussian inputs get a real histogram and draggable range.
+        let lo = 0;
+        let hi = 1;
+        for (const s of c.stats ?? []) {
+          lo = Math.min(lo, s.min);
+          hi = Math.max(hi, s.max);
+        }
         return {
           c,
           key,
           label: c.label ?? c.handleId,
           levels: draft?.key === key ? draft.levels : getValue(key),
+          win: padWindow(lo, hi),
         };
       })
       .filter((r): r is typeof r & { levels: ImageLevelsJson } => r.levels !== null)
@@ -37,6 +52,10 @@
   const GAMMA_MIN = 0.1;
   const GAMMA_MAX = 10;
   const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+  type Row = (typeof rows)[number];
+  /** Bar fraction of a value within the row's histogram window (clamped for display). */
+  const frac = (row: Row, v: number) => clamp01((v - row.win[0]) / (row.win[1] - row.win[0]));
+  const valueAt = (row: Row, f: number) => row.win[0] + f * (row.win[1] - row.win[0]);
 
   // Midtone marker position between in_lo/in_hi: the input fraction that maps to 0.5
   // output, i.e. p = 0.5^gamma (gamma 2 sits nearer black and brightens).
@@ -45,33 +64,6 @@
   // range the number field accepts (a tighter frac clamp silently truncates on click).
   const fracToGamma = (p: number) =>
     Math.log(Math.min(0.5 ** GAMMA_MIN, Math.max(0.5 ** GAMMA_MAX, p))) / Math.log(0.5);
-
-  const drawHistogram = (canvas: HTMLCanvasElement, row: { c: RenderedControl; levels: ImageLevelsJson }) => {
-    const ctx = canvas.getContext('2d')!;
-    const { width: w, height: h } = canvas;
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillRect(0, 0, w, h);
-    const hist = row.c.histogram;
-    if (hist && hist.length > 0) {
-      const peak = Math.max(1, ...hist);
-      ctx.fillStyle = '#7a7a7a';
-      const bw = w / hist.length;
-      for (let i = 0; i < hist.length; i++) {
-        // sqrt scaling keeps sparse bins visible next to dominant peaks
-        const bh = Math.sqrt(hist[i] / peak) * (h - 2);
-        if (bh > 0) ctx.fillRect(i * bw, h - bh, Math.max(1, bw), bh);
-      }
-    }
-    // Shade outside the input window
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-    const x0 = clamp01(row.levels.in_lo) * w;
-    const x1 = clamp01(row.levels.in_hi) * w;
-    if (x0 > 0) ctx.fillRect(0, 0, x0, h);
-    if (x1 < w) ctx.fillRect(x1, 0, w - x1, h);
-  };
-
-  const histCanvas = redrawOn(drawHistogram);
 
   const commit = (key: string, levels: ImageLevelsJson) => {
     draft = null;
@@ -82,7 +74,7 @@
     draft = { key, levels };
   };
 
-  /** Marker drag: maps pointer x to [0,1], previews, commits on release. */
+  /** Marker drag: maps pointer x to a bar fraction, previews, commits on release. */
   const dragMarker = (e: PointerEvent, apply: (frac: number) => ImageLevelsJson, key: string) => {
     let live: ImageLevelsJson | null = null;
     dragAlongBar(
@@ -126,36 +118,51 @@
   <div class="ctl-section levels">
     {#each rows as row (row.key)}
       <div class="ctl-head">
-        <span class="ctl-head-label">{row.label}</span>
-        <button
-          class="ctl-btn reset"
-          disabled={isIdentity(row.levels)}
-          title="reset to identity"
-          onclick={() => commit(row.key, { ...IDENTITY })}
-        >
-          reset
-        </button>
+        <span class="ctl-head-label">
+          {#if row.c.hasOverride}<i class="ctl-dot" title="stored override"></i>{/if}{row.label}
+        </span>
+        <div class="ctl-head-right">
+          <button
+            class="ctl-btn reset"
+            disabled={isIdentity(row.levels)}
+            title="reset to identity"
+            onclick={() => commit(row.key, { ...IDENTITY })}
+          >
+            reset
+          </button>
+          {#if actions}
+            <RowMenu actions={actions(row.c)} />
+          {/if}
+        </div>
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div class="ctl-bar-wrap hist-wrap">
-        <canvas class="ctl-canvas hist" width={228} height={48} use:histCanvas={row}></canvas>
+        <div class="hist">
+          <ValueHistogram stats={row.c.stats ?? []} lo={row.win[0]} hi={row.win[1]} width={228} height={48} />
+        </div>
+        <div class="shade" style="left: 0; width: {frac(row, row.levels.in_lo) * 100}%"></div>
+        <div class="shade" style="left: {frac(row, row.levels.in_hi) * 100}%; right: 0"></div>
         <div
           class="ctl-marker marker in-lo"
           title="input black point"
-          style="left: {clamp01(row.levels.in_lo) * 100}%"
+          style="left: {frac(row, row.levels.in_lo) * 100}%"
           onpointerdown={e =>
-            dragMarker(e, f => ({ ...row.levels, in_lo: Math.min(f, row.levels.in_hi - 0.004) }), row.key)}
+            dragMarker(
+              e,
+              f => ({ ...row.levels, in_lo: Math.min(valueAt(row, f), row.levels.in_hi - 0.004) }),
+              row.key
+            )}
         ></div>
         <div
           class="ctl-marker marker gamma"
           title="gamma (midtones)"
-          style="left: {clamp01(gammaFracAbs(row.levels)) * 100}%"
+          style="left: {frac(row, gammaFracAbs(row.levels)) * 100}%"
           onpointerdown={e =>
             dragMarker(
               e,
               f => {
                 const span = Math.max(1e-6, row.levels.in_hi - row.levels.in_lo);
-                return { ...row.levels, gamma: fracToGamma((f - row.levels.in_lo) / span) };
+                return { ...row.levels, gamma: fracToGamma((valueAt(row, f) - row.levels.in_lo) / span) };
               },
               row.key
             )}
@@ -163,9 +170,13 @@
         <div
           class="ctl-marker marker in-hi"
           title="input white point"
-          style="left: {clamp01(row.levels.in_hi) * 100}%"
+          style="left: {frac(row, row.levels.in_hi) * 100}%"
           onpointerdown={e =>
-            dragMarker(e, f => ({ ...row.levels, in_hi: Math.max(f, row.levels.in_lo + 0.004) }), row.key)}
+            dragMarker(
+              e,
+              f => ({ ...row.levels, in_hi: Math.max(valueAt(row, f), row.levels.in_lo + 0.004) }),
+              row.key
+            )}
         ></div>
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -211,6 +222,16 @@
   }
   .hist {
     height: 48px;
+    border: 1px solid var(--ctl-field-border);
+    box-sizing: border-box;
+    overflow: hidden;
+  }
+  .shade {
+    position: absolute;
+    top: 0;
+    height: 48px;
+    background: rgba(0, 0, 0, 0.55);
+    pointer-events: none;
   }
   .out-wrap {
     height: 18px;

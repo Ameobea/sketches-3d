@@ -243,6 +243,9 @@ enum UniShape {
   /// A sequence unrolled to exactly `len` elements: the count is plan structure, so a
   /// different length on a cache-hit run evicts the plan and recompiles.
   Seq { len: u16 },
+  /// A texture gathered by `sample`; its channel count sizes the step's outputs, so a
+  /// change recompiles like `Seq`.
+  Texture(u8),
 }
 
 struct UniStep {
@@ -313,10 +316,25 @@ struct DynStep {
   dst: ArrayVec<u16, 4>,
 }
 
+/// `sample(tex, uv, filter, wrap)` over a varying coordinate field: one gather pass that
+/// resolves each texel's address/weights once and reads every plane of the source.
+struct GatherStep {
+  /// Uniform-table indices: the texture, and its `filter` / `wrap` string args.
+  tex: u16,
+  filter: u16,
+  wrap: u16,
+  u: Src,
+  v: Src,
+  dst: ArrayVec<u16, 4>,
+  /// Index into the run's resolved-gather table.
+  rix: u16,
+}
+
 enum Step {
   Op { kind: OpKind, dst: u16, a: Src, b: Src, c: Src },
   Fbm(FbmStep),
   Dyn(DynStep),
+  Gather(GatherStep),
 }
 
 enum PlanOut {
@@ -334,6 +352,7 @@ pub(crate) struct Plan {
   branch_aborts: Vec<BranchAbort>,
   unis: Vec<UniStep>,
   n_fbm: u16,
+  n_gather: u16,
   /// Step index of the last read per register (`u32::MAX` = output, never freed).
   reg_last: Vec<u32>,
   out: PlanOut,
@@ -368,7 +387,16 @@ struct UniRun {
   vals: Vec<Value>,
   chans: Vec<[f32; 4]>,
   fbm: Vec<FbmResolved>,
+  /// `None` for steps whose guard is off this run.
+  gather: Vec<Option<GatherResolved>>,
   guards: Vec<bool>,
+}
+
+#[derive(Clone)]
+struct GatherResolved {
+  tex: Rc<TextureHandle>,
+  filter: kern::SampleFilter,
+  wrap: crate::TextureWrap,
 }
 
 #[derive(Clone, Copy)]
@@ -457,10 +485,14 @@ impl From<Src> for SrcKey {
   }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum UniKey {
   /// Numeric/bool literal by type tag + bit pattern.
   Val(u8, [u32; 4]),
+  /// String literal / default (`filter="nearest"`), so repeated gathers share their args.
+  Str(Rc<str>),
+  /// Texture literal (a const-folded capture) by handle identity; the AST keeps it alive.
+  Tex(usize),
   Capture(u16, u16),
 }
 
@@ -476,6 +508,16 @@ enum CseKey {
     pos: [SrcKey; 3],
     params: [u16; 5],
     tileable: Option<u16>,
+    guard: Option<u16>,
+  },
+  /// One entry per output channel, inserted together.
+  Gather {
+    tex: u16,
+    u: SrcKey,
+    v: SrcKey,
+    filter: u16,
+    wrap: u16,
+    chan: u8,
     guard: Option<u16>,
   },
 }
@@ -659,6 +701,9 @@ fn capture_sig(closure: &Closure) -> u64 {
   let mut h = FxHasher::default();
   for v in closure.captures.iter() {
     v.type_flag_ix().hash(&mut h);
+    if let Value::Texture(t) = v {
+      (t.channels as u8).hash(&mut h);
+    }
     if let Value::Callable(c) = v {
       match &**c {
         Callable::Builtin { fn_entry_ix, .. } => (1u8, *fn_entry_ix as u64).hash(&mut h),
@@ -694,6 +739,7 @@ struct Compiler<'a> {
   uni_vals: Vec<Value>,
   n_regs: u16,
   n_fbm: u16,
+  n_gather: u16,
   /// Ops answered at emission by `peephole` (exact identities / all-constant folds).
   n_folded: u16,
   /// Value-numbering table for CSE: `(op, operands, guard)` → the register already holding
@@ -826,6 +872,9 @@ impl<'a> Compiler<'a> {
           Value::Vec2(v) => ([v.x.to_bits(), v.y.to_bits(), 0, 0], 4),
           Value::Vec3(v) => ([v.x.to_bits(), v.y.to_bits(), v.z.to_bits(), 0], 5),
           Value::Vec4(v) => ([v.x.to_bits(), v.y.to_bits(), v.z.to_bits(), v.w.to_bits()], 6),
+          Value::String(s) => return Some(UniKey::Str(s.as_str().into())),
+          Value::Texture(t) => return Some(UniKey::Tex(Rc::as_ptr(t) as usize)),
+          Value::Nil => ([0; 4], 7),
           _ => return None,
         };
         Some(UniKey::Val(tag, bits))
@@ -837,10 +886,10 @@ impl<'a> Compiler<'a> {
 
   fn push_uni(&mut self, src: UniSrc, val: Value, slot: Option<u16>, hint: Option<ArgType>) -> u16 {
     let key = if slot.is_none() && hint.is_none() { self.uni_key(&src, &val) } else { None };
-    if let Some(k) = key {
+    if let Some(k) = &key {
       let mut g = self.guard;
       loop {
-        if let Some(&uix) = self.uni_cse.get(&(k, g)) {
+        if let Some(&uix) = self.uni_cse.get(&(k.clone(), g)) {
           return uix;
         }
         let Some(gi) = g else { break };
@@ -1047,12 +1096,16 @@ impl<'a> Compiler<'a> {
 
   fn emit_uniform(&mut self, expr: &Expr) -> Result<AbsVal, CErr> {
     let val = self.eval_uniform_now(expr)?;
-    Ok(AbsVal::U(self.push_uni(
-      UniSrc::Expr(expr.clone()),
-      val,
-      None,
-      None,
-    )))
+    // A bare capture read takes the keyed form so repeated uses (`sample(src, …)` twice)
+    // share one table entry and downstream CSE can see them as equal.
+    let src = match expr {
+      Expr::Ident {
+        res: VarRes::Capture(ix),
+        ..
+      } => UniSrc::Capture(*ix),
+      _ => UniSrc::Expr(expr.clone()),
+    };
+    Ok(AbsVal::U(self.push_uni(src, val, None, None)))
   }
 
   // -------------------------------------------------------------------------------------
@@ -1639,7 +1692,7 @@ impl<'a> Compiler<'a> {
       "sin", "cos", "tan", "asin", "acos", "atan", "sqrt", "exp", "log2", "floor", "ceil",
       "round", "fract", "trunc", "sigmoid", "abs", "pow", "atan2", "min", "max", "clamp",
       "smoothstep", "lerp", "len", "dot", "distance", "normalize", "vec2", "vec3", "vec4", "fbm",
-      "linearstep", "remap", "add", "sub", "mul", "div",
+      "linearstep", "remap", "add", "sub", "mul", "div", "sample",
     ];
     if !WHITELIST.contains(name) {
       return bail(format!("builtin `{name}` is not vectorizable"), loc);
@@ -1887,6 +1940,7 @@ impl<'a> Compiler<'a> {
         Ok(VV::num(chans))
       }
       ("fbm", _) => self.lower_fbm(def_ix, &mut arg, loc),
+      ("sample", _) => self.lower_sample(&mut arg, loc),
       _ => bail(format!("`{name}` def {def_ix} is not vectorizable"), loc),
     }
   }
@@ -2003,6 +2057,65 @@ impl<'a> Compiler<'a> {
     }));
     self.cse.insert(key(self.guard), Src::Reg(dst));
     Ok(VV::num([Src::Reg(dst)].into_iter().collect()))
+  }
+
+  fn lower_sample(
+    &mut self,
+    arg: &mut dyn FnMut(&mut Self, usize) -> AbsVal,
+    loc: SourceLoc,
+  ) -> Result<AbsVal, CErr> {
+    let uni_of = |v: AbsVal, what: &str| -> Result<u16, CErr> {
+      match v {
+        AbsVal::U(uix) => Ok(uix),
+        AbsVal::V(_) | AbsVal::Seq(_) => bail(format!("varying sample `{what}` argument"), loc),
+      }
+    };
+    let tex = uni_of(arg(self, 0), "texture")?;
+    let channels = match self.uni_val(tex) {
+      Value::Texture(t) => t.channels as u8,
+      _ => return bail("sample on a non-texture", loc),
+    };
+    self.unis[tex as usize].shape = UniShape::Texture(channels);
+    let uv = arg(self, 1);
+    if self.arity(&uv)? != 2 {
+      return bail("sample uv must be a vec2", loc);
+    }
+    let (u, v) = (self.chan(&uv, 0), self.chan(&uv, 1));
+    let filter = uni_of(arg(self, 2), "filter")?;
+    let wrap = uni_of(arg(self, 3), "wrap")?;
+
+    let key = |chan: u8, guard| CseKey::Gather {
+      tex,
+      u: u.into(),
+      v: v.into(),
+      filter,
+      wrap,
+      chan,
+      guard,
+    };
+    if let Some(s0) = self.cse_lookup(&|g| key(0, g)) {
+      let mut chans: ArrayVec<Src, 4> = [s0].into_iter().collect();
+      for c in 1..channels {
+        chans.push(self.cse_lookup(&|g| key(c, g)).expect("gather channels are inserted together"));
+      }
+      return Ok(VV::num(chans));
+    }
+    let dst: ArrayVec<u16, 4> = (0..channels).map(|_| self.alloc_reg()).collect();
+    for (c, r) in dst.iter().enumerate() {
+      self.cse.insert(key(c as u8, self.guard), Src::Reg(*r));
+    }
+    let rix = self.n_gather;
+    self.n_gather += 1;
+    self.push_step(Step::Gather(GatherStep {
+      tex,
+      filter,
+      wrap,
+      u,
+      v,
+      dst: dst.clone(),
+      rix,
+    }));
+    Ok(VV::num(dst.iter().map(|r| Src::Reg(*r)).collect()))
   }
 
   // -------------------------------------------------------------------------------------
@@ -3140,6 +3253,13 @@ fn eval_uniforms_inner(
       }
       seqs.insert(uix as u16, Rc::new(items));
     }
+    if let UniShape::Texture(ch) = step.shape {
+      match &val {
+        Value::Texture(t) if t.channels as u8 == ch => {}
+        Value::Texture(_) => return Err(UniErr::Recompile),
+        _ => return Err(UniErr::Abort),
+      }
+    }
     if let Some(hint) = &step.hint {
       if hint.validate_val(&val).is_err() {
         return Err(UniErr::Abort);
@@ -3202,9 +3322,34 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>, guards: Vec<bool>) -> Option
         Value::Bool(b) => chans[i] = [*b as u8 as f32; 4],
         _ => return None,
       },
+      UniShape::Texture(ch) => match val {
+        Value::Texture(t) if t.channels as u8 == ch => {}
+        _ => return None,
+      },
       // Length-checked during evaluation, where the consumed elements are needed anyway.
       UniShape::Any | UniShape::Seq { .. } => {}
     }
+  }
+
+  let mut gather = Vec::with_capacity(plan.n_gather as usize);
+  for (ix, step) in plan.steps.iter().enumerate() {
+    let Step::Gather(g) = step else { continue };
+    debug_assert_eq!(g.rix as usize, gather.len());
+    if plan.step_guards[ix].is_some_and(|gd| !guards[gd as usize]) {
+      gather.push(None);
+      continue;
+    }
+    let Value::Texture(tex) = &vals[g.tex as usize] else { return None };
+    let filter = kern::SampleFilter::from_name(vals[g.filter as usize].as_str()?).ok()?;
+    let wrap = match &vals[g.wrap as usize] {
+      Value::Nil => tex.wrap,
+      v => crate::TextureWrap::from_name(v.as_str()?).ok()?,
+    };
+    gather.push(Some(GatherResolved {
+      tex: Rc::clone(tex),
+      filter,
+      wrap,
+    }));
   }
 
   let mut fbm = vec![
@@ -3255,6 +3400,7 @@ fn validate_uniforms(plan: &Plan, vals: Vec<Value>, guards: Vec<bool>) -> Option
     vals,
     chans,
     fbm,
+    gather,
     guards,
   })
 }
@@ -3314,6 +3460,16 @@ impl<'a> Exec<'a> {
         }
       }
     }
+  }
+}
+
+fn coord_plane<'a>(ex: &'a Exec, s: Src, splat: &'a Option<Vec<f32>>) -> &'a [f32] {
+  match splat {
+    Some(b) => b,
+    None => match ex.resolve(s) {
+      RSrc::S(sl) => sl,
+      RSrc::K(_) => unreachable!("uniform coordinates are splatted"),
+    },
   }
 }
 
@@ -3518,6 +3674,40 @@ fn exec(
           }
         }
         ex.regs[f.dst as usize] = Some(buf);
+        ex.release_dead(plan, step_ix);
+      }
+      Step::Gather(g) => {
+        let r = uni.gather[g.rix as usize].as_ref().expect("resolved for every unguarded gather");
+        let mut outs: Vec<Vec<f32>> = (0..g.dst.len()).map(|_| ex.pool.pop().unwrap_or_default()).collect();
+        // A uniform coordinate (`sample(t, v2(uv.x, .5))`) is splatted into a scratch plane.
+        let splat = |ex: &mut Exec, s: Src| match ex.resolve(s) {
+          RSrc::K(k) => {
+            let mut b = ex.pool.pop().unwrap_or_default();
+            b.clear();
+            b.resize(n, k);
+            Some(b)
+          }
+          RSrc::S(_) => None,
+        };
+        let (ut, vt) = (splat(&mut ex, g.u), splat(&mut ex, g.v));
+        {
+          let (u, v) = (coord_plane(&ex, g.u, &ut), coord_plane(&ex, g.v, &vt));
+          let (planes, origin, x_pitch, y_pitch) = r.tex.gather_parts();
+          let src = kern::GatherSrc {
+            planes: &planes,
+            w: r.tex.width,
+            h: r.tex.height,
+            origin,
+            x_pitch,
+            y_pitch,
+            wrap: r.wrap,
+          };
+          kern::gather(&src, r.filter, u, v, &mut outs);
+        }
+        ex.pool.extend(ut.into_iter().chain(vt));
+        for (d, o) in g.dst.iter().zip(outs) {
+          ex.regs[*d as usize] = Some(o);
+        }
         ex.release_dead(plan, step_ix);
       }
       Step::Dyn(d) => {
@@ -3886,6 +4076,7 @@ fn compile(
     uni_vals: Vec::new(),
     n_regs: 0,
     n_fbm: 0,
+    n_gather: 0,
     n_folded: 0,
     cse: FxHashMap::default(),
     uni_cse: FxHashMap::default(),
@@ -4037,6 +4228,7 @@ fn compile(
       branch_aborts: compiler.branch_aborts,
       unis: compiler.unis,
       n_fbm: compiler.n_fbm,
+      n_gather: compiler.n_gather,
       reg_last,
       out,
       peak_regs: peak.max(1),
@@ -4058,6 +4250,7 @@ fn step_dsts(step: &Step) -> &[u16] {
     Step::Op { dst, .. } => std::slice::from_ref(dst),
     Step::Fbm(f) => std::slice::from_ref(&f.dst),
     Step::Dyn(d) => &d.dst,
+    Step::Gather(g) => &g.dst,
   }
 }
 
@@ -4066,6 +4259,7 @@ fn step_srcs(step: &Step) -> ArrayVec<Src, 16> {
   match step {
     Step::Op { kind, a, b, c, .. } => out.extend([*a, *b, *c].into_iter().take(op_arity(*kind))),
     Step::Fbm(f) => out.extend(f.pos.iter().copied().take(f.dim as usize)),
+    Step::Gather(g) => out.extend([g.u, g.v]),
     Step::Dyn(d) => {
       for chans in &d.args {
         for s in chans {
@@ -4484,6 +4678,7 @@ fn render_plan(
         UniShape::Builtin(_) => "builtin".into(),
         UniShape::ClosureBody(_) => "closure".into(),
         UniShape::Dynamic(ar) => format!("dynamic→{ar}ch"),
+        UniShape::Texture(ch) => format!("texture {ch}ch"),
         UniShape::Any => "raw".into(),
       };
       let guard = match step.guard {
@@ -4533,6 +4728,20 @@ fn render_plan(
             f.dim,
             pos.join(", ")
           ),
+        )
+      }
+      Step::Gather(g) => {
+        let dst: Vec<String> = g.dst.iter().map(|r| format!("r{r}")).collect();
+        let src = match &uni.gather[g.rix as usize] {
+          Some(r) => format!(
+            "{}x{}x{} {:?} {:?}",
+            r.tex.width, r.tex.height, r.tex.channels, r.filter, r.wrap
+          ),
+          None => "—".into(),
+        };
+        (
+          dst.join(","),
+          format!("gather  ({}, {}) tex=u{} {src}", src_name(g.u, plan), src_name(g.v, plan), g.tex),
         )
       }
       Step::Dyn(d) => {
@@ -4675,6 +4884,91 @@ out | render_texture(name="o")
       reps.iter().any(|r| r.vectorized),
       "expected the map body to vectorize; reports: {reps:?}"
     );
+  }
+
+  #[test]
+  fn sample_gathers_bit_identical() {
+    let src = r#"
+src = texture(16, 12, |uv| v3(uv.x, uv.y, fbm(pos=uv * 3.)))
+g = src.r
+w1 = texture(16, 12, |uv| sample(src, uv + v2(0.05 * sin(uv.y * tau), 0.)))
+w2 = texture(16, 12, |uv| sample(src, uv * 1.5 - 0.25, filter="nearest", wrap="clamp"))
+w3 = texture(16, 12, |uv| sample(flip_x(src), v2(uv.y, uv.x) * 2., wrap="mirror"))
+w4 = texture(16, 12, |uv| sample(transpose(src), uv.yx * 3. - 1., filter="nearest", wrap="mirror"))
+w5 = texture(16, 12, |uv| sample(g, v2(uv.x, 0.5), filter="nearest"))
+w6 = src -> |p, uv| p * sample(src, uv + v2(0.1, 0.)).bgr
+w7 = [src, g] | texture_zip(|p, m, uv| sample(src, uv + v2(m, m) * 0.1) + p * 0.5)
+w8 = texture(16, 12, |uv| { s = sample(src, uv * 2.); s.r + sample(src, uv * 2.).g })
+warp = |t| texture(16, 12, |uv| sample(t, uv * 2.))
+w9 = warp(g)
+w10 = warp(src)
+w11 = warp(g.rrr)
+texs = [g, src]
+mk = |i| texture(16, 12, |uv| sample(texs[i], uv * 1.5))
+w12 = mk(0)
+w13 = mk(1)
+w1 | render_texture(name="w1")
+w2 | render_texture(name="w2")
+w3 | render_texture(name="w3")
+w4 | render_texture(name="w4")
+w5 | render_texture(name="w5")
+w6 | render_texture(name="w6")
+w7 | render_texture(name="w7")
+w8 | render_texture(name="w8")
+w9 | render_texture(name="w9")
+w10 | render_texture(name="w10")
+w11 | render_texture(name="w11")
+w12 | render_texture(name="w12")
+w13 | render_texture(name="w13")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert!(reps.len() >= 10 && reps.iter().all(|r| r.vectorized), "{reps:?}");
+    let plans = vec_ctx.tex_vectorize.plans.borrow();
+    let gathers: usize = plans
+      .values()
+      .map(|p| match p {
+        PlanEntry::Ok(p) => p.steps.iter().filter(|s| matches!(s, Step::Gather(_))).count(),
+        PlanEntry::Bail(..) => 0,
+      })
+      .sum();
+    assert!(gathers >= 10, "{gathers}");
+    drop(plans);
+
+    // Two reads at the same coordinate share one gather step through CSE.
+    let (vec_ctx, _) = eval_both(
+      r#"
+src = texture(16, 12, |uv| v3(uv.x, uv.y, 0.5))
+w8 = texture(16, 12, |uv| { s = sample(src, uv * 2.); s.r + sample(src, uv * 2.).g })
+w8 | render_texture(name="w8")
+"#,
+    );
+    let plans = vec_ctx.tex_vectorize.plans.borrow();
+    let gathers: Vec<usize> = plans
+      .values()
+      .filter_map(|p| match p {
+        PlanEntry::Ok(p) => Some(p.steps.iter().filter(|s| matches!(s, Step::Gather(_))).count()),
+        PlanEntry::Bail(..) => None,
+      })
+      .collect();
+    assert_eq!(gathers.iter().sum::<usize>(), 1, "{gathers:?}");
+  }
+
+  /// Nearest sampling at texel centers is an exact identity, and whole-pixel offsets match
+  /// `roll` bit-for-bit — the property that makes `sample` usable as an exact gather.
+  #[test]
+  fn sample_nearest_is_exact() {
+    let src = r#"
+src = texture(16, 12, |uv| v3(uv.x, uv.y, fbm(pos=uv * 3.)))
+id = texture(16, 12, |uv| sample(src, uv, filter="nearest"))
+rolled = texture_roll(3, -2, src)
+shifted = texture(16, 12, |uv| sample(src, uv - v2(3., -2.) / v2(16., 12.), filter="nearest"))
+"#;
+    let (vec_ctx, _) = eval_both(src);
+    let get = |n: &str| vec_ctx.get_global(n).unwrap();
+    assert_bit_identical(&get("id"), &get("src")).unwrap();
+    assert_bit_identical(&get("shifted"), &get("rolled")).unwrap();
   }
 
   #[test]

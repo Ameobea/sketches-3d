@@ -5,6 +5,7 @@ import type { RenderedControl } from './runner/types';
 /** Panel key for a control site: handleIds are unique only per module, so join both.
  *  NUL separator — collision-proof, and explicit so it can't be mistaken for a space. */
 export const controlKey = (c: RenderedControl): string => `${c.sourceModule ?? ''}\0${c.handleId}`;
+export const controlKeyHandleId = (key: string): string => key.slice(key.indexOf('\0') + 1);
 
 /** Spline-editing surface bridged from a viewport `SplineOverlay` into a controls panel. */
 export interface SplinePanelCtx {

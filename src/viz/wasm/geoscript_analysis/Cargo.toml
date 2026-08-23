@@ -7,4 +7,5 @@ edition = "2021"
 [dependencies]
 geoscript = { path = "../geoscript" }
 fxhash = "0.2"
+pest = "2.8"
 nanoserde = { version = "0.2", default-features = false, features = ["std", "json"], git = "https://github.com/ameobea/nanoserde", branch = "all-fixes" }

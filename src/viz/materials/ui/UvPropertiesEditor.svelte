@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { CustomShaderMatDef } from 'src/viz/materials/schema';
+  import type { CustomShaderMatDef, UvAlignAxis } from 'src/viz/materials/schema';
+  import { DEFAULT_UV_ALIGN } from 'src/viz/wasm/uv_unwrap/uvAlign';
   import FormField from './FormField.svelte';
 
   let {
@@ -11,6 +12,9 @@
   } = $props();
 
   let unwrap = $derived(material.meshUvUnwrap ?? null);
+
+  const AXES: UvAlignAxis[] = ['+x', '-x', '+y', '-y', '+z', '-z'];
+  const isParallel = (a: UvAlignAxis, b: UvAlignAxis) => a[1] === b[1];
 </script>
 
 {#if !!unwrap}
@@ -37,9 +41,104 @@
     <input type="checkbox" bind:checked={unwrap.mapToSphere} oninput={() => rerun(false)} />
   </FormField>
   <FormField
-    label="enable UV island rotation"
-    help="If true, the UV islands will be rotated to minimize their bounding box before packing them into the UV unit square. This can help to reduce wasted space in the UV layout but may result in textures appearing rotated on the mesh."
+    label="align islands"
+    help="Rotates each UV island so a texture axis follows a fixed local-space direction on every face, instead of rotating islands freely for tighter packing.  Use for anisotropic textures (planks, slats, stripes)."
   >
-    <input type="checkbox" bind:checked={unwrap.enableUVIslandRotation} oninput={() => rerun(false)} />
+    <input
+      type="checkbox"
+      checked={!!unwrap.align}
+      onchange={() => {
+        unwrap.align = unwrap.align ? undefined : { ...DEFAULT_UV_ALIGN };
+        rerun(false);
+      }}
+    />
   </FormField>
+  {#if unwrap.align}
+    <div class="align-controls">
+      <FormField
+        label={`texture ${unwrap.align.axis} →`}
+        help="Local-space direction the pinned texture axis follows on each face."
+      >
+        <div class="toggle-group">
+          {#each AXES as axis (axis)}
+            <button
+              class:selected={unwrap.align.up === axis}
+              onclick={() => {
+                unwrap.align!.up = axis;
+                if (isParallel(axis, unwrap.align!.fallback)) {
+                  unwrap.align!.fallback = axis[1] === 'y' ? '-z' : '+y';
+                }
+                rerun(false);
+              }}
+            >
+              {axis.toUpperCase()}
+            </button>
+          {/each}
+        </div>
+      </FormField>
+      <FormField
+        label="fallback →"
+        help="Used instead for faces whose normal is within 15° of the primary direction (floors and ceilings when the primary is ±Y)."
+      >
+        <div class="toggle-group">
+          {#each AXES as axis (axis)}
+            <button
+              class:selected={unwrap.align.fallback === axis}
+              disabled={isParallel(axis, unwrap.align.up)}
+              onclick={() => {
+                unwrap.align!.fallback = axis;
+                rerun(false);
+              }}
+            >
+              {axis.toUpperCase()}
+            </button>
+          {/each}
+        </div>
+      </FormField>
+      <FormField
+        label="pinned uv axis"
+        help="Which texture axis follows the direction above.  +v is texture up; +u is texture right — pick +u to run a texture's grain the other way."
+      >
+        <select bind:value={unwrap.align.axis} onchange={() => rerun(false)}>
+          <option value="+v">+v (texture up)</option>
+          <option value="+u">+u (texture right)</option>
+          <option value="-v">−v</option>
+          <option value="-u">−u</option>
+        </select>
+      </FormField>
+    </div>
+  {/if}
 {/if}
+
+<style>
+  .align-controls {
+    padding-left: 16px;
+  }
+
+  .toggle-group {
+    display: flex;
+  }
+
+  .toggle-group button {
+    background: #333;
+    border: 1px solid #555;
+    color: #f0f0f0;
+    padding: 2px 6px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+
+  .toggle-group button.selected {
+    background: #555;
+    border-color: #777;
+  }
+
+  .toggle-group button:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .toggle-group button:not(:last-child) {
+    border-right: none;
+  }
+</style>

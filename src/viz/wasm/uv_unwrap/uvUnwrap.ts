@@ -1,5 +1,14 @@
+import type { MeshUvAlign } from 'src/viz/materials/schema';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import { uvAlignWasmArgs } from './uvAlign';
 import WasmURL from './uv-unwrap.wasm?url';
+
+export interface UVUnwrapParams {
+  nCones: number;
+  flattenToDisk: boolean;
+  mapToSphere: boolean;
+  align?: MeshUvAlign;
+}
 
 const UVUnwrapWasm = new AsyncOnce(() =>
   import('./uv-unwrap.js')
@@ -22,10 +31,7 @@ export const getIsUVUnwrapLoaded = (): boolean => UVUnwrapWasm.isSome();
 const unwrapInner = (
   verts: Float32Array,
   indices: Uint32Array,
-  nCones: number,
-  flattenToDisk: boolean,
-  mapToSphere: boolean,
-  enableUVIslandRotation: boolean
+  params: UVUnwrapParams
 ) => {
   if (!UVUnwrapWasm.isSome()) {
     throw new Error('UVUnwrapWasm not initialized');
@@ -60,10 +66,10 @@ const unwrapInner = (
   const output = UVUnwrap.unwrapUVs(
     vec_indices,
     vec_verts,
-    nCones,
-    flattenToDisk,
-    mapToSphere,
-    enableUVIslandRotation
+    params.nCones,
+    params.flattenToDisk,
+    params.mapToSphere,
+    ...uvAlignWasmArgs(params.align)
   );
 
   return {
@@ -90,18 +96,12 @@ export type UVUnwrapRes =
 export const unwrapUVs = (
   verts: Float32Array,
   indices: Uint32Array,
-  nCones: number,
-  flattenToDisk: boolean,
-  mapToSphere: boolean,
-  enableUVIslandRotation: boolean
+  params: UVUnwrapParams
 ): UVUnwrapRes => {
   const { output, vec_verts, vec_indices, HEAPF32, HEAPU32 } = unwrapInner(
     verts,
     indices,
-    nCones,
-    flattenToDisk,
-    mapToSphere,
-    enableUVIslandRotation
+    params
   );
 
   const from_vec_f32 = (vec: any): Float32Array => {
@@ -147,18 +147,12 @@ export const unwrapUVs = (
 export const buildUVUnwrapDistortionSVG = (
   verts: Float32Array,
   indices: Uint32Array,
-  nCones: number,
-  flattenToDisk: boolean,
-  mapToSphere: boolean,
-  enableUVIslandRotation: boolean
+  params: UVUnwrapParams
 ): { type: 'ok'; out: string } | { type: 'error'; message: string } => {
   const { output, vec_verts, vec_indices } = unwrapInner(
     verts,
     indices,
-    nCones,
-    flattenToDisk,
-    mapToSphere,
-    enableUVIslandRotation
+    params
   );
 
   const error = output.error;

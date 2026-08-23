@@ -1386,15 +1386,53 @@
                   "mapToSphere": {
                     "type": "boolean"
                   },
-                  "enableUVIslandRotation": {
-                    "type": "boolean"
+                  "align": {
+                    "type": "object",
+                    "properties": {
+                      "up": {
+                        "type": "string",
+                        "enum": [
+                          "+x",
+                          "-x",
+                          "+y",
+                          "-y",
+                          "+z",
+                          "-z"
+                        ]
+                      },
+                      "fallback": {
+                        "type": "string",
+                        "enum": [
+                          "+x",
+                          "-x",
+                          "+y",
+                          "-y",
+                          "+z",
+                          "-z"
+                        ]
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "+v",
+                          "+u",
+                          "-v",
+                          "-u"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "up",
+                      "fallback",
+                      "axis"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
                   "numCones",
                   "flattenToDisk",
-                  "mapToSphere",
-                  "enableUVIslandRotation"
+                  "mapToSphere"
                 ],
                 "additionalProperties": false
               },
@@ -1992,6 +2030,129 @@
                         "value"
                       ],
                       "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "ramp"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "scalar": {
+                              "type": "boolean"
+                            },
+                            "stops": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "pos": {
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "ease": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "smooth",
+                                      "smoother",
+                                      "step"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "pos",
+                                  "value",
+                                  "ease"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "extend": {
+                              "type": "string",
+                              "enum": [
+                                "clamp",
+                                "repeat",
+                                "mirror"
+                              ]
+                            },
+                            "space": {
+                              "type": "string",
+                              "enum": [
+                                "linear",
+                                "oklab",
+                                "oklch",
+                                "srgb"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "scalar",
+                            "stops",
+                            "extend",
+                            "space"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "image_levels"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "in_lo": {
+                              "type": "number"
+                            },
+                            "in_hi": {
+                              "type": "number"
+                            },
+                            "out_lo": {
+                              "type": "number"
+                            },
+                            "out_hi": {
+                              "type": "number"
+                            },
+                            "gamma": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "in_lo",
+                            "in_hi",
+                            "out_lo",
+                            "out_hi",
+                            "gamma"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }
@@ -2291,6 +2452,129 @@
                               }
                             ]
                           }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "ramp"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "scalar": {
+                              "type": "boolean"
+                            },
+                            "stops": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "pos": {
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "ease": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "smooth",
+                                      "smoother",
+                                      "step"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "pos",
+                                  "value",
+                                  "ease"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "extend": {
+                              "type": "string",
+                              "enum": [
+                                "clamp",
+                                "repeat",
+                                "mirror"
+                              ]
+                            },
+                            "space": {
+                              "type": "string",
+                              "enum": [
+                                "linear",
+                                "oklab",
+                                "oklch",
+                                "srgb"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "scalar",
+                            "stops",
+                            "extend",
+                            "space"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "image_levels"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "in_lo": {
+                              "type": "number"
+                            },
+                            "in_hi": {
+                              "type": "number"
+                            },
+                            "out_lo": {
+                              "type": "number"
+                            },
+                            "out_hi": {
+                              "type": "number"
+                            },
+                            "gamma": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "in_lo",
+                            "in_hi",
+                            "out_lo",
+                            "out_hi",
+                            "gamma"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -2672,6 +2956,129 @@
                         "value"
                       ],
                       "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "ramp"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "scalar": {
+                              "type": "boolean"
+                            },
+                            "stops": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "pos": {
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "ease": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "smooth",
+                                      "smoother",
+                                      "step"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "pos",
+                                  "value",
+                                  "ease"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "extend": {
+                              "type": "string",
+                              "enum": [
+                                "clamp",
+                                "repeat",
+                                "mirror"
+                              ]
+                            },
+                            "space": {
+                              "type": "string",
+                              "enum": [
+                                "linear",
+                                "oklab",
+                                "oklch",
+                                "srgb"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "scalar",
+                            "stops",
+                            "extend",
+                            "space"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "image_levels"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "in_lo": {
+                              "type": "number"
+                            },
+                            "in_hi": {
+                              "type": "number"
+                            },
+                            "out_lo": {
+                              "type": "number"
+                            },
+                            "out_hi": {
+                              "type": "number"
+                            },
+                            "gamma": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "in_lo",
+                            "in_hi",
+                            "out_lo",
+                            "out_hi",
+                            "gamma"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
                     }
                   ]
                 }
@@ -3032,6 +3439,129 @@
                               }
                             ]
                           }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "ramp"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "scalar": {
+                              "type": "boolean"
+                            },
+                            "stops": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "pos": {
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "ease": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "smooth",
+                                      "smoother",
+                                      "step"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "pos",
+                                  "value",
+                                  "ease"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "extend": {
+                              "type": "string",
+                              "enum": [
+                                "clamp",
+                                "repeat",
+                                "mirror"
+                              ]
+                            },
+                            "space": {
+                              "type": "string",
+                              "enum": [
+                                "linear",
+                                "oklab",
+                                "oklch",
+                                "srgb"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "scalar",
+                            "stops",
+                            "extend",
+                            "space"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "image_levels"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "in_lo": {
+                              "type": "number"
+                            },
+                            "in_hi": {
+                              "type": "number"
+                            },
+                            "out_lo": {
+                              "type": "number"
+                            },
+                            "out_hi": {
+                              "type": "number"
+                            },
+                            "gamma": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "in_lo",
+                            "in_hi",
+                            "out_lo",
+                            "out_hi",
+                            "gamma"
+                          ],
+                          "additionalProperties": false
                         }
                       },
                       "required": [
@@ -4764,6 +5294,129 @@
                                   }
                                 ]
                               }
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "ramp"
+                            },
+                            "value": {
+                              "type": "object",
+                              "properties": {
+                                "scalar": {
+                                  "type": "boolean"
+                                },
+                                "stops": {
+                                  "minItems": 1,
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "pos": {
+                                        "type": "number"
+                                      },
+                                      "value": {
+                                        "minItems": 1,
+                                        "maxItems": 3,
+                                        "type": "array",
+                                        "items": {
+                                          "type": "number"
+                                        }
+                                      },
+                                      "ease": {
+                                        "type": "string",
+                                        "enum": [
+                                          "linear",
+                                          "smooth",
+                                          "smoother",
+                                          "step"
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "pos",
+                                      "value",
+                                      "ease"
+                                    ],
+                                    "additionalProperties": false
+                                  }
+                                },
+                                "extend": {
+                                  "type": "string",
+                                  "enum": [
+                                    "clamp",
+                                    "repeat",
+                                    "mirror"
+                                  ]
+                                },
+                                "space": {
+                                  "type": "string",
+                                  "enum": [
+                                    "linear",
+                                    "oklab",
+                                    "oklch",
+                                    "srgb"
+                                  ]
+                                }
+                              },
+                              "required": [
+                                "scalar",
+                                "stops",
+                                "extend",
+                                "space"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "type",
+                            "value"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "type": {
+                              "type": "string",
+                              "const": "image_levels"
+                            },
+                            "value": {
+                              "type": "object",
+                              "properties": {
+                                "in_lo": {
+                                  "type": "number"
+                                },
+                                "in_hi": {
+                                  "type": "number"
+                                },
+                                "out_lo": {
+                                  "type": "number"
+                                },
+                                "out_hi": {
+                                  "type": "number"
+                                },
+                                "gamma": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "in_lo",
+                                "in_hi",
+                                "out_lo",
+                                "out_hi",
+                                "gamma"
+                              ],
+                              "additionalProperties": false
                             }
                           },
                           "required": [

@@ -1,7 +1,10 @@
 <script lang="ts">
   import { ControlPanel, type ControlPanelState } from 'src/viz/UI/ControlPanel';
-  import { controlCurrentValue, controlToSetting } from 'src/geoscript/controlsUi';
+  import ImageLevelsSection from 'src/viz/UI/ImageLevelsSection.svelte';
+  import RampControlsSection from 'src/viz/UI/RampControlsSection.svelte';
+  import { controlCurrentValue, controlKeyHandleId, controlToSetting } from 'src/geoscript/controlsUi';
   import type { RenderedControl } from 'src/geoscript/runner/types';
+  import type { ImageLevelsJson, RampSpecJson } from 'src/geoscript/geotoyAPIClient';
   import type { InputValueJson } from './types';
   import { reifyInput } from './inputInjection';
   import type { ObjectInputsInfo } from './levelEditorPanelTypes';
@@ -40,6 +43,9 @@
         return [w.value?.[0] ?? 0, w.value?.[1] ?? 0, w.value?.[2] ?? 0];
       case 'select':
         return w.str_value ?? '';
+      case 'ramp':
+      case 'image_levels':
+        return v.value;
     }
   };
 
@@ -59,9 +65,9 @@
         // Splines never route through the ControlPanel; edits flow via the viewport overlay.
         return { type: 'spline', value: value as [number, number, number][] };
       case 'ramp':
+        return { type: 'ramp', value: value as RampSpecJson };
       case 'image_levels':
-        // `controlToSetting` surfaces no widget for these here yet, so this can't be reached.
-        throw new Error(`${kind} inputs are not editable in the level editor yet`);
+        return { type: 'image_levels', value: value as ImageLevelsJson };
     }
   };
 
@@ -84,12 +90,29 @@
     const c = uniqueControls.find(c => c.handleId === key);
     if (c) onchange(key, panelValueToInputJson(c.kind, value));
   };
+
+  // The sections key rows by module-qualified `controlKey`; state here is by bare name.
+  const onSectionChange = (key: string, value: RampSpecJson | ImageLevelsJson) => {
+    const handleId = controlKeyHandleId(key);
+    panelState = { ...panelState, [handleId]: value };
+    handleChange(handleId, value);
+  };
 </script>
 
 <div class="object-inputs-panel">
   {#if settings.length > 0}
     <ControlPanel {settings} bind:state={panelState} onChange={handleChange} title="inputs" width={252} />
   {/if}
+  <RampControlsSection
+    controls={uniqueControls}
+    getSpec={key => (panelState[controlKeyHandleId(key)] as RampSpecJson | undefined) ?? null}
+    onChange={onSectionChange}
+  />
+  <ImageLevelsSection
+    controls={uniqueControls}
+    getValue={key => (panelState[controlKeyHandleId(key)] as ImageLevelsJson | undefined) ?? null}
+    onChange={onSectionChange}
+  />
 </div>
 
 <style>

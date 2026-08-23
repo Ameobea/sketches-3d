@@ -4,17 +4,21 @@
   import { controlKey } from 'src/geoscript/controlsUi';
   import { drawRampPreview, linearToSrgb, sampleRampSpec, srgbToLinear } from 'src/geoscript/rampPreview';
   import { dragAlongBar, redrawOn } from 'src/viz/UI/controlSection';
+  import RowMenu from 'src/viz/UI/RowMenu.svelte';
+  import type { SettingAction } from 'src/viz/UI/ControlPanel';
   import 'src/viz/UI/controlSection.css';
 
   let {
     controls,
     getSpec,
     onChange,
+    actions,
   }: {
     controls: RenderedControl[];
     /** Optimistic spec for a control key (panel state), so edits render immediately. */
     getSpec: (key: string) => RampSpecJson | null;
     onChange: (key: string, spec: RampSpecJson) => void;
+    actions?: (c: RenderedControl) => SettingAction[];
   } = $props();
 
   // In-flight edit, rendered locally until released. Raw: `commit` hands the spec to
@@ -175,22 +179,29 @@
   <div class="ctl-section ramps">
     {#each rows as row (row.key)}
       <div class="ctl-head">
-        <span class="ctl-head-label">{row.label}</span>
-        {#if !row.spec.scalar}
-          <select
-            class="ctl-select space-select"
-            value={row.spec.space}
-            onchange={e => {
-              const spec = cloneSpec(row.spec);
-              spec.space = (e.target as HTMLSelectElement).value as RampSpecJson['space'];
-              commit(row.key, spec);
-            }}
-          >
-            {#each ['oklab', 'oklch', 'linear', 'srgb'] as s (s)}
-              <option value={s}>{s}</option>
-            {/each}
-          </select>
-        {/if}
+        <span class="ctl-head-label">
+          {#if row.c.hasOverride}<i class="ctl-dot" title="stored override"></i>{/if}{row.label}
+        </span>
+        <div class="ctl-head-right">
+          {#if !row.spec.scalar}
+            <select
+              class="ctl-select space-select"
+              value={row.spec.space}
+              onchange={e => {
+                const spec = cloneSpec(row.spec);
+                spec.space = (e.target as HTMLSelectElement).value as RampSpecJson['space'];
+                commit(row.key, spec);
+              }}
+            >
+              {#each ['oklab', 'oklch', 'linear', 'srgb'] as s (s)}
+                <option value={s}>{s}</option>
+              {/each}
+            </select>
+          {/if}
+          {#if actions}
+            <RowMenu actions={actions(row.c)} />
+          {/if}
+        </div>
       </div>
       <!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions -->
       <div class="ctl-bar-wrap bar-wrap" ondblclick={e => addStop(row, e)} title="double-click to add a stop">

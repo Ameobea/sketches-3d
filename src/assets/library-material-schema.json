@@ -1244,11 +1244,27 @@
                 "mapToSphere": {
                   "type": "boolean"
                 },
-                "enableUVIslandRotation": {
-                  "type": "boolean"
+                "align": {
+                  "type": "object",
+                  "properties": {
+                    "up": {
+                      "type": "string",
+                      "enum": ["+x", "-x", "+y", "-y", "+z", "-z"]
+                    },
+                    "fallback": {
+                      "type": "string",
+                      "enum": ["+x", "-x", "+y", "-y", "+z", "-z"]
+                    },
+                    "axis": {
+                      "type": "string",
+                      "enum": ["+v", "+u", "-v", "-u"]
+                    }
+                  },
+                  "required": ["up", "fallback", "axis"],
+                  "additionalProperties": false
                 }
               },
-              "required": ["numCones", "flattenToDisk", "mapToSphere", "enableUVIslandRotation"],
+              "required": ["numCones", "flattenToDisk", "mapToSphere"],
               "additionalProperties": false
             },
             "externalVelocityAirDampingFactor": {

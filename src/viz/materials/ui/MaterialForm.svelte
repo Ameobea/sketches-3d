@@ -283,7 +283,6 @@
                   numCones: 0,
                   flattenToDisk: false,
                   mapToSphere: false,
-                  enableUVIslandRotation: true,
                 };
                 host.rerun(true);
               }

@@ -253,11 +253,26 @@ export const ExternalVelocityDampingOverrideFields = {
  * which writes the `uv` attribute the material then samples. Run before material build; `buildMaterial`
  * ignores it. Its presence distinguishes an unwrapped mesh from one whose existing `uv`s are used as-is.
  */
+export const UvAlignAxisSchema = z.enum(['+x', '-x', '+y', '-y', '+z', '-z']);
+export type UvAlignAxis = z.infer<typeof UvAlignAxisSchema>;
+
+/**
+ * Pins each UV island's rotation so texture axis `axis` follows local-space direction `up` on every
+ * face (faces whose normal is within ~15° of `up` use `fallback`), instead of rotating islands freely
+ * for tighter packing.  For anisotropic textures (planks, slats, stripes).
+ */
+export const MeshUvAlignSchema = z.object({
+  up: UvAlignAxisSchema,
+  fallback: UvAlignAxisSchema,
+  axis: z.enum(['+v', '+u', '-v', '-u']),
+});
+export type MeshUvAlign = z.infer<typeof MeshUvAlignSchema>;
+
 export const MeshUvUnwrapParamsSchema = z.object({
   numCones: z.number().int(),
   flattenToDisk: z.boolean(),
   mapToSphere: z.boolean(),
-  enableUVIslandRotation: z.boolean(),
+  align: MeshUvAlignSchema.optional(),
 });
 export type MeshUvUnwrapParams = z.infer<typeof MeshUvUnwrapParamsSchema>;
 

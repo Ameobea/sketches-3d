@@ -90,6 +90,9 @@ export interface TextureTabView {
   layout?: 'single' | 'grid';
   /** Explicit sRGB-display override; unset defers to the output's usage (albedo → on). */
   srgb?: boolean;
+  /** Explicit display-range override; unset = auto (1-channel usage-less outputs fit their
+   *  min–max as data, everything else shows the [0, 1] image contract). */
+  range?: 'unit' | 'fit';
   /** 3D preview: target object, whether the 3D view is showing, and its camera. Editing
    *  convenience only — persisted like a camera pose, never part of the composition. */
   preview?: TexturePreviewTarget;

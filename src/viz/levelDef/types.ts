@@ -69,6 +69,30 @@ export type Transform3Json = z.infer<typeof Transform3JsonSchema>;
  * `input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one
  * composition node when the bare name is ambiguous.
  */
+const RampSpecJsonSchema = z.object({
+  scalar: z.boolean(),
+  stops: z
+    .array(
+      z.object({
+        pos: z.number(),
+        /** 1 element for scalar ramps, 3 (linear RGB) for color ramps. */
+        value: z.array(z.number()).min(1).max(3),
+        ease: z.enum(['linear', 'smooth', 'smoother', 'step']),
+      })
+    )
+    .min(1),
+  extend: z.enum(['clamp', 'repeat', 'mirror']),
+  space: z.enum(['linear', 'oklab', 'oklch', 'srgb']),
+});
+
+const ImageLevelsJsonSchema = z.object({
+  in_lo: z.number(),
+  in_hi: z.number(),
+  out_lo: z.number(),
+  out_hi: z.number(),
+  gamma: z.number(),
+});
+
 export const InputValueJsonSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('float'), value: z.number() }),
   z.object({ type: z.literal('int'), value: z.number().int() }),
@@ -78,6 +102,8 @@ export const InputValueJsonSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('vec3'), value: Vec3Tuple }),
   z.object({ type: z.literal('transform'), value: Transform3JsonSchema }),
   z.object({ type: z.literal('spline'), value: z.array(Vec3Tuple) }),
+  z.object({ type: z.literal('ramp'), value: RampSpecJsonSchema }),
+  z.object({ type: z.literal('image_levels'), value: ImageLevelsJsonSchema }),
 ]);
 export type InputValueJson = z.infer<typeof InputValueJsonSchema>;
 export const InputsJsonSchema = z.record(z.string(), InputValueJsonSchema);

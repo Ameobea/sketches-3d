@@ -1,5 +1,6 @@
 use geoscript::preprocess::preprocess;
-use geoscript_analysis::AnalysisCtx;
+use geoscript_analysis::{rewrite_input_defaults, AnalysisCtx, InputDefaultRequest};
+use nanoserde::{DeJson, SerJson};
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
@@ -91,6 +92,23 @@ pub fn preprocess_source(src: &str) -> String {
       err.col,
     ),
   }
+}
+
+/// Plans `default=` rewrites for `input_*` sites in `src` from stored control values
+/// (`[{handle_id, kind, value, str_value}]`, the injection wire shape). Returns JSON
+/// `{ edits: [{from, to, insert}], errors: [{handle_id, message}] }` with UTF-16 offsets.
+#[wasm_bindgen]
+pub fn analysis_rewrite_input_defaults(src: &str, requests_json: &str) -> String {
+  let requests: Vec<InputDefaultRequest> = match DeJson::deserialize_json(requests_json) {
+    Ok(r) => r,
+    Err(err) => {
+      return format!(
+        "{{\"edits\":[],\"errors\":[{{\"handle_id\":\"\",\"message\":{}}}]}}",
+        format!("invalid request JSON: {err}").serialize_json()
+      )
+    }
+  };
+  rewrite_input_defaults(src, &requests).serialize_json()
 }
 
 /// Get go-to-definition location at (line, col).  Returns JSON-serialized `DefinitionLocation`

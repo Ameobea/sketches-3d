@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ControlPanel, type ControlPanelState } from 'src/viz/UI/ControlPanel';
+  import { ControlPanel, type ControlPanelState, type SettingAction } from 'src/viz/UI/ControlPanel';
   import ImageLevelsSection from 'src/viz/UI/ImageLevelsSection.svelte';
   import RampControlsSection from 'src/viz/UI/RampControlsSection.svelte';
   import SplineControlsSection from 'src/viz/UI/SplineControlsSection.svelte';
@@ -20,18 +20,49 @@
     treeState,
     moduleNameToNodeId,
     onEdit,
+    onBakeDefault,
+    onResetControl,
     spline,
   }: {
     controls: RenderedControl[];
     treeState: TreeState;
     moduleNameToNodeId: Record<string, string>;
     onEdit: () => void;
+    /** Write the stored value into the source `default=` and drop the override. */
+    onBakeDefault: (c: RenderedControl) => void;
+    /** Drop the stored override so the source `default=` applies again. */
+    onResetControl: (c: RenderedControl) => void;
     spline?: SplinePanelCtx;
   } = $props();
 
   const keyOf = controlKey;
 
-  const settings = $derived(controls.map(c => controlToSetting(c, keyOf(c))).filter(s => s !== null));
+  const actionsFor = (c: RenderedControl): SettingAction[] =>
+    targets.has(keyOf(c))
+      ? [
+          {
+            label: 'set as default',
+            title: 'Write this value into the source as `default=` and clear the stored override',
+            disabled: !c.hasOverride,
+            action: () => onBakeDefault(c),
+          },
+          {
+            label: 'reset to default',
+            title: 'Drop the stored override; the source `default=` applies again',
+            disabled: !c.hasOverride,
+            action: () => onResetControl(c),
+          },
+        ]
+      : [];
+
+  const settings = $derived(
+    controls
+      .map(c => {
+        const s = controlToSetting(c, keyOf(c));
+        return s && { ...s, modified: c.hasOverride, actions: actionsFor(c) };
+      })
+      .filter(s => s !== null)
+  );
 
   const targets = $derived.by(() => {
     const m = new Map<string, { nodeId: string; handleId: string; kind: RenderedControl['kind'] }>();
@@ -119,14 +150,16 @@
     {controls}
     getSpec={key => (panelState[key] as RampSpecJson | undefined) ?? null}
     onChange={onSectionChange}
+    actions={actionsFor}
   />
   <ImageLevelsSection
     {controls}
     getValue={key => (panelState[key] as ImageLevelsJson | undefined) ?? null}
     onChange={onSectionChange}
+    actions={actionsFor}
   />
   {#if spline}
-    <SplineControlsSection {controls} {spline} />
+    <SplineControlsSection {controls} {spline} actions={actionsFor} />
   {/if}
 </div>
 

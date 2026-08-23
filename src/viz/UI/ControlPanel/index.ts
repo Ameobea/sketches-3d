@@ -9,5 +9,6 @@ export type {
   ColorSetting,
   TextSetting,
   ButtonSetting,
+  SettingAction,
   Rgb,
 } from './types';

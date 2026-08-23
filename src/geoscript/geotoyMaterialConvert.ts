@@ -29,7 +29,6 @@ export type TextureMapping =
       numCones: number;
       flattenToDisk: boolean;
       mapToSphere: boolean;
-      enableUVIslandRotation: boolean;
       tileBreaking?: { patchScale: number };
     };
 
@@ -219,8 +218,6 @@ export const geotoyPhysicalToShared = (def: PhysicalMaterialDef): CustomShaderMa
             numCones: tm.numCones,
             flattenToDisk: tm.flattenToDisk,
             mapToSphere: tm.mapToSphere,
-            // Legacy `uv` defs predate this field; the live persistence backfill defaults it to true.
-            enableUVIslandRotation: tm.enableUVIslandRotation ?? true,
           }
         : undefined,
   };

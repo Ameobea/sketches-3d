@@ -2156,7 +2156,7 @@ fn parse_export_statement(
   })
 }
 
-fn parse_string_literal(pair: Pair<Rule>) -> String {
+pub fn parse_string_literal(pair: Pair<Rule>) -> String {
   match pair.as_rule() {
     Rule::double_quote_string_literal => {
       parse_double_quote_string_inner(pair.into_inner().next().unwrap()).unwrap()

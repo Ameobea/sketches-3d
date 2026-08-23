@@ -1907,6 +1907,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Returns the transpose of a transform matrix (rows and columns swapped).",
         return_type: &[ArgType::Mat4],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Swaps a texture's axes (`out[x, y] = in[y, x]`, so a WxH input yields HxW).  O(1): returns a view of the same pixel data.  Same as `texture_transpose`.",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "flip_normals" => FnDef {
@@ -10666,14 +10679,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "Allow UV islands to be rotated when packing them into the atlas (BFF only).",
+            description: "Ignored; kept so older programs still parse.  Island orientation for BFF types is controlled via `options` (`up`, `fallback`, `axis`).",
           },
           ArgDef {
             name: "options",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Map, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Map of options specific to the chosen `type`.  For \"cylindrical\": `{ normalize_v: bool }` — when true, V is stretched to span 0..1 across the mesh's axial extent instead of being circumference-scaled for square texels.  For \"tube\": `{ caps: 'auto'|'none', cap_angle: degrees, cap_max_span: float, cap_alignment: float, normalize_v: bool, seam_straightness: float, detwist: bool }` — `caps` toggles end-cap island detection; `cap_angle` is the crease angle bounding a cap patch (defaults to the mesh sharp-edge threshold); `cap_max_span` is the max fraction of tube length a cap may span (default 0.15); `cap_alignment` is the min alignment between cap normal and local tube direction, 0..1 (default 0.6); `normalize_v` makes V span 0..1 over the tube length instead of isotropic scaling; `seam_straightness` (default 8) penalizes the internal seam cut for traveling around the tube instead of along it, preventing the texture from twisting along the spine (0 = plain shortest-path seam); `detwist` (default true) cancels any residual rotational drift of U along the spine by referencing a rotation-minimizing frame.  For \"strip\": `{ strip_angle: degrees, layout: 'stack'|'overlap'|'fill', u_mode: 'uniform'|'rail', fallback: 'planar'|'error' }` — `strip_angle` is the crease angle that splits the mesh into patches (defaults to the mesh sharp-edge threshold); `layout` places islands in V: 'stack' (default) stacks them at integer V offsets, 'overlap' gives every island the same V band starting at 0, 'fill' stretches each island's V to span 0..1 with U scaled to keep texels square; `u_mode` 'uniform' (default) gives both rails a shared U so quads map to true rectangles (a ring band's inner rail stretches instead of shearing), 'rail' keeps each rail's own arc length (exact per-rail texel density, shears when rail lengths differ); `fallback` controls non-strip patches: 'planar' (default) maps them as planar islands, 'error' fails so unexpected topology is surfaced.",
+            description: "Map of options specific to the chosen `type`.  For \"auto\"/\"unwrap\"/\"disk\": `{ up: '+y', fallback: '-z', axis: '+v' }` — when `up` is given, each UV island is rotated so texture axis `axis` ('+v' = texture up, or '+u'/'-v'/'-u') follows that local-space direction on every face, with faces whose normal is within 15° of `up` using `fallback` instead; omit `up` to let islands rotate freely for tighter packing.  For \"cylindrical\": `{ normalize_v: bool }` — when true, V is stretched to span 0..1 across the mesh's axial extent instead of being circumference-scaled for square texels.  For \"tube\": `{ caps: 'auto'|'none', cap_angle: degrees, cap_max_span: float, cap_alignment: float, normalize_v: bool, seam_straightness: float, detwist: bool }` — `caps` toggles end-cap island detection; `cap_angle` is the crease angle bounding a cap patch (defaults to the mesh sharp-edge threshold); `cap_max_span` is the max fraction of tube length a cap may span (default 0.15); `cap_alignment` is the min alignment between cap normal and local tube direction, 0..1 (default 0.6); `normalize_v` makes V span 0..1 over the tube length instead of isotropic scaling; `seam_straightness` (default 8) penalizes the internal seam cut for traveling around the tube instead of along it, preventing the texture from twisting along the spine (0 = plain shortest-path seam); `detwist` (default true) cancels any residual rotational drift of U along the spine by referencing a rotation-minimizing frame.  For \"strip\": `{ strip_angle: degrees, layout: 'stack'|'overlap'|'fill', u_mode: 'uniform'|'rail', fallback: 'planar'|'error' }` — `strip_angle` is the crease angle that splits the mesh into patches (defaults to the mesh sharp-edge threshold); `layout` places islands in V: 'stack' (default) stacks them at integer V offsets, 'overlap' gives every island the same V band starting at 0, 'fill' stretches each island's V to span 0..1 with U scaled to keep texels square; `u_mode` 'uniform' (default) gives both rails a shared U so quads map to true rectangles (a ring band's inner rail stretches instead of shearing), 'rail' keeps each rail's own arc length (exact per-rail texel density, shears when rail lengths differ); `fallback` controls non-strip patches: 'planar' (default) maps them as planar islands, 'error' fails so unexpected topology is surfaced.",
           },
         ],
         description: "Procedurally generates UV coordinates and tangents for a mesh, returning a new mesh with `uv` and `tangent` vertex attributes populated.  Conformal types (auto/unwrap/disk/sphere) are backed by the BFF unwrap module; \"planar\" is a native planar projection.",
@@ -14516,6 +14529,89 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
   },
   "dilate" => morph_fn_def!("Morphological dilation (per-channel running max over a box window), wrap-aware at boundaries.  O(1) per pixel at any radius.", "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 returns the input unchanged."),
   "erode" => morph_fn_def!("Morphological erosion (per-channel running min over a box window), wrap-aware at boundaries.  O(1) per pixel at any radius.", "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 returns the input unchanged."),
+  "texture_std" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel population standard deviation over all pixels; returns a float for 1-channel textures, vec2/vec3/vec4 otherwise",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
+      },
+    ],
+  },
+  "texture_quantile" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "q",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Quantile in [0, 1]: 0 = min, 0.5 = median, 1 = max"
+          },
+        ],
+        description: "Per-channel value at quantile `q` (e.g. `texture_quantile(t, 0.7)` is the threshold above which 30% of pixels lie); returns a float for 1-channel textures, vec2/vec3/vec4 otherwise.  Exact for textures up to 64k pixels, estimated from a 64k stride-sample above that.",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
+      },
+    ],
+  },
+  "texture_standardize" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel `(x - mean) / std`, so every channel has mean 0 and std 1 (the convention `spectral_noise` emits; makes any roughly-Gaussian field interchangeable with it and usable with z-score ramp stops).  A constant channel maps to 0.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "texture_equalize" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Per-channel histogram equalization: maps each value to its empirical CDF, so the output is uniformly distributed on [0, 1] whatever the input's distribution (min -> 0, median -> 0.5, max -> 1).  Thresholding the result at `p` covers exactly `1 - p` of the pixels.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
   "texture_min" => FnDef {
     module: "texture",
     examples: &[],
@@ -14747,8 +14843,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "sigmas",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Sequence, ArgType::Vec2, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Window to stretch instead of the exact [min, max]: a number `k` maps `mean ± k*std` to [0, 1] (2.5 covers ~99% of a Gaussian field; the tails clip instead of washing out the contrast), or a signed `[lo, hi]` pair of z-positions (`[0., 2.]` maps `mean..mean + 2*std`, everything below the mean to 0)."
+          },
         ],
-        description: "Per-channel min-max stretch so every channel spans exactly [0, 1]; a constant channel maps to 0.  Useful ahead of `texture_levels` / `input_image_levels` when a synthesis step's output range is unknown.",
+        description: "Per-channel linear stretch of a window onto [0, 1], clamped: by default the exact [min, max] (a constant channel maps to 0), or a mean/std-relative window via `sigmas`.  Useful ahead of `texture_levels` / `input_image_levels` when a synthesis step's output range is unknown; see `texture_standardize` / `texture_equalize` for the other normal forms.",
         return_type: &[ArgType::Texture],
       },
     ],
@@ -14812,6 +14915,98 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Mirrors a texture vertically.  O(1): returns a view of the same pixel data.",
         return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "texture_transpose" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Swaps a texture's axes (`out[x, y] = in[y, x]`, so a WxH input yields HxW).  O(1): returns a view of the same pixel data.  Column-wise versions of row-wise ops come from `transpose | op | transpose`.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "texture_roll" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "dx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Horizontal shift in pixels; positive moves content toward +x (right).  Any int; taken modulo the width."
+          },
+          ArgDef {
+            name: "dy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Vertical shift in pixels; positive moves content toward +y (down).  Any int; taken modulo the height."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Circularly shifts a texture by whole pixels: `out[x, y] = in[(x - dx) mod w, (y - dy) mod h]`.  Always toroidal regardless of the texture's wrap mode; exact (no resampling).  For fractional or per-pixel offsets use `sample`.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "sample" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "uv",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Continuous coordinate in the same space as texel-closure `uv` params: texel (x, y) is centered at `((x + 0.5) / w, (y + 0.5) / h)`.  Any value; out-of-range coordinates resolve through the wrap mode."
+          },
+          ArgDef {
+            name: "filter",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("bilinear".to_owned())),
+            description: "\"bilinear\" (the default) or \"nearest\".  Nearest is an exact texel pick (`floor(uv * dims)`), so integer-stepped coordinates gather pixels without any blending."
+          },
+          ArgDef {
+            name: "wrap",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "\"repeat\", \"clamp\", or \"mirror\"; defaults to the texture's own wrap mode"
+          },
+        ],
+        description: "Reads one texel-space value from a texture at a continuous coordinate, like a GPU texture fetch: returns a float for 1-channel textures, vec2/vec3/vec4 otherwise.  All channels are filtered independently (no alpha premultiplication).  \n\nThe main use is inside texel closures, where it is the gather primitive that expresses warps, stretches, offsets, displacement maps, polar remaps, and so on: `texture(w, h, |uv| sample(src, uv + v2(.05 * sin(uv.y * tau), 0.)))`.  Such bodies auto-vectorize into a single gather pass over the coordinate field.  The output stays tileable whenever the coordinate function is periodic up to whole-texture translations.  Coordinates are floats, so exact pixel-index gathers are written as `sample(src, (v2(x, y) + .5) / dims, filter=\"nearest\")`.",
+        return_type: &[ArgType::Float, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4],
       },
     ],
   },

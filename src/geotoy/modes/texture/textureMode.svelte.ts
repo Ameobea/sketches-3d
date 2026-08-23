@@ -38,6 +38,31 @@ import { buildParentMap, collectDescendants } from 'src/geotoy/modules/treeOps';
 import type { TreeState } from 'src/geotoy/modules/treeState.svelte';
 import type { Viz } from 'src/viz';
 
+export type DisplayRange = 'auto' | 'unit' | 'fit';
+const NEXT_RANGE: Record<DisplayRange, DisplayRange> = { auto: 'unit', unit: 'fit', fit: 'auto' };
+
+/** Stats/pixel indices a channel selection shows for an output: the picked channel, or
+ *  r/g/b (all for ≤ 2ch) under `rgb`; `a` falls back to `rgb` off 4-channel outputs. */
+export const shownChannels = (t: GeneratedTexture, channel: TextureChannel): number[] => {
+  const ix = { r: 0, g: 1, b: 2, a: 3 }[channel as Exclude<TextureChannel, 'rgb'>];
+  if (ix !== undefined && (channel !== 'a' || t.channels === 4)) return [ix];
+  return Array.from({ length: Math.min(3, t.channels) }, (_, i) => i);
+};
+
+const STATS_PREFS_KEY = 'geotoy2:ui:textureStats';
+interface StatsPrefs {
+  panel: boolean;
+  histogram: boolean;
+}
+const readStatsPrefs = (): StatsPrefs => {
+  const defaults: StatsPrefs = { panel: true, histogram: false };
+  try {
+    return { ...defaults, ...JSON.parse(localStorage.getItem(STATS_PREFS_KEY) ?? '{}') };
+  } catch {
+    return defaults;
+  }
+};
+
 interface TextureModeDeps {
   /** Read through getters: the active tab changes when tabs switch. */
   getTreeState: () => TreeState;
@@ -76,6 +101,12 @@ export class TextureMode implements Mode {
   layout = $state<'single' | 'grid'>('single');
   /** Explicit user override; `null` defers to each output's usage (albedo → on). */
   srgbOverride = $state<boolean | null>(null);
+  /** `auto` resolves per output: 1-channel usage-less outputs are data and display fitted to
+   *  their min–max; anything else is image data with a [0, 1] contract and clamps. */
+  displayRange = $state<DisplayRange>('auto');
+  /** Stats block in the info panel + its histogram disclosure; global, localStorage-backed. */
+  statsPanel = $state(readStatsPrefs().panel);
+  statsHistogram = $state(readStatsPrefs().histogram);
   /** UV point at the viewport center + screen px per texel; `null` = fit on next draw. */
   center = $state<[number, number] | null>(null);
   zoom = $state<number | null>(null);
@@ -126,6 +157,48 @@ export class TextureMode implements Mode {
   srgbFor = (t: GeneratedTexture | null): boolean => this.srgbOverride ?? t?.usage === 'albedo';
 
   readonly srgb: boolean = $derived(this.srgbFor(this.selected));
+
+  rangeFor = (t: GeneratedTexture | null): 'unit' | 'fit' =>
+    this.displayRange !== 'auto' ? this.displayRange : t && t.channels === 1 && !t.usage ? 'fit' : 'unit';
+
+  readonly range: 'unit' | 'fit' = $derived(this.rangeFor(this.selected));
+
+  /** Black→white value window for an output under the current channel selection. */
+  displayWindow = (t: GeneratedTexture): [number, number] => {
+    if (this.rangeFor(t) === 'unit') return [0, 1];
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const c of shownChannels(t, this.channel)) {
+      const s = t.stats[c];
+      if (!s) continue;
+      lo = Math.min(lo, s.min);
+      hi = Math.max(hi, s.max);
+    }
+    if (hi > lo) return [lo, hi];
+    // constant (or statless) output: show it mid-gray rather than dividing by zero
+    return Number.isFinite(lo) ? [lo - 0.5, lo + 0.5] : [0, 1];
+  };
+
+  private saveStatsPrefs = () => {
+    try {
+      localStorage.setItem(
+        STATS_PREFS_KEY,
+        JSON.stringify({ panel: this.statsPanel, histogram: this.statsHistogram })
+      );
+    } catch {
+      // storage unavailable: prefs just don't persist
+    }
+  };
+
+  toggleStatsPanel = () => {
+    this.statsPanel = !this.statsPanel;
+    this.saveStatsPrefs();
+  };
+
+  toggleStatsHistogram = () => {
+    this.statsHistogram = !this.statsHistogram;
+    this.saveStatsPrefs();
+  };
 
   toggleLayout = () => {
     this.layout = this.layout === 'grid' ? 'single' : 'grid';
@@ -274,6 +347,7 @@ export class TextureMode implements Mode {
       tiled: this.tiled,
       layout: this.layout === 'grid' ? 'grid' : undefined,
       srgb: this.srgbOverride ?? undefined,
+      range: this.displayRange === 'auto' ? undefined : this.displayRange,
       preview: this.previewTarget ?? undefined,
       preview3d: this.preview3d || undefined,
       previewCamera: camera ?? undefined,
@@ -289,6 +363,7 @@ export class TextureMode implements Mode {
     this.tiled = v?.tiled ?? false;
     this.layout = v?.layout ?? 'single';
     this.srgbOverride = v?.srgb ?? null;
+    this.displayRange = v?.range ?? 'auto';
     this.previewTarget = v?.preview ?? null;
     this.previewProblem = null;
     this.previewCamera = v?.previewCamera ?? null;
@@ -336,6 +411,21 @@ export class TextureMode implements Mode {
           label: 'srgb display',
           state: this.srgb ? 'on' : 'off',
           action: () => (this.srgbOverride = !this.srgb),
+        },
+        {
+          label: 'display range',
+          state:
+            this.displayRange === 'auto'
+              ? `auto (${this.range === 'fit' ? 'fit' : '0–1'})`
+              : this.displayRange === 'fit'
+                ? 'fit'
+                : '0–1',
+          action: () => (this.displayRange = NEXT_RANGE[this.displayRange]),
+        },
+        {
+          label: 'stats panel',
+          state: this.statsPanel ? 'on' : 'off',
+          action: this.toggleStatsPanel,
         },
       ],
     };

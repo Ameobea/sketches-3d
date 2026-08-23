@@ -3,6 +3,7 @@ import type * as Comlink from 'comlink';
 import type { GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import type { MaterialDef } from '../materials';
 import type { TreeKind } from '../geotoyAPIClient';
+import type { ChannelStats } from '../textureStats';
 
 /** Cross-run const-eval cache occupancy. Textures dominate it, so it is the number that goes
  *  wrong first in a long editing session — hence the cap, reported alongside. */
@@ -101,6 +102,8 @@ export interface GeneratedTexture {
   sourceModule: string;
   /** Stable across runs for unchanged textures (cache replay preserves it). */
   textureId: number;
+  /** Per-channel value stats of the first layer. */
+  stats: ChannelStats[];
 }
 
 export type GeneratedObject = GeneratedMesh | GeneratedPath | GeneratedLight | GeneratedTexture;
@@ -154,8 +157,10 @@ export interface RenderedControl {
   style: string | null;
   /** Selectable options for `select`; empty otherwise. */
   options: string[];
-  /** 256-bin luma histogram for `image_levels`; null otherwise. */
-  histogram: number[] | null;
+  /** Input-texture stats behind `image_levels` (the histogram source); null otherwise. */
+  stats: ChannelStats[] | null;
+  /** Whether a stored value was injected for this site (vs. the source `default=`). */
+  hasOverride: boolean;
 }
 
 /** A `gizmo(...)`/`gizmo_transform(...)` site reported by the runtime for the last eval. */

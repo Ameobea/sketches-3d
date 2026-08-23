@@ -459,6 +459,71 @@ pub(crate) fn texture_reduce(kind: ReduceKind, t: &TextureHandle) -> [f32; 4] {
   acc
 }
 
+/// Toroidal shift: `out[x, y] = in[(x - dx) mod w, (y - dy) mod h]`, so positive offsets
+/// move content toward +x/+y. Two memcpys per row per plane.
+pub(crate) fn roll_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let dx = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+  let dy = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
+  let t = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
+  let (w, h) = (t.width, t.height);
+  let dx = dx.rem_euclid(w as i64) as usize;
+  let dy = dy.rem_euclid(h as i64) as usize;
+  if dx == 0 && dy == 0 {
+    return Ok(Value::Texture(Rc::clone(t)));
+  }
+  let planes = t
+    .as_planes()
+    .iter()
+    .map(|p| {
+      let mut out = Vec::with_capacity(w * h);
+      for y in 0..h {
+        let src = &p[((y + h - dy) % h) * w..][..w];
+        out.extend_from_slice(&src[w - dx..]);
+        out.extend_from_slice(&src[..w - dx]);
+      }
+      out
+    })
+    .collect();
+  Ok(Value::Texture(Rc::new(TextureHandle {
+    storage: TexStorage::from_plane_vecs(planes),
+    mips: Default::default(),
+    ..(**t).clone()
+  })))
+}
+
+/// `sample(texture, uv, filter, wrap)`: one continuous-coordinate read. The same kernel
+/// backs the vectorizer's gather step, which is what keeps the two paths bit-identical.
+pub(crate) fn sample_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let uv = *arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
+  let filter = kern::SampleFilter::from_name(arg_refs[2].resolve(args, kwargs).as_str().unwrap())?;
+  let wrap = match arg_refs[3].resolve(args, kwargs) {
+    Value::Nil => t.wrap,
+    v => TextureWrap::from_name(v.as_str().unwrap())?,
+  };
+  let mut px = [0f32; 4];
+  let (planes, origin, x_pitch, y_pitch) = t.gather_parts();
+  let src = kern::GatherSrc {
+    planes: &planes,
+    w: t.width,
+    h: t.height,
+    origin,
+    x_pitch,
+    y_pitch,
+    wrap,
+  };
+  kern::sample_texel(&src, filter, uv.x, uv.y, &mut px);
+  Ok(channels_value(px, t.channels))
+}
+
 pub(crate) fn texture_reduce_impl(
   kind: ReduceKind,
   arg_refs: &[ArgRef],
@@ -467,6 +532,40 @@ pub(crate) fn texture_reduce_impl(
 ) -> Result<Value, ErrorStack> {
   let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
   Ok(channels_value(texture_reduce(kind, t), t.channels))
+}
+
+pub(crate) fn texture_std_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let stats = t.stats();
+  let mut out = [0f32; 4];
+  for c in 0..t.channels {
+    out[c] = stats.channels[c].std;
+  }
+  Ok(channels_value(out, t.channels))
+}
+
+pub(crate) fn texture_quantile_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let q = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+  if !(0. ..=1.).contains(&q) {
+    return Err(ErrorStack::new(format!(
+      "texture_quantile: `q` must be in [0, 1], got {q}"
+    )));
+  }
+  let stats = t.stats();
+  let mut out = [0f32; 4];
+  for c in 0..t.channels {
+    out[c] = stats.channels[c].quantile(q);
+  }
+  Ok(channels_value(out, t.channels))
 }
 
 enum TexIx {

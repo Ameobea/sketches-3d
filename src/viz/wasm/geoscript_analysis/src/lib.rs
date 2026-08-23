@@ -15,10 +15,12 @@ mod diagnostics;
 mod format;
 mod goto;
 mod hover;
+mod rewrite_inputs;
 mod scope;
 mod source_scan;
 
 pub use analysis::Analysis;
+pub use rewrite_inputs::{rewrite_input_defaults, InputDefaultRequest, RewriteResult, SourceEdit};
 pub use scope::{SymbolDef, SymbolKind, SymbolRef};
 
 /// Severity of a diagnostic message.

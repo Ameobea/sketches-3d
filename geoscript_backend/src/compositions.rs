@@ -52,6 +52,9 @@ pub struct NodeDef {
   /// Opaque gizmo-value passthrough (populated by the editor; stored verbatim here).
   #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
   pub handles: serde_json::Map<String, serde_json::Value>,
+  /// Opaque `input_*` control-value passthrough; same contract as `handles`.
+  #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+  pub controls: serde_json::Map<String, serde_json::Value>,
   pub children: Vec<String>,
   #[serde(default, skip_serializing_if = "std::ops::Not::not")]
   pub disabled: bool,
@@ -98,7 +101,10 @@ impl CompositionDoc {
     if self.version != 2 {
       return Err(APIError::new(
         StatusCode::BAD_REQUEST,
-        format!("Unsupported composition doc version {}; expected 2", self.version),
+        format!(
+          "Unsupported composition doc version {}; expected 2",
+          self.version
+        ),
       ));
     }
     if self.trees.is_empty() {
@@ -723,8 +729,8 @@ ORDER BY c.updated_at DESC
       // the caller didn't ask for the actual code.
       "'{\"version\":2,\"trees\":[{\"id\":\"main\",\"kind\":\"mesh\",\"name\":\"main\",\"tree\":{\"\
        version\":1,\"rootId\":\"_\",\"globalsSource\":\"\",\"nodes\":{\"_\":{\"id\":\"_\",\"name\":\
-       \"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,1]}\
-       ],\"children\":[]}}}}]}' as latest_tree"
+       \"_root\",\"source\":\"\",\"instances\":[{\"pos\":[0,0,0],\"rot\":[0,0,0],\"scale\":[1,1,\
+       1]}],\"children\":[]}}}}]}' as latest_tree"
     },
     match (limit, offset) {
       (Some(limit), Some(offset)) => format!("LIMIT {limit} OFFSET {offset}"),
@@ -983,6 +989,23 @@ mod tests {
       "id/pos must sit flat, not nested"
     );
     assert_eq!(inst["pos"][0].as_f64(), Some(0.0));
+  }
+
+  #[test]
+  fn editor_owned_node_fields_round_trip() {
+    let json = r#"{"version":1,"rootId":"r","globalsSource":"","nodes":{"r":{"id":"r","name":"_root","source":"","instances":[{"pos":[0,0,0],"rot":[0,0,0],"scale":[1,1,1],"id":"deadbeef"}],"handles":{"h":{"kind":"vec3","value":[1,2,3]}},"controls":{"amp":{"kind":"float","value":0.5},"grad":{"kind":"ramp","value":{"scalar":false,"stops":[],"extend":"clamp","space":"oklab"}}},"children":[]}}}"#;
+    let tree: TreeDef = serde_json::from_str(json).unwrap();
+    let out = serde_json::to_value(&tree).unwrap();
+    let node = &out["nodes"]["r"];
+    assert_eq!(node["handles"]["h"]["value"][2], 3);
+    assert_eq!(node["controls"]["amp"]["value"], 0.5);
+    assert_eq!(node["controls"]["grad"]["value"]["space"], "oklab");
+    let bare: TreeDef = serde_json::from_str(NO_ID).unwrap();
+    let out = serde_json::to_value(&bare).unwrap();
+    assert!(
+      out["nodes"]["r"].get("controls").is_none(),
+      "empty controls must not be emitted"
+    );
   }
 
   #[test]

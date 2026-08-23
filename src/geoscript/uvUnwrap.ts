@@ -1,4 +1,6 @@
+import type { MeshUvAlign } from 'src/viz/materials/schema';
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import { uvAlignWasmArgs } from 'src/viz/wasm/uv_unwrap/uvAlign';
 
 // The wasm URL is configured by the caller via `setUVUnwrapWasmURL` rather than imported with
 // `?url` here, so this module can be included in a `?worker` graph without Vite emitting a
@@ -38,7 +40,9 @@ export const unwrap_uvs = (
   nCones: number,
   flattenToDisk: boolean,
   mapToSphere: boolean,
-  islandRotation: boolean
+  alignUp: string,
+  alignFallback: string,
+  alignAxis: string
 ): string => {
   if (!UVUnwrapWasm.isSome()) {
     return 'uv_unwrap module not initialized';
@@ -83,7 +87,18 @@ export const unwrap_uvs = (
   const vec_indices = vec_uint32(indices);
   let output: any = null;
   try {
-    output = UVUnwrap.unwrapUVs(vec_indices, vec_verts, nCones, flattenToDisk, mapToSphere, islandRotation);
+    // axis strings are validated on the Rust side; empty `alignUp` means free island rotation
+    const align = alignUp
+      ? ({ up: alignUp, fallback: alignFallback, axis: alignAxis } as MeshUvAlign)
+      : undefined;
+    output = UVUnwrap.unwrapUVs(
+      vec_indices,
+      vec_verts,
+      nCones,
+      flattenToDisk,
+      mapToSphere,
+      ...uvAlignWasmArgs(align)
+    );
     const error: string = output.error;
     if (error) {
       return error;

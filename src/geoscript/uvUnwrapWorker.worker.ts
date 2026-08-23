@@ -1,13 +1,11 @@
 import * as Comlink from 'comlink';
 
-import { initUVUnwrap, unwrapUVs, type UVUnwrapRes } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
-
-export interface UVUnwrapParams {
-  nCones: number;
-  flattenToDisk: boolean;
-  mapToSphere: boolean;
-  enableUVIslandRotation: boolean;
-}
+import {
+  initUVUnwrap,
+  unwrapUVs,
+  type UVUnwrapParams,
+  type UVUnwrapRes,
+} from 'src/viz/wasm/uv_unwrap/uvUnwrap';
 
 const methods = {
   uvUnwrap: async (
@@ -17,15 +15,7 @@ const methods = {
   ): Promise<UVUnwrapRes> => {
     await initUVUnwrap();
 
-    const res = unwrapUVs(
-      verts,
-      indices,
-      params.nCones,
-      params.flattenToDisk,
-      params.mapToSphere,
-      params.enableUVIslandRotation
-    );
-
+    const res = unwrapUVs(verts, indices, params);
     if (res.type === 'error') {
       return res;
     }

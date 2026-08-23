@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { scanGizmoHandleIds, scanGizmoHandleOrder, scanSource } from './gizmoScan';
+import { scanControlHandleIds, scanGizmoHandleIds, scanGizmoHandleOrder, scanSource } from './gizmoScan';
 
 test('named call: handleId from the string literal, vec3 kind, name range recorded', () => {
   const src = 'pos = gizmo("cut1")';
@@ -52,6 +52,13 @@ test('calls are found inside blocks and despite trailing syntax errors', () => {
 test('matches by callee name even when shadowed (runtime channel is authoritative)', () => {
   // A user-defined `gizmo` still trips the scanner; documented v1 limitation.
   assert.equal(scanSource('gizmo = |x| x\nz = gizmo("y")').at(-1)?.handleId, 'y');
+});
+
+test('scanControlHandleIds covers every input_* builtin, literal names only', () => {
+  const ids = scanControlHandleIds(
+    'a = input_float("f")\nb = input_color_ramp(name="g", default=[])\nc = input_image_levels("lv", t)\nd = input_int("n" + str(1))'
+  );
+  assert.deepEqual([...ids].sort(), ['f', 'g', 'lv']);
 });
 
 test('scanGizmoHandleIds returns static ids only, excluding dynamic ones', () => {

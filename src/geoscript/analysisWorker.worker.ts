@@ -39,6 +39,10 @@ const methods = {
     await ensureInit();
     return Analysis.analysis_completions(ctxPtr!, src, line, col, includePrelude, ambientSrc);
   },
+  rewriteInputDefaults: async (src: string, requestsJson: string): Promise<string> => {
+    await ensureInit();
+    return Analysis.analysis_rewrite_input_defaults(src, requestsJson);
+  },
   gotoDefinition: async (
     src: string,
     line: number,

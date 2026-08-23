@@ -36,7 +36,8 @@ interface RawRenderedControl {
   step: number | null;
   style: string | null;
   options: string[];
-  histogram: number[] | null;
+  stats: number[] | null;
+  has_override: boolean;
 }
 import { initGeodesics, setGeodesicsWasmURL } from './geodesics';
 import { initCGAL, setCGALWasmURL } from 'src/viz/wasm/cgal/cgal';
@@ -382,6 +383,7 @@ const methods = {
     const wrap = Geoscript.geoscript_get_rendered_texture_wrap(ctxPtr, texIx);
     const sourceModule = Geoscript.geoscript_get_rendered_texture_source_module(ctxPtr, texIx);
     const textureId = Geoscript.geoscript_get_rendered_texture_id(ctxPtr, texIx);
+    const stats = Geoscript.geoscript_get_rendered_texture_stats(ctxPtr, texIx);
     /** Empty strings mean unset. */
     const [minFilter, magFilter, format] = Geoscript.geoscript_get_rendered_texture_gpu_params(ctxPtr, texIx);
     /** SIMD-encoded in wasm for u8 materialization formats; empty for float formats. */
@@ -419,8 +421,9 @@ const methods = {
         minFilter,
         magFilter,
         format,
+        stats,
       },
-      filterNils([pixels?.buffer, encoded?.buffer, rgba?.buffer])
+      filterNils([pixels?.buffer, encoded?.buffer, rgba?.buffer, stats.buffer])
     );
   },
   setTextureParams: (ctxPtr: number, entries: TextureParamsEntry[]) => {

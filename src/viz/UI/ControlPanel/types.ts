@@ -1,10 +1,21 @@
 export type Rgb = [number, number, number];
 
+/** A row-level action surfaced behind the row's `⋯` menu. */
+export interface SettingAction {
+  label: string;
+  action: () => void;
+  disabled?: boolean;
+  title?: string;
+}
+
 interface BaseSetting {
   /** Display text. Doubles as the state key unless `key` is set, so must be unique then. */
   label: string;
   /** Explicit state key; defaults to `label`. Use when the display label isn't unique/stable. */
   key?: string;
+  /** Marks the label with a dot (e.g. "holds a stored override"). */
+  modified?: boolean;
+  actions?: SettingAction[];
 }
 
 export interface RangeSetting extends BaseSetting {

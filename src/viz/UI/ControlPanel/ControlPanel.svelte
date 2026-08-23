@@ -8,6 +8,7 @@
   import Color from './controls/Color.svelte';
   import Text from './controls/Text.svelte';
   import Button from './controls/Button.svelte';
+  import RowMenu from '../RowMenu.svelte';
 
   interface Props {
     settings: ControlPanelSetting[];
@@ -50,7 +51,9 @@
       {#if setting.type === 'button'}
         <Button {setting} />
       {:else}
-        <span class="cp-label" title={setting.label}>{setting.label}</span>
+        <span class="cp-label" title={setting.label}>
+          {#if setting.modified}<i class="cp-dot" title="stored override"></i>{/if}{setting.label}
+        </span>
         <div class="cp-control">
           {#if setting.type === 'range'}
             <Range {setting} value={state[k]} onChange={v => commit(k, v)} />
@@ -66,6 +69,9 @@
             <Text value={state[k]} onChange={v => commit(k, v)} />
           {/if}
         </div>
+        {#if setting.actions}
+          <RowMenu actions={setting.actions} />
+        {/if}
       {/if}
     </div>
   {/each}
@@ -105,5 +111,15 @@
     display: flex;
     align-items: center;
     min-width: 0;
+  }
+
+  .cp-dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 4px;
+    border-radius: 50%;
+    background: #d9a441;
+    vertical-align: middle;
   }
 </style>

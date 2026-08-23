@@ -12,6 +12,7 @@ import type {
 } from './types';
 import { buildLight, fitAutoShadowFrusta } from 'src/geotoy/modes/mesh/lights';
 import { getUVUnwrapWorker } from '../uvUnwrapWorker';
+import { parseChannelStats } from '../textureStats';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
 import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
@@ -223,7 +224,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
         nCones: unwrap.numCones,
         flattenToDisk: unwrap.flattenToDisk,
         mapToSphere: unwrap.mapToSphere,
-        enableUVIslandRotation: unwrap.enableUVIslandRotation,
+        align: unwrap.align,
       };
     })();
 
@@ -369,6 +370,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       minFilter: t.minFilter || null,
       magFilter: t.magFilter || null,
       format: t.format || null,
+      stats: parseChannelStats(t.stats),
     });
   }
 
@@ -405,7 +407,8 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       step: c.step,
       style: c.style,
       options: c.options,
-      histogram: c.histogram,
+      stats: c.stats ? parseChannelStats(c.stats) : null,
+      hasOverride: c.has_override,
     });
   }
 

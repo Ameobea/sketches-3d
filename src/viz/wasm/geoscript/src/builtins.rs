@@ -1377,8 +1377,10 @@ fn transpose_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let m = arg_refs[0].resolve(args, kwargs).as_mat4().unwrap();
-  Ok(Value::Mat4(Rc::new(m.transpose())))
+  match arg_refs[0].resolve(args, kwargs) {
+    Value::Mat4(m) => Ok(Value::Mat4(Rc::new(m.transpose()))),
+    v => Ok(Value::Texture(Rc::new(v.as_texture().unwrap().transpose_view()))),
+  }
 }
 
 fn apply_mat4_impl(
@@ -4916,7 +4918,6 @@ fn compute_uvs_impl(
       let uv_type = UvType::from_str(arg_refs[1].resolve(args, kwargs).as_str().unwrap())?;
       let scale = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
       let n_cones = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
-      let island_rotation = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
       let options = arg_refs[5].resolve(args, kwargs).as_map();
 
       if scale <= 0. || !scale.is_finite() {
@@ -4931,7 +4932,6 @@ fn compute_uvs_impl(
         uv_type,
         scale,
         n_cones.max(0) as u32,
-        island_rotation,
         sharp_threshold_rad,
         options,
       )
@@ -6564,6 +6564,7 @@ fn input_numeric_impl(
   is_int: bool,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 5)?;
+  let has_override = c.injected.is_some();
   let min = arg_refs[1]
     .resolve(args, kwargs)
     .as_float()
@@ -6611,7 +6612,8 @@ fn input_numeric_impl(
     step,
     style,
     options: Vec::new(),
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }
@@ -6623,6 +6625,7 @@ fn input_bool_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let has_override = c.injected.is_some();
   let default = arg_refs[1].resolve(args, kwargs).as_bool();
   let b = c
     .injected
@@ -6642,7 +6645,8 @@ fn input_bool_impl(
     step: None,
     style: None,
     options: Vec::new(),
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }
@@ -6654,6 +6658,7 @@ fn input_color_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let has_override = c.injected.is_some();
   let default = arg_refs[1].resolve(args, kwargs).as_vec3().copied();
   let v = match &c.injected {
     Some(Value::Vec3(v)) => *v,
@@ -6671,7 +6676,8 @@ fn input_color_impl(
     step: None,
     style: None,
     options: Vec::new(),
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }
@@ -6683,6 +6689,7 @@ fn input_spline_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 2)?;
+  let has_override = c.injected.is_some();
   let source = match &c.injected {
     Some(Value::Sequence(seq)) => Some(Rc::clone(seq)),
     _ => arg_refs[1].resolve(args, kwargs).as_sequence(),
@@ -6706,7 +6713,8 @@ fn input_spline_impl(
     step: None,
     style: None,
     options: Vec::new(),
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }
@@ -6718,6 +6726,7 @@ fn input_select_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let c = input_common(ctx, arg_refs, args, kwargs, 3)?;
+  let has_override = c.injected.is_some();
   let options: Vec<String> = match arg_refs[1].resolve(args, kwargs).as_sequence() {
     Some(seq) => seq
       .consume(ctx)
@@ -6752,7 +6761,8 @@ fn input_select_impl(
     step: None,
     style: None,
     options,
-    histogram: None,
+    stats: None,
+    has_override,
   });
   Ok(value)
 }
@@ -11029,8 +11039,14 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
     Ok(texture::texture_map_unary(t, |x| 1. - x))
   }),
-  "texture_normalize" => builtin_fn!(texture_normalize, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    img_ops::texture_normalize_impl(arg_refs, args, kwargs)
+  "texture_normalize" => builtin_fn!(texture_normalize, |_def_ix, arg_refs, args, kwargs, ctx| {
+    img_ops::texture_normalize_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "texture_standardize" => builtin_fn!(texture_standardize, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    img_ops::texture_standardize_impl(arg_refs, args, kwargs)
+  }),
+  "texture_equalize" => builtin_fn!(texture_equalize, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    img_ops::texture_equalize_impl(arg_refs, args, kwargs)
   }),
   "morph_open" => builtin_fn!(morph_open, |_def_ix, arg_refs, args, kwargs, _ctx| {
     img_ops::morph_composite_impl(img_ops::MorphOp::Open, arg_refs, args, kwargs)
@@ -11056,6 +11072,12 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "texture_mean" => builtin_fn!(texture_mean, |_def_ix, arg_refs, args, kwargs, _ctx| {
     texture::texture_reduce_impl(texture::ReduceKind::Mean, arg_refs, args, kwargs)
   }),
+  "texture_std" => builtin_fn!(texture_std, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::texture_std_impl(arg_refs, args, kwargs)
+  }),
+  "texture_quantile" => builtin_fn!(texture_quantile, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::texture_quantile_impl(arg_refs, args, kwargs)
+  }),
   "materialize" => builtin_fn!(materialize, |_def_ix, arg_refs: &[ArgRef], args: &[Value], kwargs, _ctx| {
     let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
     Ok(Value::Texture(texture::dense_rc(t)))
@@ -11067,6 +11089,16 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "flip_y" => builtin_fn!(flip_y, |_def_ix, arg_refs: &[ArgRef], args: &[Value], kwargs, _ctx| {
     let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
     Ok(Value::Texture(Rc::new(t.flip_view(false, true))))
+  }),
+  "texture_transpose" => builtin_fn!(texture_transpose, |_def_ix, arg_refs: &[ArgRef], args: &[Value], kwargs, _ctx| {
+    let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+    Ok(Value::Texture(Rc::new(t.transpose_view())))
+  }),
+  "texture_roll" => builtin_fn!(roll, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::roll_impl(arg_refs, args, kwargs)
+  }),
+  "sample" => builtin_fn!(sample, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    texture::sample_impl(arg_refs, args, kwargs)
   }),
   "height_to_normal" => builtin_fn!(height_to_normal, |def_ix, arg_refs, args, kwargs, _ctx| {
     texture::height_to_normal_impl(def_ix, arg_refs, args, kwargs)

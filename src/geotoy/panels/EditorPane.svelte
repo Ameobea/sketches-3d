@@ -3,6 +3,7 @@
   import type { EditorView, KeyBinding } from '@codemirror/view';
 
   import { buildEditor } from 'src/geoscript/editor';
+  import type { SourceEdit } from 'src/geoscript/analysisClient';
   import type { VectorizeMarker } from 'src/geoscript/vectorizeMarkers';
   import type { GizmoEditorHooks, GizmoReadout } from 'src/geoscript/gizmoExtensions';
   import { logGeotoyEvent } from 'src/analytics';
@@ -180,6 +181,14 @@
 
   /** Viewport mode → Ctrl-Z routes to the tree undo stack. */
   export const blur = () => editorView?.contentDOM.blur();
+
+  /** Splices edits (UTF-16 offsets into the current doc) as one CM transaction, so the
+   *  change lands in editor history and mirrors to the tree via `onDocChange`. */
+  export const applyEdits = (edits: SourceEdit[]): boolean => {
+    if (!editorView) return false;
+    editorView.dispatch({ changes: edits.map(e => ({ from: e.from, to: e.to, insert: e.insert })) });
+    return true;
+  };
 
   /** Cursor to a 1-based editor-space location (after the doc swap for a node change). */
   export const revealLoc = (line: number, col: number) => {

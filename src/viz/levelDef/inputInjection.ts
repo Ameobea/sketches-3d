@@ -36,6 +36,12 @@ export const reifyInput = (v: InputValueJson): GizmoValueWire => {
       };
     case 'spline':
       return { kind: 'spline', value: v.value.flat() };
+    case 'ramp':
+      return { kind: 'ramp', str_value: JSON.stringify(v.value) };
+    case 'image_levels': {
+      const l = v.value;
+      return { kind: 'image_levels', value: [l.in_lo, l.in_hi, l.out_lo, l.out_hi, l.gamma] };
+    }
   }
 };
 

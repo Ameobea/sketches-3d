@@ -48,7 +48,10 @@
     qualifyModuleName,
     referencedTabIds,
     moduleSourceLineOffset,
+    controlValueToWire,
   } from 'src/geoscript/treeCodegen';
+  import { applySourceEdits, getAnalysisClient, type SourceEdit } from 'src/geoscript/analysisClient';
+  import { showToast } from 'src/viz/util/GlobalToastState.svelte';
   import {
     proceduralOutputOptions,
     proceduralRefTabIds,
@@ -433,6 +436,7 @@
   let editorPane = $state<{
     blur: () => void;
     revealLoc: (line: number, col: number) => void;
+    applyEdits: (edits: SourceEdit[]) => boolean;
   } | null>(null);
 
   onMount(() => {
@@ -619,6 +623,53 @@
   const runOrFast = () => {
     if (tryTransformOnlyFastPath()) return;
     execution.run();
+  };
+
+  const controlNodeId = (c: RenderedControl): string | null => {
+    const nodeId = c.sourceModule ? lastRun?.moduleNameToNodeId[c.sourceModule] : undefined;
+    return nodeId && treeState.state.tree.nodes[nodeId] ? nodeId : null;
+  };
+
+  const clearControlOverride = (nodeId: string, handleId: string) => {
+    const before = treeState.captureControl(nodeId, handleId);
+    if (!before) return;
+    treeState.deleteControl(nodeId, handleId);
+    treeState.recordControlChange(nodeId, handleId, before, null);
+  };
+
+  const resetControl = (c: RenderedControl) => {
+    const nodeId = controlNodeId(c);
+    if (!nodeId) return;
+    clearControlOverride(nodeId, c.handleId);
+    runOrFast();
+  };
+
+  /** Bakes the stored value into the node source's `default=` (planned by the Rust parser),
+   *  then drops the override so the source is the single truth again. */
+  const bakeControlDefault = async (c: RenderedControl) => {
+    const nodeId = controlNodeId(c);
+    const stored = nodeId ? treeState.captureControl(nodeId, c.handleId) : null;
+    if (!nodeId || !stored) return;
+    const source = treeState.state.tree.nodes[nodeId].source;
+    const wire = controlValueToWire(stored);
+    const res = await getAnalysisClient().rewriteInputDefaults(source, [
+      { handle_id: c.handleId, kind: c.kind, value: wire.value ?? [], str_value: wire.str_value ?? null },
+    ]);
+    if (res.errors.length > 0) {
+      showToast({ status: 'error', message: `set as default: ${res.errors[0].message}`, durationMs: 6000 });
+      return;
+    }
+    if (treeState.state.tree.nodes[nodeId]?.source !== source) {
+      showToast({ status: 'warning', message: 'set as default: the source changed meanwhile; try again' });
+      return;
+    }
+    // The open node goes through CodeMirror (keeps its undo history); others edit the tree
+    // directly and the editor picks the text up when they're selected.
+    const viaEditor = treeState.state.selectedId === nodeId && editorPane?.applyEdits(res.edits);
+    if (!viaEditor) treeState.setSource(nodeId, applySourceEdits(source, res.edits));
+    clearControlOverride(nodeId, c.handleId);
+    logGeotoyEvent('editor', 'control_baked_default');
+    runOrFast();
   };
 
   const runManual = async () => {
@@ -1396,6 +1447,8 @@
     {treeState}
     moduleNameToNodeId={lastRun?.moduleNameToNodeId ?? {}}
     onEdit={scheduleControlRun}
+    onBakeDefault={bakeControlDefault}
+    onResetControl={resetControl}
     spline={splineController.panelCtx}
   />
 {/if}

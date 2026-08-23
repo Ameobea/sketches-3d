@@ -188,6 +188,49 @@ xy = t.xy
   }
 
   #[test]
+  fn transpose_and_roll() {
+    let ctx = eval(&format!(
+      "{SETUP}
+tt = transpose(t)
+tt2 = texture_transpose(t)
+back = transpose(tt)
+a = t[1][2][0]
+b = tt[2][1][0]
+c = t[2][3][2]
+d = tt[3][2][2]
+r = texture_roll(1, -1, t)
+r0 = texture_roll(0, 0, t)
+rw = texture_roll(4, 3, t)
+r_px = r[0][1][0]
+r_src = t[1][0][0]
+r_wrap = r[2][0][1]
+r_wrap_src = t[0][3][1]
+"
+    ));
+    let (t, tt, back) = (get_tex(&ctx, "t"), get_tex(&ctx, "tt"), get_tex(&ctx, "back"));
+    assert_eq!((tt.width, tt.height, tt.channels), (3, 4, 3));
+    assert!(!tt.is_dense());
+    assert_eq!(get_tex(&ctx, "tt2").as_interleaved(), tt.as_interleaved());
+    assert_eq!(back.as_interleaved(), t.as_interleaved());
+    assert_eq!(get_f(&ctx, "a"), get_f(&ctx, "b"));
+    assert_eq!(get_f(&ctx, "c"), get_f(&ctx, "d"));
+    let td = t.as_interleaved();
+    let ttd = tt.as_interleaved();
+    for y in 0..3 {
+      for x in 0..4 {
+        for ch in 0..3 {
+          assert_eq!(ttd[(x * 3 + y) * 3 + ch], td[(y * 4 + x) * 3 + ch]);
+        }
+      }
+    }
+
+    assert_eq!(get_f(&ctx, "r_px"), get_f(&ctx, "r_src"));
+    assert_eq!(get_f(&ctx, "r_wrap"), get_f(&ctx, "r_wrap_src"));
+    assert!(Rc::ptr_eq(&get_tex(&ctx, "r0"), &t));
+    assert_eq!(get_tex(&ctx, "rw").as_interleaved(), td);
+  }
+
+  #[test]
   fn indexing_forms_and_equivalences() {
     let ctx = eval(&format!(
       "{SETUP}

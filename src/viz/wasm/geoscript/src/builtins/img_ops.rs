@@ -5,8 +5,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use super::texture::{
-  blur_tex, premultiplied_planes, resolve_tex_range, texture_map_chan, texture_reduce,
-  texture_zip, unpremultiply_planes, ReduceKind, MAX_TEXTURE_DIM,
+  blur_tex, premultiplied_planes, resolve_tex_range, texture_map_chan, texture_zip,
+  unpremultiply_planes, MAX_TEXTURE_DIM,
 };
 use crate::{ArgRef, ErrorStack, Sym, TexStorage, TextureHandle, TextureWrap, Value};
 
@@ -376,21 +376,83 @@ pub(crate) fn sharpen_impl(
   texture_zip(tex, &blurred, "sharpen", |x, b| x + (x - b) * amt)
 }
 
+/// `sigmas`: nil → the exact [min, max] window; `k` → mean ± k·std; `[lo, hi]` → signed
+/// z-positions around the mean. Output is clamped to [0, 1]; a constant channel maps to 0.
 pub(crate) fn texture_normalize_impl(
+  ctx: &crate::EvalCtx,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-  let (lo, hi) = (
-    texture_reduce(ReduceKind::Min, t),
-    texture_reduce(ReduceKind::Max, t),
-  );
-  let mut scale = [0f32; 4];
-  for c in 0..t.channels {
-    scale[c] = 1. / (hi[c] - lo[c]).max(1e-8);
+  let err = || {
+    ErrorStack::new(
+      "texture_normalize: `sigmas` must be a positive number or a `[lo, hi]` pair (or vec2) \
+       of z-positions with lo < hi",
+    )
+  };
+  let z = match arg_refs[1].resolve(args, kwargs) {
+    Value::Nil => None,
+    Value::Vec2(v) => Some((v.x, v.y)),
+    Value::Sequence(seq) => {
+      let parts: Vec<Value> = seq.consume(ctx).collect::<Result<_, _>>()?;
+      if parts.len() != 2 {
+        return Err(err());
+      }
+      Some((
+        parts[0].as_float().ok_or_else(err)?,
+        parts[1].as_float().ok_or_else(err)?,
+      ))
+    }
+    v => {
+      let k = v.as_float().ok_or_else(err)?;
+      Some((-k, k))
+    }
+  };
+  if let Some((lo, hi)) = z {
+    if !(lo < hi) {
+      return Err(err());
+    }
   }
-  Ok(texture_map_chan(t, |x, c| (x - lo[c]) * scale[c]))
+
+  let stats = t.stats();
+  let (mut lo, mut scale) = ([0f32; 4], [0f32; 4]);
+  for c in 0..t.channels {
+    let s = &stats.channels[c];
+    let (a, b) = match z {
+      None => (s.min, s.max),
+      Some((zl, zh)) => (s.mean + zl * s.std, s.mean + zh * s.std),
+    };
+    lo[c] = a;
+    scale[c] = 1. / (b - a).max(1e-8);
+  }
+  Ok(texture_map_chan(t, |x, c| ((x - lo[c]) * scale[c]).clamp(0., 1.)))
+}
+
+pub(crate) fn texture_standardize_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let stats = t.stats();
+  let (mut mean, mut inv) = ([0f32; 4], [0f32; 4]);
+  for c in 0..t.channels {
+    let s = &stats.channels[c];
+    mean[c] = s.mean;
+    inv[c] = if s.std > 1e-12 { 1. / s.std } else { 0. };
+  }
+  Ok(texture_map_chan(t, |x, c| (x - mean[c]) * inv[c]))
+}
+
+pub(crate) fn texture_equalize_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
+  let stats = t.stats();
+  Ok(texture_map_chan(t, |x, c| stats.channels[c].cdf(x)))
 }
 
 enum ChannelSrc<'a> {
@@ -559,29 +621,6 @@ pub(crate) fn texture_levels_impl(
   Ok(apply_levels(tex, p))
 }
 
-/// 256-bin histogram over at most ~64k stride-sampled texels so cost is ~constant at any
-/// resolution. 1-ch bins the channel; multi-channel uses Rec.709 luma of the first 3
-/// channels (channel 0 for 2-ch). Out-of-range values clamp into the edge bins.
-pub(crate) fn build_histogram(t: &TextureHandle) -> Vec<u32> {
-  let mut bins = vec![0u32; 256];
-  let ch = t.channels;
-  // Step both axes: striding a flat index by total/65536 gives a power of two on
-  // power-of-two textures, which divides the width and so samples a handful of columns.
-  let step = ((t.width * t.height).div_ceil(65536) as f64).sqrt().ceil() as usize;
-  let step = step.max(1);
-  for y in (0..t.height).step_by(step) {
-    for x in (0..t.width).step_by(step) {
-      let v = if ch >= 3 {
-        0.2126 * t.texel_raw(x, y, 0) + 0.7152 * t.texel_raw(x, y, 1) + 0.0722 * t.texel_raw(x, y, 2)
-      } else {
-        t.texel_raw(x, y, 0)
-      };
-      bins[((v * 256.) as i64).clamp(0, 255) as usize] += 1;
-    }
-  }
-  bins
-}
-
 pub(crate) fn input_image_levels_impl(
   ctx: &crate::EvalCtx,
   arg_refs: &[ArgRef],
@@ -589,6 +628,7 @@ pub(crate) fn input_image_levels_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let c = super::input_common(ctx, arg_refs, args, kwargs, 3)?;
+  let has_override = c.injected.is_some();
   let tex = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
 
   let injected = c.injected.as_ref().and_then(|v| match v {
@@ -635,7 +675,8 @@ pub(crate) fn input_image_levels_impl(
     step: None,
     style: None,
     options: Vec::new(),
-    histogram: Some(build_histogram(tex)),
+    stats: Some(tex.stats()),
+    has_override,
   });
   Ok(apply_levels(tex, params))
 }
@@ -650,6 +691,52 @@ mod tests {
       Value::Texture(t) => t,
       other => panic!("Expected {name} to be a texture, found: {other:?}"),
     }
+  }
+
+  /// The normalize family end to end on a standardized Gaussian field (64² = exact stats).
+  #[test]
+  fn normalize_family() {
+    let ctx = parse_and_eval_program(
+      r#"
+n = spectral_noise(bands=[[-3,-3,-3,-3],[-3.5,-3.5,-3.5,-3.5],[-4.1,-4.1,-4.1,-4.1],[-4.7,-4.7,-4.7,-4.7],[-5.2,-5.2,-5.2,-5.2],[-5.8,-5.8,-5.8,-5.8],[-6.3,-6.3,-6.3,-6.3],[-6.9,-6.9,-6.9,-6.9]], width=64, height=64)
+z = (n * 3.) | texture_standardize
+s = n | texture_normalize(sigmas=2.)
+a = n | texture_normalize(sigmas=[0., 2.])
+e = n | texture_equalize
+q = texture_quantile(n, 0.7)
+sd = texture_std(n)
+"#,
+    )
+    .unwrap();
+    let n = get_tex(&ctx, "n").as_interleaved();
+    let count = n.len() as f32;
+    let frac = |f: &dyn Fn(f32) -> bool| n.iter().filter(|&&v| f(v)).count() as f32 / count;
+
+    let z = get_tex(&ctx, "z").as_interleaved();
+    assert!(n.iter().zip(&z).all(|(a, b)| (a - b).abs() < 1e-4), "standardize(3n) must recover n");
+    assert!((ctx.get_global("sd").unwrap().as_float().unwrap() - 1.).abs() < 1e-3);
+
+    let s = get_tex(&ctx, "s").as_interleaved();
+    assert!(s.iter().all(|&v| (0. ..=1.).contains(&v)));
+    let clipped = s.iter().filter(|&&v| v == 0. || v == 1.).count() as f32 / count;
+    assert!((0.02..0.08).contains(&clipped), "±2σ clips ~4.5%, got {clipped}");
+    let a = get_tex(&ctx, "a").as_interleaved();
+    let zeros = a.iter().filter(|&&v| v == 0.).count() as f32 / count;
+    assert!((zeros - frac(&|v| v <= 0.)).abs() < 1e-3, "[0, 2] zeroes everything below the mean");
+
+    let e = get_tex(&ctx, "e").as_interleaved();
+    let e_mean = e.iter().sum::<f32>() / count;
+    assert!((e_mean - 0.5).abs() < 0.01, "equalized mean {e_mean}");
+    let above = e.iter().filter(|&&v| v > 0.7).count() as f32 / count;
+    assert!((above - 0.3).abs() < 0.01, "equalize: {above} above 0.7");
+
+    let q = ctx.get_global("q").unwrap().as_float().unwrap();
+    assert!((frac(&|v| v > q) - 0.3).abs() < 0.002, "quantile(0.7) threshold covers 30%");
+
+    let err = parse_and_eval_program("t = texture(4, 4, |uv| uv.x)\nt | texture_normalize(sigmas=[2., 1.])")
+      .unwrap_err()
+      .to_string();
+    assert!(err.contains("lo < hi"), "{err}");
   }
 
   #[test]
@@ -767,9 +854,9 @@ outd = input_image_levels("lv2", g, default={in_hi: 0.5})
     let controls = ctx.rendered_controls.inner.borrow();
     assert_eq!(controls.len(), 2);
     assert!(matches!(controls[0].kind, crate::ControlKind::ImageLevels));
-    let hist = controls[0].histogram.as_ref().unwrap();
-    assert_eq!(hist.len(), 256);
-    assert_eq!(hist.iter().sum::<u32>(), 16);
+    let stats = controls[0].stats.as_ref().unwrap();
+    assert_eq!(stats.channels.len(), 1);
+    assert_eq!((stats.channels[0].min, stats.channels[0].max), (g[0], g[3]));
     match &controls[1].current_value {
       Value::Map(m) => {
         assert_eq!(m.get("in_hi").unwrap().as_float().unwrap(), 0.5);
@@ -853,21 +940,6 @@ out = blit(masked, base, filter="nearest")
     for px in out.as_interleaved().iter() {
       assert!((px - 0.5).abs() < 1e-6, "alpha 0.5 over black base: got {px}");
     }
-  }
-
-  /// Striding a flat index by `total/65536` is a power of two on power-of-two textures, so
-  /// it divides the width and samples only a few columns; a vertical ramp exposes that.
-  #[test]
-  fn histogram_covers_both_axes() {
-    let ctx = parse_and_eval_program(
-      "g = texture(2048, 2048, |uv| uv.x)\nout = input_image_levels(\"lv\", g)",
-    )
-    .unwrap();
-    let controls = ctx.rendered_controls.inner.borrow();
-    let hist = controls[0].histogram.as_ref().unwrap();
-    // A full-width ramp must light up essentially every bin, not a handful of columns.
-    let occupied = hist.iter().filter(|&&b| b > 0).count();
-    assert!(occupied > 200, "vertical ramp aliased to {occupied}/256 bins");
   }
 
   #[test]

@@ -130,6 +130,7 @@ const INPUT_CALLEES = new Set([
   'input_spline',
   'input_ramp',
   'input_color_ramp',
+  'input_image_levels',
 ]);
 
 /** Static `input_*` control handle ids in a node's source; used for orphaned-control GC. */

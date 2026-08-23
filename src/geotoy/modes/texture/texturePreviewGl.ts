@@ -9,6 +9,8 @@ export interface PreviewCell {
   w: number;
   h: number;
   srgb: boolean;
+  /** Value window shown as black→white (`[0, 1]` for images; the data's min–max when fitted). */
+  range: [number, number];
 }
 
 export interface PreviewDraw {
@@ -50,6 +52,7 @@ uniform int uChannelSel;
 uniform bool uTiled;
 uniform int uWrap;
 uniform bool uSrgb;
+uniform vec2 uRange;
 uniform sampler2D uTex;
 uniform highp sampler2DArray uTexArr;
 uniform bool uIsArray;
@@ -102,7 +105,7 @@ void main() {
     else if (uChannelSel == 2) c = vec3(c.g);
     else if (uChannelSel == 3) c = vec3(c.b);
     else if (uChannelSel == 4) c = vec3(uChannels == 4 ? t.a : 1.0);
-    c = clamp(c, 0.0, 1.0);
+    c = clamp((c - uRange.x) / (uRange.y - uRange.x), 0.0, 1.0);
     if (uSrgb) c = l2s(c);
     if (uChannels == 4 && uChannelSel == 0) {
       // straight-alpha composite over a checkerboard so transparency reads visually
@@ -135,6 +138,7 @@ const UNIFORMS = [
   'uTiled',
   'uWrap',
   'uSrgb',
+  'uRange',
   'uTex',
   'uTexArr',
   'uIsArray',
@@ -319,7 +323,7 @@ export const createTexturePreviewGl = (canvas: HTMLCanvasElement): TexturePrevie
     gl.uniform2f(u.uTilePx, tilePx[0] * dpr, tilePx[1] * dpr);
     gl.uniform1i(u.uTiled, tiled ? 1 : 0);
     gl.uniform1f(u.uStackT, stackT);
-    for (const { tex, x, y, w, h, srgb } of cells) {
+    for (const { tex, x, y, w, h, srgb, range } of cells) {
       const glTex = upload(tex);
       const x0 = Math.round(x * dpr);
       const x1 = Math.round((x + w) * dpr);
@@ -337,6 +341,7 @@ export const createTexturePreviewGl = (canvas: HTMLCanvasElement): TexturePrevie
       gl.uniform1i(u.uChannelSel, CHANNEL_IX[channel === 'a' && tex.channels !== 4 ? 'rgb' : channel]);
       gl.uniform1i(u.uWrap, WRAP_IX[tex.wrap]);
       gl.uniform1i(u.uSrgb, srgb ? 1 : 0);
+      gl.uniform2f(u.uRange, range[0], range[1]);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
   };

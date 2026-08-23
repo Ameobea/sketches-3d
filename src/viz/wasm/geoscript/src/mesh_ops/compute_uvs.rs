@@ -44,7 +44,9 @@ extern "C" {
     n_cones: u32,
     flatten_to_disk: bool,
     map_to_sphere: bool,
-    island_rotation: bool,
+    align_up: &str,
+    align_fallback: &str,
+    align_axis: &str,
   ) -> String;
   fn uv_unwrap_get_verts() -> Vec<f32>;
   fn uv_unwrap_get_indices() -> Vec<u32>;
@@ -130,7 +132,6 @@ pub fn compute_uvs(
   uv_type: UvType,
   scale: f32,
   n_cones: u32,
-  island_rotation: bool,
   sharp_threshold_rad: f32,
   options: Option<&FxHashMap<String, Value>>,
 ) -> Result<MeshHandle, ErrorStack> {
@@ -143,15 +144,62 @@ pub fn compute_uvs(
       "`compute_uvs(type='toroidal')` (closed genus-1) is not yet implemented; for a capped \
        tube-like mesh use type='tube'",
     )),
-    UvType::Auto | UvType::Unwrap | UvType::Disk | UvType::Sphere => bff_uvs(
-      mesh,
-      uv_type,
-      scale,
-      n_cones,
-      island_rotation,
-      sharp_threshold_rad,
-    ),
+    UvType::Auto | UvType::Unwrap | UvType::Disk | UvType::Sphere => {
+      bff_uvs(mesh, uv_type, scale, n_cones, sharp_threshold_rad, options)
+    }
   }
+}
+
+struct UvAlign {
+  #[allow(dead_code)]
+  up: String,
+  #[allow(dead_code)]
+  fallback: String,
+  #[allow(dead_code)]
+  axis: String,
+}
+
+const ALIGN_AXES: &[&str] = &["+x", "-x", "+y", "-y", "+z", "-z"];
+const ALIGN_UV_AXES: &[&str] = &["+v", "+u", "-v", "-u"];
+
+fn parse_align_options(
+  options: Option<&FxHashMap<String, Value>>,
+) -> Result<Option<UvAlign>, ErrorStack> {
+  let Some(map) = options else { return Ok(None) };
+  let mut up = None;
+  let mut fallback = "-z".to_owned();
+  let mut axis = "+v".to_owned();
+  for (key, val) in map {
+    let parse = |allowed: &[&str]| -> Result<String, ErrorStack> {
+      val
+        .as_str()
+        .map(|s| s.to_lowercase())
+        .filter(|s| allowed.contains(&s.as_str()))
+        .ok_or_else(|| {
+          ErrorStack::new(format!(
+            "`compute_uvs` option `{key}` must be one of {allowed:?}"
+          ))
+        })
+    };
+    match key.as_str() {
+      "up" => up = Some(parse(ALIGN_AXES)?),
+      "fallback" => fallback = parse(ALIGN_AXES)?,
+      "axis" => axis = parse(ALIGN_UV_AXES)?,
+      _ => {
+        return Err(ErrorStack::new(format!(
+          "Unknown option {key:?} for `compute_uvs` BFF types; supported options: `up`, \
+           `fallback`, `axis`"
+        )))
+      }
+    }
+  }
+  let Some(up) = up else { return Ok(None) };
+  if up[1..] == fallback[1..] {
+    return Err(ErrorStack::new(
+      "`compute_uvs` options `up` and `fallback` must not be parallel",
+    ));
+  }
+  Ok(Some(UvAlign { up, fallback, axis }))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -180,10 +228,14 @@ fn bff_uvs(
   uv_type: UvType,
   scale: f32,
   n_cones: u32,
-  island_rotation: bool,
   sharp_threshold_rad: f32,
+  options: Option<&FxHashMap<String, Value>>,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_uv_unwrap_loaded()?;
+  let align = parse_align_options(options)?;
+  let (align_up, align_fallback, align_axis) = align.as_ref().map_or(("", "", ""), |a| {
+    (a.up.as_str(), a.fallback.as_str(), a.axis.as_str())
+  });
 
   let (flatten_to_disk, map_to_sphere) = match uv_type {
     UvType::Disk => (true, false),
@@ -203,7 +255,9 @@ fn bff_uvs(
     n_cones,
     flatten_to_disk,
     map_to_sphere,
-    island_rotation,
+    align_up,
+    align_fallback,
+    align_axis,
   );
   if !err.is_empty() {
     return Err(ErrorStack::new(format!(
@@ -543,9 +597,10 @@ fn bff_uvs(
   _uv_type: UvType,
   _scale: f32,
   _n_cones: u32,
-  _island_rotation: bool,
   _sharp_threshold_rad: f32,
+  options: Option<&FxHashMap<String, Value>>,
 ) -> Result<MeshHandle, ErrorStack> {
+  parse_align_options(options)?;
   Err(ErrorStack::new(
     "`compute_uvs` with type=auto/unwrap/disk/sphere is only supported in wasm (backed by the BFF \
      unwrap module)",
@@ -948,6 +1003,26 @@ mod tests {
 
   #[test]
   fn unknown_type_errors() {
+    for (src, needle) in [
+      (
+        "compute_uvs(type='unwrap', options={ up: 'diagonal' })",
+        "must be one of",
+      ),
+      (
+        "compute_uvs(type='unwrap', options={ up: '+y', fallback: '-y' })",
+        "must not be parallel",
+      ),
+      (
+        "compute_uvs(type='unwrap', options={ bogus: 1 })",
+        "Unknown option",
+      ),
+    ] {
+      let err = crate::parse_and_eval_program(&format!("box(1, 1, 1) | {src} | render"))
+        .unwrap_err()
+        .to_string();
+      assert!(err.contains(needle), "{src}: {err}");
+    }
+
     let err = crate::parse_and_eval_program("box(1, 1, 1) | compute_uvs(type='nope') | render")
       .unwrap_err();
     assert!(format!("{err}").contains("Invalid `type`"), "got: {err}");

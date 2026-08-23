@@ -5,7 +5,7 @@
 
 use crate::{
   noise::{fbm_2d, fbm_2d_tileable},
-  Vec2,
+  ErrorStack, TextureWrap, Vec2,
 };
 
 pub(crate) fn map_new(a: &[f32], f: impl Fn(f32) -> f32) -> Vec<f32> {
@@ -146,6 +146,236 @@ pub(crate) fn fbm2_kern(
       }
     }
   }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SampleFilter {
+  Nearest,
+  Bilinear,
+}
+
+impl SampleFilter {
+  pub(crate) fn from_name(s: &str) -> Result<Self, ErrorStack> {
+    match s {
+      "nearest" => Ok(Self::Nearest),
+      "bilinear" => Ok(Self::Bilinear),
+      _ => Err(ErrorStack::new(format!(
+        "Invalid sample filter: \"{s}\"; expected \"nearest\" or \"bilinear\""
+      ))),
+    }
+  }
+}
+
+/// Source for the gather kernels: a `w`×`h` texture's planes under strided addressing
+/// (`origin + y * y_pitch + x * x_pitch`), so views gather without materializing.
+#[derive(Clone, Copy)]
+pub(crate) struct GatherSrc<'a> {
+  pub planes: &'a [&'a [f32]],
+  pub w: usize,
+  pub h: usize,
+  pub origin: isize,
+  pub x_pitch: isize,
+  pub y_pitch: isize,
+  pub wrap: TextureWrap,
+}
+
+impl GatherSrc<'_> {
+  #[inline(always)]
+  fn at(&self, x: usize, y: usize) -> usize {
+    (self.origin + y as isize * self.y_pitch + x as isize * self.x_pitch) as usize
+  }
+}
+
+#[inline(always)]
+fn repeat01(u: f32) -> f32 {
+  u - u.floor()
+}
+
+#[inline(always)]
+fn clamp01(u: f32) -> f32 {
+  u.clamp(0., 1.)
+}
+
+#[inline(always)]
+fn mirror01(u: f32) -> f32 {
+  let t = repeat01(u * 0.5) * 2.;
+  if t > 1. {
+    2. - t
+  } else {
+    t
+  }
+}
+
+/// Monomorphizes `$body` per wrap mode: `$f` canonicalizes a coordinate into [0, 1] and
+/// `$rep` says whether the two bilinear taps wrap toroidally or clamp.
+macro_rules! with_wrap {
+  ($wrap:expr, |$f:ident, $rep:ident| $body:expr) => {
+    match $wrap {
+      TextureWrap::Repeat => {
+        let ($f, $rep) = (repeat01, true);
+        $body
+      }
+      TextureWrap::Clamp => {
+        let ($f, $rep) = (clamp01, false);
+        $body
+      }
+      TextureWrap::Mirror => {
+        let ($f, $rep) = (mirror01, false);
+        $body
+      }
+    }
+  };
+}
+
+/// Coordinates canonicalize to [0, 1] (so `u = 1.` lands on texel 0 under repeat) and the
+/// index clamps, which also absorbs `u01 * n` rounding up to exactly `n`; NaN → texel 0.
+#[inline(always)]
+fn nearest_ix(u: f32, n: usize, wrap01: impl Fn(f32) -> f32) -> usize {
+  ((wrap01(u) * n as f32).floor() as i32).min(n as i32 - 1) as usize
+}
+
+/// Tap pair + blend weight along one axis; texel centers sit at `(i + 0.5) / n`.
+#[inline(always)]
+fn linear_taps(u: f32, n: usize, rep: bool, wrap01: impl Fn(f32) -> f32) -> (usize, usize, f32) {
+  let s = wrap01(u) * n as f32 - 0.5;
+  let s0 = s.floor();
+  let i0 = s0 as i32;
+  let last = n as i32 - 1;
+  let (a, b) = if rep {
+    (
+      if i0 < 0 { last } else { i0.min(last) },
+      if i0 >= last { 0 } else { i0 + 1 },
+    )
+  } else {
+    (i0.clamp(0, last), (i0 + 1).clamp(0, last))
+  };
+  (a as usize, b as usize, s - s0)
+}
+
+/// Plane index of the nearest texel.
+#[inline(always)]
+fn nearest_at(src: &GatherSrc, u: f32, v: f32, wrap01: impl Fn(f32) -> f32 + Copy) -> usize {
+  src.at(nearest_ix(u, src.w, wrap01), nearest_ix(v, src.h, wrap01))
+}
+
+/// Plane indices + weights of the four bilinear taps.
+#[inline(always)]
+fn bilinear_at(
+  src: &GatherSrc,
+  u: f32,
+  v: f32,
+  rep: bool,
+  wrap01: impl Fn(f32) -> f32 + Copy,
+) -> ([usize; 4], [f32; 4]) {
+  let (x0, x1, fx) = linear_taps(u, src.w, rep, wrap01);
+  let (y0, y1, fy) = linear_taps(v, src.h, rep, wrap01);
+  let (gx, gy) = (1. - fx, 1. - fy);
+  (
+    [
+      src.at(x0, y0),
+      src.at(x1, y0),
+      src.at(x0, y1),
+      src.at(x1, y1),
+    ],
+    [gx * gy, fx * gy, gx * fy, fx * fy],
+  )
+}
+
+#[inline(always)]
+fn blend4(p: &[f32], k: &[usize; 4], w: &[f32; 4]) -> f32 {
+  p[k[0]] * w[0] + p[k[1]] * w[1] + p[k[2]] * w[2] + p[k[3]] * w[3]
+}
+
+/// One texel of `src` at continuous `(u, v)`; `out[..planes.len()]` is written.
+pub(crate) fn sample_texel(
+  src: &GatherSrc,
+  filter: SampleFilter,
+  u: f32,
+  v: f32,
+  out: &mut [f32; 4],
+) {
+  with_wrap!(src.wrap, |f, rep| match filter {
+    SampleFilter::Nearest => {
+      let k = nearest_at(src, u, v, f);
+      for (o, p) in out.iter_mut().zip(src.planes) {
+        *o = p[k];
+      }
+    }
+    SampleFilter::Bilinear => {
+      let (k, w) = bilinear_at(src, u, v, rep, f);
+      for (o, p) in out.iter_mut().zip(src.planes) {
+        *o = blend4(p, &k, &w);
+      }
+    }
+  })
+}
+
+/// Texels per address-resolve block: the resolved taps stay L1-resident while each plane
+/// runs its own branch-free zip loop over them.
+const BLK: usize = 64;
+
+#[inline(always)]
+fn gather_w(
+  src: &GatherSrc,
+  filter: SampleFilter,
+  rep: bool,
+  wrap01: impl Fn(f32) -> f32 + Copy,
+  u: &[f32],
+  v: &[f32],
+  outs: &mut [Vec<f32>],
+) {
+  let n = u.len();
+  match filter {
+    SampleFilter::Nearest => {
+      let mut ks = [0usize; BLK];
+      for b in (0..n).step_by(BLK) {
+        let m = (n - b).min(BLK);
+        for (k, (&u, &v)) in ks[..m].iter_mut().zip(u[b..b + m].iter().zip(&v[b..b + m])) {
+          *k = nearest_at(src, u, v, wrap01);
+        }
+        for (o, p) in outs.iter_mut().zip(src.planes) {
+          for (o, &k) in o[b..b + m].iter_mut().zip(&ks[..m]) {
+            *o = p[k];
+          }
+        }
+      }
+    }
+    SampleFilter::Bilinear => {
+      let mut taps = [([0usize; 4], [0f32; 4]); BLK];
+      for b in (0..n).step_by(BLK) {
+        let m = (n - b).min(BLK);
+        for (t, (&u, &v)) in taps[..m]
+          .iter_mut()
+          .zip(u[b..b + m].iter().zip(&v[b..b + m]))
+        {
+          *t = bilinear_at(src, u, v, rep, wrap01);
+        }
+        for (o, p) in outs.iter_mut().zip(src.planes) {
+          for (o, (k, w)) in o[b..b + m].iter_mut().zip(&taps[..m]) {
+            *o = blend4(p, k, w);
+          }
+        }
+      }
+    }
+  }
+}
+
+/// Whole-field gather: `outs[c][i] = src.planes[c]` sampled at `(u[i], v[i])`. Addresses
+/// and weights resolve once per texel and feed every plane.
+pub(crate) fn gather(
+  src: &GatherSrc,
+  filter: SampleFilter,
+  u: &[f32],
+  v: &[f32],
+  outs: &mut [Vec<f32>],
+) {
+  let n = u.len();
+  let v = &v[..n];
+  for o in outs.iter_mut() {
+    o.clear();
+    o.resize(n, 0.);
+  }
+  with_wrap!(src.wrap, |f, rep| gather_w(src, filter, rep, f, u, v, outs))
 }
 
 #[cfg(test)]

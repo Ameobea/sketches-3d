@@ -31,6 +31,22 @@
   color: var(--ctl-label);
 }
 
+.ctl-section .ctl-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: #d9a441;
+  vertical-align: middle;
+}
+
+.ctl-section .ctl-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 /* Bar: a canvas with markers positioned absolutely over it. `dragAlongBar` measures the
  * marker's parent, so markers must be siblings of the canvas inside the wrap. */
 .ctl-section .ctl-bar-wrap {

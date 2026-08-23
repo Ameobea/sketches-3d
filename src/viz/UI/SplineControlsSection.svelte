@@ -1,8 +1,18 @@
 <script lang="ts">
   import type { RenderedControl } from 'src/geoscript/runner/types';
   import { controlKey, type SplinePanelCtx } from 'src/geoscript/controlsUi';
+  import RowMenu from 'src/viz/UI/RowMenu.svelte';
+  import type { SettingAction } from 'src/viz/UI/ControlPanel';
 
-  let { controls, spline }: { controls: RenderedControl[]; spline: SplinePanelCtx } = $props();
+  let {
+    controls,
+    spline,
+    actions,
+  }: {
+    controls: RenderedControl[];
+    spline: SplinePanelCtx;
+    actions?: (c: RenderedControl) => SettingAction[];
+  } = $props();
 
   // Script-level view-model: a fresh row array per change drives the keyed each.
   const rows = $derived(
@@ -36,11 +46,16 @@
   <div class="splines">
     {#each rows as row (row.key)}
       <div class="spline-row">
-        <span class="spline-label">{row.label}</span>
+        <span class="spline-label">
+          {#if row.c.hasOverride}<i class="spline-dot" title="stored override"></i>{/if}{row.label}
+        </span>
         <span class="spline-count">{row.count} pts</span>
         <button class="spline-btn" class:active={row.active} onclick={() => spline.toggle(row.c)}>
           {row.active ? 'done' : 'edit'}
         </button>
+        {#if actions}
+          <RowMenu actions={actions(row.c)} />
+        {/if}
       </div>
       {#if row.active}
         <div class="pt-list">
@@ -86,6 +101,16 @@
 {/if}
 
 <style>
+  .spline-dot {
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 4px;
+    border-radius: 50%;
+    background: #d9a441;
+    vertical-align: middle;
+  }
+
   .splines {
     background: #1a1a1a;
     border: 1px solid #444;

@@ -56,10 +56,10 @@ use crate::{
 #[cfg(target_arch = "wasm32")]
 pub mod aligned_alloc;
 pub mod ast;
-pub mod desugar;
 pub mod autodiff;
 pub mod builtins;
 pub mod color;
+pub mod desugar;
 mod guards;
 pub mod lights;
 pub mod materials;
@@ -71,20 +71,24 @@ pub mod preprocess;
 mod resolve;
 mod retained_size;
 mod seq;
+pub mod tex_stats;
 pub mod tex_vectorize;
 #[cfg(test)]
 mod tex_view_tests;
+pub mod texture_encode;
 #[cfg(test)]
 mod texture_goldens;
-pub mod texture_encode;
 pub mod ty;
 pub mod type_infer;
 pub mod value_json;
 
-pub use self::ast::{traverse_fn_calls, Program};
+pub use self::ast::{parse_string_literal, traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
 pub use self::builtins::img_ops::{image_levels_control_value, image_levels_value_from_wire};
-pub use self::builtins::ramp::{ramp_control_value_json, ramp_value_from_wire_json};
+pub use self::builtins::ramp::{
+  ramp_control_value_json, ramp_value_from_wire_json, RampSpecWire, RampStopWire,
+};
+pub use self::tex_stats::{ChannelStats, TexStats};
 
 /// Mesh prelude: default scene lights.
 pub const PRELUDE: &str = include_str!("prelude.geo");
@@ -916,6 +920,8 @@ fn next_tex_storage_id() -> u64 {
 pub struct TexStorage {
   id: u64,
   pub(crate) kind: TexKind,
+  /// Lazily filled by `TextureHandle::stats`; storage is immutable, so never invalidated.
+  stats: RefCell<Option<Rc<TexStats>>>,
 }
 
 #[derive(Clone)]
@@ -930,6 +936,7 @@ impl TexStorage {
     TexStorage {
       id: next_tex_storage_id(),
       kind: TexKind::Planes(planes),
+      stats: Default::default(),
     }
   }
 
@@ -941,6 +948,7 @@ impl TexStorage {
     TexStorage {
       id: next_tex_storage_id(),
       kind: TexKind::View(v),
+      stats: Default::default(),
     }
   }
 
@@ -1008,11 +1016,35 @@ impl TextureHandle {
       TexKind::View(v) => (0..self.channels)
         .map(|c| {
           let src: &[f32] = &v.planes[c];
-          let mut out = Vec::with_capacity(self.width * self.height);
-          for y in 0..self.height {
-            let row = v.origin + y as isize * v.y_pitch;
-            for x in 0..self.width {
-              out.push(src[(row + x as isize * v.x_pitch) as usize]);
+          let (w, h) = (self.width, self.height);
+          let at = |x: usize, y: usize| {
+            src[(v.origin + y as isize * v.y_pitch + x as isize * v.x_pitch) as usize]
+          };
+          let mut out = Vec::with_capacity(w * h);
+          if v.x_pitch.abs() <= v.y_pitch.abs() {
+            for y in 0..h {
+              out.extend((0..w).map(|x| at(x, y)));
+            }
+          } else {
+            // Transposed view: stream the source in its own order into an L1-resident tile,
+            // then stream the tile out row-major. Direct strided loops alias badly on
+            // power-of-two widths (every row lands in the same cache set).
+            const T: usize = 64;
+            let mut tile = [0f32; T * T];
+            out.resize(w * h, 0.);
+            for ty in (0..h).step_by(T) {
+              let th = (ty + T).min(h) - ty;
+              for tx in (0..w).step_by(T) {
+                let tw = (tx + T).min(w) - tx;
+                for i in 0..tw {
+                  for j in 0..th {
+                    tile[j * T + i] = at(tx + i, ty + j);
+                  }
+                }
+                for j in 0..th {
+                  out[(ty + j) * w + tx..][..tw].copy_from_slice(&tile[j * T..][..tw]);
+                }
+              }
             }
           }
           Rc::new(out)
@@ -1047,6 +1079,11 @@ impl TextureHandle {
   /// cache-replay identity checks.
   pub fn storage_id(&self) -> u64 {
     self.storage.id()
+  }
+
+  pub fn stats(&self) -> Rc<TexStats> {
+    let mut slot = self.storage.stats.borrow_mut();
+    Rc::clone(slot.get_or_insert_with(|| Rc::new(TexStats::compute(self))))
   }
 
   /// Unwrapped in-bounds texel read; the wrap-aware funnel is `texel` (builtins/texture.rs).
@@ -1096,7 +1133,10 @@ impl TextureHandle {
   /// storage kinds. `sel` entries are validated against `self.channels` by the caller.
   pub(crate) fn swizzle_view(&self, sel: &[u8]) -> TextureHandle {
     let pick = |planes: &[Rc<Vec<f32>>]| -> Vec<Rc<Vec<f32>>> {
-      sel.iter().map(|&s| Rc::clone(&planes[s as usize])).collect()
+      sel
+        .iter()
+        .map(|&s| Rc::clone(&planes[s as usize]))
+        .collect()
     };
     let storage = match &self.storage.kind {
       TexKind::Planes(p) => TexStorage::planes(pick(p)),
@@ -1111,6 +1151,35 @@ impl TextureHandle {
       mips: MipCache::default(),
       ..self.clone()
     }
+  }
+
+  /// Borrowed planes + `(origin, x_pitch, y_pitch)` addressing, for either storage kind.
+  pub(crate) fn gather_parts(&self) -> (ArrayVec<&[f32], 4>, isize, isize, isize) {
+    match &self.storage.kind {
+      TexKind::Planes(p) => (
+        p.iter().map(|p| p.as_slice()).collect(),
+        0,
+        1,
+        self.width as isize,
+      ),
+      TexKind::View(v) => (
+        v.planes.iter().map(|p| p.as_slice()).collect(),
+        v.origin,
+        v.x_pitch,
+        v.y_pitch,
+      ),
+    }
+  }
+
+  /// O(1) transpose: swapping the pitches swaps the axes.
+  pub(crate) fn transpose_view(&self) -> TextureHandle {
+    let v = self.view_parts();
+    let t = TexView {
+      x_pitch: v.y_pitch,
+      y_pitch: v.x_pitch,
+      ..v
+    };
+    self.with_view(t, self.height, self.width, self.channels)
   }
 
   pub(crate) fn flip_view(&self, flip_x: bool, flip_y: bool) -> TextureHandle {
@@ -2302,9 +2371,10 @@ pub struct RenderedControl {
   pub step: Option<f64>,
   pub style: Option<String>,
   pub options: Vec<String>,
-  /// Derived data for control UIs (currently: 256-bin luma histogram for `ImageLevels`);
-  /// not part of the control value.
-  pub histogram: Option<Vec<u32>>,
+  /// Input-texture stats behind `ImageLevels` controls; not part of the control value.
+  pub stats: Option<Rc<TexStats>>,
+  /// Whether the host injected a stored value for this site (vs. the source `default`).
+  pub has_override: bool,
 }
 
 type RenderedControls = AppendOnlyBuffer<RenderedControl>;
@@ -2885,11 +2955,7 @@ impl EvalCtx {
     let _ = borrowed.try_push(kwargs);
   }
 
-  fn eval_fn_call(
-    &self,
-    env: &FrameEnv,
-    call: &FunctionCall,
-  ) -> Result<Value, ErrorStack> {
+  fn eval_fn_call(&self, env: &FrameEnv, call: &FunctionCall) -> Result<Value, ErrorStack> {
     let mut args_opt = None;
     if !call.args.is_empty() {
       let mut args = self.get_args_scratch();
@@ -2930,8 +2996,7 @@ impl EvalCtx {
             args.as_ref().unwrap_or(EMPTY_ARGS),
             kwargs.as_ref().unwrap_or(EMPTY_KWARGS),
           )
-          .map_err(|err| err.wrap("Error invoking callable"))
-          ;
+          .map_err(|err| err.wrap("Error invoking callable"));
 
         if let Some(args) = args {
           self.restore_args_scratch(args);
@@ -2977,11 +3042,7 @@ impl EvalCtx {
     }
   }
 
-  pub(crate) fn eval_expr_env(
-    &self,
-    expr: &Expr,
-    env: &FrameEnv,
-  ) -> Result<Value, ErrorStack> {
+  pub(crate) fn eval_expr_env(&self, expr: &Expr, env: &FrameEnv) -> Result<Value, ErrorStack> {
     match expr {
       Expr::Call { call, .. } => self
         .eval_fn_call(env, call)
@@ -3045,13 +3106,12 @@ impl EvalCtx {
         op, expr: inner, ..
       } => {
         let val = self.eval_expr_env(inner, env)?;
-        op.apply(self, val)
-          .map_err(|err| {
-            self.locate_err(
-              err.wrap(format!("Error applying prefix operator `{op:?}`")),
-              expr.loc(),
-            )
-          })
+        op.apply(self, val).map_err(|err| {
+          self.locate_err(
+            err.wrap(format!("Error applying prefix operator `{op:?}`")),
+            expr.loc(),
+          )
+        })
       }
       Expr::Range {
         start,
@@ -3085,10 +3145,7 @@ impl EvalCtx {
           None => None,
         };
 
-        Ok(Value::Sequence(Rc::new(IntRange {
-          start,
-          end,
-        })))
+        Ok(Value::Sequence(Rc::new(IntRange { start, end })))
       }
       Expr::Ident { name, res, .. } => {
         let val = match res {
@@ -3230,11 +3287,7 @@ impl EvalCtx {
   }
 
   #[inline]
-  fn eval_statement_env(
-    &self,
-    statement: &Statement,
-    env: &FrameEnv,
-  ) -> Result<Value, ErrorStack> {
+  fn eval_statement_env(&self, statement: &Statement, env: &FrameEnv) -> Result<Value, ErrorStack> {
     self.eval_statements(std::slice::from_ref(statement), env)
   }
 
@@ -3745,11 +3798,15 @@ impl EvalCtx {
         let mut sel = [0u8; 4];
         let mut n = 0usize;
         if field.is_empty() {
-          return Err(ErrorStack::new("invalid texture swizzle; expected 1 to 4 chars"));
+          return Err(ErrorStack::new(
+            "invalid texture swizzle; expected 1 to 4 chars",
+          ));
         }
         for c in field.chars() {
           if n == 4 {
-            return Err(ErrorStack::new("invalid texture swizzle; expected 1 to 4 chars"));
+            return Err(ErrorStack::new(
+              "invalid texture swizzle; expected 1 to 4 chars",
+            ));
           }
           let ix = match c {
             'x' | 'r' => 0u8,
