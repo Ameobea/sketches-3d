@@ -38,7 +38,11 @@ impl ChannelStats {
         m2 += (x as f64 - mean).powi(2);
       }
     }
-    let std = if n > 0 { (m2 / n as f64).sqrt() } else { f64::NAN };
+    let std = if n > 0 {
+      (m2 / n as f64).sqrt()
+    } else {
+      f64::NAN
+    };
 
     // Stride both axes: a flat stride is a power of two on power-of-two planes and would
     // sample a handful of columns.
@@ -129,8 +133,16 @@ impl TexStats {
     let fin = |v: f32| if v.is_finite() { v } else { 0. };
     let mut out = Vec::with_capacity(self.channels.len() * (5 + WIRE_QUANTILES));
     for c in &self.channels {
-      out.extend_from_slice(&[fin(c.min), fin(c.max), fin(c.mean), fin(c.std), c.nonfinite as f32]);
-      out.extend((0..WIRE_QUANTILES).map(|i| fin(c.quantile(i as f32 / (WIRE_QUANTILES - 1) as f32))));
+      out.extend_from_slice(&[
+        fin(c.min),
+        fin(c.max),
+        fin(c.mean),
+        fin(c.std),
+        c.nonfinite as f32,
+      ]);
+      out.extend(
+        (0..WIRE_QUANTILES).map(|i| fin(c.quantile(i as f32 / (WIRE_QUANTILES - 1) as f32))),
+      );
     }
     out
   }
@@ -150,7 +162,8 @@ mod tests {
   fn stats_match_brute_force_and_views() {
     // 8x8 ramp in x, scaled per channel, with one NaN texel in channel 0.
     let t = tex(
-      "t = texture(8, 8, |uv, x_ix, y_ix| if x_ix == 3 && y_ix == 2 { v3(sqrt(-1.), uv.x * 2., 5.) } else { v3(uv.x, uv.x * 2., 5.) })\nt | render_texture",
+      "t = texture(8, 8, |uv, x_ix, y_ix| if x_ix == 3 && y_ix == 2 { v3(sqrt(-1.), uv.x * 2., \
+       5.) } else { v3(uv.x, uv.x * 2., 5.) })\nt | render_texture",
     );
     let s = t.stats();
     let c0 = &s.channels[0];
@@ -161,11 +174,22 @@ mod tests {
     assert!((c0.mean - mean).abs() < 1e-6, "{} vs {mean}", c0.mean);
     assert!((c0.quantile(0.5) - 0.5).abs() < 0.07);
     assert!((s.channels[1].std - 2. * c0.std).abs() < 0.02);
-    assert_eq!((s.channels[2].min, s.channels[2].max, s.channels[2].std), (5., 5., 0.));
+    assert_eq!(
+      (s.channels[2].min, s.channels[2].max, s.channels[2].std),
+      (5., 5., 0.)
+    );
     assert_eq!((c0.cdf(-1.), c0.cdf(10.)), (0., 1.));
     // 63 finite samples; each column is 8 ties → mid-rank of the band.
-    assert!((c0.cdf(xs[0]) - 3.5 / 62.).abs() < 1e-6, "{}", c0.cdf(xs[0]));
-    assert!((c0.cdf(xs[7]) - 58.5 / 62.).abs() < 1e-6, "{}", c0.cdf(xs[7]));
+    assert!(
+      (c0.cdf(xs[0]) - 3.5 / 62.).abs() < 1e-6,
+      "{}",
+      c0.cdf(xs[0])
+    );
+    assert!(
+      (c0.cdf(xs[7]) - 58.5 / 62.).abs() < 1e-6,
+      "{}",
+      c0.cdf(xs[7])
+    );
     assert!((c0.cdf(0.5 * (xs[3] + xs[4])) - 0.5).abs() < 0.03);
 
     // A crop view carries its own stats over the view region only.

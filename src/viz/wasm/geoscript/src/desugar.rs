@@ -250,11 +250,7 @@ impl Walker<'_> {
   }
 }
 
-fn rewrite(
-  ctx: &EvalCtx,
-  stmts: &[Statement],
-  kind: Kind,
-) -> Result<Vec<Statement>, ErrorStack> {
+fn rewrite(ctx: &EvalCtx, stmts: &[Statement], kind: Kind) -> Result<Vec<Statement>, ErrorStack> {
   let Some(i) = stmts.iter().position(|s| stmt_exits(s, kind)) else {
     return Ok(stmts.to_vec());
   };
@@ -321,7 +317,9 @@ fn rewrite(
       }));
     }
     // R4: a block in statement position holding a `return` is spliced into the enclosing list.
-    Expr::Block { statements, loc, .. } => {
+    Expr::Block {
+      statements, loc, ..
+    } => {
       let joined = join(ctx, statements, bind.as_ref(), rest, *loc);
       out.extend(rewrite(ctx, &joined, kind)?);
     }
@@ -402,7 +400,12 @@ fn join(
   head
 }
 
-fn rename_conflicts(ctx: &EvalCtx, head: &mut [Statement], bind: Option<&Bind>, rest: &[Statement]) {
+fn rename_conflicts(
+  ctx: &EvalCtx,
+  head: &mut [Statement],
+  bind: Option<&Bind>,
+  rest: &[Statement],
+) {
   let mut bound = FxHashSet::default();
   for s in head.iter() {
     binds_of(s, &mut bound);
@@ -437,7 +440,9 @@ fn binding_loc(stmts: &[Statement], name: Sym) -> Option<SourceLoc> {
     Statement::Assignment {
       name: n, name_loc, ..
     } if *n == name => Some(*name_loc),
-    Statement::DestructureAssignment { lhs, rhs, .. } if pattern_binds(lhs, name) => Some(rhs.loc()),
+    Statement::DestructureAssignment { lhs, rhs, .. } if pattern_binds(lhs, name) => {
+      Some(rhs.loc())
+    }
     _ => None,
   })
 }
@@ -679,9 +684,7 @@ fn for_each_child(e: &Expr, f: &mut impl FnMut(&Expr)) {
         f(a);
       }
     }
-    Expr::Block { statements, .. } => statements
-      .iter()
-      .for_each(|s| s.exprs().for_each(&mut *f)),
+    Expr::Block { statements, .. } => statements.iter().for_each(|s| s.exprs().for_each(&mut *f)),
     Expr::Closure { body, .. } => body.0.iter().for_each(|s| s.exprs().for_each(&mut *f)),
     Expr::Ident { .. } | Expr::Literal { .. } => (),
   }
@@ -759,7 +762,6 @@ fn for_each_child_mut_infallible(e: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
     Expr::Ident { .. } | Expr::Literal { .. } => (),
   }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -857,53 +859,123 @@ mod tests {
     // R1: unconditional exit, rest is dead.
     assert_eq!(int("f = |x| { return 1\n2 }\nout = f(0)", "out"), 1);
     // R2: else-if ladder; the trailing statement is dead.
-    let ladder = "f = |x| { if x == 1 || x == 4 { return 0 } else if x == 2 { return 100 } else { return 200 }\nreturn -100 }\n";
+    let ladder = "f = |x| { if x == 1 || x == 4 { return 0 } else if x == 2 { return 100 } else { \
+                  return 200 }\nreturn -100 }\n";
     assert_eq!(int(&format!("{ladder}out = f(1)"), "out"), 0);
     assert_eq!(int(&format!("{ladder}out = f(2)"), "out"), 100);
     assert_eq!(int(&format!("{ladder}out = f(3)"), "out"), 200);
     // R2 with no else: the non-exiting path keeps falling through to `rest`.
-    assert_eq!(int("f = |x| { if x { return 1 }\n2 }\nout = f(false)", "out"), 2);
+    assert_eq!(
+      int("f = |x| { if x { return 1 }\n2 }\nout = f(false)", "out"),
+      2
+    );
     // R2 with no else and no rest: value is Nil, so the fallback is observable as `is_nil`.
     assert_eq!(
-      int("f = |x| { if x { return 1 } }\nout = if f(false) == nil { 7 } else { 8 }", "out"),
+      int(
+        "f = |x| { if x { return 1 } }\nout = if f(false) == nil { 7 } else { 8 }",
+        "out"
+      ),
       7
     );
     // R3: assignment rhs; the non-exiting arm rebinds and continues.
-    assert_eq!(int("f = |x| { y = if x { return 1 } else { 4 }\ny + 1 }\nout = f(false)", "out"), 5);
-    assert_eq!(int("f = |x| { y = if x { return 1 } else { 4 }\ny + 1 }\nout = f(true)", "out"), 1);
+    assert_eq!(
+      int(
+        "f = |x| { y = if x { return 1 } else { 4 }\ny + 1 }\nout = f(false)",
+        "out"
+      ),
+      5
+    );
+    assert_eq!(
+      int(
+        "f = |x| { y = if x { return 1 } else { 4 }\ny + 1 }\nout = f(true)",
+        "out"
+      ),
+      1
+    );
     // R3 with no else: the missing arm binds nil.
     assert_eq!(
-      int("f = |x| { y = if x { return 1 }\nif y == nil { 9 } else { 8 } }\nout = f(false)", "out"),
+      int(
+        "f = |x| { y = if x { return 1 }\nif y == nil { 9 } else { 8 } }\nout = f(false)",
+        "out"
+      ),
       9
     );
     // R4: a block in statement position holding a return is spliced.
-    assert_eq!(int("f = |x| { y = { if x { return 1 }\n4 }\ny + 1 }\nout = f(false)", "out"), 5);
-    assert_eq!(int("f = |x| { y = { if x { return 1 }\n4 }\ny + 1 }\nout = f(true)", "out"), 1);
-    // R5: break targets the nearest block; arms are transparent.
-    assert_eq!(int("f = |x| { out = { if x == 0 { break 100\n4 } else { x } }\nout }\nout = f(0)", "out"), 100);
     assert_eq!(
-      int("f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(20)", "out"),
-      1000
+      int(
+        "f = |x| { y = { if x { return 1 }\n4 }\ny + 1 }\nout = f(false)",
+        "out"
+      ),
+      5
     );
     assert_eq!(
-      int("f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(5)", "out"),
+      int(
+        "f = |x| { y = { if x { return 1 }\n4 }\ny + 1 }\nout = f(true)",
+        "out"
+      ),
+      1
+    );
+    // R5: break targets the nearest block; arms are transparent.
+    assert_eq!(
+      int(
+        "f = |x| { out = { if x == 0 { break 100\n4 } else { x } }\nout }\nout = f(0)",
+        "out"
+      ),
       100
     );
     assert_eq!(
-      int("f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(-1)", "out"),
+      int(
+        "f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(20)",
+        "out"
+      ),
+      1000
+    );
+    assert_eq!(
+      int(
+        "f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(5)",
+        "out"
+      ),
+      100
+    );
+    assert_eq!(
+      int(
+        "f = |x| { { if x > 0 { if x > 10 { break 1000 }\nbreak 100 }\nx } }\nout = f(-1)",
+        "out"
+      ),
       -1
     );
     // Nested blocks keep distinct break targets.
-    assert_eq!(int("out = { inner = { if true { break 7 }\n0 }\ninner + 1 }", "out"), 8);
+    assert_eq!(
+      int(
+        "out = { inner = { if true { break 7 }\n0 }\ninner + 1 }",
+        "out"
+      ),
+      8
+    );
     // Top-level break inside a block still works.
     assert_eq!(int("out = { if true { break 5 }\n10 }", "out"), 5);
     // R1 clause (d): an exit inside an exit's value rewrites; the inner one wins.
     assert_eq!(
-      int("f = || { x = 100\nreturn { x = 200\nreturn 2\n{ 1 } } }\nout = f()", "out"),
+      int(
+        "f = || { x = 100\nreturn { x = 200\nreturn 2\n{ 1 } } }\nout = f()",
+        "out"
+      ),
       2
     );
-    assert_eq!(int("f = |x| { return if x { return 1 } else { 2 } }\nout = f(false)", "out"), 2);
-    assert_eq!(int("f = |x| { return if x { return 1 } else { 2 } }\nout = f(true)", "out"), 1);
+    assert_eq!(
+      int(
+        "f = |x| { return if x { return 1 } else { 2 } }\nout = f(false)",
+        "out"
+      ),
+      2
+    );
+    assert_eq!(
+      int(
+        "f = |x| { return if x { return 1 } else { 2 } }\nout = f(true)",
+        "out"
+      ),
+      1
+    );
   }
 
   /// R7: joining `rest` into a scope must not let that scope's bindings shadow it.
@@ -912,17 +984,29 @@ mod tests {
     let conflict = "f = |t, c, d| { if c { t = 5\nif d { return 0 } }\nt }\n";
     // The `t = 5` is arm-local today, so the tail still sees the parameter.
     assert_eq!(int(&format!("{conflict}out = f(1, true, false)"), "out"), 1);
-    assert_eq!(int(&format!("{conflict}out = f(1, false, false)"), "out"), 1);
+    assert_eq!(
+      int(&format!("{conflict}out = f(1, false, false)"), "out"),
+      1
+    );
     assert_eq!(int(&format!("{conflict}out = f(1, true, true)"), "out"), 0);
     let (ctx, program) = desugared(conflict);
-    assert!(has_synthetic(&ctx, &program), "expected a rename in:\n{conflict}");
+    assert!(
+      has_synthetic(&ctx, &program),
+      "expected a rename in:\n{conflict}"
+    );
 
     // Splicing a block (R4) exposes its bindings to the enclosing tail the same way.
     let block_conflict = "f = |x, c| { y = 1\nz = { y = 2\nif c { return 0 }\n3 }\ny + z + x }\n";
-    assert_eq!(int(&format!("{block_conflict}out = f(10, false)"), "out"), 14);
+    assert_eq!(
+      int(&format!("{block_conflict}out = f(10, false)"), "out"),
+      14
+    );
     assert_eq!(int(&format!("{block_conflict}out = f(10, true)"), "out"), 0);
     let (ctx, program) = desugared(block_conflict);
-    assert!(has_synthetic(&ctx, &program), "expected a rename in:\n{block_conflict}");
+    assert!(
+      has_synthetic(&ctx, &program),
+      "expected a rename in:\n{block_conflict}"
+    );
 
     // Nothing to shadow — output must stay gensym-free.
     for clear in [
@@ -931,7 +1015,10 @@ mod tests {
       "f = |x| { y = { if x { return 1 }\n4 }\ny + 1 }",
     ] {
       let (ctx, program) = desugared(clear);
-      assert!(!has_synthetic(&ctx, &program), "unexpected rename in:\n{clear}");
+      assert!(
+        !has_synthetic(&ctx, &program),
+        "unexpected rename in:\n{clear}"
+      );
     }
   }
 
@@ -940,27 +1027,66 @@ mod tests {
   #[test]
   fn rejects_exits_in_operands() {
     for (src, needle) in [
-      ("f = |x| { 1 + if x { return 1 } else { 2 } }", "only allowed as a statement"),
-      ("f = |x| { abs(if x { return 1 } else { 2 }) }", "only allowed as a statement"),
-      ("f = |x| { [if x { return 1 } else { 2 }] }", "only allowed as a statement"),
-      ("f = |x| { m = { a: if x { return 1 } else { 2 } }\nm }", "only allowed as a statement"),
-      ("f = |x| { 0..(if x { return 1 } else { 2 }) }", "only allowed as a statement"),
-      ("f = |x| { a = [1, 2]\na[if x { return 1 } else { 0 }] }", "only allowed as a statement"),
-      ("f = |x| { 1 | add(if x { return 1 } else { 2 }) }", "only allowed as a statement"),
-      ("f = |x| { if (if x { return 1 } else { false }) { 2 } else { 3 } }", "only allowed as a statement"),
-      ("g = || { f = |x = (if true { return 1 } else { 2 })| { x }\nf() }", "only allowed as a statement"),
-      ("out = { 1 + if true { break 2 } else { 3 } }", "only allowed as a statement"),
+      (
+        "f = |x| { 1 + if x { return 1 } else { 2 } }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { abs(if x { return 1 } else { 2 }) }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { [if x { return 1 } else { 2 }] }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { m = { a: if x { return 1 } else { 2 } }\nm }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { 0..(if x { return 1 } else { 2 }) }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { a = [1, 2]\na[if x { return 1 } else { 0 }] }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { 1 | add(if x { return 1 } else { 2 }) }",
+        "only allowed as a statement",
+      ),
+      (
+        "f = |x| { if (if x { return 1 } else { false }) { 2 } else { 3 } }",
+        "only allowed as a statement",
+      ),
+      (
+        "g = || { f = |x = (if true { return 1 } else { 2 })| { x }\nf() }",
+        "only allowed as a statement",
+      ),
+      (
+        "out = { 1 + if true { break 2 } else { 3 } }",
+        "only allowed as a statement",
+      ),
       // No catch scope at all — these keep the evaluator's old wording.
       ("if true { return 1 }", "outside of a function"),
-      ("a = if { return true } { 1 } else { 2 }", "outside of a function"),
-      ("f = |x| { if x > 0 { break 1 }\nx }\nout = f(1)", "outside of a block"),
+      (
+        "a = if { return true } { 1 } else { 2 }",
+        "outside of a function",
+      ),
+      (
+        "f = |x| { if x > 0 { break 1 }\nx }\nout = f(1)",
+        "outside of a block",
+      ),
       ("x = if true { break 1 } else { 2 }", "outside of a block"),
     ] {
       let err = parse_and_eval_program(src.to_owned())
         .err()
         .unwrap_or_else(|| panic!("expected an error for:\n{src}"));
       let msg = format!("{err}");
-      assert!(msg.contains(needle), "expected {needle:?} in {msg:?}\n{src}");
+      assert!(
+        msg.contains(needle),
+        "expected {needle:?} in {msg:?}\n{src}"
+      );
       assert!(err.loc.is_some(), "expected a location for:\n{src}");
     }
   }
@@ -1009,7 +1135,9 @@ fn corpus_growth() {
   for dir in ["geo_compositions", "src/viz/wasm/geoscript/examples"] {
     let mut stack = vec![std::path::PathBuf::from(root).join(dir)];
     while let Some(d) = stack.pop() {
-      let Ok(rd) = std::fs::read_dir(&d) else { continue };
+      let Ok(rd) = std::fs::read_dir(&d) else {
+        continue;
+      };
       for e in rd.flatten() {
         let p = e.path();
         if p.is_dir() {
@@ -1022,11 +1150,16 @@ fn corpus_growth() {
   }
   files.sort();
 
-  let (mut total_before, mut total_after, mut renamed, mut parsed, mut worst) = (0, 0, 0, 0, (0.0, String::new()));
+  let (mut total_before, mut total_after, mut renamed, mut parsed, mut worst) =
+    (0, 0, 0, 0, (0.0, String::new()));
   for f in &files {
-    let Ok(src) = std::fs::read_to_string(f) else { continue };
+    let Ok(src) = std::fs::read_to_string(f) else {
+      continue;
+    };
     let ctx = EvalCtx::default();
-    let Ok(mut program) = parse_program_src(&ctx, &src) else { continue };
+    let Ok(mut program) = parse_program_src(&ctx, &src) else {
+      continue;
+    };
     parsed += 1;
     let before = size(&program);
     let syms_before = ctx.interned_symbols.synthetic_count();
@@ -1047,7 +1180,8 @@ fn corpus_growth() {
     }
   }
   println!(
-    "corpus: {parsed}/{} parsed, nodes {total_before} -> {total_after} ({:+.2}%), worst file {} ({:.2}x), renames {renamed}",
+    "corpus: {parsed}/{} parsed, nodes {total_before} -> {total_after} ({:+.2}%), worst file {} \
+     ({:.2}x), renames {renamed}",
     files.len(),
     (total_after as f64 / total_before as f64 - 1.0) * 100.0,
     worst.1,

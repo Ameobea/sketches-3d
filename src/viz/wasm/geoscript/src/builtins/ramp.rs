@@ -68,7 +68,8 @@ fn parse_ease(v: &Value, fn_name: &str) -> Result<Ease, ErrorStack> {
       "smoother" => Ok(Ease::Smoother),
       "step" => Ok(Ease::Step),
       other => Err(ErrorStack::new(format!(
-        "{fn_name}: unknown ease {other:?}; expected \"linear\" | \"smooth\" | \"smoother\" | \"step\" or a callable"
+        "{fn_name}: unknown ease {other:?}; expected \"linear\" | \"smooth\" | \"smoother\" | \
+         \"step\" or a callable"
       ))),
     },
     Value::Callable(cb) => Ok(Ease::Custom(Rc::clone(cb))),
@@ -99,7 +100,11 @@ fn to_space(space: MixSpace, v: Vec3) -> Vec3 {
     MixSpace::Oklab => linear_to_oklab(v),
     MixSpace::Oklch => {
       let lab = linear_to_oklab(v);
-      Vec3::new(lab.x, (lab.y * lab.y + lab.z * lab.z).sqrt(), lab.z.atan2(lab.y))
+      Vec3::new(
+        lab.x,
+        (lab.y * lab.y + lab.z * lab.z).sqrt(),
+        lab.z.atan2(lab.y),
+      )
     }
   }
 }
@@ -130,7 +135,8 @@ fn mix_in_space(space: MixSpace, a: Vec3, b: Vec3, t: f32) -> Vec3 {
       if b.y < ACHROMATIC_C {
         hb = ha;
       }
-      let dh = (hb - ha + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+      let dh =
+        (hb - ha + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
       Vec3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, ha + dh * t)
     }
     _ => a.lerp(&b, t),
@@ -196,7 +202,11 @@ fn bake(spec: &RampSpec, ctx: &EvalCtx) -> Result<Baked, ErrorStack> {
     return Ok(Baked::Exact);
   }
   let (lo, hi) = (spec.positions[0], *spec.positions.last().unwrap());
-  let space_vals: Vec<Vec3> = spec.values.iter().map(|v| to_space(spec.space, *v)).collect();
+  let space_vals: Vec<Vec3> = spec
+    .values
+    .iter()
+    .map(|v| to_space(spec.space, *v))
+    .collect();
   let mut lut = Vec::with_capacity(LUT_SIZE);
   for i in 0..LUT_SIZE {
     let u = lo + (hi - lo) * (i as f32 / (LUT_SIZE - 1) as f32);
@@ -410,8 +420,7 @@ fn parse_stops(
 
   // Bare payloads (floats/vec3s) are never sequences/maps/vec2s, so pair-likeness is
   // unambiguous per element; mixing the two forms in one list is rejected.
-  let is_pairlike =
-    |v: &Value| matches!(v, Value::Sequence(_) | Value::Map(_) | Value::Vec2(_));
+  let is_pairlike = |v: &Value| matches!(v, Value::Sequence(_) | Value::Map(_) | Value::Vec2(_));
   let explicit = elems.iter().all(is_pairlike);
   if !explicit && elems.iter().any(is_pairlike) {
     return Err(ErrorStack::new(format!(
@@ -435,7 +444,11 @@ fn parse_stops(
   } else {
     let n = elems.len();
     for (i, e) in elems.iter().enumerate() {
-      let frac = if n == 1 { 0. } else { i as f32 / (n - 1) as f32 };
+      let frac = if n == 1 {
+        0.
+      } else {
+        i as f32 / (n - 1) as f32
+      };
       stops.push((
         domain.0 + (domain.1 - domain.0) * frac,
         e.clone(),
@@ -556,7 +569,15 @@ fn build_ramp(
   let domain = parse_domain(&arg_refs[1].resolve(args, kwargs), ctx, fn_name)?;
   let extend = parse_extend(&arg_refs[2].resolve(args, kwargs), fn_name)?;
   let default_ease = parse_ease(&arg_refs[3].resolve(args, kwargs), fn_name)?;
-  construct_ramp(ctx, &stops_val, domain, extend, &default_ease, space, fn_name)
+  construct_ramp(
+    ctx,
+    &stops_val,
+    domain,
+    extend,
+    &default_ease,
+    space,
+    fn_name,
+  )
 }
 
 pub fn ramp_impl(
@@ -598,9 +619,10 @@ pub fn remap_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let f = |ix: usize, name: &str| -> Result<f32, ErrorStack> {
-    arg_refs[ix].resolve(args, kwargs).as_float().ok_or_else(|| {
-      ErrorStack::new(format!("remap: `{name}` must be a number"))
-    })
+    arg_refs[ix]
+      .resolve(args, kwargs)
+      .as_float()
+      .ok_or_else(|| ErrorStack::new(format!("remap: `{name}` must be a number")))
   };
   let (in_lo, in_hi) = (f(0, "in_lo")?, f(1, "in_hi")?);
   let (out_lo, out_hi) = (f(2, "out_lo")?, f(3, "out_hi")?);
@@ -765,7 +787,11 @@ pub fn ramp_value_from_wire_json(json: &str, ctx: &EvalCtx) -> Result<Value, Err
     } else {
       Vec3::new(s.value[0], s.value[1], s.value[2])
     };
-    stops.push((s.pos, v, parse_ease(&Value::String(s.ease.clone()), "ramp control")?));
+    stops.push((
+      s.pos,
+      v,
+      parse_ease(&Value::String(s.ease.clone()), "ramp control")?,
+    ));
   }
   stops.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
   let spec = RampSpec {
@@ -800,7 +826,11 @@ pub(crate) fn input_ramp_impl(
   kwargs: &FxHashMap<Sym, Value>,
   color: bool,
 ) -> Result<Value, ErrorStack> {
-  let fn_name: &'static str = if color { "input_color_ramp" } else { "input_ramp" };
+  let fn_name: &'static str = if color {
+    "input_color_ramp"
+  } else {
+    "input_ramp"
+  };
   let c = super::input_common(ctx, arg_refs, args, kwargs, 2)?;
   let has_override = c.injected.is_some();
   let expected_scalar = !color;
@@ -846,7 +876,8 @@ pub(crate) fn input_ramp_impl(
 
   if ramp_control_value_json(&value).is_none() {
     return Err(ErrorStack::new(format!(
-      "{fn_name}: control ramps must use named easings — closures can't be serialized for the editor"
+      "{fn_name}: control ramps must use named easings — closures can't be serialized for the \
+       editor"
     )));
   }
 
@@ -887,7 +918,10 @@ mod tests {
 
   #[test]
   fn scalar_ramp_pairs_pipe_and_extend() {
-    assert_eq!(eval_f("r = ramp([[0., 0.], [1., 10.]])\nout = 0.25 | r"), 2.5);
+    assert_eq!(
+      eval_f("r = ramp([[0., 0.], [1., 10.]])\nout = 0.25 | r"),
+      2.5
+    );
     // clamp (default) holds ends; repeat wraps; mirror reflects
     assert_eq!(eval_f("r = ramp([[0., 0.], [1., 10.]])\nout = r(2.)"), 10.);
     assert_eq!(
@@ -932,7 +966,8 @@ mod tests {
     assert_eq!(eval_f(&format!("{src}out = r(0.25)")), 0.);
     assert_eq!(eval_f(&format!("{src}out = r(0.75)")), 7.5);
 
-    let src = "r = ramp([{pos: 0., value: 0., ease: \"step\"}, {pos: 0.5, value: 5.}, {pos: 1., value: 10.}])\n";
+    let src = "r = ramp([{pos: 0., value: 0., ease: \"step\"}, {pos: 0.5, value: 5.}, {pos: 1., \
+               value: 10.}])\n";
     assert_eq!(eval_f(&format!("{src}out = r(0.25)")), 0.);
     assert_eq!(eval_f(&format!("{src}out = r(0.75)")), 7.5);
   }
@@ -973,11 +1008,11 @@ mod tests {
     assert!((srgb_mid.x - 0.2140).abs() < 0.01, "{srgb_mid:?}");
 
     // Red -> blue: OKLCH keeps chroma through the middle; OKLAB passes near neutral.
-    let mid_oklab = eval_v3(
-      "r = color_ramp([[0., vec3(1., 0., 0.)], [1., vec3(0., 0., 1.)]])\nout = r(0.5)",
-    );
+    let mid_oklab =
+      eval_v3("r = color_ramp([[0., vec3(1., 0., 0.)], [1., vec3(0., 0., 1.)]])\nout = r(0.5)");
     let mid_oklch = eval_v3(
-      "r = color_ramp([[0., vec3(1., 0., 0.)], [1., vec3(0., 0., 1.)]], space=\"oklch\")\nout = r(0.5)",
+      "r = color_ramp([[0., vec3(1., 0., 0.)], [1., vec3(0., 0., 1.)]], space=\"oklch\")\nout = \
+       r(0.5)",
     );
     let chroma = |v: Vec3| {
       let lab = linear_to_oklab(v);
@@ -993,29 +1028,33 @@ mod tests {
 
   #[test]
   fn input_ramp_defaults_and_control_registration() {
-    let ctx =
-      parse_and_eval_program("r = input_ramp(\"amt\", default=[[0., 0.], [1., 10.]])\nout = r(0.3)")
-        .unwrap();
+    let ctx = parse_and_eval_program(
+      "r = input_ramp(\"amt\", default=[[0., 0.], [1., 10.]])\nout = r(0.3)",
+    )
+    .unwrap();
     assert_eq!(ctx.get_global("out").unwrap().as_float().unwrap(), 3.);
     let controls = ctx.rendered_controls.inner.borrow();
     assert_eq!(controls.len(), 1);
     assert!(matches!(controls[0].kind, ControlKind::Ramp));
     let json = ramp_control_value_json(&controls[0].current_value).unwrap();
-    assert!(json.contains("\"scalar\":true") || json.contains("\"scalar\": true"), "{json}");
+    assert!(
+      json.contains("\"scalar\":true") || json.contains("\"scalar\": true"),
+      "{json}"
+    );
 
     // Built-ramp default + payload-type mismatch rejection.
     let ctx = parse_and_eval_program(
-      "r = input_color_ramp(\"shade\", default=color_ramp([[0., vec3(0.)], [1., vec3(1.)]], space=\"linear\"))\nout = r(0.5)",
+      "r = input_color_ramp(\"shade\", default=color_ramp([[0., vec3(0.)], [1., vec3(1.)]], \
+       space=\"linear\"))\nout = r(0.5)",
     )
     .unwrap();
     match ctx.get_global("out").unwrap() {
       Value::Vec3(v) => assert!((v.x - 0.5).abs() < 1e-4),
       other => panic!("expected vec3, got {other:?}"),
     }
-    assert!(parse_and_eval_program(
-      "input_color_ramp(\"shade\", default=[[0., 0.], [1., 1.]])"
-    )
-    .is_err());
+    assert!(
+      parse_and_eval_program("input_color_ramp(\"shade\", default=[[0., 0.], [1., 1.]])").is_err()
+    );
   }
 
   #[test]

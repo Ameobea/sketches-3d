@@ -63,7 +63,10 @@ pub(crate) struct MapSeq {
 
 impl Sequence for MapSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+    Some(vec![
+      Value::Callable(Rc::clone(&self.cb)),
+      Value::Sequence(Rc::clone(&self.inner)),
+    ])
   }
 
   fn consume<'a>(
@@ -91,7 +94,10 @@ pub(crate) struct FilterSeq {
 
 impl Sequence for FilterSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+    Some(vec![
+      Value::Callable(Rc::clone(&self.cb)),
+      Value::Sequence(Rc::clone(&self.inner)),
+    ])
   }
 
   fn consume<'a>(
@@ -164,7 +170,10 @@ impl<'a> Iterator for ScanIter<'a> {
 
 impl Sequence for ScanSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+    Some(vec![
+      Value::Callable(Rc::clone(&self.cb)),
+      Value::Sequence(Rc::clone(&self.inner)),
+    ])
   }
 
   fn consume<'a>(
@@ -346,7 +355,13 @@ impl<'a> Iterator for PointDistributeIter<'a> {
 impl Sequence for PointDistributeSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
     // sampling uses a self-seeded sampler, not ctx rng
-    Some(self.cb.iter().map(|cb| Value::Callable(Rc::clone(cb))).collect())
+    Some(
+      self
+        .cb
+        .iter()
+        .map(|cb| Value::Callable(Rc::clone(cb)))
+        .collect(),
+    )
   }
 
   fn consume<'a>(
@@ -563,7 +578,10 @@ impl Iterator for TakeWhileIter<'_> {
 
 impl Sequence for TakeWhileSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+    Some(vec![
+      Value::Callable(Rc::clone(&self.cb)),
+      Value::Sequence(Rc::clone(&self.inner)),
+    ])
   }
 
   fn consume<'a>(
@@ -636,7 +654,10 @@ impl Iterator for SkipWhileIter<'_> {
 
 impl Sequence for SkipWhileSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(vec![Value::Callable(Rc::clone(&self.cb)), Value::Sequence(Rc::clone(&self.inner))])
+    Some(vec![
+      Value::Callable(Rc::clone(&self.cb)),
+      Value::Sequence(Rc::clone(&self.inner)),
+    ])
   }
 
   fn consume<'a>(
@@ -718,7 +739,13 @@ impl<'a> Iterator for ChainIter<'a> {
 
 impl Sequence for ChainSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
-    Some(self.inner.iter().map(|s| Value::Sequence(Rc::clone(s))).collect())
+    Some(
+      self
+        .inner
+        .iter()
+        .map(|s| Value::Sequence(Rc::clone(s)))
+        .collect(),
+    )
   }
 
   fn consume<'a>(

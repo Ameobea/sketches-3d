@@ -548,7 +548,11 @@ pub fn strip_uvs(
   }
 
   let keys: Vec<VertexKey> = m.vertices.iter().map(|(k, _)| k).collect();
-  let k2i: FxHashMap<VertexKey, u32> = keys.iter().enumerate().map(|(i, &k)| (k, i as u32)).collect();
+  let k2i: FxHashMap<VertexKey, u32> = keys
+    .iter()
+    .enumerate()
+    .map(|(i, &k)| (k, i as u32))
+    .collect();
   let mut verts = Vec::with_capacity(keys.len() * 3);
   let mut uvs = Vec::with_capacity(keys.len() * 2);
   let mut tangents = Vec::with_capacity(keys.len() * 4);

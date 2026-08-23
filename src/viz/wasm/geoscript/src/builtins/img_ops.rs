@@ -60,9 +60,7 @@ impl ResizeFilter {
         const B: f32 = 1. / 3.;
         const C: f32 = 1. / 3.;
         if x < 1. {
-          ((12. - 9. * B - 6. * C) * x * x * x
-            + (-18. + 12. * B + 6. * C) * x * x
-            + (6. - 2. * B))
+          ((12. - 9. * B - 6. * C) * x * x * x + (-18. + 12. * B + 6. * C) * x * x + (6. - 2. * B))
             / 6.
         } else if x < 2. {
           ((-B - 6. * C) * x * x * x
@@ -203,7 +201,14 @@ pub(crate) fn resize_impl(
 
 /// van Herk–Gil-Werman running extreme over a padded line: `src.len() == out.len() + 2r`,
 /// window `2r+1`; O(1) per pixel at any radius.
-fn vhgw_line(src: &[f32], out: &mut [f32], r: usize, dilate: bool, g: &mut Vec<f32>, h: &mut Vec<f32>) {
+fn vhgw_line(
+  src: &[f32],
+  out: &mut [f32],
+  r: usize,
+  dilate: bool,
+  g: &mut Vec<f32>,
+  h: &mut Vec<f32>,
+) {
   let w = 2 * r + 1;
   let len = src.len();
   let ext = if dilate { f32::max } else { f32::min };
@@ -387,8 +392,8 @@ pub(crate) fn texture_normalize_impl(
   let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
   let err = || {
     ErrorStack::new(
-      "texture_normalize: `sigmas` must be a positive number or a `[lo, hi]` pair (or vec2) \
-       of z-positions with lo < hi",
+      "texture_normalize: `sigmas` must be a positive number or a `[lo, hi]` pair (or vec2) of \
+       z-positions with lo < hi",
     )
   };
   let z = match arg_refs[1].resolve(args, kwargs) {
@@ -426,7 +431,9 @@ pub(crate) fn texture_normalize_impl(
     lo[c] = a;
     scale[c] = 1. / (b - a).max(1e-8);
   }
-  Ok(texture_map_chan(t, |x, c| ((x - lo[c]) * scale[c]).clamp(0., 1.)))
+  Ok(texture_map_chan(t, |x, c| {
+    ((x - lo[c]) * scale[c]).clamp(0., 1.)
+  }))
 }
 
 pub(crate) fn texture_standardize_impl(
@@ -560,7 +567,13 @@ impl LevelsParams {
   }
 
   fn from_array(v: [f32; 5]) -> LevelsParams {
-    LevelsParams { in_lo: v[0], in_hi: v[1], out_lo: v[2], out_hi: v[3], gamma: v[4] }
+    LevelsParams {
+      in_lo: v[0],
+      in_hi: v[1],
+      out_lo: v[2],
+      out_hi: v[3],
+      gamma: v[4],
+    }
   }
 
   pub(crate) fn to_map_value(self) -> Value {
@@ -597,7 +610,11 @@ pub(crate) fn apply_levels(t: &Rc<TextureHandle>, p: LevelsParams) -> Value {
   // libm doesn't special-case exponent 1, and gamma is untouched in most levels edits.
   let map1 = |x: f32| {
     let t = ((x - p.in_lo) / in_range).clamp(0., 1.);
-    let t = if inv_gamma == 1. { t } else { t.powf(inv_gamma) };
+    let t = if inv_gamma == 1. {
+      t
+    } else {
+      t.powf(inv_gamma)
+    };
     p.out_lo + (p.out_hi - p.out_lo) * t
   };
   let alpha_ix = if t.channels == 4 { 3 } else { usize::MAX };
@@ -713,16 +730,25 @@ sd = texture_std(n)
     let frac = |f: &dyn Fn(f32) -> bool| n.iter().filter(|&&v| f(v)).count() as f32 / count;
 
     let z = get_tex(&ctx, "z").as_interleaved();
-    assert!(n.iter().zip(&z).all(|(a, b)| (a - b).abs() < 1e-4), "standardize(3n) must recover n");
+    assert!(
+      n.iter().zip(&z).all(|(a, b)| (a - b).abs() < 1e-4),
+      "standardize(3n) must recover n"
+    );
     assert!((ctx.get_global("sd").unwrap().as_float().unwrap() - 1.).abs() < 1e-3);
 
     let s = get_tex(&ctx, "s").as_interleaved();
     assert!(s.iter().all(|&v| (0. ..=1.).contains(&v)));
     let clipped = s.iter().filter(|&&v| v == 0. || v == 1.).count() as f32 / count;
-    assert!((0.02..0.08).contains(&clipped), "±2σ clips ~4.5%, got {clipped}");
+    assert!(
+      (0.02..0.08).contains(&clipped),
+      "±2σ clips ~4.5%, got {clipped}"
+    );
     let a = get_tex(&ctx, "a").as_interleaved();
     let zeros = a.iter().filter(|&&v| v == 0.).count() as f32 / count;
-    assert!((zeros - frac(&|v| v <= 0.)).abs() < 1e-3, "[0, 2] zeroes everything below the mean");
+    assert!(
+      (zeros - frac(&|v| v <= 0.)).abs() < 1e-3,
+      "[0, 2] zeroes everything below the mean"
+    );
 
     let e = get_tex(&ctx, "e").as_interleaved();
     let e_mean = e.iter().sum::<f32>() / count;
@@ -731,11 +757,16 @@ sd = texture_std(n)
     assert!((above - 0.3).abs() < 0.01, "equalize: {above} above 0.7");
 
     let q = ctx.get_global("q").unwrap().as_float().unwrap();
-    assert!((frac(&|v| v > q) - 0.3).abs() < 0.002, "quantile(0.7) threshold covers 30%");
+    assert!(
+      (frac(&|v| v > q) - 0.3).abs() < 0.002,
+      "quantile(0.7) threshold covers 30%"
+    );
 
-    let err = parse_and_eval_program("t = texture(4, 4, |uv| uv.x)\nt | texture_normalize(sigmas=[2., 1.])")
-      .unwrap_err()
-      .to_string();
+    let err = parse_and_eval_program(
+      "t = texture(4, 4, |uv| uv.x)\nt | texture_normalize(sigmas=[2., 1.])",
+    )
+    .unwrap_err()
+    .to_string();
     assert!(err.contains("lo < hi"), "{err}");
   }
 
@@ -759,7 +790,11 @@ flat = texture(7, 3, |uv| 0.25) | resize(5, 9)
     assert_eq!((down.width, down.height), (4, 4));
     // Box-downsampling a linear ramp: each output pixel is the mean of its 2px column pair.
     let dd = down.as_interleaved();
-    assert!((dd[0] - (0.5 / 8. + 1.5 / 8.) / 2.).abs() < 1e-5, "{}", dd[0]);
+    assert!(
+      (dd[0] - (0.5 / 8. + 1.5 / 8.) / 2.).abs() < 1e-5,
+      "{}",
+      dd[0]
+    );
     let nn = get_tex(&ctx, "nn");
     assert_eq!(nn.as_interleaved().len(), 16);
     for px in get_tex(&ctx, "flat").as_interleaved().iter() {
@@ -801,14 +836,25 @@ inv_e = erode(1, 1. - imp)
     for y in 0..8i64 {
       for x in 0..8i64 {
         let inside = (x <= 1 || x == 7) && (y <= 1 || y == 7);
-        assert_eq!(dd[(y * 8 + x) as usize], if inside { 1. } else { 0. }, "({x}, {y})");
+        assert_eq!(
+          dd[(y * 8 + x) as usize],
+          if inside { 1. } else { 0. },
+          "({x}, {y})"
+        );
       }
     }
     // Erosion after dilation (close) restores the single impulse plus nothing extra
     // is guaranteed only for shapes >= the SE; here just sanity-check counts.
     let ed = get_tex(&ctx, "e").as_interleaved();
     assert_eq!(ed.iter().filter(|&&v| v == 1.).count(), 1);
-    assert_eq!(get_tex(&ctx, "big").as_interleaved().iter().filter(|&&v| v == 1.).count(), 25);
+    assert_eq!(
+      get_tex(&ctx, "big")
+        .as_interleaved()
+        .iter()
+        .filter(|&&v| v == 1.)
+        .count(),
+      25
+    );
     let inv = get_tex(&ctx, "inv_e").as_interleaved();
     assert_eq!(inv.iter().filter(|&&v| v == 0.).count(), 9);
   }
@@ -888,7 +934,11 @@ opaque = concat_channels(1., 0., 0.5, m)
       assert_eq!(&rd[i * 4..i * 4 + 3], &rgb[i * 3..i * 3 + 3], "rgb at {i}");
       assert_eq!(rd[i * 4 + 3], m[i], "alpha at {i}");
     }
-    assert_eq!(get_tex(&ctx, "piped").as_interleaved(), rd, "partial application fills the last slot");
+    assert_eq!(
+      get_tex(&ctx, "piped").as_interleaved(),
+      rd,
+      "partial application fills the last slot"
+    );
     let ga = get_tex(&ctx, "gray_a");
     assert_eq!(ga.channels, 2);
     assert_eq!(&ga.as_interleaved()[..4], &[m[0], 1., m[1], 1.]);
@@ -907,7 +957,10 @@ d = concat_channels(materialize(t.bgr), materialize(flip_x(t).r))
 "#,
     )
     .unwrap();
-    assert_eq!(get_tex(&ctx, "v").as_interleaved(), get_tex(&ctx, "d").as_interleaved());
+    assert_eq!(
+      get_tex(&ctx, "v").as_interleaved(),
+      get_tex(&ctx, "d").as_interleaved()
+    );
   }
 
   #[test]
@@ -918,7 +971,10 @@ d = concat_channels(materialize(t.bgr), materialize(flip_x(t).r))
       "c = concat_channels(0.5, 1.)",
     ];
     for src in cases {
-      assert!(parse_and_eval_program(src).is_err(), "expected error for:\n{src}");
+      assert!(
+        parse_and_eval_program(src).is_err(),
+        "expected error for:\n{src}"
+      );
     }
   }
 
@@ -938,7 +994,10 @@ out = blit(masked, base, filter="nearest")
     let out = get_tex(&ctx, "out");
     assert_eq!(out.channels, 3);
     for px in out.as_interleaved().iter() {
-      assert!((px - 0.5).abs() < 1e-6, "alpha 0.5 over black base: got {px}");
+      assert!(
+        (px - 0.5).abs() < 1e-6,
+        "alpha 0.5 over black base: got {px}"
+      );
     }
   }
 
@@ -968,10 +1027,10 @@ out = blit(masked, base, filter="nearest")
 
   #[test]
   fn dilate_zero_radius_is_identity() {
-    let ctx = parse_and_eval_program(
-      "t = texture(4, 4, |uv| uv.x)\nd = dilate(0, t)",
-    )
-    .unwrap();
-    assert_eq!(get_tex(&ctx, "t").storage_id(), get_tex(&ctx, "d").storage_id());
+    let ctx = parse_and_eval_program("t = texture(4, 4, |uv| uv.x)\nd = dilate(0, t)").unwrap();
+    assert_eq!(
+      get_tex(&ctx, "t").storage_id(),
+      get_tex(&ctx, "d").storage_id()
+    );
   }
 }

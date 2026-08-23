@@ -261,8 +261,16 @@ mod tests {
   #[test]
   fn test_exit_position_diagnostics() {
     for (src, needle, line) in [
-      ("f = |x| { 1 + if x { return 1 } else { 2 } }", "only allowed as a statement", 1),
-      ("f = |x| {\n  if x > 0 { break 1 }\n  x\n}", "outside of a block", 2),
+      (
+        "f = |x| { 1 + if x { return 1 } else { 2 } }",
+        "only allowed as a statement",
+        1,
+      ),
+      (
+        "f = |x| {\n  if x > 0 { break 1 }\n  x\n}",
+        "outside of a block",
+        2,
+      ),
       ("if true { return 1 }", "outside of a function", 1),
     ] {
       let result = analyze(src);
@@ -270,9 +278,17 @@ mod tests {
         .diagnostics
         .iter()
         .find(|d| d.message.contains(needle))
-        .unwrap_or_else(|| panic!("expected {needle:?} for {src:?}, got: {:?}", result.diagnostics));
+        .unwrap_or_else(|| {
+          panic!(
+            "expected {needle:?} for {src:?}, got: {:?}",
+            result.diagnostics
+          )
+        });
       assert_eq!(hit.start_line, line, "wrong line for {src:?}: {hit:?}");
-      assert!(hit.end_col > hit.start_col, "empty span for {src:?}: {hit:?}");
+      assert!(
+        hit.end_col > hit.start_col,
+        "empty span for {src:?}: {hit:?}"
+      );
     }
   }
 

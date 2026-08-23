@@ -64,19 +64,24 @@ mod wasm {
     detwist: bool,
   ) -> String {
     let m = LinkedMesh::from_raw_indexed(verts, indices, None, None);
-    store(crate::tube_uvs(m, scale, sharp_threshold_rad, &TubeOptions {
-      caps,
-      cap_angle_rad: if cap_angle_rad.is_nan() {
-        None
-      } else {
-        Some(cap_angle_rad)
+    store(crate::tube_uvs(
+      m,
+      scale,
+      sharp_threshold_rad,
+      &TubeOptions {
+        caps,
+        cap_angle_rad: if cap_angle_rad.is_nan() {
+          None
+        } else {
+          Some(cap_angle_rad)
+        },
+        cap_max_span,
+        cap_alignment,
+        normalize_v,
+        seam_straightness,
+        detwist,
       },
-      cap_max_span,
-      cap_alignment,
-      normalize_v,
-      seam_straightness,
-      detwist,
-    }))
+    ))
   }
 
   #[wasm_bindgen]
@@ -91,16 +96,21 @@ mod wasm {
     planar_fallback: bool,
   ) -> String {
     let m = LinkedMesh::from_raw_indexed(verts, indices, None, None);
-    store(crate::strip_uvs(m, scale, sharp_threshold_rad, &StripOptions {
-      strip_angle_rad: if strip_angle_rad.is_nan() {
-        None
-      } else {
-        Some(strip_angle_rad)
+    store(crate::strip_uvs(
+      m,
+      scale,
+      sharp_threshold_rad,
+      &StripOptions {
+        strip_angle_rad: if strip_angle_rad.is_nan() {
+          None
+        } else {
+          Some(strip_angle_rad)
+        },
+        layout: Layout::from_u8(layout),
+        u_mode: UMode::from_u8(u_mode),
+        planar_fallback,
       },
-      layout: Layout::from_u8(layout),
-      u_mode: UMode::from_u8(u_mode),
-      planar_fallback,
-    }))
+    ))
   }
 
   #[wasm_bindgen]

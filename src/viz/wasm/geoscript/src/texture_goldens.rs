@@ -63,7 +63,10 @@ fn texture_golden_corpus() {
     parse_and_eval_program_with_ctx(src, &ctx, false)
       .unwrap_or_else(|err| panic!("fixture {fixture} failed to eval:\n{err:?}"));
     let rendered = ctx.rendered_textures.into_inner();
-    assert!(!rendered.is_empty(), "fixture {fixture} rendered no textures");
+    assert!(
+      !rendered.is_empty(),
+      "fixture {fixture} rendered no textures"
+    );
     for rt in &rendered {
       record(&mut got, fixture, &rt.name, 0, &rt.texture);
       for (i, s) in rt.extra_slices.iter().enumerate() {
@@ -83,7 +86,10 @@ fn texture_golden_corpus() {
     let mut msg = String::from("texture goldens mismatch:\n");
     let (gl, wl): (Vec<_>, Vec<_>) = (got.lines().collect(), want.lines().collect());
     for i in 0..gl.len().max(wl.len()) {
-      let (g, w) = (gl.get(i).copied().unwrap_or("<missing>"), wl.get(i).copied().unwrap_or("<missing>"));
+      let (g, w) = (
+        gl.get(i).copied().unwrap_or("<missing>"),
+        wl.get(i).copied().unwrap_or("<missing>"),
+      );
       if g != w {
         writeln!(msg, "  got:  {g}\n  want: {w}").unwrap();
       }

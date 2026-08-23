@@ -1322,10 +1322,12 @@ fn fold_associative_literal_chain(
       if *rhs_op == op {
         if let Some(rhs_lhs_val) = rhs_lhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_val, &rhs_lhs_val, rhs_rhs.as_ref()) {
-            let new_val = op.apply(ctx, lhs_val.clone(), rhs_lhs_val.clone(), None).map_err(|err| {
-              let (line, col) = ctx.resolve_loc(lhs_loc);
-              err.with_loc(line, col)
-            })?;
+            let new_val = op
+              .apply(ctx, lhs_val.clone(), rhs_lhs_val.clone(), None)
+              .map_err(|err| {
+                let (line, col) = ctx.resolve_loc(lhs_loc);
+                err.with_loc(line, col)
+              })?;
             *lhs = Box::new(new_val.into_literal_expr(lhs_loc));
             rhs_expr = std::mem::replace(
               rhs_rhs,
@@ -1367,10 +1369,12 @@ fn fold_associative_literal_chain(
       if *lhs_op == op {
         if let Some(lhs_rhs_val) = lhs_rhs.as_literal().cloned() {
           if can_fold_assoc_literals(ctx, local_scope, &lhs_rhs_val, &rhs_val, lhs_lhs.as_ref()) {
-            let new_val = op.apply(ctx, lhs_rhs_val.clone(), rhs_val.clone(), None).map_err(|err| {
-              let (line, col) = ctx.resolve_loc(rhs_loc);
-              err.with_loc(line, col)
-            })?;
+            let new_val = op
+              .apply(ctx, lhs_rhs_val.clone(), rhs_val.clone(), None)
+              .map_err(|err| {
+                let (line, col) = ctx.resolve_loc(rhs_loc);
+                err.with_loc(line, col)
+              })?;
             *rhs = Box::new(new_val.into_literal_expr(rhs_loc));
             lhs_expr = std::mem::replace(
               lhs_lhs,
@@ -2888,10 +2892,12 @@ fn fold_exec_input_stmt(
   let (Some(arg_vals), Some(kwarg_vals)) = (arg_vals, kwarg_vals) else {
     return Ok(false);
   };
-  let value = ctx.invoke_callable(&cb, &arg_vals, &kwarg_vals).map_err(|err| {
-    let (line, col) = ctx.resolve_loc(*loc);
-    err.with_loc(line, col)
-  })?;
+  let value = ctx
+    .invoke_callable(&cb, &arg_vals, &kwarg_vals)
+    .map_err(|err| {
+      let (line, col) = ctx.resolve_loc(*loc);
+      err.with_loc(line, col)
+    })?;
   *expr = Expr::Literal { value, loc: *loc };
   Ok(true)
 }

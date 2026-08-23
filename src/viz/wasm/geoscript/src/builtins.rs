@@ -68,19 +68,19 @@ use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod blit;
 pub(crate) mod catmull_rom;
-pub(crate) mod img_ops;
 pub(crate) mod fillet_path;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod flat_memo;
 pub mod fn_defs;
+pub(crate) mod img_ops;
 pub(crate) mod lerp_path;
+pub(crate) mod load_image;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
-pub(crate) mod load_image;
 pub(crate) mod spectral_noise;
 pub(crate) mod tex_kernels;
 pub(crate) mod texture;
@@ -1379,7 +1379,9 @@ fn transpose_impl(
 ) -> Result<Value, ErrorStack> {
   match arg_refs[0].resolve(args, kwargs) {
     Value::Mat4(m) => Ok(Value::Mat4(Rc::new(m.transpose()))),
-    v => Ok(Value::Texture(Rc::new(v.as_texture().unwrap().transpose_view()))),
+    v => Ok(Value::Texture(Rc::new(
+      v.as_texture().unwrap().transpose_view(),
+    ))),
   }
 }
 
@@ -10248,7 +10250,9 @@ fn sigmoid_impl(
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| 1.0 / (1.0 + (-x).exp())))))
+      Ok(Value::Vec4(Rc::new(
+        value.map(|x| 1.0 / (1.0 + (-x).exp())),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -12263,7 +12267,8 @@ mesh = embed_path(
       let ctx = parse_and_eval_program(&src).unwrap();
       let handle = ctx.get_global("mesh").unwrap();
       let m = &handle.as_mesh().unwrap().mesh;
-      m.check_is_manifold::<true>().expect("should stay watertight");
+      m.check_is_manifold::<true>()
+        .expect("should stay watertight");
       // Flat-sheet offsets sit at y=0.5, cone-sheet offsets at y ≤ ~0.224; only the crease ring
       // lives between.
       let ring: Vec<_> = m
@@ -12274,7 +12279,10 @@ mesh = embed_path(
         .collect();
       // Planar sheets refine to nothing interior, so the ring is just the two boundary-pinned
       // crease verts.
-      assert!(ring.len() >= 2, "[{mode}] no crease-ring offset verts found");
+      assert!(
+        ring.len() >= 2,
+        "[{mode}] no crease-ring offset verts found"
+      );
       for p in &ring {
         assert!(
           (p.x - 0.2629).abs() < 0.02 && (p.y - 0.4253).abs() < 0.02,
@@ -12301,7 +12309,8 @@ mesh = embed_path(
     let ctx = parse_and_eval_program(src).unwrap();
     let handle = ctx.get_global("mesh").unwrap();
     let m = &handle.as_mesh().unwrap().mesh;
-    m.check_is_manifold::<true>().expect("should stay watertight");
+    m.check_is_manifold::<true>()
+      .expect("should stay watertight");
     let ring: Vec<_> = m
       .vertices
       .values()

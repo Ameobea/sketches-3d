@@ -207,7 +207,11 @@ r_wrap = r[2][0][1]
 r_wrap_src = t[0][3][1]
 "
     ));
-    let (t, tt, back) = (get_tex(&ctx, "t"), get_tex(&ctx, "tt"), get_tex(&ctx, "back"));
+    let (t, tt, back) = (
+      get_tex(&ctx, "t"),
+      get_tex(&ctx, "tt"),
+      get_tex(&ctx, "back"),
+    );
     assert_eq!((tt.width, tt.height, tt.channels), (3, 4, 3));
     assert!(!tt.is_dense());
     assert_eq!(get_tex(&ctx, "tt2").as_interleaved(), tt.as_interleaved());
@@ -384,10 +388,22 @@ mnt = min(g, 1. - g)
     assert!((px0("div_t") - 0.25 / 1.25).abs() < 1e-6);
     let tint = get_tex(&ctx, "tint").as_interleaved();
     assert_eq!(tint[0..3], [0.25, 1., 1.]);
-    assert_eq!(get_tex(&ctx, "tint2").as_interleaved()[0..3], [0.25, 1., 1.]);
-    assert_eq!(get_tex(&ctx, "vadd").as_interleaved()[0..3], [1.25, 0.5, 2.]);
-    assert_eq!(get_tex(&ctx, "vsub").as_interleaved()[0..3], [0.75, 0.5, -1.]);
-    assert_eq!(get_tex(&ctx, "vdiv").as_interleaved()[0..3], [0.125, 0.25, 1.]);
+    assert_eq!(
+      get_tex(&ctx, "tint2").as_interleaved()[0..3],
+      [0.25, 1., 1.]
+    );
+    assert_eq!(
+      get_tex(&ctx, "vadd").as_interleaved()[0..3],
+      [1.25, 0.5, 2.]
+    );
+    assert_eq!(
+      get_tex(&ctx, "vsub").as_interleaved()[0..3],
+      [0.75, 0.5, -1.]
+    );
+    assert_eq!(
+      get_tex(&ctx, "vdiv").as_interleaved()[0..3],
+      [0.125, 0.25, 1.]
+    );
     assert!((px0("p") - 0.0625).abs() < 1e-6);
     assert!((px0("cl") - 0.3).abs() < 1e-6);
     assert!((px0("ab") - 0.25).abs() < 1e-6);
@@ -460,13 +476,23 @@ sh2 = sharpen(g, amt=0.3, sigma=1.)
     let nd = get_tex(&ctx, "norm").as_interleaved();
     assert!((nd[0] - 0.).abs() < 1e-6 && (nd[7] - 1.).abs() < 1e-6);
     // A constant channel has no range to stretch; it must map to 0, not NaN.
-    assert!(get_tex(&ctx, "flat").as_interleaved().iter().all(|&v| v == 0.));
+    assert!(get_tex(&ctx, "flat")
+      .as_interleaved()
+      .iter()
+      .all(|&v| v == 0.));
     // Opening removes the lone impulse; closing preserves it.
-    assert!(get_tex(&ctx, "opened").as_interleaved().iter().all(|&v| v == 0.));
+    assert!(get_tex(&ctx, "opened")
+      .as_interleaved()
+      .iter()
+      .all(|&v| v == 0.));
     assert_eq!(get_tex(&ctx, "closed").as_interleaved()[0], 1.);
     // Morphological gradient of an impulse: a 3x3 ring plus center.
     assert_eq!(
-      get_tex(&ctx, "grad").as_interleaved().iter().filter(|&&v| v == 1.).count(),
+      get_tex(&ctx, "grad")
+        .as_interleaved()
+        .iter()
+        .filter(|&&v| v == 1.)
+        .count(),
       9
     );
     assert_eq!(get_tex(&ctx, "th").as_interleaved()[0], 1.);
@@ -492,7 +518,10 @@ sh2 = sharpen(g, amt=0.3, sigma=1.)
       }
     }
     for c in 0..3 {
-      assert!(mn[c].abs() < 1e-5 && (mx[c] - 1.).abs() < 1e-5, "{mn:?} {mx:?}");
+      assert!(
+        mn[c].abs() < 1e-5 && (mx[c] - 1.).abs() < 1e-5,
+        "{mn:?} {mx:?}"
+      );
     }
   }
 
@@ -513,4 +542,3 @@ out = blit(checker | scale(0.5) | trans_global(0.25, 0.25), base)
     assert!((px - 0.5).abs() < 0.1, "expected ~0.5 from mips, got {px}");
   }
 }
-

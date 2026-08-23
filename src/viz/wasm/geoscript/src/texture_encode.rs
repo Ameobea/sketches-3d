@@ -33,9 +33,24 @@ fn pack_rgba4(r: &[f32], g: &[f32], b: &[f32], a: &[f32]) -> [u8; 16] {
       i16x8_narrow_i32x4(cv(r), cv(g)),
       i16x8_narrow_i32x4(cv(b), cv(a)),
     );
-    core::mem::transmute(u8x16_shuffle::<0, 4, 8, 12, 1, 5, 9, 13, 2, 6, 10, 14, 3, 7, 11, 15>(
-      packed, packed,
-    ))
+    core::mem::transmute(u8x16_shuffle::<
+      0,
+      4,
+      8,
+      12,
+      1,
+      5,
+      9,
+      13,
+      2,
+      6,
+      10,
+      14,
+      3,
+      7,
+      11,
+      15,
+    >(packed, packed))
   }
 }
 
@@ -59,9 +74,24 @@ fn pack_rg8(r: &[f32], g: &[f32]) -> [u8; 16] {
       i16x8_narrow_i32x4(cv(r, 0), cv(r, 4)),
       i16x8_narrow_i32x4(cv(g, 0), cv(g, 4)),
     );
-    core::mem::transmute(u8x16_shuffle::<0, 8, 1, 9, 2, 10, 3, 11, 4, 12, 5, 13, 6, 14, 7, 15>(
-      packed, packed,
-    ))
+    core::mem::transmute(u8x16_shuffle::<
+      0,
+      8,
+      1,
+      9,
+      2,
+      10,
+      3,
+      11,
+      4,
+      12,
+      5,
+      13,
+      6,
+      14,
+      7,
+      15,
+    >(packed, packed))
   }
 }
 
@@ -104,13 +134,19 @@ struct RgbaLanes<'a> {
 impl<'a> RgbaLanes<'a> {
   fn new(planes: &[&'a [f32]]) -> Self {
     let (lane, konst) = match planes.len() {
-      1 => ([planes[0], planes[0], planes[0], &ONES[..]], [false, false, false, true]),
-      2 => ([planes[0], planes[1], &ZEROS[..], &ONES[..]], [false, false, true, true]),
-      3 => ([planes[0], planes[1], planes[2], &ONES[..]], [false, false, false, true]),
-      _ => (
-        [planes[0], planes[1], planes[2], planes[3]],
-        [false; 4],
+      1 => (
+        [planes[0], planes[0], planes[0], &ONES[..]],
+        [false, false, false, true],
       ),
+      2 => (
+        [planes[0], planes[1], &ZEROS[..], &ONES[..]],
+        [false, false, true, true],
+      ),
+      3 => (
+        [planes[0], planes[1], planes[2], &ONES[..]],
+        [false, false, false, true],
+      ),
+      _ => ([planes[0], planes[1], planes[2], planes[3]], [false; 4]),
     };
     Self { lane, konst }
   }
@@ -148,7 +184,14 @@ pub fn encode_unorm8(planes: &[&[f32]], format: TextureFormat, dst: &mut [u8]) {
       }
     }
     TextureFormat::Rg8 => {
-      let (r, g) = (planes[0], if planes.len() >= 2 { planes[1] } else { planes[0] });
+      let (r, g) = (
+        planes[0],
+        if planes.len() >= 2 {
+          planes[1]
+        } else {
+          planes[0]
+        },
+      );
       let mut i = 0;
       while i + 8 <= n {
         dst[i * 2..i * 2 + 16].copy_from_slice(&pack_rg8(&r[i..], &g[i..]));
@@ -239,9 +282,15 @@ mod tests {
       vec![0, 0, 128, 255, 0, 255, 0, 255]
     );
     // 1ch → gray replicated to rgb, a=255
-    assert_eq!(enc(&[&[0.5]], TextureFormat::Rgba8), vec![128, 128, 128, 255]);
+    assert_eq!(
+      enc(&[&[0.5]], TextureFormat::Rgba8),
+      vec![128, 128, 128, 255]
+    );
     // 2ch → b zero-filled
-    assert_eq!(enc(&[&[1.], &[0.5]], TextureFormat::Rgba8), vec![255, 128, 0, 255]);
+    assert_eq!(
+      enc(&[&[1.], &[0.5]], TextureFormat::Rgba8),
+      vec![255, 128, 0, 255]
+    );
     // 3ch → a=255
     assert_eq!(
       enc(&[&[0.25], &[0.5], &[1.]], TextureFormat::Rgba8),
@@ -272,7 +321,11 @@ mod tests {
       let want: Vec<u8> = p0.iter().map(|&v| to8(v)).collect();
       assert_eq!(enc(&[&p0[..]], TextureFormat::R8), want, "r8 n={n}");
       let want: Vec<u8> = (0..n).flat_map(|i| [to8(p0[i]), to8(p1[i])]).collect();
-      assert_eq!(enc(&[&p0[..], &p1[..]], TextureFormat::Rg8), want, "rg8 n={n}");
+      assert_eq!(
+        enc(&[&p0[..], &p1[..]], TextureFormat::Rg8),
+        want,
+        "rg8 n={n}"
+      );
     }
   }
 

@@ -46,8 +46,8 @@ fn zip_shape_check(a: &TextureHandle, b: &TextureHandle, op: &str) -> Result<(),
   let ch_ok = a.channels == b.channels || a.channels == 1 || b.channels == 1;
   if (a.width, a.height) != (b.width, b.height) || !ch_ok {
     return Err(ErrorStack::new(format!(
-      "texture {op} texture requires matching dims and matching channels (or a 1-channel \
-       texture on either side, which broadcasts); found {}x{}x{}ch vs {}x{}x{}ch",
+      "texture {op} texture requires matching dims and matching channels (or a 1-channel texture \
+       on either side, which broadcasts); found {}x{}x{}ch vs {}x{}x{}ch",
       a.width, a.height, a.channels, b.width, b.height, b.channels
     )));
   }
@@ -309,8 +309,8 @@ pub(crate) fn texture_lerp(
   };
   if !shape_ok(t) || !shape_ok(a) || !shape_ok(b) {
     return Err(ErrorStack::new(format!(
-      "`lerp` of textures requires matching dims and matching channels (or 1-channel \
-       broadcast); found t={}x{}x{}ch, a={}x{}x{}ch, b={}x{}x{}ch",
+      "`lerp` of textures requires matching dims and matching channels (or 1-channel broadcast); \
+       found t={}x{}x{}ch, a={}x{}x{}ch, b={}x{}x{}ch",
       t.width, t.height, t.channels, a.width, a.height, a.channels, b.width, b.height, b.channels
     )));
   }
@@ -325,7 +325,10 @@ pub(crate) fn texture_lerp(
       ))
     })
     .collect();
-  let meta = [a, b, t].into_iter().find(|x| x.channels == out_ch).unwrap();
+  let meta = [a, b, t]
+    .into_iter()
+    .find(|x| x.channels == out_ch)
+    .unwrap();
   Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     channels: out_ch,
@@ -755,11 +758,7 @@ fn texture_generate_scalar(
       let out = ctx
         .invoke_callable(
           generator,
-          &[
-            Value::Vec2(uv),
-            Value::Int(x as i64),
-            Value::Int(y as i64),
-          ],
+          &[Value::Vec2(uv), Value::Int(x as i64), Value::Int(y as i64)],
           EMPTY_KWARGS,
         )
         .map_err(|err| {
@@ -885,8 +884,7 @@ pub(crate) fn texture_zip_impl(
 
   let mut texs: Vec<Rc<TextureHandle>> = Vec::new();
   for (i, val) in seq.consume(ctx).enumerate() {
-    let val =
-      val.map_err(|err| err.wrap("Error produced by `textures` seq in `texture_zip`"))?;
+    let val = val.map_err(|err| err.wrap("Error produced by `textures` seq in `texture_zip`"))?;
     let Value::Texture(tex) = val else {
       return Err(ErrorStack::new(format!(
         "Expected texture at index {i} of `textures` in `texture_zip`, found: {val:?}"
@@ -1237,7 +1235,8 @@ pub(crate) fn render_texture_stack_impl(
 
   let mut slices: Vec<Rc<TextureHandle>> = Vec::new();
   for (i, val) in seq.consume(ctx).enumerate() {
-    let val = val.map_err(|err| err.wrap("Error produced by `slices` seq in `render_texture_stack`"))?;
+    let val =
+      val.map_err(|err| err.wrap("Error produced by `slices` seq in `render_texture_stack`"))?;
     let Value::Texture(tex) = val else {
       return Err(ErrorStack::new(format!(
         "Expected texture at index {i} of `slices` in `render_texture_stack`, found: {val:?}"
@@ -1250,7 +1249,13 @@ pub(crate) fn render_texture_stack_impl(
         return Err(ErrorStack::new(format!(
           "All slices in `render_texture_stack` must have matching dims/channels/wrap; slice 0 is \
            {}x{}x{}ch wrap={:?} but slice {i} is {}x{}x{}ch wrap={:?}",
-          first.width, first.height, first.channels, first.wrap, tex.width, tex.height, tex.channels,
+          first.width,
+          first.height,
+          first.channels,
+          first.wrap,
+          tex.width,
+          tex.height,
+          tex.channels,
           tex.wrap
         )));
       }
@@ -1335,7 +1340,9 @@ mod tests {
     let b_ptr = b.planes().unwrap()[0].as_ptr();
     let out = texture_zip_owned(a, b, "-", |x, y| x - y).unwrap();
     assert_eq!(plane_ptr(&out, 0), b_ptr);
-    assert!(out.as_texture().unwrap().as_planes()[0].iter().all(|&x| x == 0.));
+    assert!(out.as_texture().unwrap().as_planes()[0]
+      .iter()
+      .all(|&x| x == 0.));
     assert_eq!(a_keep.as_planes()[0][2], 2.);
   }
 
@@ -1448,12 +1455,16 @@ s2 = texture(4, 2, |uv| 1.)
     assert_eq!(t.name, "wall");
     assert_eq!(t.usage, Some(crate::TextureUsage::Albedo));
     assert_eq!(t.extra_slices.len(), 2);
-    assert_eq!((t.texture.width, t.texture.height, t.texture.channels), (4, 2, 1));
+    assert_eq!(
+      (t.texture.width, t.texture.height, t.texture.channels),
+      (4, 2, 1)
+    );
     assert_eq!(t.texture.as_interleaved()[0], 0.5 / 4.);
     assert_eq!(t.extra_slices[1].as_interleaved()[0], 1.);
 
-    let err = parse_and_eval_program(r#"[texture(2, 2, |uv| 0.)] | render_texture_stack(name="x")"#)
-      .unwrap_err();
+    let err =
+      parse_and_eval_program(r#"[texture(2, 2, |uv| 0.)] | render_texture_stack(name="x")"#)
+        .unwrap_err();
     assert!(err.to_string().contains("at least 2 slices"));
 
     let err = parse_and_eval_program(
@@ -1471,7 +1482,8 @@ s2 = texture(4, 2, |uv| 1.)
   #[test]
   fn render_texture_stack_survives_rerun() {
     let ctx = EvalCtx::default();
-    let src = r#"[texture(2, 2, |uv| 0.), texture(2, 2, |uv| 1.)] | render_texture_stack(name="s")"#;
+    let src =
+      r#"[texture(2, 2, |uv| 0.), texture(2, 2, |uv| 1.)] | render_texture_stack(name="s")"#;
     let mut ast = parse_program_src(&ctx, src).unwrap();
     for run in 1..=2 {
       ctx.rendered_textures.inner.borrow_mut().clear();
@@ -1509,8 +1521,16 @@ export marker = 1
       let rendered = ctx.rendered_textures.inner.borrow();
       assert_eq!(rendered.len(), 1, "run {run}");
       assert_eq!(rendered[0].extra_slices.len(), 2, "run {run}");
-      assert_eq!(rendered[0].source_module.as_deref(), Some("textab:root"), "run {run}");
-      assert_eq!(rendered[0].texture.format, Some(crate::TextureFormat::R32F), "run {run}");
+      assert_eq!(
+        rendered[0].source_module.as_deref(),
+        Some("textab:root"),
+        "run {run}"
+      );
+      assert_eq!(
+        rendered[0].texture.format,
+        Some(crate::TextureFormat::R32F),
+        "run {run}"
+      );
     }
     assert!(ctx.module_exports.borrow().contains_key("textab:root"));
   }
@@ -1595,8 +1615,8 @@ r(a) | render_texture(name="colored")
     assert_eq!(colored.channels, 3);
     assert!(colored.as_interleaved()[0] < colored.as_interleaved()[3]);
 
-    let err = parse_and_eval_program(r#"texture(2, 2, |uv| 0.) + texture(4, 2, |uv| 0.)"#)
-      .unwrap_err();
+    let err =
+      parse_and_eval_program(r#"texture(2, 2, |uv| 0.) + texture(4, 2, |uv| 0.)"#).unwrap_err();
     assert!(err.to_string().contains("matching dims"), "{err}");
 
     let err = parse_and_eval_program(

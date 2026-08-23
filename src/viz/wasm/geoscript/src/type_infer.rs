@@ -743,9 +743,9 @@ pub fn infer_reduce_fold_result(
   let bare_builtin_name = match reducer_expr {
     Expr::Ident {
       name: reducer_name, ..
-    } if !is_local(*reducer_name) => ctx
-      .interned_symbols
-      .with_resolved(*reducer_name, |s| s.strip_prefix('@').unwrap_or(s).to_owned()),
+    } if !is_local(*reducer_name) => ctx.interned_symbols.with_resolved(*reducer_name, |s| {
+      s.strip_prefix('@').unwrap_or(s).to_owned()
+    }),
     _ => None,
   };
   match reducer_result_type(reducer_ty, bare_builtin_name.as_deref()) {

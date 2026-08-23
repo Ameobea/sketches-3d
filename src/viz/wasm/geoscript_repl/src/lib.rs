@@ -969,7 +969,10 @@ pub fn geoscript_get_rendered_texture_pixels_rgba(
   let mut out = vec![0f32; layer_len * slices.len()];
   for (i, slice) in slices.iter().enumerate() {
     with_planes(slice, |planes| {
-      geoscript::texture_encode::expand_rgba_f32(planes, &mut out[i * layer_len..(i + 1) * layer_len])
+      geoscript::texture_encode::expand_rgba_f32(
+        planes,
+        &mut out[i * layer_len..(i + 1) * layer_len],
+      )
     });
   }
   out
@@ -997,7 +1000,11 @@ pub fn geoscript_encode_rendered_texture_pixels(
   let mut out = vec![0u8; layer_len * slices.len()];
   for (i, slice) in slices.iter().enumerate() {
     with_planes(slice, |planes| {
-      geoscript::texture_encode::encode_unorm8(planes, format, &mut out[i * layer_len..(i + 1) * layer_len])
+      geoscript::texture_encode::encode_unorm8(
+        planes,
+        format,
+        &mut out[i * layer_len..(i + 1) * layer_len],
+      )
     });
   }
   out
@@ -1661,10 +1668,9 @@ mod tests {
     out
   }
 
-  const LAZY_STACK_HEADER: &str = "n = 32\nf0 = texture(n, n, |uv| fbm(pos=uv))\nramp = \
-                                   color_ramp(stops=[[-1., srgb(0x504d4c)], [1., \
-                                   srgb(0xdfd9d3)]])\nlayers = 0..4 -> |i| ramp(f0 * ((i + 1) / \
-                                   4.))\n";
+  const LAZY_STACK_HEADER: &str =
+    "n = 32\nf0 = texture(n, n, |uv| fbm(pos=uv))\nramp = color_ramp(stops=[[-1., \
+     srgb(0x504d4c)], [1., srgb(0xdfd9d3)]])\nlayers = 0..4 -> |i| ramp(f0 * ((i + 1) / 4.))\n";
 
   /// A pure lazy map piped into a side-effectful consumer gets pre-collected into the
   /// const-eval cache, so warm runs replay the computed slices instead of re-running the
@@ -1700,8 +1706,8 @@ mod tests {
   #[test]
   fn pure_seq_fold_cache_survives_unrelated_rng_shift() {
     let head = "n = 16\nf0 = texture(n, n, |uv| fbm(pos=uv))\n";
-    let tail = "layers = 0..4 -> |i| f0 * ((i + 1) / 4.)\nlayers | \
-                render_texture_stack(name=\"s\")";
+    let tail =
+      "layers = 0..4 -> |i| f0 * ((i + 1) / 4.)\nlayers | render_texture_stack(name=\"s\")";
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
     let first = eval_rendered_pixel_ptrs(p, &format!("{head}{tail}"));
@@ -1717,9 +1723,8 @@ mod tests {
   /// rng analysis as bare closures — no fallback to the blanket poison.
   #[test]
   fn paf_callback_seq_replays_from_cache() {
-    let src = "n = 16\nf0 = texture(n, n, |uv| fbm(pos=uv))\nscale = |a, b| f0 * (a * \
-               b)\nlayers = [0.25, 0.5, 0.75, 1.] -> scale(0.5)\nlayers | \
-               render_texture_stack(name=\"s\")";
+    let src = "n = 16\nf0 = texture(n, n, |uv| fbm(pos=uv))\nscale = |a, b| f0 * (a * b)\nlayers \
+               = [0.25, 0.5, 0.75, 1.] -> scale(0.5)\nlayers | render_texture_stack(name=\"s\")";
     let mut ctx = GeoscriptReplCtx::default();
     let p: *mut GeoscriptReplCtx = &mut ctx;
     let first = eval_rendered_pixel_ptrs(p, src);
@@ -1739,7 +1744,10 @@ mod tests {
     let first = eval_rendered_pixel_ptrs(p, src);
     let second = eval_rendered_pixel_ptrs(p, src);
     assert_eq!(first.len(), 3);
-    assert_ne!(first, second, "rng seq must stay lazy and recompute per run");
+    assert_ne!(
+      first, second,
+      "rng seq must stay lazy and recompute per run"
+    );
   }
 
   #[test]
@@ -1853,12 +1861,18 @@ mod tests {
     // pointer-stable replay.
     let (_, default_px, control_json) = run(p, None);
     assert!((default_px - 0.5 / 8.).abs() < 1e-6);
-    assert!(control_json.contains("\"kind\":\"image_levels\""), "{control_json}");
+    assert!(
+      control_json.contains("\"kind\":\"image_levels\""),
+      "{control_json}"
+    );
     assert!(control_json.contains("\"stats\":["), "{control_json}");
 
     let (_, a_px, a_json) = run(p, Some([0., 1., 0., 0.5, 1.]));
     assert!((a_px - 0.5 * 0.5 / 8.).abs() < 1e-6, "{a_px}");
-    assert!(a_json.contains("\"value\":[0.0,1.0,0.0,0.5,1.0]"), "{a_json}");
+    assert!(
+      a_json.contains("\"value\":[0.0,1.0,0.0,0.5,1.0]"),
+      "{a_json}"
+    );
     let (_, a2_px, _) = run(p, Some([0., 1., 0., 0.5, 1.]));
     assert_eq!(a_px, a2_px);
     let (_, b_px, _) = run(p, Some([0., 1., 0., 2., 1.]));
@@ -2020,7 +2034,10 @@ mod tests {
     // Identity defaults flow out in wire order.
     let wire = geoscript_repl_get_rendered_control(p, 0);
     assert!(wire.contains("image_levels"), "{wire}");
-    assert!(wire.contains("\"value\":[0.0,1.0,0.0,1.0,1.0]"), "identity in wire order: {wire}");
+    assert!(
+      wire.contains("\"value\":[0.0,1.0,0.0,1.0,1.0]"),
+      "identity in wire order: {wire}"
+    );
     assert!(wire.contains("\"has_override\":false"), "{wire}");
 
     // in_hi=0.5 doubles the black end, proving slot 1 drives in_hi and not some other param.
@@ -2043,9 +2060,13 @@ mod tests {
     geoscript_repl_eval(p, None);
     unsafe { (*p).last_result.as_ref().unwrap() };
     let json = geoscript_repl_get_last_value_json(p, 4);
-    assert!(json.contains("0.25"), "in_hi=0.5 must double the black end: {json}");
+    assert!(
+      json.contains("0.25"),
+      "in_hi=0.5 must double the black end: {json}"
+    );
     // No reset between runs here, so the second eval's control is the last entry.
-    let wire = geoscript_repl_get_rendered_control(p, geoscript_repl_get_rendered_control_count(p) - 1);
+    let wire =
+      geoscript_repl_get_rendered_control(p, geoscript_repl_get_rendered_control_count(p) - 1);
     assert!(wire.contains("\"has_override\":true"), "{wire}");
   }
 

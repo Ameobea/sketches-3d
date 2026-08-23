@@ -305,7 +305,11 @@ fn sample_level(
       return None;
     }
     let base = ty as usize * view.w + tx as usize;
-    let a = if has_alpha { view.planes[ch - 1][base] } else { 1. };
+    let a = if has_alpha {
+      view.planes[ch - 1][base]
+    } else {
+      1.
+    };
     let mut vals = [0f32; 3];
     for (c, val) in vals.iter_mut().enumerate().take(val_ch) {
       *val = view.planes[c][base];
@@ -315,10 +319,7 @@ fn sample_level(
 
   match filter {
     BlitFilter::Nearest => {
-      let (tx, ty) = (
-        (sx + 0.5).floor() as i64,
-        (sy + 0.5).floor() as i64,
-      );
+      let (tx, ty) = ((sx + 0.5).floor() as i64, (sy + 0.5).floor() as i64);
       tap(tx, ty).unwrap_or(([0.; 3], 0.))
     }
     BlitFilter::Bilinear => {
@@ -621,8 +622,8 @@ pub(crate) fn blit_into(
   const MAX_FOOTPRINT_PX: i64 = 8192 * 8192;
   if (x1 - x0 + 1).saturating_mul(y1 - y0 + 1) > MAX_FOOTPRINT_PX {
     return Err(ErrorStack::new(format!(
-      "blit footprint too large: {}x{} pixels (max {MAX_FOOTPRINT_PX} total); check the \
-       stamp's placement scale",
+      "blit footprint too large: {}x{} pixels (max {MAX_FOOTPRINT_PX} total); check the stamp's \
+       placement scale",
       x1 - x0 + 1,
       y1 - y0 + 1
     )));
@@ -638,7 +639,8 @@ pub(crate) fn blit_into(
         continue;
       }
 
-      let (mut vals, mut sa) = sample_level(&view0, stamp.channels, val_ch, has_alpha, lx, ly, filter);
+      let (mut vals, mut sa) =
+        sample_level(&view0, stamp.channels, val_ch, has_alpha, lx, ly, filter);
       if let Some(v1) = &view1 {
         // Cross-level lerp runs premultiplied: straight-value blending would let a
         // low-alpha level's RGB bleed at alpha silhouettes.
@@ -741,8 +743,8 @@ pub(crate) fn composite_impl(
   let blend = BlendMode::from_name(arg_refs[2].resolve(args, kwargs).as_str().unwrap())?;
   if (top.width, top.height) != (bottom.width, bottom.height) {
     return Err(ErrorStack::new(format!(
-      "`composite` requires matching dims; found {}x{} over {}x{}. Use `blit` (with a \
-       placement transform) to composite textures of different sizes.",
+      "`composite` requires matching dims; found {}x{} over {}x{}. Use `blit` (with a placement \
+       transform) to composite textures of different sizes.",
       top.width, top.height, bottom.width, bottom.height
     )));
   }
@@ -866,7 +868,11 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x < 2 && y < 2 { 1. } else { 0. };
-        assert_eq!(quarter.as_interleaved()[y * 4 + x], expected, "quarter ({x}, {y})");
+        assert_eq!(
+          quarter.as_interleaved()[y * 4 + x],
+          expected,
+          "quarter ({x}, {y})"
+        );
       }
     }
 
@@ -879,7 +885,11 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
         } else {
           0.
         };
-        assert_eq!(wrapped.as_interleaved()[y * 4 + x], expected, "wrapped ({x}, {y})");
+        assert_eq!(
+          wrapped.as_interleaved()[y * 4 + x],
+          expected,
+          "wrapped ({x}, {y})"
+        );
       }
     }
 
@@ -888,7 +898,11 @@ clamped = blit(stamp | scale(0.5), base_clamp, filter="nearest")
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x == 0 && y == 0 { 1. } else { 0. };
-        assert_eq!(clamped.as_interleaved()[y * 4 + x], expected, "clamped ({x}, {y})");
+        assert_eq!(
+          clamped.as_interleaved()[y * 4 + x],
+          expected,
+          "clamped ({x}, {y})"
+        );
       }
     }
   }
@@ -941,10 +955,16 @@ full = blit(texture(2, 2, |uv| v2(0.2, 1.)) | trans_global(0.5, 0.5), base, filt
       assert!((px - 0.5).abs() < 1e-6, "alpha 0.5: expected 0.5, got {px}");
     }
     for px in get_tex(&ctx, "zero").as_interleaved().iter() {
-      assert!((px - 0.8).abs() < 1e-6, "alpha 0: base must survive, got {px}");
+      assert!(
+        (px - 0.8).abs() < 1e-6,
+        "alpha 0: base must survive, got {px}"
+      );
     }
     for px in get_tex(&ctx, "full").as_interleaved().iter() {
-      assert!((px - 0.2).abs() < 1e-6, "alpha 1: stamp must replace, got {px}");
+      assert!(
+        (px - 0.2).abs() < 1e-6,
+        "alpha 1: stamp must replace, got {px}"
+      );
     }
   }
 
@@ -1007,7 +1027,10 @@ blit_added = blit(top | trans_global(0.5, 0.5), bottom, blend="add")
     .unwrap();
 
     for (a, b) in [("composited", "blitted"), ("added", "blit_added")] {
-      let (pa, pb) = (get_tex(&ctx, a).as_interleaved(), get_tex(&ctx, b).as_interleaved());
+      let (pa, pb) = (
+        get_tex(&ctx, a).as_interleaved(),
+        get_tex(&ctx, b).as_interleaved(),
+      );
       for (i, (x, y)) in pa.iter().zip(pb.iter()).enumerate() {
         assert!((x - y).abs() < 1e-6, "{a} vs {b} at {i}: {x} vs {y}");
       }
@@ -1037,7 +1060,11 @@ from_seq = scatter([dot | scale(0.25) | trans_global(0.875, 0.875)], base, blend
     for y in 0..4 {
       for x in 0..4 {
         let expected = if x % 2 == 0 && y % 2 == 0 { 1. } else { 0. };
-        assert_eq!(scattered.as_interleaved()[y * 4 + x], expected, "scattered ({x}, {y})");
+        assert_eq!(
+          scattered.as_interleaved()[y * 4 + x],
+          expected,
+          "scattered ({x}, {y})"
+        );
       }
     }
 
@@ -1093,6 +1120,9 @@ b = t | blur(2.)
     let px = &b.as_interleaved()[(8 * 16 + 9) * 4..(8 * 16 + 9) * 4 + 4];
     assert!(px[1] < 0.01, "green bled into opaque side: {px:?}");
     assert!(px[2] > 0.9, "blue should stay saturated: {px:?}");
-    assert!(px[3] > 0.4 && px[3] < 1.01, "alpha should blur normally: {px:?}");
+    assert!(
+      px[3] > 0.4 && px[3] < 1.01,
+      "alpha should blur normally: {px:?}"
+    );
   }
 }

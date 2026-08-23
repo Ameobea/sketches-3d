@@ -134,7 +134,13 @@ macro_rules! argtype_flags {
   };
 }
 
-const CONCAT_CHANNELS_DESC: &str = "Joins the channels of several same-sized textures into one texture, in argument order (numpy `concatenate(axis=-1)`).  A numeric argument contributes one channel filled with that constant.  At least one argument must be a texture; it fixes the output dims, wrap mode, and placement transform.  Total channels must be <= 4.\n\nThe idiom for compositing with a mask sourced from an unrelated texture: `concat_channels(rgb, mask)` builds an RGBA stamp for `blit`.";
+const CONCAT_CHANNELS_DESC: &str =
+  "Joins the channels of several same-sized textures into one texture, in argument order (numpy \
+   `concatenate(axis=-1)`).  A numeric argument contributes one channel filled with that \
+   constant.  At least one argument must be a texture; it fixes the output dims, wrap mode, and \
+   placement transform.  Total channels must be <= 4.\n\nThe idiom for compositing with a mask \
+   sourced from an unrelated texture: `concat_channels(rgb, mask)` builds an RGBA stamp for \
+   `blit`.";
 
 const CONCAT_CHANNELS_ARG_DESC: &str =
   "Texture whose channels are appended in order, or a constant filling a single channel";
@@ -151,7 +157,9 @@ macro_rules! concat_channels_arg {
   };
 }
 
-const MORPH_RADIUS_DESC: &str = "Box structuring-element radius in pixels; the window is (2r+1)x(2r+1).  <= 0 is a no-op for `morph_open`/`morph_close` and yields an all-zero result for the difference forms.";
+const MORPH_RADIUS_DESC: &str = "Box structuring-element radius in pixels; the window is \
+                                 (2r+1)x(2r+1).  <= 0 is a no-op for `morph_open`/`morph_close` \
+                                 and yields an all-zero result for the difference forms.";
 
 macro_rules! morph_fn_def {
   ($desc:literal) => {

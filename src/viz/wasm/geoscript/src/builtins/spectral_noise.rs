@@ -196,7 +196,9 @@ fn parse_bands(ctx: &EvalCtx, v: &Value) -> Result<[[f32; KA]; KR], ErrorStack> 
   for (i, row) in seq.consume(ctx).enumerate() {
     let row = row?;
     if i >= KR {
-      return Err(ErrorStack::new(format!("`bands` must have exactly {KR} rows")));
+      return Err(ErrorStack::new(format!(
+        "`bands` must have exactly {KR} rows"
+      )));
     }
     let row_seq = row.as_sequence().ok_or_else(|| {
       ErrorStack::new(format!(
@@ -262,10 +264,16 @@ fn parse_kernels(ctx: &EvalCtx, v: &Value) -> Result<Vec<Kernel>, ErrorStack> {
       )));
     }
     let f0y = vals[0].as_float().ok_or_else(|| {
-      ErrorStack::new(format!("`kernels`[{i}][0] (f0y) must be numeric, found: {:?}", vals[0]))
+      ErrorStack::new(format!(
+        "`kernels`[{i}][0] (f0y) must be numeric, found: {:?}",
+        vals[0]
+      ))
     })?;
     let f0x = vals[1].as_float().ok_or_else(|| {
-      ErrorStack::new(format!("`kernels`[{i}][1] (f0x) must be numeric, found: {:?}", vals[1]))
+      ErrorStack::new(format!(
+        "`kernels`[{i}][1] (f0x) must be numeric, found: {:?}",
+        vals[1]
+      ))
     })?;
     if !(-0.5..=0.5).contains(&f0y) || !(-0.5..=0.5).contains(&f0x) {
       return Err(ErrorStack::new(format!(
@@ -289,7 +297,12 @@ fn parse_kernels(ctx: &EvalCtx, v: &Value) -> Result<Vec<Kernel>, ErrorStack> {
           &format!("`kernels`[{i}][3] (sig2, log10)"),
         )?,
       ],
-      angle: parse_f32_in(&vals[4], 0., PI, &format!("`kernels`[{i}][4] (angle, radians)"))?,
+      angle: parse_f32_in(
+        &vals[4],
+        0.,
+        PI,
+        &format!("`kernels`[{i}][4] (angle, radians)"),
+      )?,
       energy: parse_f32_in(
         &vals[5],
         EN_RANGE.0,
@@ -356,7 +369,13 @@ pub(crate) fn spectral_noise_impl(
       }
       let fx = fxs[x];
       let r = (fx * fx + fy * fy).sqrt();
-      let s = eval_bands_at(&bands, &cs, step, r.max(1e-9).ln(), fy.atan2(fx).rem_euclid(PI));
+      let s = eval_bands_at(
+        &bands,
+        &cs,
+        step,
+        r.max(1e-9).ln(),
+        fy.atan2(fx).rem_euclid(PI),
+      );
       spec[y * w + x] = s;
       e_resid += s as f64;
       if (y2, x2) != (y, x) {
@@ -448,7 +467,10 @@ pub(crate) fn spectral_noise_impl(
       .map(|v| 0.5 * (1. + erf(((v[0] as f64 - mean) / std) as f32 / std::f32::consts::SQRT_2)))
       .collect()
   } else {
-    buf.iter().map(|v| ((v[0] as f64 - mean) / std) as f32).collect()
+    buf
+      .iter()
+      .map(|v| ((v[0] as f64 - mean) / std) as f32)
+      .collect()
   };
 
   Ok(Value::Texture(Rc::new(TextureHandle {
@@ -500,19 +522,30 @@ t | render_texture(name="field")
     assert_eq!((tex.width, tex.height, tex.channels), (256, 256, 1));
     let n = tex.as_interleaved().len() as f64;
     let mean = tex.as_interleaved().iter().map(|&v| v as f64).sum::<f64>() / n;
-    let var = tex.as_interleaved().iter().map(|&v| (v as f64 - mean).powi(2)).sum::<f64>() / n;
+    let var = tex
+      .as_interleaved()
+      .iter()
+      .map(|&v| (v as f64 - mean).powi(2))
+      .sum::<f64>()
+      / n;
     assert!(mean.abs() < 0.01, "mean {mean}");
     assert!((var.sqrt() - 1.).abs() < 0.01, "std {}", var.sqrt());
 
     let ctx = parse_and_eval_program(
-      "spectral_noise(bands=[[-3,-3,-3,-3],[-3.5,-3.5,-3.5,-3.5],[-4.1,-4.1,-4.1,-4.1],[-4.7,-4.7,-4.7,-4.7],[-5.2,-5.2,-5.2,-5.2],[-5.8,-5.8,-5.8,-5.8],[-6.3,-6.3,-6.3,-6.3],[-6.9,-6.9,-6.9,-6.9]], width=64, height=64, distribution=\"uniform\") | render_texture",
+      "spectral_noise(bands=[[-3,-3,-3,-3],[-3.5,-3.5,-3.5,-3.5],[-4.1,-4.1,-4.1,-4.1],[-4.7,-4.7,\
+       -4.7,-4.7],[-5.2,-5.2,-5.2,-5.2],[-5.8,-5.8,-5.8,-5.8],[-6.3,-6.3,-6.3,-6.3],[-6.9,-6.9,-6.\
+       9,-6.9]], width=64, height=64, distribution=\"uniform\") | render_texture",
     )
     .unwrap();
     let rendered = ctx.rendered_textures.into_inner();
     let tex = &rendered[0].texture;
-    let mean = tex.as_interleaved().iter().map(|&v| v as f64).sum::<f64>() / tex.as_interleaved().len() as f64;
+    let mean = tex.as_interleaved().iter().map(|&v| v as f64).sum::<f64>()
+      / tex.as_interleaved().len() as f64;
     assert!((mean - 0.5).abs() < 0.02, "uniform mean {mean}");
-    assert!(tex.as_interleaved().iter().all(|&v| (0. ..=1.).contains(&v)));
+    assert!(tex
+      .as_interleaved()
+      .iter()
+      .all(|&v| (0. ..=1.).contains(&v)));
   }
 
   #[test]
@@ -521,13 +554,16 @@ t | render_texture(name="field")
     assert!(err.to_string().contains("expected 8"), "{err}");
 
     // old u8-format fingerprints fail loudly
-    let err =
-      parse_and_eval_program("spectral_noise(bands=[[240,204,255,209],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]])")
-        .unwrap_err();
+    let err = parse_and_eval_program(
+      "spectral_noise(bands=[[240,204,255,209],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],\
+       [0,0,0,0],[0,0,0,0]])",
+    )
+    .unwrap_err();
     assert!(err.to_string().contains("out of range"), "{err}");
 
     let err = parse_and_eval_program(
-      "spectral_noise(bands=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]], width=300)",
+      "spectral_noise(bands=[[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,\
+       0],[0,0,0,0]], width=300)",
     )
     .unwrap_err();
     assert!(err.to_string().contains("power of two"), "{err}");
@@ -537,13 +573,18 @@ t | render_texture(name="field")
   fn spectral_noise_rect_and_seed_determinism() {
     let src = |seed: u32| {
       format!(
-        "spectral_noise(bands=[[-3,-3,-3,-3],[-3.5,-3.5,-3.5,-3.5],[-4.1,-4.1,-4.1,-4.1],[-4.7,-4.7,-4.7,-4.7],[-5.2,-5.2,-5.2,-5.2],[-5.8,-5.8,-5.8,-5.8],[-6.3,-6.3,-6.3,-6.3],[-6.9,-6.9,-6.9,-6.9]], width=64, height=32, seed={seed}) | render_texture"
+        "spectral_noise(bands=[[-3,-3,-3,-3],[-3.5,-3.5,-3.5,-3.5],[-4.1,-4.1,-4.1,-4.1],[-4.7,-4.\
+         7,-4.7,-4.7],[-5.2,-5.2,-5.2,-5.2],[-5.8,-5.8,-5.8,-5.8],[-6.3,-6.3,-6.3,-6.3],[-6.9,-6.\
+         9,-6.9,-6.9]], width=64, height=32, seed={seed}) | render_texture"
       )
     };
     let px = |seed: u32| {
       let ctx = parse_and_eval_program(&src(seed)).unwrap();
       let rendered = ctx.rendered_textures.into_inner();
-      assert_eq!((rendered[0].texture.width, rendered[0].texture.height), (64, 32));
+      assert_eq!(
+        (rendered[0].texture.width, rendered[0].texture.height),
+        (64, 32)
+      );
       rendered[0].texture.as_interleaved()
     };
     let a = px(1);
@@ -552,7 +593,6 @@ t | render_texture(name="field")
     assert_eq!(a, b);
     assert_ne!(a, c);
   }
-
 
   /// The variation-stack idiom end to end: equal-power seed morph, ramped per layer,
   /// published as a stack.
