@@ -65,6 +65,7 @@ pub mod lights;
 pub mod materials;
 pub mod mesh_ops;
 pub mod noise;
+pub mod noise_batch;
 pub mod optimizer;
 pub mod path_building;
 pub mod preprocess;

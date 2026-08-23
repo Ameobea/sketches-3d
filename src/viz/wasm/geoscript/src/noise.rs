@@ -14,7 +14,7 @@ pub enum RangeFunction {
   Quadratic,
 }
 
-const PERLIN_PERM_TABLE: [u8; 256] = [
+pub(crate) const PERLIN_PERM_TABLE: [u8; 256] = [
   246, 24, 167, 112, 231, 134, 42, 88, 182, 251, 121, 236, 125, 149, 31, 68, 62, 210, 113, 12, 85,
   96, 27, 18, 25, 191, 26, 173, 89, 225, 249, 101, 81, 32, 218, 205, 206, 207, 174, 192, 80, 232,
   226, 6, 30, 127, 74, 201, 2, 245, 184, 241, 223, 19, 144, 248, 48, 255, 146, 165, 102, 109, 238,
@@ -38,120 +38,150 @@ fn perm1(x: isize) -> usize {
   PERLIN_PERM_TABLE[(x & 0xff) as usize] as usize
 }
 
+/// `grad2(perm(j))` folded into one table: the second hash level and the gradient choice
+/// collapse into a pair of indexed loads per corner.
+const fn perm_grad2() -> [[f32; 2]; 256] {
+  const N: f32 = 0.7071067811865475f64 as f32;
+  let mut g = [[0f32; 2]; 256];
+  let mut i = 0;
+  while i < 256 {
+    g[i] = match PERLIN_PERM_TABLE[i] % 8 {
+      0 => [1., 0.],
+      1 => [-1., 0.],
+      2 => [0., 1.],
+      3 => [0., -1.],
+      4 => [N, N],
+      5 => [-N, N],
+      6 => [N, -N],
+      _ => [-N, -N],
+    };
+    i += 1;
+  }
+  g
+}
+
+pub(crate) static PERM_GRAD2: [[f32; 2]; 256] = perm_grad2();
+
 #[inline(always)]
-fn perm2(x: isize, y: isize) -> usize {
+pub(crate) fn surflet2_at(j: usize, dx: f32, dy: f32) -> f32 {
+  let attn = 1. - (dx * dx + dy * dy);
+  let g = PERM_GRAD2[j];
+  // Evaluated unconditionally so this lowers to a select: the corner test is
+  // data-dependent noise and mispredicts on roughly a third of corners.
+  let v = (attn * attn * attn * attn) * (dx * g[0] + dy * g[1]);
+  if attn > 0. {
+    v
+  } else {
+    0.
+  }
+}
+
+const fn perm_grad3() -> [[f32; 4]; 256] {
+  const N: f32 = 0.7071067811865475f64 as f32;
+  const N2: f32 = 0.5773502691896258f64 as f32;
+  let mut g = [[0f32; 4]; 256];
+  let mut i = 0;
+  while i < 256 {
+    let [x, y, z] = match PERLIN_PERM_TABLE[i] % 32 {
+      0 | 12 => [N, N, 0.],
+      1 | 13 => [-N, N, 0.],
+      2 | 14 => [N, -N, 0.],
+      3 | 15 => [-N, -N, 0.],
+      4 | 16 => [N, 0., N],
+      5 | 17 => [-N, 0., N],
+      6 | 18 => [N, 0., -N],
+      7 | 19 => [-N, 0., -N],
+      8 | 20 => [0., N, N],
+      9 | 21 => [0., -N, N],
+      10 | 22 => [0., N, -N],
+      11 | 23 => [0., -N, -N],
+      24 => [N2, N2, N2],
+      25 => [-N2, N2, N2],
+      26 => [N2, -N2, N2],
+      27 => [-N2, -N2, N2],
+      28 => [N2, N2, -N2],
+      29 => [-N2, N2, -N2],
+      30 => [N2, -N2, -N2],
+      _ => [-N2, -N2, -N2],
+    };
+    g[i] = [x, y, z, 0.];
+    i += 1;
+  }
+  g
+}
+
+pub(crate) static PERM_GRAD3: [[f32; 4]; 256] = perm_grad3();
+
+#[inline(always)]
+pub(crate) fn perm2(x: isize, y: isize) -> usize {
   PERLIN_PERM_TABLE[perm1(x) ^ ((y & 0xff) as usize)] as usize
 }
 
 #[inline(always)]
-fn perm3(x: isize, y: isize, z: isize) -> usize {
-  PERLIN_PERM_TABLE[perm2(x, y) ^ ((z & 0xff) as usize)] as usize
-}
-
-#[inline(always)]
-fn grad2(index: usize) -> [f32; 2] {
-  const NORM: f32 = 0.7071067811865475f64 as f32;
-  match index % 8 {
-    0 => [1., 0.],
-    1 => [-1., 0.],
-    2 => [0., 1.],
-    3 => [0., -1.],
-    4 => [NORM, NORM],
-    5 => [-NORM, NORM],
-    6 => [NORM, -NORM],
-    7 => [-NORM, -NORM],
-    _ => unreachable!(),
-  }
-}
-
-#[inline(always)]
-fn grad3(index: usize) -> [f32; 3] {
-  const N: f32 = 0.7071067811865475f64 as f32;
-  const N2: f32 = 0.5773502691896258f64 as f32;
-  match index % 32 {
-    // 12 edges repeated twice then 8 corners
-    0 | 12 => [N, N, 0.],
-    1 | 13 => [-N, N, 0.],
-    2 | 14 => [N, -N, 0.],
-    3 | 15 => [-N, -N, 0.],
-    4 | 16 => [N, 0., N],
-    5 | 17 => [-N, 0., N],
-    6 | 18 => [N, 0., -N],
-    7 | 19 => [-N, 0., -N],
-    8 | 20 => [0., N, N],
-    9 | 21 => [0., -N, N],
-    10 | 22 => [0., N, -N],
-    11 | 23 => [0., -N, -N],
-    24 => [N2, N2, N2],
-    25 => [-N2, N2, N2],
-    26 => [N2, -N2, N2],
-    27 => [-N2, -N2, N2],
-    28 => [N2, N2, -N2],
-    29 => [-N2, N2, -N2],
-    30 => [N2, -N2, -N2],
-    31 => [-N2, -N2, -N2],
-    _ => unreachable!(),
-  }
-}
-
-#[inline(always)]
-fn surflet2(corner_hash: usize, dx: f32, dy: f32) -> f32 {
-  let attn = 1. - (dx * dx + dy * dy);
-  if attn > 0. {
-    let g = grad2(corner_hash);
-    (attn * attn * attn * attn) * (dx * g[0] + dy * g[1])
-  } else {
-    0.
-  }
-}
-
-#[inline(always)]
-fn surflet3(corner_hash: usize, dx: f32, dy: f32, dz: f32) -> f32 {
+pub(crate) fn surflet3_at(j: usize, dx: f32, dy: f32, dz: f32) -> f32 {
   let attn = 1. - (dx * dx + dy * dy + dz * dz);
+  let g = PERM_GRAD3[j];
+  let v = (attn * attn * attn * attn) * (dx * g[0] + dy * g[1] + dz * g[2]);
   if attn > 0. {
-    let g = grad3(corner_hash);
-    (attn * attn * attn * attn) * (dx * g[0] + dy * g[1] + dz * g[2])
+    v
   } else {
     0.
   }
 }
 
-const PERLIN2_SCALE: f32 = 3.1604938271604937f64 as f32;
-const PERLIN3_SCALE: f32 = 3.8898553255531074f64 as f32;
+pub(crate) const PERLIN2_SCALE: f32 = 3.1604938271604937f64 as f32;
+pub(crate) const PERLIN3_SCALE: f32 = 3.8898553255531074f64 as f32;
 
+/// The four corner indices into [`PERM_GRAD2`] for the lattice cell at `(nx, ny)`; `wrap`
+/// maps a cell index into the tiling period (identity for non-tiling perlin).
+#[inline(always)]
+pub(crate) fn corner_hashes2(x0: isize, y0: isize, x1: isize, y1: isize) -> [usize; 4] {
+  let p0 = perm1(x0);
+  let p1 = perm1(x1);
+  let (q0, q1) = ((y0 & 0xff) as usize, (y1 & 0xff) as usize);
+  [p0 ^ q0, p1 ^ q0, p0 ^ q1, p1 ^ q1]
+}
+
+#[inline(always)]
 fn perlin2(x: f32, y: f32) -> f32 {
   let (fx, fy) = (x.floor(), y.floor());
   let (nx, ny) = (fx as isize, fy as isize);
   let (dx, dy) = (x - fx, y - fy);
   let (fdx, fdy) = (dx - 1., dy - 1.);
 
-  let f00 = surflet2(perm2(nx, ny), dx, dy);
-  let f10 = surflet2(perm2(nx + 1, ny), fdx, dy);
-  let f01 = surflet2(perm2(nx, ny + 1), dx, fdy);
-  let f11 = surflet2(perm2(nx + 1, ny + 1), fdx, fdy);
+  let [h00, h10, h01, h11] = corner_hashes2(nx, ny, nx + 1, ny + 1);
+  let f00 = surflet2_at(h00, dx, dy);
+  let f10 = surflet2_at(h10, fdx, dy);
+  let f01 = surflet2_at(h01, dx, fdy);
+  let f11 = surflet2_at(h11, fdx, fdy);
 
   (f00 + f10 + f01 + f11) * PERLIN2_SCALE
 }
 
+#[inline(always)]
 fn perlin3(x: f32, y: f32, z: f32) -> f32 {
   let (fx, fy, fz) = (x.floor(), y.floor(), z.floor());
   let (nx, ny, nz) = (fx as isize, fy as isize, fz as isize);
   let (dx, dy, dz) = (x - fx, y - fy, z - fz);
   let (fdx, fdy, fdz) = (dx - 1., dy - 1., dz - 1.);
 
-  let f000 = surflet3(perm3(nx, ny, nz), dx, dy, dz);
-  let f100 = surflet3(perm3(nx + 1, ny, nz), fdx, dy, dz);
-  let f010 = surflet3(perm3(nx, ny + 1, nz), dx, fdy, dz);
-  let f110 = surflet3(perm3(nx + 1, ny + 1, nz), fdx, fdy, dz);
-  let f001 = surflet3(perm3(nx, ny, nz + 1), dx, dy, fdz);
-  let f101 = surflet3(perm3(nx + 1, ny, nz + 1), fdx, dy, fdz);
-  let f011 = surflet3(perm3(nx, ny + 1, nz + 1), dx, fdy, fdz);
-  let f111 = surflet3(perm3(nx + 1, ny + 1, nz + 1), fdx, fdy, fdz);
+  let (p00, p10) = (perm2(nx, ny), perm2(nx + 1, ny));
+  let (p01, p11) = (perm2(nx, ny + 1), perm2(nx + 1, ny + 1));
+  let (q0, q1) = ((nz & 0xff) as usize, ((nz + 1) & 0xff) as usize);
+
+  let f000 = surflet3_at(p00 ^ q0, dx, dy, dz);
+  let f100 = surflet3_at(p10 ^ q0, fdx, dy, dz);
+  let f010 = surflet3_at(p01 ^ q0, dx, fdy, dz);
+  let f110 = surflet3_at(p11 ^ q0, fdx, fdy, dz);
+  let f001 = surflet3_at(p00 ^ q1, dx, dy, fdz);
+  let f101 = surflet3_at(p10 ^ q1, fdx, dy, fdz);
+  let f011 = surflet3_at(p01 ^ q1, dx, fdy, fdz);
+  let f111 = surflet3_at(p11 ^ q1, fdx, fdy, fdz);
 
   (f000 + f100 + f010 + f110 + f001 + f101 + f011 + f111) * PERLIN3_SCALE
 }
 
-fn seed_offset_3d(seed: u32) -> Vec3 {
+pub(crate) fn seed_offset_3d(seed: u32) -> Vec3 {
   let h1 = seed.wrapping_mul(0x9E3779B1);
   let h2 = seed.wrapping_mul(0x85EBCA77);
   let h3 = seed.wrapping_mul(0xC2B2AE3D);
@@ -163,7 +193,7 @@ fn seed_offset_3d(seed: u32) -> Vec3 {
   )
 }
 
-fn seed_offset_2d(seed: u32) -> Vec2 {
+pub(crate) fn seed_offset_2d(seed: u32) -> Vec2 {
   let h1 = seed.wrapping_mul(0x9E3779B1);
   let h2 = seed.wrapping_mul(0x85EBCA77);
 
@@ -173,11 +203,13 @@ fn seed_offset_2d(seed: u32) -> Vec2 {
   )
 }
 
+#[inline]
 pub fn perlin_noise_3d(seed: u32, pos: Vec3) -> f32 {
   let pos = pos + seed_offset_3d(seed);
   perlin3(pos.x, pos.y, pos.z)
 }
 
+#[inline]
 pub fn perlin_noise_2d(seed: u32, pos: Vec2) -> f32 {
   let pos = pos + seed_offset_2d(seed);
   perlin2(pos.x, pos.y)
@@ -186,21 +218,46 @@ pub fn perlin_noise_2d(seed: u32, pos: Vec2) -> f32 {
 /// Exact-tiling perlin: corner indices wrap `mod period` before hashing, so the noise
 /// repeats every `period` lattice cells. The fractional seed offset survives this — it
 /// translates uniformly and cell indices advance by exactly `period` per tile.
+#[inline(always)]
+pub(crate) fn wrap_next(w: isize, period: isize) -> isize {
+  let n = w + 1;
+  if n == period {
+    0
+  } else {
+    n
+  }
+}
+
+#[inline(always)]
 fn periodic_perlin2(x: f32, y: f32, period: isize) -> f32 {
   let (fx, fy) = (x.floor(), y.floor());
   let (nx, ny) = (fx as isize, fy as isize);
   let (dx, dy) = (x - fx, y - fy);
   let (fdx, fdy) = (dx - 1., dy - 1.);
-  let w = |c: isize| c.rem_euclid(period);
+  let (x0, y0) = (nx.rem_euclid(period), ny.rem_euclid(period));
 
-  let f00 = surflet2(perm2(w(nx), w(ny)), dx, dy);
-  let f10 = surflet2(perm2(w(nx + 1), w(ny)), fdx, dy);
-  let f01 = surflet2(perm2(w(nx), w(ny + 1)), dx, fdy);
-  let f11 = surflet2(perm2(w(nx + 1), w(ny + 1)), fdx, fdy);
+  let [h00, h10, h01, h11] = corner_hashes2(x0, y0, wrap_next(x0, period), wrap_next(y0, period));
+  let f00 = surflet2_at(h00, dx, dy);
+  let f10 = surflet2_at(h10, fdx, dy);
+  let f01 = surflet2_at(h01, dx, fdy);
+  let f11 = surflet2_at(h11, fdx, fdy);
 
   (f00 + f10 + f01 + f11) * PERLIN2_SCALE
 }
 
+pub(crate) fn perlin3_raw(pos: Vec3) -> f32 {
+  perlin3(pos.x, pos.y, pos.z)
+}
+
+pub(crate) fn perlin2_raw(pos: Vec2) -> f32 {
+  perlin2(pos.x, pos.y)
+}
+
+pub(crate) fn periodic_perlin2_raw(pos: Vec2, period: isize) -> f32 {
+  periodic_perlin2(pos.x, pos.y, period)
+}
+
+#[inline]
 pub fn periodic_perlin_noise_2d(seed: u32, period: isize, pos: Vec2) -> f32 {
   let pos = pos + seed_offset_2d(seed);
   periodic_perlin2(pos.x, pos.y, period)

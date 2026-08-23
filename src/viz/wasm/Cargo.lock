@@ -602,6 +602,7 @@ dependencies = [
  "tessellation",
  "uv_solvers",
  "wasm-bindgen",
+ "wide",
 ]
 
 [[package]]

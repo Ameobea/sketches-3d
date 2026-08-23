@@ -23,8 +23,7 @@ use crate::{
     MapLiteralEntry, PrefixOp, ResolvedBody, Statement, VarRes,
   },
   builtins::{fn_defs::fn_sigs, resolve_tile_period, tex_kernels as kern},
-  get_args,
-  noise::{fbm_1d, fbm_2d, fbm_2d_tileable, fbm_3d},
+  get_args, noise_batch,
   seq::EagerSeq,
   seq_as_eager, ArgRef, ArgType, Callable, Closure, ErrorStack, EvalCtx, FrameEnv, GetArgsOutput,
   SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
@@ -3991,72 +3990,60 @@ fn exec(
         let p = uni.fbm[f.rix as usize];
         let mut buf = ex.pool.pop().unwrap_or_default();
         buf.clear();
-        buf.reserve(n);
-        let get = |s: Src, i: usize| -> f32 {
-          match s {
-            Src::Reg(r) => ex.regs[r as usize].as_ref().unwrap()[i],
-            Src::In(c) => ex.input[c as usize][i],
-            Src::Uv(c) => ex.uv.unwrap()[c as usize][i],
-            Src::Uni(uix, c) => ex.uni.chans[uix as usize][c as usize],
-            Src::Const(k) => k,
+        buf.resize(n, 0.);
+        // A uniform coordinate is splatted into a scratch plane so the batch kernels see
+        // slices throughout; `fbm_1d` is `fbm_2d` against a zero y.
+        let splat = |ex: &mut Exec, s: Src| match ex.resolve(s) {
+          RSrc::K(k) => {
+            let mut b = ex.pool.pop().unwrap_or_default();
+            b.clear();
+            b.resize(n, k);
+            Some(b)
           }
+          RSrc::S(_) => None,
         };
-        match f.dim {
-          1 => {
-            for i in 0..n {
-              buf.push(fbm_1d(
-                p.seed,
-                p.octaves,
-                p.frequency,
-                p.persistence,
-                p.lacunarity,
-                get(f.pos[0], i),
-              ));
-            }
-          }
-          2 => match p.tileable {
-            Some(period) => {
-              for i in 0..n {
-                let pos = Vec2::new(get(f.pos[0], i), get(f.pos[1], i));
-                buf.push(fbm_2d_tileable(
-                  p.seed,
-                  p.octaves,
-                  p.frequency,
-                  p.persistence,
-                  p.lacunarity,
-                  period,
-                  pos,
-                ));
-              }
-            }
-            None => {
-              for i in 0..n {
-                let pos = Vec2::new(get(f.pos[0], i), get(f.pos[1], i));
-                buf.push(fbm_2d(
-                  p.seed,
-                  p.octaves,
-                  p.frequency,
-                  p.persistence,
-                  p.lacunarity,
-                  pos,
-                ));
-              }
-            }
-          },
-          _ => {
-            for i in 0..n {
-              let pos = Vec3::new(get(f.pos[0], i), get(f.pos[1], i), get(f.pos[2], i));
-              buf.push(fbm_3d(
-                p.seed,
-                p.octaves,
-                p.frequency,
-                p.persistence,
-                p.lacunarity,
-                pos,
-              ));
-            }
+        let srcs: [Src; 3] = match f.dim {
+          1 => [f.pos[0], Src::Const(0.), Src::Const(0.)],
+          d => [
+            f.pos[0],
+            f.pos[1],
+            if d == 3 { f.pos[2] } else { Src::Const(0.) },
+          ],
+        };
+        let tmp = srcs.map(|s| splat(&mut ex, s));
+        {
+          let pl: [&[f32]; 3] = [
+            coord_plane(&ex, srcs[0], &tmp[0]),
+            coord_plane(&ex, srcs[1], &tmp[1]),
+            coord_plane(&ex, srcs[2], &tmp[2]),
+          ];
+          if f.dim == 3 {
+            noise_batch::fbm_3d_batch(
+              p.seed,
+              p.octaves,
+              p.frequency,
+              p.persistence,
+              p.lacunarity,
+              pl[0],
+              pl[1],
+              pl[2],
+              &mut buf,
+            );
+          } else {
+            noise_batch::fbm_2d_batch(
+              p.seed,
+              p.octaves,
+              p.frequency,
+              p.persistence,
+              p.lacunarity,
+              p.tileable,
+              pl[0],
+              pl[1],
+              &mut buf,
+            );
           }
         }
+        ex.pool.extend(tmp.into_iter().flatten());
         ex.regs[f.dst as usize] = Some(buf);
         ex.release_dead(plan, step_ix);
       }
