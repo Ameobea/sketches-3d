@@ -1,11 +1,11 @@
 import type * as THREE from 'three';
 
 import { buildMaterial, FallbackMat, HiddenMat, type MaterialDef } from 'src/geoscript/materials';
-import { CustomBasicShaderMaterial } from 'src/viz/shaders/customBasicShader';
 import { CustomShaderMaterial } from 'src/viz/shaders/customShader';
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
 import { referencedTextureIDsForDef } from 'src/geotoy/modules/materialLoading.svelte';
 import type { Viz } from 'src/viz';
+import { materialIsAnimated } from 'src/geotoy/modules/shaderTimeUse';
 
 export interface MaterialRuntimeEntry {
   name: string;
@@ -117,14 +117,7 @@ export class MaterialRuntime {
       if (!isSharedMat(mat)) mat.dispose();
       return;
     }
-    if (
-      (mat instanceof CustomShaderMaterial || mat instanceof CustomBasicShaderMaterial) &&
-      def.type === 'customShader' &&
-      (def.shaders?.colorShader ||
-        def.shaders?.iridescenceShader ||
-        def.shaders?.metalnessShader ||
-        def.shaders?.roughnessShader)
-    ) {
+    if (mat instanceof CustomShaderMaterial && materialIsAnimated(def)) {
       build.cb = curTimeSeconds => mat.setCurTimeSeconds(curTimeSeconds);
       this.viz.registerBeforeRenderCb(build.cb);
     }

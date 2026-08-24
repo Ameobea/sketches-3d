@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import * as Stats from 'three/examples/jsm/libs/stats.module.js';
+import { VizStats } from './util/vizStats';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -42,6 +42,7 @@ import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 import { OverlayMSAARenderer } from './gizmos/overlayMSAA';
+import { FrameGovernor, MAX_FRAME_DELTA_SECONDS } from './frameGovernor';
 
 // `RectAreaLight`s render with undefined data unless their LTC lookup textures
 // are bound. `init()` recreates them, so it's guarded to run once.
@@ -143,7 +144,7 @@ interface ViewModeInterpolationState {
 export class Viz {
   public camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   public renderer!: THREE.WebGLRenderer;
-  public stats: Stats | null = null;
+  public stats: VizStats | null = null;
   public sceneName: string;
   public clock: THREE.Clock = new THREE.Clock();
   public inventory: Inventory = new Inventory();
@@ -199,6 +200,8 @@ export class Viz {
   }[] = [];
   private afterRenderCbs: ((curTimeSeconds: number, tDiffSeconds: number) => void)[] = [];
   private animateHandle: number = 0;
+  /** Distinct from `animateHandle`, which is 0 for the duration of an `animate` call. */
+  private loopRunning = false;
   private captureFrozen = false;
   private captureElapsedSeconds = 0;
   private distanceSwapEntries: {
@@ -208,6 +211,7 @@ export class Viz {
     distance: number;
   }[] = [];
   private renderOverride: ((timeDiffSeconds: number) => void) | null = null;
+  public frameGovernor: FrameGovernor | null = null;
   private isBlurred = false;
   /**
    * State used to manage smoothly interpolating camera when switching view modes.
@@ -333,14 +337,18 @@ export class Viz {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   };
 
-  private renderFrame = (deltaTime: number, curTimeSeconds: number) => {
+  /** Split from `presentFrame` so a frame can be staged and inspected without being drawn. */
+  public stageFrame = (deltaTime: number, curTimeSeconds: number) => {
+    this.stats?.begin();
     updateAaPixelScale(
       this.camera,
       this.renderer,
       this.orbitControls ? this.camera.position.distanceTo(this.orbitControls.target) : undefined
     );
     this.beforeRenderCbs.forEach(({ cb }) => cb(curTimeSeconds, deltaTime));
+  };
 
+  public presentFrame = (deltaTime: number, curTimeSeconds: number) => {
     if (this.renderOverride) {
       this.renderOverride(deltaTime);
     } else {
@@ -361,22 +369,87 @@ export class Viz {
     this.stats?.update();
   };
 
+  private renderFrame = (deltaTime: number, curTimeSeconds: number) => {
+    this.stageFrame(deltaTime, curTimeSeconds);
+    this.presentFrame(deltaTime, curTimeSeconds);
+  };
+
   public animate = () => {
-    if (this.isBlurred || this.paused.current) {
-      this.animateHandle = requestAnimationFrame(this.animate);
+    // This handle has fired, so it is no longer cancellable. `loopRunning` — not the handle —
+    // is what `startAnimationLoop` guards on, so a render callback that calls `invalidate()`
+    // mid-frame can't slip past it and stack a second rAF chain.
+    this.animateHandle = 0;
+    let stop = false;
+    try {
+      if (this.isBlurred || this.paused.current) {
+        if (this.frameGovernor) {
+          this.stats?.setTier('paused');
+          stop = true;
+        }
+        return;
+      }
+
+      if (this.captureFrozen) {
+        stop = true;
+        return;
+      }
+
+      const deltaTime = this.clock.getDelta();
+      const curTimeSeconds = this.clock.getElapsedTime();
+
+      if (this.frameGovernor) {
+        // Clamped only here: a governed loop can idle for seconds at a time and blow up any
+        // consumer that integrates the delta. Ungoverned scenes keep their original timing,
+        // where a long frame is a genuine stall the physics step needs to see.
+        stop = !this.frameGovernor.tick(Math.min(deltaTime, MAX_FRAME_DELTA_SECONDS), curTimeSeconds);
+        return;
+      }
+
+      this.renderFrame(deltaTime, curTimeSeconds);
+    } finally {
+      // A throw leaves `stop` false and re-arms, so one bad frame doesn't kill the loop. The
+      // `loopRunning` check keeps a mid-frame `stopAnimationLoop` stopped instead of silently
+      // re-armed, which would let a later start stack a second rAF chain.
+      if (stop) {
+        this.loopRunning = false;
+      } else if (this.loopRunning) {
+        this.animateHandle = requestAnimationFrame(this.animate);
+      }
+    }
+  };
+
+  /**
+   * On-demand rendering: present only when the scene actually changed. Editor scenes only —
+   * see `FrameGovernor`.
+   */
+  public enableFrameGovernor = (): FrameGovernor => {
+    this.frameGovernor ??= new FrameGovernor(this);
+    return this.frameGovernor;
+  };
+
+  public invalidate = () => this.frameGovernor?.invalidate();
+
+  /** True when something other than the governor is holding the loop down. */
+  public get loopBlocked(): boolean {
+    return this.isBlurred || this.paused.current || this.captureFrozen || this.isDestroyed;
+  }
+
+  public startAnimationLoop = () => {
+    if (this.loopRunning || this.isDestroyed || this.captureFrozen) {
       return;
     }
-
-    if (this.captureFrozen) {
-      return;
-    }
-
-    const deltaTime = this.clock.getDelta();
-    const curTimeSeconds = this.clock.getElapsedTime();
-
-    this.renderFrame(deltaTime, curTimeSeconds);
-
+    this.loopRunning = true;
+    // Skips the idle gap so the resumed frame doesn't see a multi-second delta.
+    this.clock.getDelta();
     this.animateHandle = requestAnimationFrame(this.animate);
+  };
+
+  public stopAnimationLoop = () => {
+    this.loopRunning = false;
+    if (this.animateHandle) {
+      cancelAnimationFrame(this.animateHandle);
+      this.animateHandle = 0;
+    }
   };
 
   public captureFreeze = () => {
@@ -385,10 +458,7 @@ export class Viz {
     }
     this.captureFrozen = true;
     this.captureElapsedSeconds = 0;
-    if (this.animateHandle) {
-      cancelAnimationFrame(this.animateHandle);
-      this.animateHandle = 0;
-    }
+    this.stopAnimationLoop();
     console.info('[vizCapture] render loop frozen — call vizCapture.frame() to render one frame');
   };
 
@@ -409,8 +479,7 @@ export class Viz {
       return;
     }
     this.captureFrozen = false;
-    this.clock.getDelta();
-    this.animateHandle = requestAnimationFrame(this.animate);
+    this.startAnimationLoop();
     console.info('[vizCapture] render loop resumed');
   };
 
@@ -423,6 +492,7 @@ export class Viz {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
 
     this.resizeCbs.forEach(cb => cb());
+    this.invalidate();
   };
 
   /**
@@ -640,10 +710,11 @@ export class Viz {
     }
 
     if (statsEnabled) {
-      this.stats = new Stats.default();
+      this.stats = new VizStats();
       this.stats.dom.style.position = 'absolute';
       this.stats.dom.style.top = '0px';
       this.stats.dom.id = 'viz-stats';
+      this.stats.setTier(this.loopBlocked ? 'paused' : (this.frameGovernor?.currentTier ?? 'render'));
 
       const container = this.renderer.domElement.parentElement;
       if (!container) {
@@ -673,6 +744,7 @@ export class Viz {
 
     this.clock.start();
     this.clock.elapsedTime = this.clockStopTime;
+    this.startAnimationLoop();
 
     if (forceLock) {
       this.didManuallyLockPointer = true;
@@ -1013,9 +1085,9 @@ export class Viz {
       (window as any).lastPos = (window as any).recordPos();
     }
 
-    if (this.animateHandle) {
-      cancelAnimationFrame(this.animateHandle);
-    }
+    this.stopAnimationLoop();
+    this.frameGovernor?.dispose();
+    this.frameGovernor = null;
 
     window.removeEventListener('resize', this.onWindowResize);
     this.viewportResizeObserver?.disconnect();
@@ -1124,7 +1196,7 @@ export const initViz = (
   // set the clock to 0 since there could be some time in between page load and when we
   // actually start ticking the main loop
   viz.clock.start();
-  setTimeout(() => viz.animate(), 0);
+  setTimeout(() => viz.startAnimationLoop(), 0);
 
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
     if (viz.destroyed) {

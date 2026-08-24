@@ -214,6 +214,7 @@ export class SplineOverlay {
     const cam = this.host.camera as THREE.PerspectiveCamera;
     _camPos.setFromMatrixPosition(cam.matrixWorld);
     const pos = this.linePos.array as Float32Array;
+    let moved = false;
 
     for (let i = 0; i < this.markers.length; i++) {
       const m = this.markers[i];
@@ -225,11 +226,21 @@ export class SplineOverlay {
       }
       const isEndpoint = i === 0 || i === this.markers.length - 1;
       m.scale.setScalar(s * (i === this._selected ? SELECTED_SCALE : isEndpoint ? ENDPOINT_SCALE : 1));
+      // Read before / compare after the store so both sides are f32; comparing the stored
+      // value against the f64 source differs for any coordinate f32 can't represent.
+      const px = pos[i * 3];
+      const py = pos[i * 3 + 1];
+      const pz = pos[i * 3 + 2];
       pos[i * 3] = m.position.x;
       pos[i * 3 + 1] = m.position.y;
       pos[i * 3 + 2] = m.position.z;
+      moved ||= pos[i * 3] !== px || pos[i * 3 + 1] !== py || pos[i * 3 + 2] !== pz;
     }
-    this.linePos.needsUpdate = true;
+    // Only on an actual move: an unconditional flag re-uploads the buffer every frame and
+    // bumps `version`, which reads as a scene change forever.
+    if (moved) {
+      this.linePos.needsUpdate = true;
+    }
     this.line.visible = this.points.length > 1;
   }
 

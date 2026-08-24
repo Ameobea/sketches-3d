@@ -49,9 +49,11 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
   private readonly renderFrameCb: (timeDiffSeconds: number) => void;
+  private readonly viz: Viz;
   private pomRescanCb: (() => void) | null = null;
 
   constructor(
+    viz: Viz,
     effectComposer: StableDepthEffectComposer,
     depthPass: DepthPass | null,
     depthPrePassMaterial: THREE.Material | null,
@@ -62,6 +64,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     finalPass: FinalPass | null = null,
     inlineEmissivePass: InlineEmissivePass | null = null
   ) {
+    this.viz = viz;
     this.effectComposer = effectComposer;
     this.depthPass = depthPass;
     this.depthPrePassMaterial = depthPrePassMaterial;
@@ -79,11 +82,13 @@ export class PostprocessingPipelineController implements PostprocessingControlle
 
   setGamma(gamma: number): void {
     this.finalPass?.setGamma(gamma);
+    this.viz.invalidate();
   }
 
   setFogEnabled(enabled: boolean): void {
     this.finalPass?.setFogEnabled(enabled);
     this.emissiveBloomPass?.setFogEnabled(enabled);
+    this.viz.invalidate();
   }
 
   setCamera(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void {
@@ -102,6 +107,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
         pass.mainCamera = camera;
       }
     }
+    this.viz.invalidate();
   }
 
   renderFrame(timeDiffSeconds: number): void {
@@ -113,10 +119,12 @@ export class PostprocessingPipelineController implements PostprocessingControlle
       this.depthPass.enabled = enabled;
     }
     this.renderer.autoClearDepth = !enabled;
+    this.viz.invalidate();
   }
 
   addEmissiveBypassObject(mesh: THREE.Mesh): void {
     this.emissiveBypassPass?.addBypassMesh(mesh);
+    this.viz.invalidate();
   }
 
   rescanBypassMeshes(scene: THREE.Scene): void {
@@ -128,6 +136,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
         this.emissiveBypassPass!.addBypassMesh(obj);
       }
     });
+    this.viz.invalidate();
   }
 
   setPomRescanCb(cb: () => void): void {
@@ -136,6 +145,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
 
   rescanPomMeshes(): void {
     this.pomRescanCb?.();
+    this.viz.invalidate();
   }
 
   setEmissiveBloom({
@@ -156,6 +166,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     if (luminanceThreshold !== undefined) this.emissiveBloomPass?.setLuminanceThreshold(luminanceThreshold);
     if (luminanceSmoothing !== undefined) this.emissiveBloomPass?.setLuminanceSmoothing(luminanceSmoothing);
     if (luminanceSoftKnee !== undefined) this.emissiveBloomPass?.setLuminanceSoftKnee(luminanceSoftKnee);
+    this.viz.invalidate();
   }
 }
 
@@ -578,6 +589,7 @@ export const configureDefaultPostprocessingPipeline = ({
   viz.setRenderOverride(renderFrame);
 
   const controller = new PostprocessingPipelineController(
+    viz,
     effectComposer,
     depthPass,
     depthPrePassMaterial,

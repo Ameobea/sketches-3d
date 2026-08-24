@@ -47,6 +47,14 @@ export const processLoadedScene = async (
 
   const pipelineController = buildMeshPipeline(viz, quality, userData?.renderMode ?? false);
 
+  // Nothing in a geoscript scene animates on its own, so present only on change. A shader that
+  // reads `curTimeSeconds` keeps rendering because the governor hashes that uniform, not
+  // through any registration here. The render harness drives frames explicitly, so it stays
+  // ungoverned.
+  if (!userData?.renderMode) {
+    viz.enableFrameGovernor();
+  }
+
   if (!userData?.renderMode && localStorage.getItem('geoscript-axis-helpers') !== 'false') {
     const axisHelper = new THREE.AxesHelper(100);
     axisHelper.position.set(0, 0, 0);

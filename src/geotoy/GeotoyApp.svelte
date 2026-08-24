@@ -395,6 +395,14 @@
   const modesByKind: Record<TreeKind, Mode> = { mesh: meshScene, texture: textureMode };
   const mode: Mode = $derived(modesByKind[tabs.active.kind]);
 
+  // The 2D texture preview (and its placeholder) is an opaque fixed overlay, so the 3D
+  // canvas underneath it is drawing nothing anyone can see.
+  $effect(() => {
+    viz.frameGovernor?.setSuspended(mode.kind === 'texture' && !textureMode.preview3d);
+    // `viz` outlives this component, so a teardown while suspended would leave its loop stopped.
+    return () => viz.frameGovernor?.setSuspended(false);
+  });
+
   // Per-mode key table: the action surface is built in onMount, so the table reads it lazily.
   let keymapActions: GeotoyKeymapActions | null = null;
   $effect(() => {
