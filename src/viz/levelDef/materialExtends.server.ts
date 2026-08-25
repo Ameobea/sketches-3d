@@ -17,12 +17,12 @@ const deepMerge = (base: unknown, over: unknown): unknown => {
 };
 
 /**
- * Resolves a non-local (`library`/`geotoy`) extends parent to a fully-flattened `customShader` def,
- * merging any textures it pulls in into `textures`. Injected by the caller so this module needn't
- * import the library/geotoy resolvers (which would form an import cycle).
+ * Resolves a non-local (`library`/`geotoy`/`composition`) extends parent to a fully-flattened
+ * `customShader` def, merging any textures it pulls in into `textures`. Injected by the caller so
+ * this module needn't import the library/geotoy resolvers (which would form an import cycle).
  */
 export type ExternalParentResolver = (
-  ref: Extract<MaterialExtendsRef, { type: 'library' | 'geotoy' }>,
+  ref: Exclude<MaterialExtendsRef, { type: 'local' }>,
   textures: Record<string, AnyLevelTextureDef>
 ) => Promise<MaterialDefRaw>;
 
@@ -74,7 +74,9 @@ export const resolveMaterialExtends = async (
           ? `"${ext.name}"`
           : ext.type === 'library'
             ? `library "${ext.path}"`
-            : `geotoy material ${ext.materialId}`;
+            : ext.type === 'geotoy'
+              ? `geotoy material ${ext.materialId}`
+              : `composition "${ext.asset}" material "${ext.name}"`;
       throw new Error(
         `[resolveMaterialExtends] "${name}" extends ${desc} of type "${parent.type}"; only customShader supports extends`
       );

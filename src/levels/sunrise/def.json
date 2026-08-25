@@ -18,6 +18,13 @@
       "castShadow": true
     }
   ],
+  "materials": {
+    "path_wall": {
+      "type": "customShader",
+      "extends": { "type": "composition", "asset": "trench", "name": "stone" },
+      "parkour": { "climb": { "maxClimbAngle": 0.3 } }
+    }
+  },
   "assets": {
     "box": {
       "type": "geoscript",
@@ -26,7 +33,10 @@
     },
     "trench": {
       "type": "geotoyComposition",
-      "compositionId": 132
+      "compositionId": 132,
+      "materialMap": {
+        "stone": "path_wall"
+      }
     }
   },
   "objects": [

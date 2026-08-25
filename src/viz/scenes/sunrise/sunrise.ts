@@ -77,10 +77,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
         maxSlopeRadians: 1.4,
         oobYThreshold: -200,
-        slopeSlide: {
-          minAngle: 0.4,
-          maxSpeed: 80,
-        },
+        // slopeSlide: {
+        //   minAngle: 0.4,
+        //   maxSpeed: 80,
+        // },
       },
       viewMode: {
         type: 'thirdPerson',

@@ -34,6 +34,12 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   if (!level.def.materials) level.def.materials = {};
   // Re-attach the prior `{ file }` shader refs so GLSL isn't inlined into materials.json.
   const prevRaw = level.def.materials[body.name];
+  if (prevRaw && typeof prevRaw === 'object' && 'extends' in prevRaw) {
+    error(
+      400,
+      `Material "${body.name}" uses \`extends\`; saving from the editor would write the flattened def and sever the link. Edit it in the level def file by hand.`
+    );
+  }
   level.def.materials[body.name] = externalizeShaderFiles(body.def, prevRaw, getLevelDir(name));
 
   level.save();

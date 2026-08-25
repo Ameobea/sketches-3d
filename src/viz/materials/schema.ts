@@ -232,19 +232,34 @@ export const BoostSurfaceConfigSchema = z.object({
 });
 export type BoostSurfaceConfigDef = z.infer<typeof BoostSurfaceConfigSchema>;
 
+/** Per-surface climbability / friction. Any omitted field falls back to the scene-level
+ *  player config (`maxSlopeRadians` / `slopeSlide`). */
+export const ClimbSurfaceConfigSchema = z.object({
+  /** Max slope angle (radians) the player can stand on. Steeper surfaces never ground the
+   *  player — they slide down under gravity — and jumps off them are denied. */
+  maxClimbAngle: z.number().optional(),
+  /** Surface angle (radians) at which downhill sliding begins while still grounded. Can
+   *  enable sliding on this surface even when the scene has no global `slopeSlide`. */
+  slideMinAngle: z.number().optional(),
+  /** Peak downhill slide speed (units/sec), reached at `maxClimbAngle`. */
+  slideMaxSpeed: z.number().optional(),
+});
+export type ClimbSurfaceConfigDef = z.infer<typeof ClimbSurfaceConfigSchema>;
+
 export const ParkourMaterialMetaSchema = z.object({
   /** Default boost-surface config for objects using this material; an object's own
    *  `parkour.boostSurface` overrides this if set. */
   boostSurface: BoostSurfaceConfigSchema.optional(),
+  /** Default climbability config for objects using this material; an object's own
+   *  `parkour.climb` overrides this if set. */
+  climb: ClimbSurfaceConfigSchema.optional(),
 });
 export type ParkourMaterialMeta = z.infer<typeof ParkourMaterialMetaSchema>;
 
-/** Per-axis (0..1) damping factor for the in-air external-velocity term while the player is
- *  standing on (or just left) a surface using this material/object.  Higher = velocity bleeds
- *  off faster.  Either field may be omitted to fall back to the scene-level default for that
- *  axis-pair. */
+/** Per-axis (0..1) on-ground external-velocity damping override while the player stands on a
+ *  surface using this material/object.  Higher = velocity bleeds off faster.  Omitted = the
+ *  scene-level default. */
 export const ExternalVelocityDampingOverrideFields = {
-  externalVelocityAirDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
   externalVelocityGroundDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
 } as const;
 

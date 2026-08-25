@@ -831,11 +831,11 @@ export const loadLevelDef = (
     if (ud.boostSurfaceConfig && !entity.boostSurfaceConfig) {
       entity.setBoostSurfaceConfig(ud.boostSurfaceConfig);
     }
-    if (ud.externalVelocityAirDampingFactor && !entity.externalVelocityAirDampingFactor) {
-      entity.externalVelocityAirDampingFactor = ud.externalVelocityAirDampingFactor;
+    if (ud.climbSurfaceConfig && !entity.climbSurfaceConfig) {
+      entity.setClimbSurfaceConfig(ud.climbSurfaceConfig);
     }
     if (ud.externalVelocityGroundDampingFactor && !entity.externalVelocityGroundDampingFactor) {
-      entity.externalVelocityGroundDampingFactor = ud.externalVelocityGroundDampingFactor;
+      entity.setExternalVelocityGroundDampingFactor(ud.externalVelocityGroundDampingFactor);
     }
   };
 
@@ -881,11 +881,11 @@ export const loadLevelDef = (
     if (objDef.parkour?.boostSurface) {
       entity.setBoostSurfaceConfig(objDef.parkour.boostSurface);
     }
-    if (objDef.externalVelocityAirDampingFactor) {
-      entity.externalVelocityAirDampingFactor = objDef.externalVelocityAirDampingFactor;
+    if (objDef.parkour?.climb) {
+      entity.setClimbSurfaceConfig(objDef.parkour.climb);
     }
     if (objDef.externalVelocityGroundDampingFactor) {
-      entity.externalVelocityGroundDampingFactor = objDef.externalVelocityGroundDampingFactor;
+      entity.setExternalVelocityGroundDampingFactor(objDef.externalVelocityGroundDampingFactor);
     }
     // Texture-less materials build before any placement, so tryBuildMaterial's post-build
     // propagation runs against an empty allLevelObjects map; cover the already-built case here.
@@ -978,6 +978,18 @@ export const loadLevelDef = (
     );
     levelObj.owner = group;
     group.object.add(levelObj.object);
+
+    // Object-level surface config applies to every child of a composition placement, taking
+    // precedence over material userData (the propagate guards below skip already-set fields).
+    if (objDef.parkour?.boostSurface) {
+      levelObj.entity.setBoostSurfaceConfig(objDef.parkour.boostSurface);
+    }
+    if (objDef.parkour?.climb) {
+      levelObj.entity.setClimbSurfaceConfig(objDef.parkour.climb);
+    }
+    if (objDef.externalVelocityGroundDampingFactor) {
+      levelObj.entity.setExternalVelocityGroundDampingFactor(objDef.externalVelocityGroundDampingFactor);
+    }
 
     const matName = levelObj.def.material;
     const builtMat = matName ? builtMaterials.get(matName) : undefined;

@@ -223,6 +223,9 @@ export class BulletPhysics {
   /** Mesh → owning Entity, so legacy mesh-only callers can resolve via {@link getEntity}. */
   private entityByObject: WeakMap<THREE.Object3D, Entity> = new WeakMap();
   private nextAnonEntityCounter = 0;
+  /** Engine surface materials interned by config-value key. */
+  private surfaceMaterialIdByKey: Map<string, number> = new Map();
+  private nextSurfaceMaterialId = 1;
   private nextZoneId = 1;
   private zoneCallbacks: Map<number, ZoneCallbacks> = new Map();
   private sensorEntries: SensorEntry[] = [];
@@ -804,32 +807,6 @@ export class BulletPhysics {
     const floorIx = this.playerController.getFloorUserIndex();
     const floorEntity = floorIx >= 0 ? this.entitiesByUserIndex.get(floorIx) : undefined;
     const boostCfg = floorEntity?.boostSurfaceConfig;
-    this.playerController.setCurrentFloorBoost(
-      boostCfg?.targetSpeed ?? 0,
-      boostCfg?.jumpRetention ?? 0,
-      boostCfg?.rampUpSeconds ?? 0,
-      boostCfg?.followSurfaceSlope ?? true
-    );
-
-    const airOv = floorEntity?.externalVelocityAirDampingFactor;
-    const groundOv = floorEntity?.externalVelocityGroundDampingFactor;
-    if (airOv || groundOv) {
-      const airF = this.extVelAirDampingDefault;
-      const groundF = this.extVelGroundDampingDefault;
-      const air = airOv ?? [airF.x, airF.y, airF.z];
-      const ground = groundOv ?? [groundF.x, groundF.y, groundF.z];
-      this.playerController.setCurrentFloorExtVelDamping(
-        ground[0],
-        ground[1],
-        ground[2],
-        air[0],
-        air[1],
-        air[2],
-        true
-      );
-    } else {
-      this.playerController.setCurrentFloorExtVelDamping(0, 0, 0, 0, 0, 0, false);
-    }
 
     const effectiveInput = { ...input, keyFlags: this.getEffectiveKeyFlags(input) };
 
@@ -1280,6 +1257,7 @@ export class BulletPhysics {
       body.setUserIndex(entity.numericId);
       this.entitiesByUserIndex.set(entity.numericId, entity);
       entity._setBody(body);
+      this.syncEntitySurfaceMaterial(entity);
     }
     this.collisionWorld.addRigidBody(body);
     this.registerCollisionShapeCleanup(body, buildResult);
@@ -1318,6 +1296,72 @@ export class BulletPhysics {
    * before this body rather than dithering through it, regardless of its thickness.
    */
   public markBodyNonPermeable = (body: BtRigidBody): void => body.setUserIndex2(1);
+
+  /**
+   * Re-derive and assign the engine-side surface material for an entity's body from its
+   * surface-affecting config (boost surface, ground ext-vel damping override).  Materials
+   * are interned by config value in the C++ registry; entities with no surface config get
+   * the null material.  Call after any change to that config; no-op until a body attaches
+   * (body attach also syncs).
+   */
+  public syncEntitySurfaceMaterial = (entity: Entity): void => {
+    if (!entity.body) {
+      return;
+    }
+
+    const boost = entity.boostSurfaceConfig;
+    const climb = entity.climbSurfaceConfig;
+    const damping = entity.externalVelocityGroundDampingFactor;
+    let materialId = -1;
+    if (boost || climb || damping) {
+      const key = [
+        boost
+          ? `${boost.targetSpeed}|${boost.jumpRetention}|${boost.rampUpSeconds ?? 0}|${boost.followSurfaceSlope ?? true}`
+          : '',
+        climb ? `${climb.maxClimbAngle ?? -1}|${climb.slideMinAngle ?? -1}|${climb.slideMaxSpeed ?? -1}` : '',
+        damping ? damping.join(',') : '',
+      ].join(';');
+      let internedId = this.surfaceMaterialIdByKey.get(key);
+      if (internedId === undefined) {
+        internedId = this.nextSurfaceMaterialId++;
+        this.playerController.defineSurfaceMaterial(internedId);
+        const ok =
+          (!boost ||
+            this.playerController.setSurfaceMaterialBoost(
+              internedId,
+              boost.targetSpeed,
+              boost.jumpRetention,
+              boost.rampUpSeconds ?? 0,
+              boost.followSurfaceSlope ?? true
+            )) &&
+          (!climb ||
+            this.playerController.setSurfaceMaterialClimb(
+              internedId,
+              climb.maxClimbAngle ?? -1,
+              climb.slideMinAngle ?? -1,
+              climb.slideMaxSpeed ?? -1
+            )) &&
+          (!damping ||
+            this.playerController.setSurfaceMaterialExtVelGroundDamping(
+              internedId,
+              damping[0],
+              damping[1],
+              damping[2]
+            ));
+        if (!ok) {
+          throw new Error(`ammo: surface material ${internedId} missing directly after define`);
+        }
+        this.surfaceMaterialIdByKey.set(key, internedId);
+      }
+      materialId = internedId;
+    }
+
+    if (!this.playerController.assignSurfaceMaterial(entity.body, materialId)) {
+      throw new Error(
+        `ammo: tried to assign surface material ${materialId} to entity "${entity.id}" but no such material is defined in the engine registry`
+      );
+    }
+  };
 
   public removeCollisionObject = (collisionObj: BtCollisionObject, meshName?: string) => {
     this.collisionWorld.removeCollisionObject(collisionObj);

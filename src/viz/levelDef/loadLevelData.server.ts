@@ -11,7 +11,7 @@ import { resolveExternalParent, resolveLibraryMaterials } from './libraryMateria
 import { inlineGeotoyMaterialTextures, resolveGeotoyMaterial } from './geotoyMaterials.server';
 import { compMaterialKey } from 'src/geoscript/runner/bakeComposition';
 import { referencedTabIds } from 'src/geoscript/treeCodegen';
-import { resolveMaterialExtends } from './materialExtends.server';
+import { resolveMaterialExtends, type ExternalParentResolver } from './materialExtends.server';
 import { LevelDefSchema, LevelDefRawSchema, isGeotoyTextureRaw, normalizeRawDefColors } from './types';
 import type {
   AnyLevelTextureDef,
@@ -23,6 +23,7 @@ import type {
   LevelTextureDef,
   LevelTextureDefRaw,
   MaterialDef,
+  MaterialDefRaw,
   ObjectDef,
   ObjectGroupDef,
 } from './types';
@@ -166,6 +167,111 @@ const closeOverImportedTabs = (runSet: string[], byId: Map<string, TreeEntry>): 
   }
 };
 
+interface CompositionPalette {
+  /** Fully-inlined defs for every extracted palette material, by geotoy name. */
+  defs: Map<string, MaterialDef>;
+  materialNames: string[] | undefined;
+  defaultMaterialName: string | undefined;
+  /** Texture tabs referenced by extracted materials — render deps of the bake run. */
+  refTabIds: Set<string>;
+}
+
+/**
+ * Palette-provider stage of a `geotoyComposition` asset: fetches the composition doc and
+ * extracts + inlines its palette material defs. Palette defs are root nodes of material
+ * resolution (level materials may `extends` them), so this stage runs before
+ * `resolveMaterialExtends`; the mesh-provider half ({@link resolveCompositionAsset}) awaits
+ * the same per-asset result for the run-set / palette metadata it needs.
+ *
+ * Auto-imports each palette material as an anonymous `__comp:` level material so unmapped
+ * composition meshes render the composition's own material instead of the placeholder. Prod
+ * imports only names not overridden by `materialMap` (lean load); dev imports all so the
+ * editor can revert any row to its composition default. Names in `extendsNames` (referenced
+ * by a level material's `extends`) are always extracted — as parents only, not as level
+ * materials — even when `materialMap` replaces them.
+ */
+const extractCompositionPalette = async (
+  assetId: string,
+  def: GeotoyCompositionAssetDefRaw,
+  synthesized: Record<string, AnyLevelTextureDef>,
+  autoImported: Record<string, MaterialDef>,
+  extendsNames: Set<string> | undefined,
+  docCache: CompositionDocCache
+): Promise<CompositionPalette> => {
+  const version = await fetchCompositionDoc(
+    def.compositionId,
+    def.version,
+    `geotoyComposition asset "${assetId}"`,
+    docCache
+  );
+  const versionMeta = readVersionMetadata(version.metadata);
+  const textureTabIds = new Set(version.tree.trees.filter(t => t.kind === 'texture').map(t => t.id));
+
+  const out: CompositionPalette = {
+    defs: new Map(),
+    materialNames: undefined,
+    defaultMaterialName: undefined,
+    refTabIds: new Set(),
+  };
+
+  const palette = versionMeta?.materials;
+  if (!palette) {
+    if (extendsNames?.size) {
+      throw new Error(
+        `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette, but level materials extend ${[...extendsNames].map(n => `"${n}"`).join(', ')} from it`
+      );
+    }
+    console.warn(
+      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette in metadata; \`set_material\` calls in its tree may fail`
+    );
+    return out;
+  }
+
+  const defId = palette.defaultMaterialID;
+  if (defId != null) out.defaultMaterialName = palette.materials[defId]?.name;
+
+  // Dedup palette materials by geotoy name (first wins) — the runtime `set_material` name list and
+  // the extraction source both derive from it.
+  const byName = new Map<string, MaterialDef>();
+  for (const m of Object.values(palette.materials)) if (!byName.has(m.name)) byName.set(m.name, m);
+  out.materialNames = [...byName.keys()];
+
+  for (const name of extendsNames ?? []) {
+    if (!byName.has(name)) {
+      throw new Error(
+        `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no palette material "${name}" (referenced by a level material's \`extends\`); palette: ${out.materialNames.map(n => `"${n}"`).join(', ')}`
+      );
+    }
+  }
+
+  const explicit = def.materialMap ?? {};
+  await Promise.all(
+    [...byName].map(async ([name, paletteDef]) => {
+      const wantAuto = dev || !(name in explicit);
+      const wantParent = extendsNames?.has(name) ?? false;
+      if (!wantAuto && !wantParent) return;
+      try {
+        const inlined = await inlineGeotoyMaterialTextures(
+          paletteDef,
+          synthesized,
+          `composition ${def.compositionId} material "${name}"`,
+          { assetId, compTabIds: textureTabIds, refTabIds: out.refTabIds }
+        );
+        out.defs.set(name, inlined);
+        if (wantAuto) autoImported[compMaterialKey(assetId, name)] = inlined;
+      } catch (err) {
+        const msg = `composition "${assetId}": failed to ${wantParent ? 'resolve `extends` parent' : 'auto-import'} material "${name}": ${err instanceof Error ? err.message : String(err)}`;
+        if (wantParent) {
+          throw new Error(`[loadLevelData] ${msg}`);
+        }
+        console.warn(`[loadLevelData] ${msg}`);
+      }
+    })
+  );
+
+  return out;
+};
+
 /**
  * Resolves a `geotoyComposition` asset by fetching its tree from the geotoy backend and
  * inlining it, so the client receives a self-contained payload (no compositions-API auth at
@@ -175,8 +281,7 @@ const closeOverImportedTabs = (runSet: string[], byId: Map<string, TreeEntry>): 
 const resolveCompositionAsset = async (
   assetId: string,
   def: GeotoyCompositionAssetDefRaw,
-  synthesized: Record<string, AnyLevelTextureDef>,
-  autoImported: Record<string, MaterialDef>,
+  palette: Promise<CompositionPalette>,
   docCache: CompositionDocCache
 ): Promise<GeotoyCompositionAssetDef> => {
   const version = await fetchCompositionDoc(
@@ -210,48 +315,9 @@ const resolveCompositionAsset = async (
   if (versionMeta?.tabs?.[meshEntry.id]?.preludeEjected) resolved.preludeEjected = true;
 
   const byId = new Map(trees.map(t => [t.id, t]));
-  const textureTabIds = new Set(trees.filter(t => t.kind === 'texture').map(t => t.id));
-  // Texture tabs referenced by auto-imported palette materials; filled during inlining below.
-  const refTabIds = new Set<string>();
-
-  const palette = versionMeta?.materials;
-  if (palette) {
-    const defId = palette.defaultMaterialID;
-    if (defId != null) resolved.defaultMaterialName = palette.materials[defId]?.name;
-
-    // Dedup palette materials by geotoy name (first wins) — the runtime `set_material` name list and
-    // the auto-import source both derive from it.
-    const byName = new Map<string, MaterialDef>();
-    for (const m of Object.values(palette.materials)) if (!byName.has(m.name)) byName.set(m.name, m);
-    resolved.materialNames = [...byName.keys()];
-
-    // Auto-import each palette material as an anonymous `__comp:` level material so unmapped
-    // composition meshes render the composition's own material instead of the placeholder. Prod
-    // imports only names not overridden by `materialMap` (lean load); dev imports all so the editor
-    // can revert any row to its composition default.
-    const explicit = def.materialMap ?? {};
-    await Promise.all(
-      [...byName].map(async ([name, paletteDef]) => {
-        if (!dev && name in explicit) return;
-        try {
-          autoImported[compMaterialKey(assetId, name)] = await inlineGeotoyMaterialTextures(
-            paletteDef,
-            synthesized,
-            `composition ${def.compositionId} material "${name}"`,
-            { assetId, compTabIds: textureTabIds, refTabIds }
-          );
-        } catch (err) {
-          console.warn(
-            `[loadLevelData] composition "${assetId}": failed to auto-import material "${name}": ${err instanceof Error ? err.message : String(err)}`
-          );
-        }
-      })
-    );
-  } else {
-    console.warn(
-      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette in metadata; \`set_material\` calls in its tree may fail`
-    );
-  }
+  const { materialNames, defaultMaterialName, refTabIds } = await palette;
+  if (materialNames) resolved.materialNames = materialNames;
+  if (defaultMaterialName !== undefined) resolved.defaultMaterialName = defaultMaterialName;
 
   // Run set mirrors Geotoy's: the mesh tab, then material-referenced texture tabs (render
   // deps — their roots are side-effect-imported so `render_texture` fires), then tabs pulled
@@ -390,11 +456,66 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
   const synthesizedTextures: Record<string, AnyLevelTextureDef> = {};
   // Anonymous materials auto-imported from composition palettes; merged into `materials` below.
   const autoImportedMaterials: Record<string, MaterialDef> = {};
-  const flatMaterials = withLibrary.materials
-    ? await resolveMaterialExtends(withLibrary.materials, resolveExternalParent, synthesizedTextures)
-    : withLibrary.materials;
-
   const compositionDocCache = new Map<string, Promise<CompositionVersion>>();
+
+  // Palette-provider stage: kick off doc fetch + palette extraction for every composition asset
+  // before material resolution, since level materials may `extends` palette entries. The asset
+  // (mesh-provider) resolution below awaits the same per-asset promise.
+  const compExtendsRefs = new Map<string, Set<string>>();
+  for (const matDef of Object.values(withLibrary.materials ?? {})) {
+    const ext = matDef.type === 'customShader' ? matDef.extends : undefined;
+    if (ext?.type === 'composition') {
+      let names = compExtendsRefs.get(ext.asset);
+      if (!names) {
+        names = new Set();
+        compExtendsRefs.set(ext.asset, names);
+      }
+      names.add(ext.name);
+    }
+  }
+  const paletteByAsset = new Map<string, Promise<CompositionPalette>>();
+  for (const [assetId, assetDef] of Object.entries(withLibrary.assets)) {
+    if (assetDef.type === 'geotoyComposition') {
+      const p = extractCompositionPalette(
+        assetId,
+        assetDef,
+        synthesizedTextures,
+        autoImportedMaterials,
+        compExtendsRefs.get(assetId),
+        compositionDocCache
+      );
+      // Both material and asset resolution await this; pre-mark handled so an early rejection
+      // can't fire an unhandledRejection before either consumer attaches.
+      p.catch(() => {});
+      paletteByAsset.set(assetId, p);
+    }
+  }
+  for (const [asset, names] of compExtendsRefs) {
+    if (!paletteByAsset.has(asset)) {
+      const available = [...paletteByAsset.keys()].map(a => `"${a}"`).join(', ') || '(none)';
+      throw new Error(
+        `[loadLevelData] material \`extends\` references composition asset "${asset}" (material${names.size > 1 ? 's' : ''} ${[...names].map(n => `"${n}"`).join(', ')}), which is not a geotoyComposition asset in this level; composition assets: ${available}`
+      );
+    }
+  }
+
+  const resolveParent: ExternalParentResolver = async (ref, textures) => {
+    if (ref.type !== 'composition') {
+      return resolveExternalParent(ref, textures);
+    }
+    const { defs } = await paletteByAsset.get(ref.asset)!;
+    const parent = defs.get(ref.name);
+    if (!parent) {
+      throw new Error(
+        `[loadLevelData] palette extraction for asset "${ref.asset}" did not produce \`extends\` parent "${ref.name}"`
+      );
+    }
+    return parent as MaterialDefRaw;
+  };
+
+  const flatMaterials = withLibrary.materials
+    ? await resolveMaterialExtends(withLibrary.materials, resolveParent, synthesizedTextures)
+    : withLibrary.materials;
 
   // Asset + material + texture resolution are independent and all make geotoy-backend
   // round-trips; overlap them.
@@ -412,13 +533,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
         if (assetDef.type === 'geotoyComposition') {
           return [
             assetId,
-            await resolveCompositionAsset(
-              assetId,
-              assetDef,
-              synthesizedTextures,
-              autoImportedMaterials,
-              compositionDocCache
-            ),
+            await resolveCompositionAsset(assetId, assetDef, paletteByAsset.get(assetId)!, compositionDocCache),
           ];
         }
         return [assetId, assetDef];

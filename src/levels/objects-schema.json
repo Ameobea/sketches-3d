@@ -487,6 +487,21 @@
                     ],
                     "additionalProperties": false
                   },
+                  "climb": {
+                    "type": "object",
+                    "properties": {
+                      "maxClimbAngle": {
+                        "type": "number"
+                      },
+                      "slideMinAngle": {
+                        "type": "number"
+                      },
+                      "slideMaxSpeed": {
+                        "type": "number"
+                      }
+                    },
+                    "additionalProperties": false
+                  },
                   "entities": {
                     "type": "array",
                     "items": {
@@ -749,20 +764,6 @@
                   }
                 },
                 "additionalProperties": false
-              },
-              "externalVelocityAirDampingFactor": {
-                "type": "array",
-                "items": [
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "number"
-                  },
-                  {
-                    "type": "number"
-                  }
-                ]
               },
               "externalVelocityGroundDampingFactor": {
                 "type": "array",
@@ -1346,6 +1347,21 @@
                         ],
                         "additionalProperties": false
                       },
+                      "climb": {
+                        "type": "object",
+                        "properties": {
+                          "maxClimbAngle": {
+                            "type": "number"
+                          },
+                          "slideMinAngle": {
+                            "type": "number"
+                          },
+                          "slideMaxSpeed": {
+                            "type": "number"
+                          }
+                        },
+                        "additionalProperties": false
+                      },
                       "entities": {
                         "type": "array",
                         "items": {
@@ -1608,20 +1624,6 @@
                       }
                     },
                     "additionalProperties": false
-                  },
-                  "externalVelocityAirDampingFactor": {
-                    "type": "array",
-                    "items": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "number"
-                      }
-                    ]
                   },
                   "externalVelocityGroundDampingFactor": {
                     "type": "array",

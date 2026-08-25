@@ -10,18 +10,28 @@ const cs = (extra: Record<string, unknown>): MaterialDefRaw =>
 const props = (m: MaterialDefRaw): Record<string, number> =>
   (m as unknown as { props: Record<string, number> }).props;
 
-test('resolveMaterialExtends merges local, library, and geotoy parents uniformly', async () => {
+test('resolveMaterialExtends merges local, library, geotoy, and composition parents uniformly', async () => {
   const materials: Record<string, MaterialDefRaw> = {
     base: cs({ props: { color: 0x111111, roughness: 0.8, metalness: 0.1 }, shaders: { colorShader: 'A' } }),
     child_local: cs({ extends: { type: 'local', name: 'base' }, props: { metalness: 0.9 } }),
     child_lib: cs({ extends: { type: 'library', path: 'procedural/x' }, props: { roughness: 0.2 } }),
     child_geo: cs({ extends: { type: 'geotoy', materialId: 42 }, props: { color: 0x222222 } }),
+    child_comp: cs({
+      extends: { type: 'composition', asset: 'trench', name: 'Floor' },
+      props: { roughness: 0.4 },
+      parkour: { boostSurface: { targetSpeed: 30, jumpRetention: 0.5 } },
+    }),
+    // Local chain through a composition-extending parent resolves in the same pass.
+    child_comp_chain: cs({ extends: { type: 'local', name: 'child_comp' }, props: { metalness: 0.2 } }),
   };
   const textures: Record<string, TextureDef> = {};
   const resolveExternal: ExternalParentResolver = async (ref, tex) => {
     if (ref.type === 'library') {
       tex['__lib__/x'] = { url: 'u' } as TextureDef;
       return cs({ props: { color: 0x999999, roughness: 0.7, metalness: 0.3 } });
+    }
+    if (ref.type === 'composition') {
+      return cs({ props: { color: 0x333333, roughness: 0.9, metalness: 0.0 } });
     }
     tex['__geotoy__/42'] = { url: 'g' } as TextureDef;
     return cs({ props: { color: 0x777777, roughness: 0.5, metalness: 0.6 } });
@@ -39,6 +49,17 @@ test('resolveMaterialExtends merges local, library, and geotoy parents uniformly
   assert.equal(textures['__lib__/x'].url, 'u');
   assert.deepEqual(props(out.child_geo), { color: 0x222222, roughness: 0.5, metalness: 0.6 });
   assert.equal(textures['__geotoy__/42'].url, 'g');
+
+  // composition: visual def inherited, child adds physics meta on top; chains resolve through it
+  assert.deepEqual(props(out.child_comp), { color: 0x333333, roughness: 0.4, metalness: 0.0 });
+  assert.deepEqual((out.child_comp as unknown as { parkour: unknown }).parkour, {
+    boostSurface: { targetSpeed: 30, jumpRetention: 0.5 },
+  });
+  assert.equal('extends' in out.child_comp, false);
+  assert.deepEqual(props(out.child_comp_chain), { color: 0x333333, roughness: 0.4, metalness: 0.2 });
+  assert.deepEqual((out.child_comp_chain as unknown as { parkour: unknown }).parkour, {
+    boostSurface: { targetSpeed: 30, jumpRetention: 0.5 },
+  });
 });
 
 test('resolveMaterialExtends detects cycles and unknown parents', async () => {

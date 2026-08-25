@@ -217,8 +217,8 @@ export const stampMaterialMetaUserData = (matDef: MaterialDef, mat: THREE.Materi
   if (matDef.parkour?.boostSurface) {
     mat.userData.boostSurfaceConfig = matDef.parkour.boostSurface;
   }
-  if (matDef.externalVelocityAirDampingFactor) {
-    mat.userData.externalVelocityAirDampingFactor = matDef.externalVelocityAirDampingFactor;
+  if (matDef.parkour?.climb) {
+    mat.userData.climbSurfaceConfig = matDef.parkour.climb;
   }
   if (matDef.externalVelocityGroundDampingFactor) {
     mat.userData.externalVelocityGroundDampingFactor = matDef.externalVelocityGroundDampingFactor;

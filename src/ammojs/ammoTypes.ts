@@ -72,12 +72,6 @@ export enum ZoneEventType {
 export interface BtKinematicCharacterController {
   setInputState(keyFlags: number, theta: number, phi: number, movementEnabled: boolean): void;
   setMoveSpeed(ground: number, air: number): void;
-  setCurrentFloorBoost(
-    targetSpeed: number,
-    jumpRetention: number,
-    rampSeconds: number,
-    followSlope: boolean
-  ): void;
   isBoostEffective(): boolean;
   /**
    * Boost chargeup blend factor in [0, 1]: the fraction of the boost surface's speed bonus
@@ -85,15 +79,30 @@ export interface BtKinematicCharacterController {
    * is active.
    */
   getBoostChargeRatio(): number;
-  setCurrentFloorExtVelDamping(
-    gx: number,
-    gy: number,
-    gz: number,
-    ax: number,
-    ay: number,
-    az: number,
-    active: boolean
-  ): void;
+  /**
+   * Surface material registry.  Define materials once, assign them to collision objects
+   * by id.  The boolean-returning calls report "no such material id" — callers must check
+   * and throw rather than continuing with an unassigned material.
+   */
+  defineSurfaceMaterial(materialId: number): void;
+  setSurfaceMaterialBoost(
+    materialId: number,
+    targetSpeed: number,
+    jumpRetention: number,
+    rampSeconds: number,
+    followSlope: boolean
+  ): boolean;
+  /** Angles in radians; pass -1 for any field to inherit the controller's global config. */
+  setSurfaceMaterialClimb(
+    materialId: number,
+    maxClimbAngle: number,
+    slideMinAngle: number,
+    slideMaxSpeed: number
+  ): boolean;
+  setSurfaceMaterialExtVelGroundDamping(materialId: number, x: number, y: number, z: number): boolean;
+  /** Pass materialId -1 to clear the object's material. */
+  assignSurfaceMaterial(obj: BtCollisionObject, materialId: number): boolean;
+  getFloorSurfaceMaterialId(): number;
   setTopDownMode(topDown: boolean): void;
   setMinJumpDelay(seconds: number): void;
   setCoyoteTime(seconds: number): void;

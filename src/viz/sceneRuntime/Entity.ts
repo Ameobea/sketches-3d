@@ -2,19 +2,11 @@ import * as THREE from 'three';
 
 import type { BtQuaternion, BtRigidBody, BtTransform, BtVec3 } from 'src/ammojs/ammoTypes';
 import type { Viz } from 'src/viz';
+import type { BoostSurfaceConfigDef, ClimbSurfaceConfigDef } from 'src/viz/materials/schema';
 import type { MaterialClass } from '../shaders/customShader.types';
 import type { Behavior, BehaviorHandle } from './types';
 
-export interface BoostSurfaceConfig {
-  /** Override for ground walk speed while aux is held and player stands on this entity. */
-  targetSpeed: number;
-  /** 0..1; fraction of live walk velocity locked into external vel on jump from this surface. */
-  jumpRetention: number;
-  /** Seconds to ramp from base walk speed up to `targetSpeed` after aux arms boost.  Default 0. */
-  rampUpSeconds?: number;
-  /** If true (default), boost retention follows the floor tangent (capped at ±45°). */
-  followSurfaceSlope?: boolean;
-}
+export type BoostSurfaceConfig = BoostSurfaceConfigDef;
 
 interface BehaviorEntry {
   behavior: Behavior;
@@ -75,12 +67,12 @@ export class Entity {
    * snapshots `walkVel * jumpRetention` into external velocity.
    */
   public boostSurfaceConfig: BoostSurfaceConfig | undefined = undefined;
-  /** Per-axis override for the in-air external-velocity damping factor while standing on
-   *  this entity.  Replaces the scene-level player.externalVelocityAirDampingFactor.
-   *  Reverts to scene defaults the tick the player leaves the surface. */
-  public externalVelocityAirDampingFactor: [number, number, number] | undefined = undefined;
+  /** Per-object climbability config (max walkable slope / slide window); omitted fields fall
+   *  back to the scene-level player config.  Set via {@link setClimbSurfaceConfig}. */
+  public climbSurfaceConfig: ClimbSurfaceConfigDef | undefined = undefined;
   /** Per-axis override for the on-ground external-velocity damping factor while standing
-   *  on this entity.  Replaces the scene-level player.externalVelocityGroundDampingFactor. */
+   *  on this entity.  Replaces the scene-level player.externalVelocityGroundDampingFactor.
+   *  Set via {@link setExternalVelocityGroundDampingFactor}. */
   public externalVelocityGroundDampingFactor: [number, number, number] | undefined = undefined;
 
   private viz: Viz;
@@ -152,6 +144,17 @@ export class Entity {
 
   setBoostSurfaceConfig(cfg: BoostSurfaceConfig | undefined): void {
     this.boostSurfaceConfig = cfg;
+    this.viz.fpCtx?.syncEntitySurfaceMaterial(this);
+  }
+
+  setClimbSurfaceConfig(cfg: ClimbSurfaceConfigDef | undefined): void {
+    this.climbSurfaceConfig = cfg;
+    this.viz.fpCtx?.syncEntitySurfaceMaterial(this);
+  }
+
+  setExternalVelocityGroundDampingFactor(factor: [number, number, number] | undefined): void {
+    this.externalVelocityGroundDampingFactor = factor;
+    this.viz.fpCtx?.syncEntitySurfaceMaterial(this);
   }
 
   /**

@@ -8,6 +8,7 @@ import {
   GeneratedMatDefSchema,
   MaterialDefSchema,
   BoostSurfaceConfigSchema,
+  ClimbSurfaceConfigSchema,
   ExternalVelocityDampingOverrideFields,
   TEXTURE_SLOTS,
 } from 'src/viz/materials/schema';
@@ -393,15 +394,22 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
 
 /**
  * Target of a material `extends`: another material defined in the same file (`local`), a
- * shared-library material (`library`; `path` is relative to `src/assets/materials/`), or a Geotoy
- * material by id (`geotoy`). All three resolve server-side to a fully-flattened parent that the
- * extending def deep-merges over; `extends` is stripped before the client sees it. The resolved
- * parent must be `customShader`.
+ * shared-library material (`library`; `path` is relative to `src/assets/materials/`), a Geotoy
+ * library material by id (`geotoy`), or a palette material of a `geotoyComposition` asset in the
+ * same file (`composition`; `asset` is the asset id, `name` the geotoy material name). All resolve
+ * server-side to a fully-flattened parent that the extending def deep-merges over; `extends` is
+ * stripped before the client sees it. The resolved parent must be `customShader`.
+ *
+ * The `composition` form pairs with the asset's `materialMap` to override one palette material
+ * in place: map the geotoy name to a level material that extends that same palette entry, then
+ * add only the fields to change (e.g. physics meta like `parkour` on an otherwise-untouched
+ * visual def).
  */
 export const MaterialExtendsRefSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('local'), name: z.string() }),
   z.object({ type: z.literal('library'), path: z.string() }),
   z.object({ type: z.literal('geotoy'), materialId: z.number().int().positive() }),
+  z.object({ type: z.literal('composition'), asset: z.string(), name: z.string() }),
 ]);
 export type MaterialExtendsRef = z.infer<typeof MaterialExtendsRefSchema>;
 
@@ -561,6 +569,8 @@ export const ParkourObjectMetaSchema = z.object({
   win: z.boolean().optional(),
   /** Per-object boost-surface config; overrides any material-level config on the same object. */
   boostSurface: BoostSurfaceConfigSchema.optional(),
+  /** Per-object climbability config; overrides any material-level config on the same object. */
+  climb: ClimbSurfaceConfigSchema.optional(),
   /** Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform. */
   entities: z.array(ParkourEntitySchema).optional(),
 });

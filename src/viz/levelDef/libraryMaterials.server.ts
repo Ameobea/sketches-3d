@@ -167,9 +167,14 @@ export const resolveLibraryMaterial = async (
  * import cycle, since a library parent recurses back through `resolveLibraryMaterial`.
  */
 export async function resolveExternalParent(
-  ref: Extract<MaterialExtendsRef, { type: 'library' | 'geotoy' }>,
+  ref: Exclude<MaterialExtendsRef, { type: 'local' }>,
   textures: Record<string, AnyLevelTextureDef>
 ): Promise<MaterialDefRaw> {
+  if (ref.type === 'composition') {
+    throw new Error(
+      `[resolveExternalParent] \`extends\` type "composition" (asset "${ref.asset}", material "${ref.name}") is only resolvable during a level def load with the composition asset in scope`
+    );
+  }
   if (ref.type === 'geotoy') {
     return (await resolveGeotoyMaterial(ref.materialId, textures)) as MaterialDefRaw;
   }
