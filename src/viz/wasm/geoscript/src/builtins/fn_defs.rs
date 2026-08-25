@@ -14246,6 +14246,108 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "polyline_frames" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` or `vec3` points defining the polyline.  All points must be the same type.  At least 2 distinct points are required (3 when `closed=true`)."
+          },
+          ArgDef {
+            name: "n",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: "Number of evenly-spaced (in arc length) samples.  Open polylines sample inclusively, `t = i / (n - 1)`, so the first and last samples land exactly on the endpoints.  Closed polylines sample half-open, `t = i / n`, so the wrap-around sample doesn't duplicate the first."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true the polyline is treated as a loop: a closing segment from the last point back to the first is added, and frames stay coherent across the seam."
+          },
+          ArgDef {
+            name: "smooth",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Turn-smoothing band half-width, in world units of arc length.  `0` (the default) gives the exact per-segment frame, so orientation snaps at each vertex.  Otherwise the frame blends from the incoming to the outgoing segment's frame over `smooth` units either side of the corner.  Automatically clamped per-corner to half the shorter adjacent segment, so bands never overlap and no value is ever \"too large\"."
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "vec3 polylines only.  When set, `normal` is `tangent × up`, giving a fixed-reference frame that never rolls — usually what you want when placing upright objects like pillars along a ground path.  When nil (the default), normals are parallel-transported segment to segment (rotation-minimizing), which stays coherent on spines that turn out of any single plane.  Errors if passed for a vec2 polyline."
+          },
+          ArgDef {
+            name: "inward_normal",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "vec2 polylines only.  When true and the polyline is closed, the normal is flipped to point into the interior regardless of CW/CCW winding, matching `path_frame`.  No effect on open or vec3 polylines."
+          },
+        ],
+        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D path callables.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
+        return_type: &[ArgType::Sequence],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` or `vec3` points defining the polyline.  All points must be the same type.  At least 2 distinct points are required (3 when `closed=true`)."
+          },
+          ArgDef {
+            name: "t",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Explicit sample positions as a sequence of numbers, each a normalized arc-length parameter in [0, 1] (clamped if out of range).  Order is arbitrary; output frames are returned in the order given."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true the polyline is treated as a loop: a closing segment from the last point back to the first is added, and frames stay coherent across the seam."
+          },
+          ArgDef {
+            name: "smooth",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Turn-smoothing band half-width, in world units of arc length.  `0` (the default) gives the exact per-segment frame, so orientation snaps at each vertex.  Otherwise the frame blends from the incoming to the outgoing segment's frame over `smooth` units either side of the corner.  Automatically clamped per-corner to half the shorter adjacent segment, so bands never overlap and no value is ever \"too large\"."
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "vec3 polylines only.  When set, `normal` is `tangent × up`, giving a fixed-reference frame that never rolls — usually what you want when placing upright objects like pillars along a ground path.  When nil (the default), normals are parallel-transported segment to segment (rotation-minimizing), which stays coherent on spines that turn out of any single plane.  Errors if passed for a vec2 polyline."
+          },
+          ArgDef {
+            name: "inward_normal",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "vec2 polylines only.  When true and the polyline is closed, the normal is flipped to point into the interior regardless of CW/CCW winding, matching `path_frame`.  No effect on open or vec3 polylines."
+          },
+        ],
+        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D path callables.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
   "path_trans" => FnDef {
     module: "path",
     examples: &[],

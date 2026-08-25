@@ -78,7 +78,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         maxSlopeRadians: 1.4,
         oobYThreshold: -200,
         slopeSlide: {
-          minAngle: 1.1,
+          minAngle: 0.4,
           maxSpeed: 80,
         },
       },

@@ -80,6 +80,7 @@ pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
+pub(crate) mod polyline_frames;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
 pub(crate) mod spectral_noise;
@@ -9160,7 +9161,7 @@ fn path_frame_impl(
   let tangent = if raw_norm > FRAME_TANGENT_MIN_NORM {
     raw / raw_norm
   } else {
-    Vec2::new(1.0, 0.0)
+    Vec2::new(1., 0.)
   };
   let mut normal = Vec2::new(-tangent.y, tangent.x);
 
@@ -11407,6 +11408,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_frame" => builtin_fn!(path_frame, |def_ix, arg_refs, args, kwargs, ctx| {
     path_frame_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "polyline_frames" => builtin_fn!(polyline_frames, |def_ix, arg_refs, args, kwargs, ctx| {
+    polyline_frames::polyline_frames_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "path_trans" => builtin_fn!(path_trans, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_trans_impl(def_ix, arg_refs, args, kwargs)
