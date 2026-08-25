@@ -72,6 +72,12 @@ import {
   buildCollisionShapeFromMesh,
   extractHullInputVertices,
 } from './collisionShapes.js';
+import {
+  getPlayerColliderCenterToFeetOffset,
+  type PlayerColliderShape,
+  validateDampingVector,
+  validateFiniteRange,
+} from './physicsConfig.js';
 
 const DASH_DIR_MODE_MAP: Record<DashDirectionMode, number> = {
   free: 0,
@@ -253,6 +259,7 @@ export class BulletPhysics {
     this.Ammo = Ammo;
     this.viz = viz;
     this.simulationTickRate = viz.sceneConf.simulationTickRate ?? DefaultSimulationTickRateHz;
+    this.validatePlayerPhysicsConfig();
 
     this.collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
     this.dispatcher = new Ammo.btCollisionDispatcher(this.collisionConfiguration);
@@ -322,6 +329,16 @@ export class BulletPhysics {
   public get playerColliderRadius() {
     return this.viz.sceneConf.player?.colliderSize?.radius ?? DefaultPlayerColliderRadius;
   }
+  public get playerColliderShape(): PlayerColliderShape {
+    return this.viz.sceneConf.player?.playerColliderShape ?? DefaultPlayerColliderShape;
+  }
+  public get playerColliderCenterToFeetOffset() {
+    return getPlayerColliderCenterToFeetOffset(
+      this.playerColliderShape,
+      this.playerColliderHeight,
+      this.playerColliderRadius
+    );
+  }
   public get extVelAirDampingDefault() {
     return (
       this.viz.sceneConf.player?.externalVelocityAirDampingFactor ?? DefaultExternalVelocityAirDampingFactor
@@ -345,13 +362,71 @@ export class BulletPhysics {
     };
   };
 
+  private validatePlayerPhysicsConfig = () => {
+    const player = this.viz.sceneConf.player;
+    const maxSlope = player?.maxSlopeRadians ?? DefaultMaxSlopeRadians;
+    const moveSpeed = player?.moveSpeed ?? DefaultMoveSpeed;
+    const gravityShaping = this.viz.sceneConf.gravityShaping;
+
+    validateFiniteRange('simulationTickRate', this.simulationTickRate, { min: 0, minExclusive: true });
+    validateFiniteRange('gravity', this.viz.sceneConf.gravity ?? DefaultGravity, { min: 0 });
+    validateFiniteRange('player.jumpVelocity', player?.jumpVelocity ?? DefaultJumpSpeed, { min: 0 });
+    validateFiniteRange('player.terminalVelocity', player?.terminalVelocity ?? 55, { min: 0 });
+    validateFiniteRange('player.moveSpeed.onGround', moveSpeed.onGround, { min: 0 });
+    validateFiniteRange('player.moveSpeed.inAir', moveSpeed.inAir, { min: 0 });
+    validateFiniteRange('player.stepHeight', player?.stepHeight ?? DEFAULT_STEP_HEIGHT, { min: 0 });
+    validateFiniteRange('player.maxSlopeRadians', maxSlope, {
+      min: 0,
+      max: Math.PI / 2,
+      maxExclusive: true,
+    });
+    validateFiniteRange(
+      'player.maxPenetrationDepth',
+      player?.maxPenetrationDepth ?? DefaultMaxPenetrationDepth,
+      { min: 0 }
+    );
+    validateFiniteRange(
+      'player.minJumpDelaySeconds',
+      player?.minJumpDelaySeconds ?? DefaultMinJumpDelaySeconds,
+      { min: 0 }
+    );
+    validateFiniteRange('player.coyoteTimeSeconds', player?.coyoteTimeSeconds ?? 0, { min: 0 });
+    validateFiniteRange('player.boostArmLeniencySeconds', player?.boostArmLeniencySeconds ?? 0, {
+      min: 0,
+    });
+
+    if (player?.slopeSlide) {
+      validateFiniteRange('player.slopeSlide.minAngle', player.slopeSlide.minAngle, {
+        min: 0,
+        max: maxSlope,
+        maxExclusive: true,
+      });
+      validateFiniteRange('player.slopeSlide.maxSpeed', player.slopeSlide.maxSpeed, { min: 0 });
+    }
+
+    if (gravityShaping) {
+      validateFiniteRange('gravityShaping.riseMultiplier', gravityShaping.riseMultiplier ?? 1, { min: 0 });
+      validateFiniteRange('gravityShaping.apexMultiplier', gravityShaping.apexMultiplier ?? 1, { min: 0 });
+      validateFiniteRange('gravityShaping.fallMultiplier', gravityShaping.fallMultiplier ?? 1, { min: 0 });
+      validateFiniteRange('gravityShaping.apexThreshold', gravityShaping.apexThreshold ?? 3, { min: 0 });
+      validateFiniteRange('gravityShaping.kneeWidth', gravityShaping.kneeWidth ?? 2, { min: 0 });
+    }
+
+    validateDampingVector('player.externalVelocityAirDampingFactor', this.extVelAirDampingDefault);
+    validateDampingVector('player.externalVelocityAirIdleDampingFactor', this.extVelAirIdleDampingDefault);
+    validateDampingVector('player.externalVelocityGroundDampingFactor', this.extVelGroundDampingDefault);
+
+    // Also validates collider dimensions even for shapes that use only one of them.
+    void this.playerColliderCenterToFeetOffset;
+  };
+
   private setupPlayerController = (initialSpawnPos: { pos: THREE.Vector3; rot: THREE.Vector3 }) => {
     const playerInitialTransform = new this.Ammo.btTransform();
     playerInitialTransform.setIdentity();
     playerInitialTransform.setOrigin(
       this.btvec3(
         initialSpawnPos.pos.x,
-        initialSpawnPos.pos.y + this.playerColliderHeight / 2 + this.playerColliderRadius,
+        initialSpawnPos.pos.y + this.playerColliderCenterToFeetOffset,
         initialSpawnPos.pos.z
       )
     );
@@ -363,7 +438,7 @@ export class BulletPhysics {
       .getOverlappingPairCache()
       .setInternalGhostPairCallback(new this.Ammo.btGhostPairCallback());
 
-    const playerColliderShape = this.viz.sceneConf.player?.playerColliderShape ?? DefaultPlayerColliderShape;
+    const playerColliderShape = this.playerColliderShape;
     const playerShape = ((): BtCollisionShape => {
       switch (playerColliderShape) {
         case 'capsule':
@@ -554,8 +629,7 @@ export class BulletPhysics {
     };
     (window as any).getPos = () => {
       const p = this.playerController.getPosition();
-      const feetOffset = this.playerColliderHeight / 2 + this.playerColliderRadius;
-      return [p.x(), p.y() - feetOffset, p.z()];
+      return [p.x(), p.y() - this.playerColliderCenterToFeetOffset, p.z()];
     };
     (window as any).getRot = () => {
       const { phi, theta } = this.viz.cameraController?.angles ?? { phi: Math.PI / 2, theta: 0 };
@@ -586,6 +660,8 @@ export class BulletPhysics {
     this.playerController.setTopDownMode(viewMode.type === 'top-down');
 
     const moveSpeed = this.viz.sceneConf.player?.moveSpeed ?? DefaultMoveSpeed;
+    validateFiniteRange('player.moveSpeed.onGround', moveSpeed.onGround, { min: 0 });
+    validateFiniteRange('player.moveSpeed.inAir', moveSpeed.inAir, { min: 0 });
     this.playerController.setMoveSpeed(moveSpeed.onGround, moveSpeed.inAir);
   };
 
@@ -623,7 +699,7 @@ export class BulletPhysics {
           this.viz.sceneConf.player.mesh.position.copy(newPlayerPos);
         }
         if (this.viz.sceneConf.player?.playerShadow) {
-          const feetY = newPlayerPos.y - this.playerColliderHeight / 2 - this.playerColliderRadius;
+          const feetY = newPlayerPos.y - this.playerColliderCenterToFeetOffset;
           const shadowUniforms = getPlayerShadowUniforms();
           shadowUniforms.playerShadowPos.set(newPlayerPos.x, feetY, newPlayerPos.z);
 
@@ -935,6 +1011,7 @@ export class BulletPhysics {
   };
 
   public setGravity = (gravity: number) => {
+    validateFiniteRange('gravity', gravity, { min: 0 });
     this.collisionWorld.setGravity(this.btvec3(0, -gravity, 0));
     this.playerController.setGravity(this.btvec3(0, -gravity, 0));
   };
@@ -1312,6 +1389,38 @@ export class BulletPhysics {
     const boost = entity.boostSurfaceConfig;
     const climb = entity.climbSurfaceConfig;
     const damping = entity.externalVelocityGroundDampingFactor;
+    if (boost) {
+      validateFiniteRange(`entity "${entity.id}" boostSurface.targetSpeed`, boost.targetSpeed, { min: 0 });
+      validateFiniteRange(`entity "${entity.id}" boostSurface.jumpRetention`, boost.jumpRetention, {
+        min: 0,
+        max: 1,
+      });
+      validateFiniteRange(`entity "${entity.id}" boostSurface.rampUpSeconds`, boost.rampUpSeconds ?? 0, {
+        min: 0,
+      });
+    }
+    if (climb) {
+      const effectiveMaxClimb =
+        climb.maxClimbAngle ?? this.viz.sceneConf.player?.maxSlopeRadians ?? DefaultMaxSlopeRadians;
+      validateFiniteRange(`entity "${entity.id}" climb.maxClimbAngle`, effectiveMaxClimb, {
+        min: 0,
+        max: Math.PI / 2,
+        maxExclusive: true,
+      });
+      if (climb.slideMinAngle !== undefined) {
+        validateFiniteRange(`entity "${entity.id}" climb.slideMinAngle`, climb.slideMinAngle, {
+          min: 0,
+          max: effectiveMaxClimb,
+          maxExclusive: true,
+        });
+      }
+      if (climb.slideMaxSpeed !== undefined) {
+        validateFiniteRange(`entity "${entity.id}" climb.slideMaxSpeed`, climb.slideMaxSpeed, { min: 0 });
+      }
+    }
+    if (damping) {
+      validateDampingVector(`entity "${entity.id}" externalVelocityGroundDampingFactor`, damping);
+    }
     let materialId = -1;
     if (boost || climb || damping) {
       const key = [
@@ -1420,8 +1529,8 @@ export class BulletPhysics {
   ) => {
     this.playerController.warp(
       Array.isArray(pos)
-        ? this.btvec3(pos[0], pos[1] + this.playerColliderHeight / 2 + this.playerColliderRadius, pos[2])
-        : this.btvec3(pos.x, pos.y + this.playerColliderHeight / 2 + this.playerColliderRadius, pos.z)
+        ? this.btvec3(pos[0], pos[1] + this.playerColliderCenterToFeetOffset, pos[2])
+        : this.btvec3(pos.x, pos.y + this.playerColliderCenterToFeetOffset, pos.z)
     );
     if (rot) {
       const r = Array.isArray(rot) ? rot : [rot.x, rot.y, rot.z];

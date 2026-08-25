@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "test:physics-config": "tsx scripts/test-physics-config.ts",
     "prepare": "svelte-kit sync || echo ''; git config core.hooksPath .githooks 2>/dev/null || true",
     "check": "CHECK_TSGO=1 node ./scripts/check.mjs",
     "package": "svelte-kit package",

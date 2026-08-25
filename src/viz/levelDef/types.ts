@@ -657,24 +657,26 @@ export const ObjectGroupDefSchema: z.ZodType<ObjectGroupDef> = z.lazy(() =>
 );
 
 export const ScenePhysicsDefSchema = z.object({
-  gravity: z.number().optional(),
-  simulationTickRate: z.number().optional(),
+  gravity: z.number().nonnegative().optional(),
+  simulationTickRate: z.number().positive().optional(),
   gravityShaping: z
     .object({
-      riseMultiplier: z.number().optional(),
-      apexMultiplier: z.number().optional(),
-      fallMultiplier: z.number().optional(),
-      apexThreshold: z.number().optional(),
-      kneeWidth: z.number().optional(),
+      riseMultiplier: z.number().nonnegative().optional(),
+      apexMultiplier: z.number().nonnegative().optional(),
+      fallMultiplier: z.number().nonnegative().optional(),
+      apexThreshold: z.number().nonnegative().optional(),
+      kneeWidth: z.number().nonnegative().optional(),
       onlyJumps: z.boolean().optional(),
     })
     .optional(),
   player: z
     .object({
-      jumpVelocity: z.number().optional(),
-      moveSpeed: z.object({ onGround: z.number(), inAir: z.number() }).optional(),
-      terminalVelocity: z.number().optional(),
-      externalVelocityAirDampingFactor: Vec3.optional(),
+      jumpVelocity: z.number().nonnegative().optional(),
+      moveSpeed: z.object({ onGround: z.number().nonnegative(), inAir: z.number().nonnegative() }).optional(),
+      terminalVelocity: z.number().nonnegative().optional(),
+      externalVelocityAirDampingFactor: z
+        .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
+        .optional(),
     })
     .optional(),
 });

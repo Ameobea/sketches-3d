@@ -220,12 +220,12 @@ export const ShaderOptionsJsonSchema = z.object({
 
 export const BoostSurfaceConfigSchema = z.object({
   /** Ground walk-speed override while the aux key is held and the player stands on this surface. */
-  targetSpeed: z.number(),
+  targetSpeed: z.number().nonnegative(),
   /** 0..1; fraction of live walk velocity locked into external vel on jump from this surface. */
-  jumpRetention: z.number(),
+  jumpRetention: z.number().min(0).max(1),
   /** Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.
    *  Curve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap. */
-  rampUpSeconds: z.number().optional(),
+  rampUpSeconds: z.number().nonnegative().optional(),
   /** If true (default), boost jump-retention launches along the floor's tangent plane (capped
    *  at ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp. */
   followSurfaceSlope: z.boolean().optional(),
@@ -234,16 +234,35 @@ export type BoostSurfaceConfigDef = z.infer<typeof BoostSurfaceConfigSchema>;
 
 /** Per-surface climbability / friction. Any omitted field falls back to the scene-level
  *  player config (`maxSlopeRadians` / `slopeSlide`). */
-export const ClimbSurfaceConfigSchema = z.object({
-  /** Max slope angle (radians) the player can stand on. Steeper surfaces never ground the
-   *  player — they slide down under gravity — and jumps off them are denied. */
-  maxClimbAngle: z.number().optional(),
-  /** Surface angle (radians) at which downhill sliding begins while still grounded. Can
-   *  enable sliding on this surface even when the scene has no global `slopeSlide`. */
-  slideMinAngle: z.number().optional(),
-  /** Peak downhill slide speed (units/sec), reached at `maxClimbAngle`. */
-  slideMaxSpeed: z.number().optional(),
-});
+export const ClimbSurfaceConfigSchema = z
+  .object({
+    /** Max slope angle (radians) the player can stand on. Steeper surfaces never ground the
+     *  player — they slide down under gravity — and jumps off them are denied. */
+    maxClimbAngle: z
+      .number()
+      .min(0)
+      .lt(Math.PI / 2)
+      .optional(),
+    /** Surface angle (radians) at which downhill sliding begins while still grounded. Can
+     *  enable sliding on this surface even when the scene has no global `slopeSlide`. */
+    slideMinAngle: z
+      .number()
+      .min(0)
+      .lt(Math.PI / 2)
+      .optional(),
+    /** Peak downhill slide speed (units/sec), reached at `maxClimbAngle`. */
+    slideMaxSpeed: z.number().nonnegative().optional(),
+  })
+  .refine(
+    config =>
+      config.maxClimbAngle === undefined ||
+      config.slideMinAngle === undefined ||
+      config.slideMinAngle < config.maxClimbAngle,
+    {
+      message: 'slideMinAngle must be less than maxClimbAngle',
+      path: ['slideMinAngle'],
+    }
+  );
 export type ClimbSurfaceConfigDef = z.infer<typeof ClimbSurfaceConfigSchema>;
 
 export const ParkourMaterialMetaSchema = z.object({
@@ -260,7 +279,9 @@ export type ParkourMaterialMeta = z.infer<typeof ParkourMaterialMetaSchema>;
  *  surface using this material/object.  Higher = velocity bleeds off faster.  Omitted = the
  *  scene-level default. */
 export const ExternalVelocityDampingOverrideFields = {
-  externalVelocityGroundDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
+  externalVelocityGroundDampingFactor: z
+    .tuple([z.number().min(0).max(1), z.number().min(0).max(1), z.number().min(0).max(1)])
+    .optional(),
 } as const;
 
 // UV generation lives in geoscript (`compute_uvs`); these align types are shared with its
