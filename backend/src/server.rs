@@ -5,11 +5,11 @@ use std::{
 };
 
 use axum::{
+  Router,
   extract::Request,
   handler::Handler,
   http::StatusCode,
   response::{IntoResponse, Response},
-  Router,
 };
 use foundations::BootstrapResult;
 use tower_http::{

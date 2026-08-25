@@ -1,4 +1,4 @@
-use foundations::telemetry::metrics::{metrics, Counter, HistogramBuilder, TimeHistogram};
+use foundations::telemetry::metrics::{Counter, HistogramBuilder, TimeHistogram, metrics};
 use uuid::Uuid;
 
 #[metrics]

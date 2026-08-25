@@ -70,9 +70,8 @@ const svelteMachineArgs = [
 if (useTsgo) {
   svelteMachineArgs.push('--tsgo');
 }
-const [svelteResult, formatResult, lintResult, ctrlResult] = await Promise.all([
+const [svelteResult, lintResult, ctrlResult] = await Promise.all([
   run(process.execPath, svelteMachineArgs),
-  run(process.execPath, [cliPath('oxfmt', 'bin', 'oxfmt'), '--list-different']),
   run(process.execPath, [cliPath('oxlint', 'bin', 'oxlint'), '--format', 'unix', '--deny-warnings']),
   run(process.execPath, [join(process.cwd(), 'scripts', 'lint-control-chars.mjs')]),
 ]);
@@ -96,18 +95,6 @@ if (svelteResult.status !== 0) {
   process.exit(svelteResult.status || 1);
 }
 
-if (formatResult.error) {
-  fail('format', formatResult.error.message);
-}
-let autoFormattedFiles = [];
-if (formatResult.status !== 0) {
-  autoFormattedFiles = formatResult.stdout.trim().split('\n').filter(Boolean);
-  const fixResult = await run(process.execPath, [cliPath('oxfmt', 'bin', 'oxfmt'), ...autoFormattedFiles]);
-  if (fixResult.error || fixResult.status !== 0) {
-    fail('format', `oxfmt auto-fix failed:\n${fixResult.stdout}${fixResult.stderr}`, fixResult.status || 1);
-  }
-}
-
 if (lintResult.error) {
   fail('lint', lintResult.error.message);
 }
@@ -122,9 +109,4 @@ if (ctrlResult.status !== 0) {
   fail('control-chars', `${ctrlResult.stdout}${ctrlResult.stderr}`, ctrlResult.status);
 }
 
-if (autoFormattedFiles.length > 0) {
-  process.stdout.write(
-    `${autoFormattedFiles.length} file(s) auto-formatted by oxfmt:\n${autoFormattedFiles.join('\n')}\n`
-  );
-}
 process.stdout.write('CHECK OK\n');
