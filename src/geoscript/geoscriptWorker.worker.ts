@@ -27,7 +27,7 @@ interface RawRenderedGizmo {
 interface RawRenderedControl {
   source_module: string | null;
   handle_id: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels' | 'uv_params';
   label: string | null;
   value: number[];
   str_value: string | null;
@@ -325,8 +325,33 @@ const methods = {
   getRenderedMeshCount: (ctxPtr: number) => {
     return Geoscript.geoscript_repl_get_rendered_mesh_count(ctxPtr);
   },
-  getRenderedMeshIndicesWithMaterial: (ctxPtr: number, materialId: string) => {
-    return Geoscript.geoscript_repl_get_rendered_mesh_indices_with_material(ctxPtr, materialId);
+  /** Snapshot of every rendered mesh's UV-view data in ONE worker message: this method is
+   *  synchronous, so a queued eval's reset can't interleave between per-mesh fetches. */
+  getAllRenderedMeshUvData: (ctxPtr: number) => {
+    const count = Geoscript.geoscript_repl_get_rendered_mesh_count(ctxPtr);
+    const out: {
+      verts: Float32Array;
+      indices: Uint32Array;
+      uvs: Float32Array | null;
+      sourceModule: string | null;
+      material: string;
+    }[] = [];
+    const buffers: ArrayBuffer[] = [];
+    for (let i = 0; i < count; i += 1) {
+      const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, i);
+      const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, i);
+      const uvs = Geoscript.geoscript_repl_get_rendered_mesh_uvs(ctxPtr, i) ?? null;
+      out.push({
+        verts,
+        indices,
+        uvs,
+        sourceModule: Geoscript.geoscript_repl_get_rendered_mesh_source_module(ctxPtr, i) ?? null,
+        material: Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, i),
+      });
+      buffers.push(verts.buffer as ArrayBuffer, indices.buffer as ArrayBuffer);
+      if (uvs) buffers.push(uvs.buffer as ArrayBuffer);
+    }
+    return Comlink.transfer(out, buffers);
   },
   getRenderedMesh: (ctxPtr: number, meshIx: number) => {
     const transform = Geoscript.geoscript_repl_get_rendered_mesh_transform(ctxPtr, meshIx);

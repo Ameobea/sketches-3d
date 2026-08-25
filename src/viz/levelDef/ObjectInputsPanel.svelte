@@ -18,11 +18,12 @@
   let { info, nodeId, onchange }: Props = $props();
 
   // Level-def inputs are keyed by bare name; collapse duplicate declarations across modules.
+  // `uv_params` controls have no level-editor widget and aren't exposed as object inputs.
   const uniqueControls = $derived.by(() => {
     const seen = new Set<string>();
     const out: RenderedControl[] = [];
     for (const c of info.controls) {
-      if (!seen.has(c.handleId)) {
+      if (c.kind !== 'uv_params' && !seen.has(c.handleId)) {
         seen.add(c.handleId);
         out.push(c);
       }
@@ -46,6 +47,8 @@
       case 'ramp':
       case 'image_levels':
         return v.value;
+      case 'uv_params':
+        return null; // filtered out of uniqueControls
     }
   };
 
@@ -68,6 +71,8 @@
         return { type: 'ramp', value: value as RampSpecJson };
       case 'image_levels':
         return { type: 'image_levels', value: value as ImageLevelsJson };
+      case 'uv_params':
+        throw new Error('uv_params controls are not exposed as level-def inputs');
     }
   };
 

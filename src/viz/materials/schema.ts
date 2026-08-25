@@ -248,11 +248,8 @@ export const ExternalVelocityDampingOverrideFields = {
   externalVelocityGroundDampingFactor: z.tuple([z.number(), z.number(), z.number()]).optional(),
 } as const;
 
-/**
- * Recipe for the geoscript mesh UV-unwrap preprocessing step (geoscript runner → WASM unwrapper),
- * which writes the `uv` attribute the material then samples. Run before material build; `buildMaterial`
- * ignores it. Its presence distinguishes an unwrapped mesh from one whose existing `uv`s are used as-is.
- */
+// UV generation lives in geoscript (`compute_uvs`); these align types are shared with its
+// BFF wasm-bridge glue.
 export const UvAlignAxisSchema = z.enum(['+x', '-x', '+y', '-y', '+z', '-z']);
 export type UvAlignAxis = z.infer<typeof UvAlignAxisSchema>;
 
@@ -267,14 +264,6 @@ export const MeshUvAlignSchema = z.object({
   axis: z.enum(['+v', '+u', '-v', '-u']),
 });
 export type MeshUvAlign = z.infer<typeof MeshUvAlignSchema>;
-
-export const MeshUvUnwrapParamsSchema = z.object({
-  numCones: z.number().int(),
-  flattenToDisk: z.boolean(),
-  mapToSphere: z.boolean(),
-  align: MeshUvAlignSchema.optional(),
-});
-export type MeshUvUnwrapParams = z.infer<typeof MeshUvUnwrapParamsSchema>;
 
 export const CustomShaderMatDefSchema = z.object({
   type: z.literal('customShader'),
@@ -292,8 +281,6 @@ export const CustomShaderMatDefSchema = z.object({
    *  soft-occlusion shader effect is disabled for it. */
   nonPermeable: z.boolean().optional(),
   parkour: ParkourMaterialMetaSchema.optional(),
-  /** Geoscript-only mesh UV-unwrap recipe (see `MeshUvUnwrapParamsSchema`); ignored by `buildMaterial`. */
-  meshUvUnwrap: MeshUvUnwrapParamsSchema.optional(),
   ...ExternalVelocityDampingOverrideFields,
 });
 

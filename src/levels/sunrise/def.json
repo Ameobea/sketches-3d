@@ -21,7 +21,7 @@
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(1)",
-      "_meta": { "runtimeMs": 2.716666667101284, "count": 3, "codeHash": "961b4562" }
+      "_meta": { "runtimeMs": 4.3, "count": 5, "codeHash": "961b4562" }
     }
   },
   "objects": [

@@ -25,7 +25,7 @@ use crate::builtins::trace_path::{
   PathSubpath, PathTracerCallable, SubpathsSeq, TrimmedPathSampler,
 };
 use crate::materials::Material;
-use crate::mesh_ops::compute_uvs::{compute_uvs, UvType};
+use crate::mesh_ops::compute_uvs::{compute_uvs, UvParams, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
 use crate::mesh_ops::mesh_ops::{
   alpha_wrap_mesh, alpha_wrap_points, baked_model_mesh, delaunay_remesh, get_cached_svg_path_str,
@@ -4914,34 +4914,83 @@ fn compute_uvs_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  match def_ix {
-    0 => {
-      let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
-      let uv_type = UvType::from_str(arg_refs[1].resolve(args, kwargs).as_str().unwrap())?;
-      let scale = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let n_cones = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
-      let options = arg_refs[5].resolve(args, kwargs).as_map();
-
-      if scale <= 0. || !scale.is_finite() {
-        return Err(ErrorStack::new(format!(
-          "Invalid `scale` for `compute_uvs`: {scale}; must be a positive, finite number"
-        )));
-      }
-
-      let sharp_threshold_rad = ctx.read_sharp_angle_threshold_degrees().to_radians();
-      let out = compute_uvs(
-        mesh,
-        uv_type,
-        scale,
-        n_cones.max(0) as u32,
-        sharp_threshold_rad,
-        options,
-      )
-      .map_err(|err| err.wrap("Error in `compute_uvs`"))?;
-      Ok(Value::Mesh(Rc::new(out)))
-    }
+  // sig 0: (mesh, type, scale, n_cones, island_rotation, options, name, label)
+  // sig 1 (pipe-friendly): (type, mesh, scale, n_cones, options, name, label)
+  let (mesh_ix, type_ix, options_ix, name_ix, label_ix) = match def_ix {
+    0 => (0usize, 1usize, 5usize, 6usize, 7usize),
+    1 => (1, 0, 4, 5, 6),
     _ => unimplemented!(),
+  };
+  let mesh = arg_refs[mesh_ix].resolve(args, kwargs).as_mesh().unwrap();
+  let ty = UvType::from_str(arg_refs[type_ix].resolve(args, kwargs).as_str().unwrap())?;
+  let scale = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+  let n_cones = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
+  let options = match arg_refs[options_ix].resolve(args, kwargs) {
+    Value::Map(m) => Some(Rc::clone(m)),
+    _ => None,
+  };
+
+  let mut params = UvParams {
+    ty,
+    scale,
+    n_cones,
+    options,
+  };
+  if let Some(handle_id) = arg_refs[name_ix]
+    .resolve(args, kwargs)
+    .as_str()
+    .map(str::to_owned)
+  {
+    let module = ctx.current_module.borrow().clone();
+    let injected = injected_gizmo_value(ctx, &module, &handle_id);
+    record_gizmo_read(ctx, &handle_id);
+    // The stored value overrides the source args wholesale; a malformed one degrades to
+    // the source defaults instead of erroring.
+    let mut has_override = false;
+    if let Some(Value::Map(m)) = &injected {
+      if let Some(p) = UvParams::from_map(m) {
+        params = p;
+        has_override = true;
+      }
+    }
+    let label = arg_refs[label_ix]
+      .resolve(args, kwargs)
+      .as_str()
+      .map(str::to_owned);
+    ctx.push_rendered_control(crate::RenderedControl {
+      source_module: module,
+      handle_id,
+      kind: crate::ControlKind::UvParams,
+      label,
+      current_value: params.to_map_value(),
+      min: None,
+      max: None,
+      step: None,
+      style: None,
+      options: Vec::new(),
+      stats: None,
+      has_override,
+    });
   }
+
+  if params.scale <= 0. || !params.scale.is_finite() {
+    return Err(ErrorStack::new(format!(
+      "Invalid `scale` for `compute_uvs`: {}; must be a positive, finite number",
+      params.scale
+    )));
+  }
+
+  let sharp_threshold_rad = ctx.read_sharp_angle_threshold_degrees().to_radians();
+  let out = compute_uvs(
+    mesh,
+    params.ty,
+    params.scale,
+    params.n_cones.max(0) as u32,
+    sharp_threshold_rad,
+    params.options.as_deref(),
+  )
+  .map_err(|err| err.wrap("Error in `compute_uvs`"))?;
+  Ok(Value::Mesh(Rc::new(out)))
 }
 
 fn compute_normals_impl(
@@ -6603,7 +6652,7 @@ fn input_numeric_impl(
   } else {
     (Value::Float(f), crate::ControlKind::Float)
   };
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind,
@@ -6636,7 +6685,7 @@ fn input_bool_impl(
     .or(default)
     .unwrap_or(false);
   let value = Value::Bool(b);
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: crate::ControlKind::Bool,
@@ -6667,7 +6716,7 @@ fn input_color_impl(
     _ => default.unwrap_or_else(Vec3::zeros),
   };
   let value = Value::Vec3(v);
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: crate::ControlKind::Color,
@@ -6704,7 +6753,7 @@ fn input_spline_impl(
     return Err(ErrorStack::new("`input_spline` points must all be vec3"));
   }
   let value = crate::eager_seq_value(points);
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: crate::ControlKind::Spline,
@@ -6752,7 +6801,7 @@ fn input_select_impl(
     .or_else(|| options.first().cloned())
     .unwrap_or_default();
   let value = Value::String(chosen);
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: crate::ControlKind::Select,

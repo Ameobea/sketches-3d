@@ -93,6 +93,7 @@ extern "C" {
   pub fn uv_solvers_get_is_loaded() -> bool;
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum UvType {
   Auto,
   Unwrap,
@@ -103,6 +104,22 @@ pub enum UvType {
   Tube,
   Strip,
   Toroidal,
+}
+
+impl UvType {
+  pub fn canonical_name(&self) -> &'static str {
+    match self {
+      UvType::Auto => "auto",
+      UvType::Unwrap => "unwrap",
+      UvType::Disk => "disk",
+      UvType::Sphere => "sphere",
+      UvType::Planar => "planar",
+      UvType::Cylindrical => "cylindrical",
+      UvType::Tube => "tube",
+      UvType::Strip => "strip",
+      UvType::Toroidal => "toroidal",
+    }
+  }
 }
 
 impl FromStr for UvType {
@@ -150,6 +167,185 @@ pub fn compute_uvs(
   }
 }
 
+/// Effective `compute_uvs` params as carried by a `UvParams` control
+/// (`compute_uvs(name=...)`).  The control value is a nested map mirroring the builtin's
+/// own args: `{ type, scale, n_cones, options }`.
+pub struct UvParams {
+  pub ty: UvType,
+  pub scale: f32,
+  pub n_cones: i64,
+  pub options: Option<Rc<FxHashMap<String, Value>>>,
+}
+
+impl UvParams {
+  pub fn to_map_value(&self) -> Value {
+    let mut map = FxHashMap::default();
+    map.insert(
+      "type".to_owned(),
+      Value::String(self.ty.canonical_name().to_owned()),
+    );
+    map.insert("scale".to_owned(), Value::Float(self.scale));
+    map.insert("n_cones".to_owned(), Value::Int(self.n_cones));
+    if let Some(options) = &self.options {
+      map.insert("options".to_owned(), Value::Map(Rc::clone(options)));
+    }
+    Value::Map(Rc::new(map))
+  }
+
+  /// Strict parse of an injected control value; `None` on any malformed/missing field so
+  /// stale stored values degrade to the source defaults instead of erroring.
+  pub fn from_map(map: &FxHashMap<String, Value>) -> Option<Self> {
+    let ty = UvType::from_str(map.get("type")?.as_str()?).ok()?;
+    let scale = map.get("scale")?.as_float()?;
+    let n_cones = map.get("n_cones").and_then(|v| v.as_int()).unwrap_or(0);
+    let options = match map.get("options") {
+      Some(Value::Map(m)) => Some(Rc::clone(m)),
+      Some(Value::Nil) | None => None,
+      Some(_) => return None,
+    };
+    Some(UvParams {
+      ty,
+      scale,
+      n_cones,
+      options,
+    })
+  }
+}
+
+/// Option keys each `type` family's parser accepts; used to drop stale cross-type options
+/// when a control value crosses the wire.
+fn family_option_keys(ty: UvType) -> &'static [&'static str] {
+  match ty {
+    UvType::Auto | UvType::Unwrap | UvType::Disk | UvType::Sphere => {
+      &["up", "fallback", "axis", "pre_split"]
+    }
+    UvType::Planar | UvType::Toroidal => &[],
+    UvType::Cylindrical => &["normalize_v"],
+    UvType::Tube => &[
+      "caps",
+      "cap_angle",
+      "cap_max_span",
+      "cap_alignment",
+      "normalize_v",
+      "seam_straightness",
+      "detwist",
+    ],
+    UvType::Strip => &["strip_angle", "layout", "u_mode", "fallback"],
+  }
+}
+
+/// Flat wire form of a `UvParams` control value; travels as `str_value` JSON on
+/// `GizmoValueWire` since the float lane can't carry strings or nested maps.
+#[derive(nanoserde::DeJson, nanoserde::SerJson, Default)]
+pub struct UvParamsWire {
+  #[nserde(rename = "type")]
+  pub ty: String,
+  pub scale: f32,
+  pub n_cones: i64,
+  pub up: Option<String>,
+  pub fallback: Option<String>,
+  pub axis: Option<String>,
+  pub pre_split: Option<bool>,
+  pub normalize_v: Option<bool>,
+  pub caps: Option<String>,
+  pub cap_angle: Option<f32>,
+  pub cap_max_span: Option<f32>,
+  pub cap_alignment: Option<f32>,
+  pub seam_straightness: Option<f32>,
+  pub detwist: Option<bool>,
+  pub strip_angle: Option<f32>,
+  pub layout: Option<String>,
+  pub u_mode: Option<String>,
+}
+
+pub fn uv_params_value_from_wire_json(json: &str) -> Result<Value, ErrorStack> {
+  use nanoserde::DeJson;
+  let wire = UvParamsWire::deserialize_json(json)
+    .map_err(|err| ErrorStack::new(format!("invalid uv_params control JSON: {err}")))?;
+  let ty = UvType::from_str(&wire.ty)?;
+  let mut options = FxHashMap::default();
+  for key in family_option_keys(ty) {
+    let val = match *key {
+      "up" => wire.up.clone().map(Value::String),
+      "fallback" => wire.fallback.clone().map(Value::String),
+      "axis" => wire.axis.clone().map(Value::String),
+      "pre_split" => wire.pre_split.map(Value::Bool),
+      "normalize_v" => wire.normalize_v.map(Value::Bool),
+      "caps" => wire.caps.clone().map(Value::String),
+      "cap_angle" => wire.cap_angle.map(Value::Float),
+      "cap_max_span" => wire.cap_max_span.map(Value::Float),
+      "cap_alignment" => wire.cap_alignment.map(Value::Float),
+      "seam_straightness" => wire.seam_straightness.map(Value::Float),
+      "detwist" => wire.detwist.map(Value::Bool),
+      "strip_angle" => wire.strip_angle.map(Value::Float),
+      "layout" => wire.layout.clone().map(Value::String),
+      "u_mode" => wire.u_mode.clone().map(Value::String),
+      _ => unreachable!(),
+    };
+    if let Some(val) = val {
+      options.insert((*key).to_owned(), val);
+    }
+  }
+  Ok(
+    UvParams {
+      ty,
+      scale: wire.scale,
+      n_cones: wire.n_cones,
+      options: if options.is_empty() {
+        None
+      } else {
+        Some(Rc::new(options))
+      },
+    }
+    .to_map_value(),
+  )
+}
+
+/// Wire JSON for a `UvParams` control's `current_value`, for the host's control editor.
+pub fn uv_params_control_value_json(v: &Value) -> Option<String> {
+  use nanoserde::SerJson;
+  let map = v.as_map()?;
+  let params = UvParams::from_map(map)?;
+  let mut wire = UvParamsWire {
+    ty: params.ty.canonical_name().to_owned(),
+    scale: params.scale,
+    n_cones: params.n_cones,
+    ..Default::default()
+  };
+  if let Some(options) = &params.options {
+    for key in family_option_keys(params.ty) {
+      let Some(val) = options.get(*key) else {
+        continue;
+      };
+      match *key {
+        "up" => wire.up = val.as_str().map(str::to_owned),
+        "fallback" => wire.fallback = val.as_str().map(str::to_owned),
+        "axis" => wire.axis = val.as_str().map(str::to_owned),
+        "pre_split" => wire.pre_split = val.as_bool(),
+        "normalize_v" => wire.normalize_v = val.as_bool(),
+        // source form allows bool caps; normalize to the string form
+        "caps" => {
+          wire.caps = val.as_str().map(str::to_owned).or_else(|| {
+            val
+              .as_bool()
+              .map(|b| if b { "auto" } else { "none" }.to_owned())
+          })
+        }
+        "cap_angle" => wire.cap_angle = val.as_float(),
+        "cap_max_span" => wire.cap_max_span = val.as_float(),
+        "cap_alignment" => wire.cap_alignment = val.as_float(),
+        "seam_straightness" => wire.seam_straightness = val.as_float(),
+        "detwist" => wire.detwist = val.as_bool(),
+        "strip_angle" => wire.strip_angle = val.as_float(),
+        "layout" => wire.layout = val.as_str().map(str::to_owned),
+        "u_mode" => wire.u_mode = val.as_str().map(str::to_owned),
+        _ => unreachable!(),
+      }
+    }
+  }
+  Some(wire.serialize_json())
+}
+
 struct UvAlign {
   #[allow(dead_code)]
   up: String,
@@ -185,10 +381,12 @@ fn parse_align_options(
       "up" => up = Some(parse(ALIGN_AXES)?),
       "fallback" => fallback = parse(ALIGN_AXES)?,
       "axis" => axis = parse(ALIGN_UV_AXES)?,
+      // read by `bff_uvs`
+      "pre_split" => (),
       _ => {
         return Err(ErrorStack::new(format!(
           "Unknown option {key:?} for `compute_uvs` BFF types; supported options: `up`, \
-           `fallback`, `axis`"
+           `fallback`, `axis`, `pre_split`"
         )))
       }
     }
@@ -243,9 +441,30 @@ fn bff_uvs(
     _ => (false, false),
   };
 
+  let pre_split = match options.and_then(|m| m.get("pre_split")) {
+    None => true,
+    Some(v) => v
+      .as_bool()
+      .ok_or_else(|| ErrorStack::new("`compute_uvs` option `pre_split` must be a bool"))?,
+  };
+
   // Drop degenerate faces: BFF's cotangent-Laplacian divides by triangle area, so a zero-area
   // sliver (common out of CSG) would inject NaN into the conformal solve.
-  let raw = mesh.mesh.to_raw_indexed(false, false, false);
+  //
+  // `pre_split` mirrors the render pipeline's export sequence exactly (weld, mark sharp,
+  // split): creases become mesh boundaries the conformal solve can cut islands along, and
+  // coincident-but-unwelded verts (CSG seams, `join`ed parts) fuse before those cuts.
+  // The consuming finalize skips the edge-topology rebuild — the clone is thrown away.
+  let raw = if pre_split {
+    let mut split = (*mesh.mesh).clone();
+    if !split.has_flag(mesh_flags::NO_WELD) {
+      split.merge_vertices_by_distance(0.0001);
+    }
+    split.mark_edge_sharpness(sharp_threshold_rad);
+    split.separate_normals_and_finalize(false, false, false)
+  } else {
+    mesh.mesh.to_raw_indexed(false, false, false)
+  };
   let in_indices =
     unsafe { std::slice::from_raw_parts(raw.indices.as_ptr() as *const u32, raw.indices.len()) };
 
@@ -1026,6 +1245,14 @@ mod tests {
     let err = crate::parse_and_eval_program("box(1, 1, 1) | compute_uvs(type='nope') | render")
       .unwrap_err();
     assert!(format!("{err}").contains("Invalid `type`"), "got: {err}");
+
+    // `pre_split` passes option validation (it's read by the wasm-side solve)
+    let err = crate::parse_and_eval_program(
+      "box(1, 1, 1) | compute_uvs(type='unwrap', options={ pre_split: false }) | render",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("only supported in wasm"), "got: {err}");
   }
 
   fn v_bounds(uv: &[[f32; 2]]) -> (f32, f32) {

@@ -89,6 +89,9 @@ pub use self::builtins::img_ops::{image_levels_control_value, image_levels_value
 pub use self::builtins::ramp::{
   ramp_control_value_json, ramp_value_from_wire_json, RampSpecWire, RampStopWire,
 };
+pub use self::mesh_ops::compute_uvs::{
+  uv_params_control_value_json, uv_params_value_from_wire_json, UvParamsWire,
+};
 pub use self::tex_stats::{ChannelStats, TexStats};
 
 /// Mesh prelude: default scene lights.
@@ -497,6 +500,9 @@ impl Callable {
             | "input_ramp"
             | "input_color_ramp"
             | "input_image_levels"
+            // control-bearing when `name=` is given; listed unconditionally since the piped
+            // form is a `PartiallyAppliedFn` and a call-shape-aware gate would miss it
+            | "compute_uvs"
         )
       }
       Callable::PartiallyAppliedFn(paf) => {
@@ -2354,6 +2360,8 @@ pub enum ControlKind {
   Spline,
   Ramp,
   ImageLevels,
+  /// `compute_uvs(name=...)` — the full UV-generation params as a nested map.
+  UvParams,
 }
 
 /// An `input_*(...)` value site reported to the host so it can render a control-panel
@@ -4088,6 +4096,23 @@ impl EvalCtx {
     }
   }
 
+  /// Registers an `input_*`/`compute_uvs(name=)` control site.  Duplicate sites (a call in
+  /// a loop/closure body, a literal name reused within one module, or a re-eval without a
+  /// reset) collapse to one entry — the host UI keys controls by (module, handle) and cannot
+  /// represent duplicates.  A re-registration replaces the entry in place so the freshest
+  /// current_value/has_override win.
+  pub fn push_rendered_control(&self, c: RenderedControl) {
+    let mut controls = self.rendered_controls.inner.borrow_mut();
+    if let Some(existing) = controls
+      .iter_mut()
+      .find(|e| e.handle_id == c.handle_id && e.source_module == c.source_module)
+    {
+      *existing = c;
+      return;
+    }
+    controls.push(c);
+  }
+
   pub fn gizmo_value_hash(&self, module_name: &str, handle_id: &str) -> u64 {
     use std::hash::Hasher;
     let mut hasher = FxHasher64::default();
@@ -4146,20 +4171,44 @@ impl EvalCtx {
           _ => hasher.write_u8(0),
         }
       }
-      // Injected maps (image levels): flat float-valued maps hashed by content in sorted
-      // key order.
+      // Injected maps (image levels, uv params): hashed by content in sorted key order,
+      // recursing into nested maps with per-type tag bytes.
       Some(Value::Map(map)) => {
         hasher.write_u8(9);
-        let mut keys: Vec<&String> = map.keys().collect();
-        keys.sort();
-        for k in keys {
-          hasher.write(k.as_bytes());
-          match map.get(k) {
-            Some(Value::Float(f)) => hasher.write_u32(f.to_bits()),
-            Some(Value::Int(i)) => hasher.write_i64(*i),
-            _ => hasher.write_u8(0),
+        fn hash_map(hasher: &mut FxHasher64, map: &FxHashMap<String, Value>) {
+          use std::hash::Hasher;
+          let mut keys: Vec<&String> = map.keys().collect();
+          keys.sort();
+          for k in keys {
+            hasher.write(k.as_bytes());
+            match map.get(k) {
+              Some(Value::Float(f)) => {
+                hasher.write_u8(3);
+                hasher.write_u32(f.to_bits());
+              }
+              Some(Value::Int(i)) => {
+                hasher.write_u8(4);
+                hasher.write_i64(*i);
+              }
+              Some(Value::Bool(b)) => {
+                hasher.write_u8(5);
+                hasher.write_u8(*b as u8);
+              }
+              Some(Value::String(s)) => {
+                hasher.write_u8(6);
+                hasher.write(s.as_bytes());
+              }
+              Some(Value::Map(m)) => {
+                hasher.write_u8(9);
+                hash_map(hasher, m);
+              }
+              _ => hasher.write_u8(0),
+            }
           }
+          // end-of-map marker so nested and flat key sequences can't collide
+          hasher.write_u8(0xff);
         }
+        hash_map(&mut hasher, map);
       }
       _ => hasher.write_u8(0),
     }
@@ -4435,7 +4484,7 @@ impl EvalCtx {
           self.rendered_gizmos.push(gizmo.clone());
         }
         for control in &entry.own_controls {
-          self.rendered_controls.push(control.clone());
+          self.push_rendered_control(control.clone());
         }
         self.set_rng_state(entry.rng_state_at_end.clone());
         // Replay the body's outgoing threshold state so its own setter calls (not part of the
@@ -8692,6 +8741,126 @@ fn test_input_float_injected_default_and_clamp() {
   assert_eq!(run(Some(7.)), 107.);
   assert_eq!(run(Some(99.)), 110.);
   assert_eq!(run(Some(-5.)), 100.);
+}
+
+#[test]
+fn test_compute_uvs_control_inside_for_each_closure() {
+  let ctx = crate::parse_and_eval_program(
+    "0..3 -> |i| { box(1) + vec3(i*2., 0., 0.) } | for_each(|m| m | compute_uvs('planar', \
+     name='uv') | render)",
+  )
+  .unwrap();
+  assert_eq!(ctx.rendered_meshes.inner.borrow().len(), 3);
+  assert_eq!(
+    ctx.rendered_controls.inner.borrow().len(),
+    1,
+    "control should be registered"
+  );
+}
+
+#[test]
+fn test_compute_uvs_pipe_and_type_first_sig() {
+  let ctx = parse_and_eval_program("result = compute_uvs(box(1), 'planar')").unwrap();
+  assert!(ctx.get_global("result").unwrap().as_mesh().is_some());
+  // type-first signature partial-applies so the piped mesh fills the `mesh` slot
+  let ctx = parse_and_eval_program("result = box(1) | compute_uvs('planar', scale=2.0)").unwrap();
+  assert!(ctx.get_global("result").unwrap().as_mesh().is_some());
+}
+
+#[test]
+fn test_compute_uvs_named_control_and_injected_override() {
+  let ctx = EvalCtx::default();
+  ctx.module_sources.borrow_mut().insert(
+    "node".to_string(),
+    "export m = box(1) | compute_uvs('planar', name='uv')".to_string(),
+  );
+  let run = || {
+    ctx.replayed_this_run.borrow_mut().clear();
+    ctx.rendered_controls.inner.borrow_mut().clear();
+    parse_and_eval_program_with_ctx(
+      "import { m } from \"node\"\nresult = m".to_string(),
+      &ctx,
+      false,
+    )
+    .unwrap();
+  };
+
+  run();
+  {
+    let controls = ctx.rendered_controls.inner.borrow();
+    assert_eq!(controls.len(), 1);
+    let c = &controls[0];
+    assert!(matches!(c.kind, ControlKind::UvParams));
+    assert_eq!(c.handle_id, "uv");
+    assert!(!c.has_override);
+    let map = c.current_value.as_map().unwrap();
+    assert_eq!(map.get("type").unwrap().as_str().unwrap(), "planar");
+    assert_eq!(map.get("scale").unwrap().as_float().unwrap(), 1.);
+  }
+
+  // cylindrical rather than a BFF type so the override actually evals natively
+  let injected = uv_params_value_from_wire_json(
+    r#"{"type":"cylindrical","scale":2.0,"n_cones":3,"normalize_v":true}"#,
+  )
+  .unwrap();
+  inject_gizmo(&ctx, "node", "uv", injected);
+  run();
+  {
+    let controls = ctx.rendered_controls.inner.borrow();
+    assert_eq!(controls.len(), 1);
+    let c = &controls[0];
+    assert!(c.has_override);
+    let map = c.current_value.as_map().unwrap();
+    assert_eq!(map.get("type").unwrap().as_str().unwrap(), "cylindrical");
+    assert_eq!(map.get("scale").unwrap().as_float().unwrap(), 2.);
+    assert_eq!(map.get("n_cones").unwrap().as_int().unwrap(), 3);
+    let opts = map.get("options").unwrap().as_map().unwrap();
+    assert_eq!(opts.get("normalize_v").unwrap().as_bool().unwrap(), true);
+  }
+}
+
+#[test]
+fn test_uv_params_gizmo_hash_distinguishes_nested_maps() {
+  let ctx = EvalCtx::default();
+  let a = uv_params_value_from_wire_json(r#"{"type":"unwrap","scale":1.0,"n_cones":4,"up":"+y"}"#)
+    .unwrap();
+  inject_gizmo(&ctx, "m", "h", a);
+  let ha = ctx.gizmo_value_hash("m", "h");
+  let b = uv_params_value_from_wire_json(r#"{"type":"unwrap","scale":1.0,"n_cones":4,"up":"+x"}"#)
+    .unwrap();
+  inject_gizmo(&ctx, "m", "h", b);
+  let hb = ctx.gizmo_value_hash("m", "h");
+  assert_ne!(ha, hb);
+  let c = uv_params_value_from_wire_json(r#"{"type":"planar","scale":1.0,"n_cones":4}"#).unwrap();
+  inject_gizmo(&ctx, "m", "h", c);
+  assert_ne!(hb, ctx.gizmo_value_hash("m", "h"));
+}
+
+#[test]
+fn test_uv_params_wire_round_trip() {
+  use nanoserde::DeJson;
+  // `up`/`pre_split` aren't tube options and must be dropped by the family filter
+  let v = uv_params_value_from_wire_json(
+    r#"{"type":"tube","scale":2.0,"n_cones":0,"cap_angle":30.0,"detwist":false,"up":"+y","pre_split":false}"#,
+  )
+  .unwrap();
+  let json = uv_params_control_value_json(&v).unwrap();
+  let wire = UvParamsWire::deserialize_json(&json).unwrap();
+  assert_eq!(wire.ty, "tube");
+  assert_eq!(wire.scale, 2.0);
+  assert_eq!(wire.cap_angle, Some(30.0));
+  assert_eq!(wire.detwist, Some(false));
+  assert!(wire.up.is_none());
+  assert!(wire.pre_split.is_none());
+
+  // ...but they survive on a BFF type
+  let v = uv_params_value_from_wire_json(
+    r#"{"type":"unwrap","scale":1.0,"n_cones":2,"up":"+y","pre_split":false}"#,
+  )
+  .unwrap();
+  let wire = UvParamsWire::deserialize_json(&uv_params_control_value_json(&v).unwrap()).unwrap();
+  assert_eq!(wire.up.as_deref(), Some("+y"));
+  assert_eq!(wire.pre_split, Some(false));
 }
 
 #[test]

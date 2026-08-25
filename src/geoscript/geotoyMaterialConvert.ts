@@ -146,7 +146,7 @@ vec3 getPomNormal(vec3 pos, vec3 N, float depth, float t, float aa) {
  * Lower a Geotoy `physical` def to the shared `customShader` def. Geotoy treats `{r,g,b}` as linear
  * working-space color, while the shared format stores an sRGB hex the shader decodes — hence the
  * `linearRgbToSrgbHex` round-trip, which preserves the rendered look. Default shader slots are dropped
- * (absent ⇒ none), and `textureMapping` splits into UV options + an optional `meshUvUnwrap` recipe.
+ * (absent ⇒ none), and `textureMapping` lowers into UV options (legacy `uv` ⇒ plain mesh-UV sampling).
  */
 export const geotoyPhysicalToShared = (def: PhysicalMaterialDef): CustomShaderMatDef => {
   const d = buildDefaultShaders();
@@ -212,14 +212,6 @@ export const geotoyPhysicalToShared = (def: PhysicalMaterialDef): CustomShaderMa
       pom: pomActive ? def.pom : undefined,
       useOrenNayarDiffuse: def.useOrenNayarDiffuse,
     },
-    meshUvUnwrap:
-      tm && tm.type === 'uv'
-        ? {
-            numCones: tm.numCones,
-            flattenToDisk: tm.flattenToDisk,
-            mapToSphere: tm.mapToSphere,
-          }
-        : undefined,
   };
 };
 

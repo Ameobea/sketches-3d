@@ -5,7 +5,6 @@
   import { isStackHandle } from 'src/geotoy/modules/proceduralTextures';
   import FormField from './FormField.svelte';
   import ColorPicker from './ColorPicker.svelte';
-  import UvPropertiesEditor from './UvPropertiesEditor.svelte';
   import DerivedMapConfigurator from './DerivedMapConfigurator.svelte';
   import type { MaterialEditorHost, PhysicalMaterialTextureField } from './host';
 
@@ -46,8 +45,8 @@
     }
   });
 
-  const mappingMode = (m: ReqCustomShader): 'triplanar' | 'mesh_uv' | 'uv' =>
-    m.meshUvUnwrap ? 'uv' : m.options.useTriplanarMapping === false ? 'mesh_uv' : 'triplanar';
+  const mappingMode = (m: ReqCustomShader): 'triplanar' | 'mesh_uv' =>
+    m.options.useTriplanarMapping === false ? 'mesh_uv' : 'triplanar';
 
   const stackAssigned = $derived(
     material.type === 'customShader' &&
@@ -245,10 +244,10 @@
       />
     </FormField>
 
-    {#if host.showUvUnwrap}
+    {#if host.showMeshUvMapping}
       <FormField
         label="texture mapping"
-        help="Controls how textures are mapped to the mesh's surface.  Triplanar mapping works great for many uses.  'mesh uv' samples the mesh's own UV attribute (e.g. analytic UVs emitted by rail_sweep) with no reprojection — required for tangent-space POM.  'uv' generates UVs via boundary-first flattening, useful for exporting to tools without triplanar support."
+        help="Controls how textures are mapped to the mesh's surface.  Triplanar projection works great for many uses and needs no UVs.  'read mesh UVs' samples the mesh's own `uv` attribute (from `rail_sweep`, `compute_uvs`, etc.) with no reprojection — required for tangent-space POM."
       >
         <div class="toggle-group">
           <button
@@ -257,50 +256,19 @@
               cs.options.useTriplanarMapping = true;
               cs.options.useGeneratedUVs = false;
               cs.options.tileBreaking = undefined;
-              cs.meshUvUnwrap = undefined;
             }}
           >
             triplanar
           </button>
           <button
             class:selected={mappingMode(cs) === 'mesh_uv'}
-            onclick={() => {
-              if (mappingMode(cs) !== 'mesh_uv') {
-                cs.options.useTriplanarMapping = false;
-                cs.meshUvUnwrap = undefined;
-                host.rerun(false);
-              }
-            }}
+            onclick={() => (cs.options.useTriplanarMapping = false)}
           >
-            mesh uv
-          </button>
-          <button
-            class:selected={mappingMode(cs) === 'uv'}
-            onclick={() => {
-              if (mappingMode(cs) !== 'uv') {
-                cs.options.useTriplanarMapping = false;
-                cs.meshUvUnwrap = {
-                  numCones: 0,
-                  flattenToDisk: false,
-                  mapToSphere: false,
-                };
-                host.rerun(true);
-              }
-            }}
-          >
-            uv
+            read mesh UVs
           </button>
         </div>
       </FormField>
-      {#if mappingMode(cs) === 'uv'}
-        <UvPropertiesEditor material={cs} rerun={host.rerun} />
-        <div style="display: flex; padding-left: 8px">
-          <button class="edit-shaders" onclick={host.onviewuvmappings} style="width:240px">
-            view generated uv mappings
-          </button>
-        </div>
-      {/if}
-      {#if mappingMode(cs) === 'uv' || mappingMode(cs) === 'mesh_uv'}
+      {#if mappingMode(cs) === 'mesh_uv'}
         <FormField label="enable hex tilebreaking">
           <input
             type="checkbox"
@@ -309,7 +277,7 @@
               cs.options.tileBreaking = cs.options.tileBreaking
                 ? undefined
                 : { type: 'neyret', patchScale: 1.0 };
-              host.rerun(false);
+              host.rerun();
             }}
           />
         </FormField>
@@ -324,7 +292,7 @@
                 step="0.1"
                 bind:value={cs.options.tileBreaking.patchScale}
                 style="width: 80px"
-                onchange={() => host.rerun(false)}
+                onchange={() => host.rerun()}
               />
             </FormField>
           </div>
@@ -357,7 +325,7 @@
             cs.options.tileBreaking = cs.options.tileBreaking
               ? undefined
               : { type: 'neyret', patchScale: 1.0 };
-            host.rerun(false);
+            host.rerun();
           }}
         />
       </FormField>
@@ -368,7 +336,7 @@
             step="0.1"
             bind:value={cs.options.tileBreaking.patchScale}
             style="width: 80px"
-            onchange={() => host.rerun(false)}
+            onchange={() => host.rerun()}
           />
         </FormField>
       {/if}

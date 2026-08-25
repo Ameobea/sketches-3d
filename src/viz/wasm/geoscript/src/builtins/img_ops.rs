@@ -681,7 +681,7 @@ pub(crate) fn input_image_levels_impl(
     },
   };
 
-  ctx.rendered_controls.push(crate::RenderedControl {
+  ctx.push_rendered_control(crate::RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: crate::ControlKind::ImageLevels,

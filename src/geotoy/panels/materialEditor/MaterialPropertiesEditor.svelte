@@ -11,7 +11,6 @@
     material = $bindable(),
     onpicktexture,
     oneditshaders,
-    onviewuvmappings,
     rerun,
     showAdvanced = $bindable(),
     onsavetolibrary,
@@ -20,8 +19,7 @@
     material: MaterialDef;
     onpicktexture: (name: PhysicalMaterialTextureField) => void;
     oneditshaders: () => void;
-    onviewuvmappings: () => void;
-    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
+    rerun: () => void;
     showAdvanced: boolean;
     onsavetolibrary: () => void;
     me: User | undefined | null;
@@ -41,12 +39,11 @@
   let host = $derived<MaterialEditorHost>({
     showName: true,
     showSaveToLibrary: !!me,
-    showUvUnwrap: true,
+    showMeshUvMapping: true,
     showLevelProps: false,
     onpicktexture,
     onconverttype: convertType,
     oneditshaders,
-    onviewuvmappings,
     onsavetolibrary,
     rerun,
   });

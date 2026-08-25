@@ -675,40 +675,6 @@ pub fn geoscript_repl_get_rendered_mesh_count(ctx: *const GeoscriptReplCtx) -> u
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_get_rendered_mesh_indices_with_material(
-  ctx: *const GeoscriptReplCtx,
-  mat_name: &str,
-) -> Vec<usize> {
-  let ctx = unsafe { &*ctx };
-  ctx
-    .output_meshes
-    .iter()
-    .enumerate()
-    .filter_map(|(ix, mesh)| match &mesh.material {
-      Some(name) => {
-        if name == mat_name {
-          Some(ix)
-        } else {
-          None
-        }
-      }
-      None => match &*ctx.geo_ctx.default_material.borrow() {
-        Some(mat) => match &**mat {
-          Material::External(name) => {
-            if name == mat_name {
-              Some(ix)
-            } else {
-              None
-            }
-          }
-        },
-        None => None,
-      },
-    })
-    .collect()
-}
-
-#[wasm_bindgen]
 pub fn geoscript_repl_get_rendered_mesh_transform(
   ctx: *const GeoscriptReplCtx,
   mesh_ix: usize,
@@ -1125,6 +1091,14 @@ pub fn geoscript_repl_set_gizmo_values(
         Some(Ok(v)) => v,
         _ => continue,
       },
+      "uv_params" => match wire
+        .str_value
+        .as_deref()
+        .map(geoscript::uv_params_value_from_wire_json)
+      {
+        Some(Ok(v)) => v,
+        _ => continue,
+      },
       _ => continue,
     };
     map
@@ -1292,16 +1266,24 @@ pub fn geoscript_repl_get_rendered_control(
     geoscript::ControlKind::Spline => "spline",
     geoscript::ControlKind::Ramp => "ramp",
     geoscript::ControlKind::ImageLevels => "image_levels",
+    geoscript::ControlKind::UvParams => "uv_params",
   }
   .to_owned();
-  if matches!(c.kind, geoscript::ControlKind::Ramp) {
+  // Ramp + uv_params values can't ride the float lane; their editor form is `str_value` JSON.
+  if matches!(
+    c.kind,
+    geoscript::ControlKind::Ramp | geoscript::ControlKind::UvParams
+  ) {
     return RenderedControlWire {
       source_module: c.source_module.clone(),
       handle_id: c.handle_id.clone(),
       kind,
       label: c.label.clone(),
       value: Vec::new(),
-      str_value: geoscript::ramp_control_value_json(&c.current_value),
+      str_value: match c.kind {
+        geoscript::ControlKind::Ramp => geoscript::ramp_control_value_json(&c.current_value),
+        _ => geoscript::uv_params_control_value_json(&c.current_value),
+      },
       min: None,
       max: None,
       step: None,

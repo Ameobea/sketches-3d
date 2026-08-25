@@ -234,9 +234,31 @@ export interface ImageLevelsJson {
   gamma: number;
 }
 
+/** `compute_uvs(name=...)` control params; mirrors the wasm-side flat `UvParamsWire`.
+ *  Option fields are interpreted per `type`; inapplicable ones are dropped wasm-side. */
+export interface UvParamsJson {
+  type: string;
+  scale: number;
+  n_cones: number;
+  up?: string;
+  fallback?: string;
+  axis?: string;
+  pre_split?: boolean;
+  normalize_v?: boolean;
+  caps?: string;
+  cap_angle?: number;
+  cap_max_span?: number;
+  cap_alignment?: number;
+  seam_straightness?: number;
+  detwist?: boolean;
+  strip_angle?: number;
+  layout?: string;
+  u_mode?: string;
+}
+
 /** An `input_*(...)` control value keyed by handleId; sparse. Written by the control panel. */
 export interface ControlValue {
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels' | 'uv_params';
   value:
     | number
     | boolean
@@ -244,7 +266,8 @@ export interface ControlValue {
     | string
     | [number, number, number][]
     | RampSpecJson
-    | ImageLevelsJson;
+    | ImageLevelsJson
+    | UvParamsJson;
 }
 
 export interface NodeDef {
@@ -826,59 +849,3 @@ export const deleteMaterial = (
   id: number,
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<void> => apiFetch<void>(`/materials/${id}`, { method: 'DELETE' }, fetch);
-
-export const unwrapUVs = async (
-  vertices: Float32Array,
-  indices: Uint32Array,
-  fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<{ uvs: Float32Array; verts: Float32Array; indices: Uint32Array }> => {
-  const encodeRequestBody = (vertices: Float32Array, indices: Uint32Array): ArrayBuffer => {
-    const vertexCount = vertices.length / 3;
-    const indexCount = indices.length;
-    const buffer = new ArrayBuffer(8 + vertexCount * 12 + indexCount * 4);
-    const dataView = new DataView(buffer);
-    dataView.setUint32(0, vertexCount, true);
-    dataView.setUint32(4, indexCount, true);
-
-    const vertexArray = new Float32Array(buffer, 8, vertexCount * 3);
-    vertexArray.set(vertices);
-
-    const indexArray = new Uint32Array(buffer, 8 + vertexCount * 12, indexCount);
-    indexArray.set(indices);
-
-    return buffer;
-  };
-
-  const body = encodeRequestBody(vertices, indices);
-  const headers = new Headers();
-  headers.set('Content-Type', 'application/octet-stream');
-  const response = await fetch('/uv_unwrap', { method: 'POST', body, headers });
-
-  if (!response.ok) {
-    throw new APIError(response.status, await response.text());
-  }
-
-  const decodeUVUnwrapResponse = (
-    encodedResponse: ArrayBuffer
-  ): { uvs: Float32Array; verts: Float32Array; indices: Uint32Array } => {
-    const dataView = new DataView(encodedResponse);
-    const vertexCount = dataView.getUint32(0, true);
-    const indexCount = dataView.getUint32(4, true);
-
-    if (encodedResponse.byteLength !== 8 + vertexCount * 2 * 4 + vertexCount * 3 * 4 + indexCount * 4) {
-      throw new APIError(
-        400,
-        `Invalid response size; expected ${8 + vertexCount * 2 * 4 + vertexCount * 3 * 4 + indexCount * 4} bytes, got ${encodedResponse.byteLength} bytes`
-      );
-    }
-
-    const uvs = new Float32Array(encodedResponse, 8, vertexCount * 2);
-    const verts = new Float32Array(encodedResponse, 8 + vertexCount * 2 * 4, vertexCount * 3);
-    const indices = new Uint32Array(encodedResponse, 8 + vertexCount * (2 + 3) * 4, indexCount);
-
-    return { uvs, verts, indices };
-  };
-
-  const responseBuffer = await response.arrayBuffer();
-  return decodeUVUnwrapResponse(responseBuffer);
-};

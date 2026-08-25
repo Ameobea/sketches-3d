@@ -133,7 +133,8 @@ export interface GizmoValueWire {
     | 'select'
     | 'spline'
     | 'ramp'
-    | 'image_levels';
+    | 'image_levels'
+    | 'uv_params';
   value?: number[];
   str_value?: string;
 }
@@ -143,7 +144,7 @@ export type GizmoValuesByModule = Record<string, Record<string, GizmoValueWire>>
 export interface RenderedControl {
   sourceModule: string | null;
   handleId: string;
-  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels';
+  kind: 'float' | 'int' | 'bool' | 'color' | 'select' | 'spline' | 'ramp' | 'image_levels' | 'uv_params';
   /** Display label override; falls back to `handleId` when null. */
   label: string | null;
   /** Numeric payload (float/int: 1 num; color: 3 rgb; spline: 3·N points). Empty for select. */

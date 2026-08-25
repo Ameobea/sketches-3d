@@ -131,6 +131,8 @@ export const controlValueToWire = (v: ControlValue): GizmoValueWire => {
       return { kind: 'spline', value: (v.value as [number, number, number][]).flat() };
     case 'ramp':
       return { kind: 'ramp', str_value: JSON.stringify(v.value) };
+    case 'uv_params':
+      return { kind: 'uv_params', str_value: JSON.stringify(v.value) };
     case 'image_levels': {
       const l = v.value as ImageLevelsJson;
       return { kind: 'image_levels', value: [l.in_lo, l.in_hi, l.out_lo, l.out_hi, l.gamma] };

@@ -16,14 +16,13 @@ export interface MaterialEditorHost {
   showName: boolean;
   /** Save/share to the geotoy material library (needs auth). */
   showSaveToLibrary: boolean;
-  /** Geoscript UV-unwrap mapping mode + its viewer (needs a live geoscript mesh). */
-  showUvUnwrap: boolean;
+  /** The triplanar-vs-mesh-UV mapping toggle (geotoy; UVs come from geoscript). */
+  showMeshUvMapping: boolean;
   /** Level-pipeline-only props (material class, fog, ambient, map-disable, opacity/transmission/ior). */
   showLevelProps: boolean;
   onpicktexture: (field: PhysicalMaterialTextureField) => void;
   onconverttype: (to: 'customShader' | 'customBasicShader') => void;
   oneditshaders: () => void;
-  onviewuvmappings: () => void;
   onsavetolibrary: () => void;
-  rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => void;
+  rerun: () => void;
 }

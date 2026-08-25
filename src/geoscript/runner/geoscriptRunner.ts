@@ -11,7 +11,6 @@ import type {
   RenderedControl,
 } from './types';
 import { buildLight, fitAutoShadowFrusta } from 'src/geotoy/modes/mesh/lights';
-import { getUVUnwrapWorker } from '../uvUnwrapWorker';
 import { parseChannelStats } from '../textureStats';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
@@ -190,78 +189,21 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
   for (let i = 0; i < stats.renderedMeshCount; i += 1) {
     const {
       transform,
-      verts: initialVerts,
-      indices: initialIndices,
+      verts,
+      indices,
       normals,
-      uvs: meshUvs,
-      tangents: meshTangents,
+      uvs,
+      tangents,
       material: materialName,
       sourceModule,
       meshId,
     } = await repl.getRenderedMesh(ctxPtr, i);
 
-    let verts = initialVerts;
-    let indices = initialIndices;
-    let uvs: Float32Array | null = meshUvs ?? null;
-    let tangents: Float32Array | null = meshTangents ?? null;
-    let didBffUnwrap = false;
     const matLookup = materials[materialName] ?? {
       def: null,
       mat: { resolved: FallbackMat, promise: Promise.resolve(FallbackMat) },
     };
-    const { def: matDef, mat: mat } = matLookup;
-
-    const uvUnwrapParams = (() => {
-      const unwrap = matDef?.type === 'customShader' ? matDef.meshUvUnwrap : undefined;
-      // Skip unwrap for headless override thumbnails only; interactive override runs
-      // must still unwrap, else un-toggling restores textured materials onto
-      // never-unwrapped geometry.
-      if ((renderMode && !!overrideMat) || !unwrap) {
-        return null;
-      }
-
-      return {
-        nCones: unwrap.numCones,
-        flattenToDisk: unwrap.flattenToDisk,
-        mapToSphere: unwrap.mapToSphere,
-        align: unwrap.align,
-      };
-    })();
-
-    // TODO: would be good to parallelize this with other work
-    if (uvUnwrapParams) {
-      try {
-        const uvUnwrapWorker = await getUVUnwrapWorker();
-        const unwrapRes = await uvUnwrapWorker.uvUnwrap(verts, indices, uvUnwrapParams);
-
-        if (unwrapRes.type === 'error') {
-          throw new Error(unwrapRes.message);
-        }
-
-        const {
-          uvs: unwrappedUVs,
-          verts: unwrappedVerts,
-          indices: unwrappedIndices,
-          tangents: unwrappedTangents,
-        } = unwrapRes.out;
-        uvs = unwrappedUVs;
-        verts = unwrappedVerts;
-        indices = unwrappedIndices;
-        // BFF recomputes tangents from the flattened UVs (the analytic ones are invalid post-remesh).
-        tangents = unwrappedTangents;
-        didBffUnwrap = true; // re-mesh invalidates the emitted normals → recompute below
-      } catch (unwrapErr) {
-        const errorMessage = `Error unwrapping UVs: ${unwrapErr}`;
-        return {
-          objects: [],
-          stats,
-          error: errorMessage,
-          gizmos: [],
-          controls: [],
-          vectorizeReports: [],
-        };
-      }
-    }
+    const { mat } = matLookup;
 
     stats.totalVtxCount += verts.length / 3;
     stats.totalFaceCount += indices.length / 3;
@@ -273,9 +215,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     if (uvs) {
       geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
     }
-    if (didBffUnwrap) {
-      geometry.computeVertexNormals();
-    } else if (normals) {
+    if (normals) {
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     }
     if (tangents) {

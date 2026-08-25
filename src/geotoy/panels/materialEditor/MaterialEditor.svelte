@@ -1,7 +1,4 @@
 <script lang="ts">
-  import type * as Comlink from 'comlink';
-  import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worker';
-
   import MaterialPropertiesEditor from './MaterialPropertiesEditor.svelte';
   import {
     buildDefaultMaterial,
@@ -15,7 +12,6 @@
   import ShaderEditor from 'src/viz/materials/ui/ShaderEditor.svelte';
   import { type ShaderSlots, sharedToSlots, slotsToShared } from 'src/viz/materials/ui/shaderSlots';
   import { makeDraggable, uuidv4 } from './util';
-  import UvViewer from './UVViewer.svelte';
 
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
@@ -31,16 +27,12 @@
     isOpen = $bindable(),
     materials = $bindable(),
     rerun,
-    repl,
-    ctxPtr,
     me,
     proceduralTextureOptions = [],
   }: {
     isOpen: boolean;
     materials: MaterialDefinitions;
-    rerun: (onlyIfUVUnwrapperNotLoaded: boolean) => Promise<void>;
-    repl: Comlink.Remote<GeoscriptWorkerMethods>;
-    ctxPtr: number | null;
+    rerun: () => Promise<void>;
     me: User | undefined | null;
     proceduralTextureOptions?: ProceduralTextureOption[];
   } = $props();
@@ -53,7 +45,6 @@
     | { type: 'texture_picker'; field: PhysicalMaterialTextureField }
     | { type: 'texture_uploader'; field: PhysicalMaterialTextureField }
     | { type: 'shader_editor' }
-    | { type: 'uv_viewer' }
     | { type: 'material_library' }
     | { type: 'save_material' }
   >({ type: 'properties' });
@@ -158,9 +149,6 @@
             oneditshaders={() => {
               view = { type: 'shader_editor' };
             }}
-            onviewuvmappings={() => {
-              view = { type: 'uv_viewer' };
-            }}
             {rerun}
             bind:showAdvanced
             onsavetolibrary={() => {
@@ -222,7 +210,7 @@
                 // reach the placeholder once a run imports it.
                 const cur = mat.props[field];
                 if ((cur && isProceduralHandle(cur)) || (prev && isProceduralHandle(prev))) {
-                  void rerun(false);
+                  void rerun();
                 }
               }}
               proceduralOptions={STACK_CAPABLE_SLOTS.includes(field)
@@ -275,29 +263,6 @@
               view = { type: 'properties' };
             }}
           />
-        {:else if ctxPtr !== null && view.type === 'uv_viewer'}
-          {#if materials.materials[selectedMaterialID]?.type === 'customShader' && !!(materials.materials[selectedMaterialID] as CustomShaderMatDef).meshUvUnwrap}
-            <UvViewer
-              onclose={() => {
-                view = { type: 'properties' };
-              }}
-              {repl}
-              {ctxPtr}
-              matDef={materials.materials[selectedMaterialID] as CustomShaderMatDef}
-              {rerun}
-            />
-          {:else}
-            <div style="display: flex; flex-direction: column; flex: 1; max-width: 400px; margin: auto;">
-              <p>active material missing or not UV mapped</p>
-              <button
-                onclick={() => {
-                  view = { type: 'properties' };
-                }}
-              >
-                close
-              </button>
-            </div>
-          {/if}
         {/if}
       {/if}
     </div>

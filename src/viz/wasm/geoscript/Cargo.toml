@@ -45,7 +45,3 @@ base64 = "0.22"
 # Native constrained-Delaunay triangulator, used only in tests to exercise the
 # refined embed_path tessellation path (whose production backend is CGAL/wasm).
 spade = { version = "2", default-features = false }
-
-[[example]]
-name = "noise_wasm"
-crate-type = ["cdylib"]

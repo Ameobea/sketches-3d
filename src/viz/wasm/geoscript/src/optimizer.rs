@@ -2818,6 +2818,8 @@ fn fold_exec_ambient_setter_stmt(
 /// (content-hashable, so downstream cache keys incorporate the injected value stably).
 /// `input_spline` stays runtime — injected sequences hash by identity, and baking them
 /// would churn every dependent cache key (and grow the cache) on each run.
+/// `compute_uvs(name=)` is likewise excluded: its control value is map-valued and the
+/// callee does mesh work — not an "input" in the bake sense.
 const FOLDABLE_INPUT_NAMES: &[&str] = &[
   "input_float",
   "input_int",

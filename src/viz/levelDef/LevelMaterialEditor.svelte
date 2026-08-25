@@ -73,12 +73,11 @@
   let host = $derived<MaterialEditorHost>({
     showName: false,
     showSaveToLibrary: false,
-    showUvUnwrap: false,
+    showMeshUvMapping: false,
     showLevelProps: true,
     onpicktexture: () => {},
     onconverttype: convertType,
     oneditshaders: () => (view = 'shader_editor'),
-    onviewuvmappings: () => {},
     onsavetolibrary: () => {},
     rerun: () => {},
   });

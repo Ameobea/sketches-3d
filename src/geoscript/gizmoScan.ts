@@ -133,6 +133,20 @@ const INPUT_CALLEES = new Set([
   'input_image_levels',
 ]);
 
+/** The `name=` kwarg's value node, kwarg form only (for callees whose first positional isn't
+ *  the control name, e.g. `compute_uvs`). */
+const resolveNameKwarg = (call: SyntaxNode, read: Read): SyntaxNode | null => {
+  for (const fa of call.getChildren('FunctionArg')) {
+    const inner = fa.firstChild;
+    if (inner?.name !== 'Kwarg') continue;
+    const id = inner.firstChild;
+    if (id?.name === 'Identifier' && read(id.from, id.to) === 'name') {
+      return inner.getChild('Expr')?.firstChild ?? null;
+    }
+  }
+  return null;
+};
+
 /** Static `input_*` control handle ids in a node's source; used for orphaned-control GC. */
 export const scanControlHandleIds = (source: string): Set<string> => {
   const out = new Set<string>();
@@ -142,8 +156,13 @@ export const scanControlHandleIds = (source: string): Set<string> => {
       if (ref.name !== 'CallExpr') return;
       const node = ref.node;
       const callee = node.firstChild;
-      if (callee?.name !== 'Identifier' || !INPUT_CALLEES.has(read(callee.from, callee.to))) return;
-      const nameVal = resolveNameValue(node, read);
+      if (callee?.name !== 'Identifier') return;
+      const calleeName = read(callee.from, callee.to);
+      const nameVal = INPUT_CALLEES.has(calleeName)
+        ? resolveNameValue(node, read)
+        : calleeName === 'compute_uvs'
+          ? resolveNameKwarg(node, read)
+          : null;
       if (nameVal?.name === 'StringLiteral') out.add(unquote(read(nameVal.from, nameVal.to)));
     },
   });

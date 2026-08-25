@@ -3,8 +3,9 @@
   import ImageLevelsSection from 'src/viz/UI/ImageLevelsSection.svelte';
   import RampControlsSection from 'src/viz/UI/RampControlsSection.svelte';
   import SplineControlsSection from 'src/viz/UI/SplineControlsSection.svelte';
+  import UvParamsSection from 'src/viz/UI/UvParamsSection.svelte';
   import type { RenderedControl } from 'src/geoscript/runner/types';
-  import type { ImageLevelsJson, RampSpecJson } from 'src/geoscript/geotoyAPIClient';
+  import type { ImageLevelsJson, RampSpecJson, UvParamsJson } from 'src/geoscript/geotoyAPIClient';
   import {
     controlCurrentValue,
     controlKey,
@@ -23,6 +24,7 @@
     onBakeDefault,
     onResetControl,
     spline,
+    onViewUvMaps,
   }: {
     controls: RenderedControl[];
     treeState: TreeState;
@@ -33,27 +35,36 @@
     /** Drop the stored override so the source `default=` applies again. */
     onResetControl: (c: RenderedControl) => void;
     spline?: SplinePanelCtx;
+    onViewUvMaps?: (c: RenderedControl) => void;
   } = $props();
 
   const keyOf = controlKey;
 
-  const actionsFor = (c: RenderedControl): SettingAction[] =>
-    targets.has(keyOf(c))
-      ? [
-          {
-            label: 'set as default',
-            title: 'Write this value into the source as `default=` and clear the stored override',
-            disabled: !c.hasOverride,
-            action: () => onBakeDefault(c),
-          },
-          {
-            label: 'reset to default',
-            title: 'Drop the stored override; the source `default=` applies again',
-            disabled: !c.hasOverride,
-            action: () => onResetControl(c),
-          },
-        ]
-      : [];
+  const actionsFor = (c: RenderedControl): SettingAction[] => {
+    const t = targets.get(keyOf(c));
+    if (!t) return [];
+    // Both actions operate on the STORED value; gating on `hasOverride` would leave a
+    // stored value the runtime failed to parse un-removable (it reports no override).
+    const hasStored = treeState.captureControl(t.nodeId, t.handleId) !== null;
+    const reset = {
+      label: 'reset to default',
+      title: 'Drop the stored override; the source `default=` applies again',
+      disabled: !hasStored,
+      action: () => onResetControl(c),
+    };
+    // Bake-to-source isn't implemented for `compute_uvs` (it would need a multi-arg splice
+    // in the rewriter), so uv_params rows only offer reset.
+    if (c.kind === 'uv_params') return [reset];
+    return [
+      {
+        label: 'set as default',
+        title: 'Write this value into the source as `default=` and clear the stored override',
+        disabled: !hasStored,
+        action: () => onBakeDefault(c),
+      },
+      reset,
+    ];
+  };
 
   const settings = $derived(
     controls
@@ -129,14 +140,16 @@
         return { kind: 'ramp', value: value as RampSpecJson };
       case 'image_levels':
         return { kind: 'image_levels', value: value as ImageLevelsJson };
+      case 'uv_params':
+        return { kind: 'uv_params', value: value as UvParamsJson };
     }
   }
 
   const top = $derived(topLeftOffset(TopLeftSlot.controls));
 
-  // Ramp/levels edits bypass the ControlPanel's bind, so mirror them into panelState so
+  // Ramp/levels/uv edits bypass the ControlPanel's bind, so mirror them into panelState so
   // their sections re-render optimistically between runs.
-  const onSectionChange = (key: string, value: RampSpecJson | ImageLevelsJson) => {
+  const onSectionChange = (key: string, value: RampSpecJson | ImageLevelsJson | UvParamsJson) => {
     panelState = { ...panelState, [key]: value };
     handleChange(key, value);
   };
@@ -157,6 +170,13 @@
     getValue={key => (panelState[key] as ImageLevelsJson | undefined) ?? null}
     onChange={onSectionChange}
     actions={actionsFor}
+  />
+  <UvParamsSection
+    {controls}
+    getValue={key => (panelState[key] as UvParamsJson | undefined) ?? null}
+    onChange={onSectionChange}
+    actions={actionsFor}
+    {onViewUvMaps}
   />
   {#if spline}
     <SplineControlsSection {controls} {spline} actions={actionsFor} />

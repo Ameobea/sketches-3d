@@ -881,7 +881,7 @@ pub(crate) fn input_ramp_impl(
     )));
   }
 
-  ctx.rendered_controls.push(RenderedControl {
+  ctx.push_rendered_control(RenderedControl {
     source_module: c.module,
     handle_id: c.handle_id,
     kind: ControlKind::Ramp,

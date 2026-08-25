@@ -19,6 +19,7 @@
   import Menubar, { type Menu } from 'src/geotoy/panels/Menubar.svelte';
   import EditorPane from 'src/geotoy/panels/EditorPane.svelte';
   import ExportModal from 'src/geotoy/panels/ExportModal.svelte';
+  import UvMapsOverlay from 'src/geotoy/panels/UvMapsOverlay.svelte';
   import { GeoscriptExecution, type RunInput } from 'src/geotoy/modules/execution.svelte';
   import { HiddenMat, type MaterialDef } from 'src/geoscript/materials';
   import MaterialEditor from 'src/geotoy/panels/materialEditor/MaterialEditor.svelte';
@@ -67,7 +68,6 @@
   import { buildParentMap, findParentId } from 'src/geotoy/modules/treeOps';
   import HierarchyPanel from 'src/geotoy/panels/HierarchyPanel.svelte';
   import NodeInspector from 'src/geotoy/panels/NodeInspector.svelte';
-  import { getIsUVUnwrapLoaded } from 'src/viz/wasm/uv_unwrap/uvUnwrap';
   import {
     buildWorldMatrixCache,
     disposeRunObjects,
@@ -505,6 +505,7 @@
   };
 
   let materialEditorOpen = $state(false);
+  let uvMapsOverlayOpen = $state(false);
   let environmentSettingsOpen = $state(false);
   let previewPickerOpen = $state(false);
 
@@ -1103,10 +1104,7 @@
     treeState.setDisabled(id, disabled);
   };
 
-  const rerun = async (onlyIfUVUnwrapperNotLoaded: boolean) => {
-    if (onlyIfUVUnwrapperNotLoaded && getIsUVUnwrapLoaded()) {
-      return;
-    }
+  const rerun = async () => {
     await execution.run();
   };
 
@@ -1458,6 +1456,15 @@
     onBakeDefault={bakeControlDefault}
     onResetControl={resetControl}
     spline={splineController.panelCtx}
+    onViewUvMaps={() => (uvMapsOverlayOpen = true)}
+  />
+{/if}
+
+{#if uvMapsOverlayOpen && execution.ctxPtr !== null}
+  <UvMapsOverlay
+    repl={execution.repl}
+    ctxPtr={execution.ctxPtr}
+    onclose={() => (uvMapsOverlayOpen = false)}
   />
 {/if}
 
@@ -1466,8 +1473,6 @@
   bind:isOpen={materialEditorOpen}
   bind:materials={persistence.materialDefinitions}
   {rerun}
-  repl={execution.repl}
-  ctxPtr={execution.ctxPtr}
   me={userData?.me}
   proceduralTextureOptions={proceduralOutputOptions(tabs.tabs)}
 />
