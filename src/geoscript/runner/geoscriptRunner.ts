@@ -78,6 +78,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     preludeKind,
     materialOverride,
     renderMode = false,
+    textureDetail = 'full',
     modules,
     modulePreludes,
     ambientSources,
@@ -291,7 +292,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
 
   stats.renderedTextureCount = await repl.getRenderedTextureCount(ctxPtr);
   for (let i = 0; i < stats.renderedTextureCount; i += 1) {
-    const t = await repl.getRenderedTexture(ctxPtr, i);
+    const t = await repl.getRenderedTexture(ctxPtr, i, textureDetail);
     renderedObjects.push({
       type: 'texture',
       name: t.name,

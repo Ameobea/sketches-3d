@@ -576,6 +576,7 @@ dependencies = [
  "arrayvec",
  "base64",
  "bitvec",
+ "bytemuck",
  "fxhash",
  "lazy_static",
  "log",

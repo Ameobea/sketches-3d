@@ -204,13 +204,18 @@ pub fn encode_unorm8(planes: &[&[f32]], format: TextureFormat, dst: &mut [u8]) {
     }
     TextureFormat::Rgba8 => {
       let l = RgbaLanes::new(planes);
-      let mut i = 0;
-      while i + 4 <= n {
-        let q = pack_rgba4(l.win(0, i), l.win(1, i), l.win(2, i), l.win(3, i));
-        dst[i * 4..i * 4 + 16].copy_from_slice(&q);
-        i += 4;
+      // `chunks_exact_mut` walks the destination without a bounds check per block; at a
+      // 10-slice 1024² stack this loop moves ~200 MB and is squarely memory-bound.
+      for (i, o) in dst.chunks_exact_mut(16).enumerate() {
+        let k = i * 4;
+        o.copy_from_slice(&pack_rgba4(
+          l.win(0, k),
+          l.win(1, k),
+          l.win(2, k),
+          l.win(3, k),
+        ));
       }
-      for k in i..n {
+      for k in n & !3..n {
         for c in 0..4 {
           dst[k * 4 + c] = to8(l.at(c, k));
         }
@@ -220,13 +225,56 @@ pub fn encode_unorm8(planes: &[&[f32]], format: TextureFormat, dst: &mut [u8]) {
   }
 }
 
+/// 4 texels x 4 lanes -> 4 interleaved rgba texels: a plain 4x4 float transpose.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn interleave4x4(r: &[f32], g: &[f32], b: &[f32], a: &[f32], dst: &mut [f32]) {
+  use core::arch::wasm32::*;
+  unsafe {
+    let ld = |p: &[f32]| v128_load(p.as_ptr() as *const v128);
+    let (r, g, b, a) = (ld(r), ld(g), ld(b), ld(a));
+    let t0 = i32x4_shuffle::<0, 4, 1, 5>(r, g);
+    let t1 = i32x4_shuffle::<2, 6, 3, 7>(r, g);
+    let t2 = i32x4_shuffle::<0, 4, 1, 5>(b, a);
+    let t3 = i32x4_shuffle::<2, 6, 3, 7>(b, a);
+    let o = dst.as_mut_ptr() as *mut v128;
+    v128_store(o, i32x4_shuffle::<0, 1, 4, 5>(t0, t2));
+    v128_store(o.add(1), i32x4_shuffle::<2, 3, 6, 7>(t0, t2));
+    v128_store(o.add(2), i32x4_shuffle::<0, 1, 4, 5>(t1, t3));
+    v128_store(o.add(3), i32x4_shuffle::<2, 3, 6, 7>(t1, t3));
+  }
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+#[inline]
+fn interleave4x4(r: &[f32], g: &[f32], b: &[f32], a: &[f32], dst: &mut [f32]) {
+  for i in 0..4 {
+    dst[i * 4] = r[i];
+    dst[i * 4 + 1] = g[i];
+    dst[i * 4 + 2] = b[i];
+    dst[i * 4 + 3] = a[i];
+  }
+}
+
 /// RGBA f32 expansion with the same channel semantics as `Rgba8` encoding. `dst` must be
 /// exactly `4 * n`. Only needed for 3ch: other counts upload GPU-direct as R/RG/RGBA32F.
 pub fn expand_rgba_f32(planes: &[&[f32]], dst: &mut [f32]) {
   let l = RgbaLanes::new(planes);
-  for (i, o) in dst.chunks_exact_mut(4).enumerate() {
-    for (c, slot) in o.iter_mut().enumerate() {
-      *slot = l.at(c, i);
+  let n = planes[0].len();
+  let mut i = 0;
+  while i + 4 <= n {
+    interleave4x4(
+      l.win(0, i),
+      l.win(1, i),
+      l.win(2, i),
+      l.win(3, i),
+      &mut dst[i * 4..i * 4 + 16],
+    );
+    i += 4;
+  }
+  for k in i..n {
+    for c in 0..4 {
+      dst[k * 4 + c] = l.at(c, k);
     }
   }
 }
@@ -248,8 +296,20 @@ pub fn interleave(planes: &[&[f32]], dst: &mut [f32]) {
       }
     }
     [p0, p1, p2, p3] => {
-      for (i, o) in dst.chunks_exact_mut(4).enumerate() {
-        (o[0], o[1], o[2], o[3]) = (p0[i], p1[i], p2[i], p3[i]);
+      let n = p0.len();
+      let mut i = 0;
+      while i + 4 <= n {
+        interleave4x4(
+          &p0[i..],
+          &p1[i..],
+          &p2[i..],
+          &p3[i..],
+          &mut dst[i * 4..i * 4 + 16],
+        );
+        i += 4;
+      }
+      for k in i..n {
+        (dst[k * 4], dst[k * 4 + 1], dst[k * 4 + 2], dst[k * 4 + 3]) = (p0[k], p1[k], p2[k], p3[k]);
       }
     }
     _ => unreachable!("textures hold 1..=4 channels"),

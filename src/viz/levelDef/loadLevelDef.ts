@@ -434,6 +434,7 @@ const resolveScriptAssets = async (
       asyncDeps,
       deps: [],
       collectMetadata,
+      textureDetail: 'gpu',
       gizmoValues,
     };
   });
@@ -1054,6 +1055,7 @@ export const loadLevelDef = (
         asyncDeps: def._meta?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [],
         deps: [],
         collectMetadata: false,
+        textureDetail: 'gpu',
         availableMaterials: def.materialNames ?? [],
         defaultMaterialName: def.defaultMaterialName ?? null,
       };
@@ -1076,6 +1078,7 @@ export const loadLevelDef = (
         asyncDeps: [],
         deps: [],
         collectMetadata: false,
+        textureDetail: 'gpu',
         availableMaterials: [],
         defaultMaterialName: null,
       };

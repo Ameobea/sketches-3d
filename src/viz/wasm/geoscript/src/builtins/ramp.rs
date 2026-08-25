@@ -221,7 +221,53 @@ pub(crate) struct RampCallable {
   baked: Baked,
 }
 
+/// `apply_ease` minus the custom-callable arm; callers check `has_custom_ease` first.
+#[inline(always)]
+fn apply_ease_pure(ease: &Ease, t: f32) -> f32 {
+  match ease {
+    Ease::Linear => t,
+    Ease::Smooth => t * t * (3. - 2. * t),
+    Ease::Smoother => t * t * t * (t * (t * 6. - 15.) + 10.),
+    Ease::Step | Ease::Custom(_) => 0.,
+  }
+}
+
 impl RampCallable {
+  fn has_custom_ease(&self) -> bool {
+    self.spec.eases.iter().any(|e| matches!(e, Ease::Custom(_)))
+  }
+
+  /// `sample` with the interpreter re-entry removed, so a whole-texture apply carries no
+  /// `Result` and no dynamic dispatch per texel.
+  #[inline(always)]
+  fn sample_pure(&self, x: f32) -> Vec3 {
+    let ps = &self.spec.positions;
+    let (lo, hi) = (ps[0], ps[ps.len() - 1]);
+    let u = map_extend(x, lo, hi, self.spec.extend);
+    if let Baked::Lut(lut) = &self.baked {
+      let f = (u - lo) / (hi - lo) * (LUT_SIZE - 1) as f32;
+      let i = (f as usize).min(LUT_SIZE - 2);
+      let t = (f - i as f32).clamp(0., 1.);
+      return lut[i].lerp(&lut[i + 1], t);
+    }
+    let vals = &self.spec.values;
+    let n = ps.len();
+    if n == 1 {
+      return vals[0];
+    }
+    let idx = ps.partition_point(|p| *p <= u);
+    if idx == 0 {
+      return vals[0];
+    }
+    if idx >= n {
+      return vals[n - 1];
+    }
+    let (p0, p1) = (ps[idx - 1], ps[idx]);
+    let t = if p1 > p0 { (u - p0) / (p1 - p0) } else { 1. };
+    // `Baked::Exact` implies a linear mix space (see `needs_lut`)
+    vals[idx - 1].lerp(&vals[idx], apply_ease_pure(&self.spec.eases[idx - 1], t))
+  }
+
   fn sample(&self, x: f32, ctx: &EvalCtx) -> Result<Vec3, ErrorStack> {
     let (lo, hi) = (self.spec.positions[0], *self.spec.positions.last().unwrap());
     let u = map_extend(x, lo, hi, self.spec.extend);
@@ -275,15 +321,28 @@ impl DynamicCallable for RampCallable {
       }
       let out_ch = if self.spec.scalar { 1 } else { 3 };
       let src = &tex.as_planes()[0];
-      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| Vec::with_capacity(src.len())).collect();
-      for &v in src.iter() {
-        let c = self.sample(v, ctx)?;
-        if self.spec.scalar {
-          planes[0].push(c.x);
-        } else {
-          planes[0].push(c.x);
-          planes[1].push(c.y);
-          planes[2].push(c.z);
+      let n = src.len();
+      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| vec![0f32; n]).collect();
+      if self.has_custom_ease() {
+        for (i, &v) in src.iter().enumerate() {
+          let c = self.sample(v, ctx)?;
+          for (p, o) in planes.iter_mut().zip([c.x, c.y, c.z]) {
+            p[i] = o;
+          }
+        }
+      } else if let [p0] = &mut planes[..] {
+        for (o, &v) in p0.iter_mut().zip(src.iter()) {
+          *o = self.sample_pure(v).x;
+        }
+      } else if let [p0, p1, p2] = &mut planes[..] {
+        for (((a, b), c), &v) in p0
+          .iter_mut()
+          .zip(p1.iter_mut())
+          .zip(p2.iter_mut())
+          .zip(src.iter())
+        {
+          let px = self.sample_pure(v);
+          (*a, *b, *c) = (px.x, px.y, px.z);
         }
       }
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {

@@ -19,50 +19,31 @@ pub struct ChannelStats {
 
 impl ChannelStats {
   fn compute(plane: &[f32], w: usize, h: usize) -> Self {
-    let (mut min, mut max) = (f32::INFINITY, f32::NEG_INFINITY);
-    let (mut sum, mut n, mut nonfinite) = (0f64, 0u64, 0u32);
-    for &x in plane {
-      if x.is_finite() {
-        min = min.min(x);
-        max = max.max(x);
-        sum += x as f64;
-        n += 1;
-      } else {
-        nonfinite += 1;
-      }
-    }
-    let mean = if n > 0 { sum / n as f64 } else { f64::NAN };
-    let mut m2 = 0f64;
-    for &x in plane {
-      if x.is_finite() {
-        m2 += (x as f64 - mean).powi(2);
-      }
-    }
-    let std = if n > 0 {
-      (m2 / n as f64).sqrt()
-    } else {
-      f64::NAN
-    };
+    let (min, max, mean, std, nonfinite) = moments(plane);
 
     // Stride both axes: a flat stride is a power of two on power-of-two planes and would
     // sample a handful of columns.
     let step = ((w * h).div_ceil(MAX_SAMPLE) as f64).sqrt().ceil().max(1.) as usize;
-    let mut sample = Vec::with_capacity((w / step + 1) * (h / step + 1));
+    let mut keys = Vec::with_capacity((w / step + 1) * (h / step + 1));
     for y in (0..h).step_by(step) {
+      let row = &plane[y * w..(y + 1) * w];
       for x in (0..w).step_by(step) {
-        let v = plane[y * w + x];
+        let v = row[x];
         if v.is_finite() {
-          sample.push(v);
+          keys.push(sort_key(v));
         }
       }
     }
-    sample.sort_unstable_by(f32::total_cmp);
+    // `f32::total_cmp` is a handful of bit ops per *comparison*; folding it into the key up
+    // front leaves a plain integer sort, and at 64k values a radix beats the comparison sort.
+    radix_sort(&mut keys);
+    let sample = keys.into_iter().map(from_sort_key).collect();
 
     ChannelStats {
-      min: if n > 0 { min } else { f32::NAN },
-      max: if n > 0 { max } else { f32::NAN },
-      mean: mean as f32,
-      std: std as f32,
+      min,
+      max,
+      mean,
+      std,
       nonfinite,
       sample,
     }
@@ -110,6 +91,183 @@ impl ChannelStats {
     let (a, b) = (s[lo - 1], s[lo]);
     ((lo - 1) as f32 + (x - a) / (b - a)) / denom
   }
+}
+
+/// `f32` reinterpreted so that unsigned integer order matches `f32::total_cmp` order.
+#[inline(always)]
+fn sort_key(v: f32) -> u32 {
+  let b = v.to_bits();
+  b ^ (((b as i32 >> 31) as u32) | 0x8000_0000)
+}
+
+#[inline(always)]
+fn from_sort_key(k: u32) -> f32 {
+  f32::from_bits(k ^ ((((k ^ 0x8000_0000) as i32) >> 31) as u32 | 0x8000_0000))
+}
+
+/// LSD radix sort, one byte per pass, skipping any byte that is constant across the input —
+/// texture samples usually share an exponent range, so the high passes are typically free.
+fn radix_sort(keys: &mut Vec<u32>) {
+  let n = keys.len();
+  if n < 2 {
+    return;
+  }
+  let mut hist = [[0u32; 256]; 4];
+  for &k in keys.iter() {
+    for (d, h) in hist.iter_mut().enumerate() {
+      h[(k >> (8 * d)) as u8 as usize] += 1;
+    }
+  }
+  let mut scratch = vec![0u32; n];
+  let (mut src, mut dst) = (&mut keys[..], &mut scratch[..]);
+  let mut swapped = false;
+  for (d, h) in hist.iter().enumerate() {
+    if h.iter().any(|&c| c as usize == n) {
+      continue;
+    }
+    let mut base = 0u32;
+    let mut offs = [0u32; 256];
+    for (o, &c) in offs.iter_mut().zip(h.iter()) {
+      *o = base;
+      base += c;
+    }
+    for &k in src.iter() {
+      let b = (k >> (8 * d)) as u8 as usize;
+      dst[offs[b] as usize] = k;
+      offs[b] += 1;
+    }
+    std::mem::swap(&mut src, &mut dst);
+    swapped = !swapped;
+  }
+  if swapped {
+    keys.copy_from_slice(&scratch);
+  }
+}
+
+/// `(min, max, mean, std, nonfinite)`. The common all-finite case runs as one branch-free
+/// pass — sums are taken about a shifted origin so a single pass can't lose the variance to
+/// cancellation, and f32 block sums are flushed to f64 often enough to stay accurate. Any
+/// non-finite texel poisons the sums, which is exactly the signal to rerun the filtered
+/// version.
+fn moments(plane: &[f32]) -> (f32, f32, f32, f32, u32) {
+  const BLOCK: usize = 4096;
+  let shift = plane.iter().copied().find(|v| v.is_finite()).unwrap_or(0.);
+  let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+  let (mut s1, mut s2) = (0f64, 0f64);
+  for block in plane.chunks(BLOCK) {
+    let (b1, b2, bmin, bmax) = block_moments(block, shift);
+    s1 += b1 as f64;
+    s2 += b2 as f64;
+    lo = lo.min(bmin);
+    hi = hi.max(bmax);
+  }
+
+  let n = plane.len() as f64;
+  if s1.is_finite() && s2.is_finite() && lo.is_finite() && hi.is_finite() {
+    let m = s1 / n;
+    let var = (s2 / n - m * m).max(0.);
+    return (lo, hi, (m + shift as f64) as f32, var.sqrt() as f32, 0);
+  }
+  moments_filtered(plane)
+}
+
+/// `(sum, sum of squares, min, max)` of one cache-sized block, the sums about `shift`.
+#[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
+#[inline]
+fn block_moments(block: &[f32], shift: f32) -> (f32, f32, f32, f32) {
+  use core::arch::wasm32::*;
+  let sh = f32x4_splat(shift);
+  let (mut a, mut b) = (f32x4_splat(0.), f32x4_splat(0.));
+  let (mut mn, mut mx) = (f32x4_splat(f32::INFINITY), f32x4_splat(f32::NEG_INFINITY));
+  let mut it = block.chunks_exact(4);
+  for c in &mut it {
+    let x = unsafe { v128_load(c.as_ptr() as *const v128) };
+    let d = f32x4_sub(x, sh);
+    a = f32x4_add(a, d);
+    b = f32x4_add(b, f32x4_mul(d, d));
+    mn = f32x4_pmin(mn, x);
+    mx = f32x4_pmax(mx, x);
+  }
+  let red = |v: v128, f: fn(f32, f32) -> f32| {
+    f(
+      f(f32x4_extract_lane::<0>(v), f32x4_extract_lane::<1>(v)),
+      f(f32x4_extract_lane::<2>(v), f32x4_extract_lane::<3>(v)),
+    )
+  };
+  let (mut sa, mut sb) = (red(a, |x, y| x + y), red(b, |x, y| x + y));
+  let (mut lo, mut hi) = (red(mn, f32::min), red(mx, f32::max));
+  for &v in it.remainder() {
+    let d = v - shift;
+    sa += d;
+    sb += d * d;
+    lo = lo.min(v);
+    hi = hi.max(v);
+  }
+  (sa, sb, lo, hi)
+}
+
+#[cfg(not(all(target_arch = "wasm32", target_feature = "simd128")))]
+#[inline]
+fn block_moments(block: &[f32], shift: f32) -> (f32, f32, f32, f32) {
+  let (mut a, mut b) = ([0f32; 4], [0f32; 4]);
+  let (mut mn, mut mx) = ([f32::INFINITY; 4], [f32::NEG_INFINITY; 4]);
+  let mut it = block.chunks_exact(4);
+  for c in &mut it {
+    for i in 0..4 {
+      let d = c[i] - shift;
+      a[i] += d;
+      b[i] += d * d;
+      mn[i] = if c[i] < mn[i] { c[i] } else { mn[i] };
+      mx[i] = if c[i] > mx[i] { c[i] } else { mx[i] };
+    }
+  }
+  let (mut sa, mut sb) = (a[0] + a[1] + a[2] + a[3], b[0] + b[1] + b[2] + b[3]);
+  let (mut lo, mut hi) = (
+    mn[0].min(mn[1]).min(mn[2].min(mn[3])),
+    mx[0].max(mx[1]).max(mx[2].max(mx[3])),
+  );
+  for &v in it.remainder() {
+    let d = v - shift;
+    sa += d;
+    sb += d * d;
+    lo = lo.min(v);
+    hi = hi.max(v);
+  }
+  (sa, sb, lo, hi)
+}
+
+/// Two-pass reference path, used once a plane is known to hold NaN or ±inf.
+#[cold]
+fn moments_filtered(plane: &[f32]) -> (f32, f32, f32, f32, u32) {
+  let (mut min, mut max) = (f32::INFINITY, f32::NEG_INFINITY);
+  let (mut sum, mut n, mut nonfinite) = (0f64, 0u64, 0u32);
+  for &x in plane {
+    if x.is_finite() {
+      min = min.min(x);
+      max = max.max(x);
+      sum += x as f64;
+      n += 1;
+    } else {
+      nonfinite += 1;
+    }
+  }
+  if n == 0 {
+    return (f32::NAN, f32::NAN, f32::NAN, f32::NAN, nonfinite);
+  }
+  let mean = sum / n as f64;
+  let mut m2 = 0f64;
+  for &x in plane {
+    if x.is_finite() {
+      m2 += (x as f64 - mean).powi(2);
+    }
+  }
+  (
+    min,
+    max,
+    mean as f32,
+    (m2 / n as f64).sqrt() as f32,
+    nonfinite,
+  )
 }
 
 pub struct TexStats {

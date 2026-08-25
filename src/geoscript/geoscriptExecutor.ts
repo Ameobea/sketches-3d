@@ -6,6 +6,7 @@ import type {
   GizmoValuesByModule,
   RenderedControl,
   RenderedGizmo,
+  TextureDetail,
   TextureParamsEntry,
 } from './runner/types';
 import type { TreeKind } from './geotoyAPIClient';
@@ -47,6 +48,8 @@ export interface GeoscriptJob {
   rootModuleName?: string;
   /** UI-owned per-output GPU materialization params, from composition tab metadata. */
   textureParams?: TextureParamsEntry[];
+  /** Defaults to `'full'`; level loading passes `'gpu'` to skip host-only texture products. */
+  textureDetail?: TextureDetail;
 }
 
 export interface GeoscriptJobResult {
@@ -133,6 +136,7 @@ export class GeoscriptExecutor {
               tabAmbients: job.tabAmbients,
               gizmoValues: job.gizmoValues,
               textureParams: job.textureParams,
+              textureDetail: job.textureDetail,
               rootModuleName: job.rootModuleName,
             });
 

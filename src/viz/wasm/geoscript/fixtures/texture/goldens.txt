@@ -35,8 +35,8 @@
 07_noise_ramps fbm_seeded[0] 64x64x1 hash=7e205c28e624e882 mean=-0.025039 min=-1.186843 max=1.056997
 07_noise_ramps fbm_3d[0] 64x64x1 hash=944e6152b5d93064 mean=-0.244731 min=-1.222019 max=0.637289
 07_noise_ramps fbm_warp[0] 64x64x1 hash=f55c727af5253d33 mean=-0.027475 min=-1.180851 max=1.291309
-07_noise_ramps spectral_uniform[0] 64x64x1 hash=89fa057526a921cb mean=0.500973 min=0.000735 max=0.999643
-07_noise_ramps ramped_spectral[0] 64x64x3 hash=2dd260adfcc8b0c4 mean=0.469036 min=0.000000 max=1.000000
+07_noise_ramps spectral_uniform[0] 64x64x1 hash=a7dd8c608e5e9e8e mean=0.498511 min=0.000060 max=0.999913
+07_noise_ramps ramped_spectral[0] 64x64x3 hash=db724d1c6a8b6ee4 mean=0.467569 min=0.000000 max=1.000000
 08_motivating layers[0] 128x128x3 hash=591b488c97932ca0 mean=0.380897 min=0.062630 max=0.581511
 08_motivating layers[1] 128x128x3 hash=7473674980fae58f mean=0.367348 min=0.054466 max=0.589865
 08_motivating layers[2] 128x128x3 hash=e0808b0bcc0ca2eb mean=0.356807 min=0.054466 max=0.589916

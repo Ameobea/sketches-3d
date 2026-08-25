@@ -25,6 +25,7 @@ arrayvec = "0.7"
 bitvec = "1"
 siphasher = "1"
 wide = "0.7"
+bytemuck = "1"
 
 mesh = { path = "../mesh" }
 point_distribute = { path = "../point_distribute" }

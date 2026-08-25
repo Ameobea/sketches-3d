@@ -5,6 +5,7 @@ import type { Light } from 'src/geotoy/modes/mesh/lights';
 import type {
   ConstEvalCacheStats,
   GizmoValuesByModule,
+  TextureDetail,
   TextureParamsEntry,
   VectorizeFlags,
   VectorizeReport,
@@ -398,7 +399,10 @@ const methods = {
     Geoscript.geoscript_repl_set_verify(ctxPtr, flags.verify);
     Geoscript.geoscript_repl_set_vectorize_profile(ctxPtr, flags.profile);
   },
-  getRenderedTexture: (ctxPtr: number, texIx: number) => {
+  /** `detail: 'gpu'` skips the host-side-only products (value stats, and the f32 rgba
+   *  expansion the 2D preview needs) — level loading uses none of them, and for a stack
+   *  they dominate the export. */
+  getRenderedTexture: (ctxPtr: number, texIx: number, detail: TextureDetail = 'full') => {
     const [width, height, channels] = Geoscript.geoscript_get_rendered_texture_dims(ctxPtr, texIx);
     /** 1 for plain outputs; stacks concatenate their slices in `pixels`. */
     const layers = Geoscript.geoscript_get_rendered_texture_layers(ctxPtr, texIx);
@@ -408,7 +412,8 @@ const methods = {
     const wrap = Geoscript.geoscript_get_rendered_texture_wrap(ctxPtr, texIx);
     const sourceModule = Geoscript.geoscript_get_rendered_texture_source_module(ctxPtr, texIx);
     const textureId = Geoscript.geoscript_get_rendered_texture_id(ctxPtr, texIx);
-    const stats = Geoscript.geoscript_get_rendered_texture_stats(ctxPtr, texIx);
+    const stats =
+      detail === 'full' ? Geoscript.geoscript_get_rendered_texture_stats(ctxPtr, texIx) : new Float32Array(0);
     /** Empty strings mean unset. */
     const [minFilter, magFilter, format] = Geoscript.geoscript_get_rendered_texture_gpu_params(ctxPtr, texIx);
     /** SIMD-encoded in wasm for u8 materialization formats; empty for float formats. */
@@ -416,9 +421,12 @@ const methods = {
     const encoded = encodedRaw.length ? encodedRaw : undefined;
     // must mirror the wasm export's unset-format resolution
     const encodedFormat = encoded ? format || 'rgba8' : undefined;
-    /** See `GeneratedTexture.rgba`. */
+    /** See `GeneratedTexture.rgba`. Kept for `rgba32f` even at `gpu` detail: there it *is*
+     *  the materialization source, not a preview copy. */
     const rgba =
-      channels === 3 ? Geoscript.geoscript_get_rendered_texture_pixels_rgba(ctxPtr, texIx) : undefined;
+      channels === 3 && (detail === 'full' || format === 'rgba32f')
+        ? Geoscript.geoscript_get_rendered_texture_pixels_rgba(ctxPtr, texIx)
+        : undefined;
     /** A 3-channel output's raw pixels have no consumer: the 2D preview reads `rgba` and
      *  every materialization format reads `encoded` or `rgba` — except r32f/rg32f, which
      *  take channel 0/1 off the raw interleave. Skipping it is the single biggest chunk of

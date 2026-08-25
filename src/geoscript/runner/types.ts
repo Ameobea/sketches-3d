@@ -191,6 +191,10 @@ export interface MatEntry {
   beforeRenderCb?: (curTimeSeconds: number) => void;
 }
 
+/** How much of each rendered texture the host wants back. `gpu` drops the products only
+ *  the Geotoy texture UI reads (value stats, f32 rgba expansion). */
+export type TextureDetail = 'full' | 'gpu';
+
 export interface RunGeoscriptOptions {
   code: string;
   // TODO: maybe make this optional
@@ -208,6 +212,8 @@ export interface RunGeoscriptOptions {
   onStart?: () => void;
   onError?: (error: string) => void;
   renderMode?: boolean;
+  /** Defaults to `'full'`; level loading passes `'gpu'`. */
+  textureDetail?: TextureDetail;
   modules?: Record<string, string>;
   /** Modules that get a tree kind's prelude prepended (resolved wasm-side), keyed by module
    *  name. Dependency roots never receive the entry prelude, so a synthesized module that
