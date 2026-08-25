@@ -1,10 +1,10 @@
 import { runGeoscript } from 'src/geoscript/runner/geoscriptRunner';
 import type { GeoscriptAsyncDeps } from 'src/geoscript/geoscriptWorker.worker';
-import { compileTree, buildInjectedValues } from 'src/geoscript/treeCodegen';
 import { bakeCompositionMeshes, type BakedCompositionMesh } from 'src/geoscript/runner/bakeComposition';
 import type * as THREE from 'three';
 
-import { BAKED_RENDER_WRAPPER } from './loadLevelDef';
+import { BAKED_RENDER_WRAPPER, buildCompositionAssetRunInputs } from './loadLevelDef';
+import { normalizeCompositionRunOutputs } from './compositionRun';
 import type { GeoscriptAssetDef, GeotoyCompositionAssetDef, ObjectDef } from './types';
 import { injectInputs } from './inputInjection';
 import type { InputsJson } from './paramVariants';
@@ -156,33 +156,30 @@ export class ParamVariantResolver {
     const ctxPtr = await ctxPtrPromise;
     await this.initAsyncDeps(def._meta?.asyncDeps);
 
-    const compiled = compileTree(def.tree);
-    const preludeEjected = def.preludeEjected ?? false;
-    const ambientSources: string[] = [];
-    if (!preludeEjected) ambientSources.push(await repl.getPrelude('mesh'));
-    if (def.tree.globalsSource.trim().length > 0) ambientSources.push(def.tree.globalsSource);
+    const run = buildCompositionAssetRunInputs(def, merged);
     await repl.setMaterials(ctxPtr, def.defaultMaterialName ?? null, def.materialNames ?? []);
 
     const result = await runGeoscript({
-      code: compiled.rootSource,
+      code: run.code,
       ctxPtr,
       repl,
-      preludeKind: preludeEjected ? undefined : 'mesh',
-      modules: compiled.modules,
-      ambientSources,
-      gizmoValues: injectInputs(buildInjectedValues(def.tree), merged, [
-        ...Object.keys(compiled.modules),
-        '_root',
-      ]),
+      preludeKind: run.preludeKind,
+      modules: run.modules,
+      tabAmbients: run.tabAmbients,
+      textureParams: run.textureParams,
+      rootModuleName: run.rootModuleName,
+      gizmoValues: run.gizmoValues,
     });
     if (result.error) {
       console.error(`[ParamVariantResolver] composition variant "${eid}" failed:`, result.error);
       return null;
     }
-    if (result.controls.length > 0) this.editor.assetControls.set(eid, result.controls);
-    if (result.gizmos.length > 0) this.editor.assetGizmos.set(eid, result.gizmos);
+    const controls = normalizeCompositionRunOutputs(result.controls, run.tabId);
+    const gizmos = normalizeCompositionRunOutputs(result.gizmos, run.tabId);
+    if (controls.length > 0) this.editor.assetControls.set(eid, controls);
+    if (gizmos.length > 0) this.editor.assetGizmos.set(eid, gizmos);
     else this.editor.assetGizmos.delete(eid);
-    return bakeCompositionMeshes(def.tree, result.objects);
+    return bakeCompositionMeshes(def.tree, result.objects, run.tabId);
   }
 
   private async initAsyncDeps(deps: string[] | undefined) {

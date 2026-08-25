@@ -1,7 +1,14 @@
 import * as Comlink from 'comlink';
 
 import { runGeoscript } from './runner/geoscriptRunner';
-import type { GeneratedObject, GizmoValuesByModule, RenderedControl, RenderedGizmo } from './runner/types';
+import type {
+  GeneratedObject,
+  GizmoValuesByModule,
+  RenderedControl,
+  RenderedGizmo,
+  TextureParamsEntry,
+} from './runner/types';
+import type { TreeKind } from './geotoyAPIClient';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
 import { WorkerManager } from './workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
@@ -29,6 +36,17 @@ export interface GeoscriptJob {
   availableMaterials?: string[];
   /** Default material name applied to meshes that don't call `set_material`. */
   defaultMaterialName?: string | null;
+  /**
+   * Per-tab ambient scopes for multi-tab composition runs (dep tabs first, entry tab last);
+   * takes precedence over `ambientSources`/`includePrelude`-derived ambients.
+   */
+  tabAmbients?: { tabId: string; preludeKind: TreeKind | ''; globalsSource: string }[];
+  /** Entry-program prelude kind; defaults to `includePrelude ? 'mesh' : undefined`. */
+  preludeKind?: TreeKind;
+  /** Qualified entry module name (`<tabId>:_root`) for multi-tab runs. */
+  rootModuleName?: string;
+  /** UI-owned per-output GPU materialization params, from composition tab metadata. */
+  textureParams?: TextureParamsEntry[];
 }
 
 export interface GeoscriptJobResult {
@@ -109,11 +127,13 @@ export class GeoscriptExecutor {
               code: job.code,
               ctxPtr,
               repl,
-              // Level-def assets are mesh trees; their config stays a boolean.
-              preludeKind: job.includePrelude ? 'mesh' : undefined,
+              preludeKind: job.preludeKind ?? (job.includePrelude ? 'mesh' : undefined),
               modules: job.modules,
-              ambientSources: job.ambientSources,
+              ambientSources: job.tabAmbients ? undefined : job.ambientSources,
+              tabAmbients: job.tabAmbients,
               gizmoValues: job.gizmoValues,
+              textureParams: job.textureParams,
+              rootModuleName: job.rootModuleName,
             });
 
             const result: GeoscriptJobResult = {

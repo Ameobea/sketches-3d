@@ -189,12 +189,41 @@ const TreeDefSchema = z.custom<GeotoyTreeDef>(
     typeof (v as { nodes?: unknown }).nodes === 'object'
 );
 
+/**
+ * One composition tab inlined alongside a primary tree because it participates in the run:
+ * texture tabs feeding procedural material slots (`render: true` — their roots are imported
+ * as side effects so their `render_texture` calls fire) and tabs pulled in transitively by
+ * qualified imports. Mirrors the tab-shaped inputs of Geotoy's multi-tab `buildRunInput`.
+ */
+export const CompositionTabDefSchema = z.object({
+  id: z.string(),
+  kind: z.enum(['mesh', 'texture']),
+  tree: TreeDefSchema,
+  preludeEjected: z.boolean().optional(),
+  /** UI-owned per-output GPU materialization params from tab metadata. */
+  textureParams: z
+    .record(
+      z.string(),
+      z.object({
+        minFilter: z.string().optional(),
+        magFilter: z.string().optional(),
+        format: z.string().optional(),
+      })
+    )
+    .optional(),
+  /** Prepend a side-effect import of this tab's root so its renders fire unconditionally. */
+  render: z.boolean().optional(),
+});
+export type CompositionTabDef = z.infer<typeof CompositionTabDefSchema>;
+
 /** Composition reference as authored on disk; the `tree` is inlined server-side. */
 export const GeotoyCompositionAssetDefRawSchema = z.object({
   type: z.literal('geotoyComposition'),
   compositionId: z.number().int().positive(),
   /** Pin a specific version; omitted = latest. */
   version: z.number().int().optional(),
+  /** Mesh tab (tree id) to import; omitted = the composition's first mesh tab. */
+  tab: z.string().optional(),
   /** geotoy material NAME -> level-def material id. Unmapped names fall back. */
   materialMap: z.record(z.string(), z.string()).optional(),
   /** Restrict the import to a subtree by node name; omitted = whole tree. */
@@ -208,6 +237,10 @@ export const GeotoyCompositionAssetDefRawSchema = z.object({
 /** Resolved form (post server-side inlining): carries the full composition tree. */
 export const GeotoyCompositionAssetDefSchema = GeotoyCompositionAssetDefRawSchema.extend({
   tree: TreeDefSchema,
+  /** Tree id of the imported mesh tab — the module-namespace prefix for the baked run. */
+  treeId: z.string().optional(),
+  /** Other composition tabs that join the run (procedural texture sources, import targets). */
+  depTabs: z.array(CompositionTabDefSchema).optional(),
   /** Mirrors the composition's run config; drives prelude inclusion when baking the tree. */
   preludeEjected: z.boolean().optional(),
   /**
@@ -267,6 +300,66 @@ export const TextureDefSchema = z.object({
 });
 
 export type TextureDef = z.infer<typeof TextureDefSchema>;
+
+/**
+ * A texture sourced from a Geotoy composition's texture tab, as authored on disk. The server
+ * inlines the run payload (trees + tab metadata) and rewrites it to `GeotoyProcTextureDefSchema`.
+ */
+export const GeotoyTextureDefRawSchema = z.object({
+  geotoyComposition: z.number().int().positive(),
+  /** Pin a specific version; omitted = latest. */
+  version: z.number().int().optional(),
+  /** Texture tab (tree id); optional when the composition has exactly one texture tab. */
+  tab: z.string().optional(),
+  /** `render_texture(name=…)` output to bind. */
+  output: z.string(),
+  /** Values for the tab's `input_*` controls, keyed by control name. */
+  inputs: InputsJsonSchema.optional(),
+});
+export type GeotoyTextureDefRaw = z.infer<typeof GeotoyTextureDefRawSchema>;
+
+/** Standalone texture-run payload: the target tab plus its transitive import deps, inlined. */
+export const GeotoyTextureRunSchema = z.object({
+  /** Entries with equal keys share one geoscript run client-side. */
+  key: z.string(),
+  rootTabId: z.string(),
+  /** Root tab first, then deps in discovery order. */
+  tabs: z.array(CompositionTabDefSchema),
+  inputs: InputsJsonSchema.optional(),
+});
+export type GeotoyTextureRun = z.infer<typeof GeotoyTextureRunSchema>;
+
+/**
+ * Resolved form: a texture materialized from a geoscript run's `render_texture` output rather
+ * than fetched from a URL. Exactly one of `asset` (an owning `geotoyComposition` asset whose
+ * bake run produces it) or `run` (a standalone inlined texture run) is set.
+ */
+export const GeotoyProcTextureDefSchema = z.object({
+  kind: z.literal('geotoyProcedural'),
+  tab: z.string(),
+  output: z.string(),
+  /** From the authoring handle (`procedural:` vs `procedural-stack:`): the run output's
+   *  layer-kind must match, so a stale-kind slot goes unbound instead of binding the wrong
+   *  sampler type. Absent (standalone imports) = bind whatever the run produces. */
+  stack: z.boolean().optional(),
+  asset: z.string().optional(),
+  run: GeotoyTextureRunSchema.optional(),
+});
+export type GeotoyProcTextureDef = z.infer<typeof GeotoyProcTextureDefSchema>;
+
+export const LevelTextureDefRawSchema = z.union([TextureDefSchema, GeotoyTextureDefRawSchema]);
+export type LevelTextureDefRaw = z.infer<typeof LevelTextureDefRawSchema>;
+export const LevelTextureDefSchema = z.union([TextureDefSchema, GeotoyProcTextureDefSchema]);
+export type LevelTextureDef = z.infer<typeof LevelTextureDefSchema>;
+
+/** Both authoring + resolved variants — the shape of pass-through records in server resolvers
+ *  that read raw entries and write resolved ones. */
+export type AnyLevelTextureDef = TextureDef | GeotoyTextureDefRaw | GeotoyProcTextureDef;
+
+export const isGeotoyProcTexture = (def: AnyLevelTextureDef): def is GeotoyProcTextureDef =>
+  'kind' in def && def.kind === 'geotoyProcedural';
+export const isGeotoyTextureRaw = (def: AnyLevelTextureDef): def is GeotoyTextureDefRaw =>
+  'geotoyComposition' in def;
 
 // Material schema lives in the shared `src/viz/materials` module; re-exported here so existing
 // `./types` importers keep resolving. Level-def-only authoring layers (Raw schemas, `extends`,
@@ -870,7 +963,7 @@ export const LevelDefSchema = z
     $schema: z.string().optional(),
     version: z.literal(1),
     /** Named texture definitions loaded in parallel at startup. */
-    textures: z.record(z.string(), TextureDefSchema).optional(),
+    textures: z.record(z.string(), LevelTextureDefSchema).optional(),
     /** Named material definitions built once their textures are ready. */
     materials: z.record(z.string(), MaterialDefSchema).optional(),
     assets: z.record(z.string(), AssetDefSchema),
@@ -983,7 +1076,7 @@ export type LevelDef = z.infer<typeof LevelDefSchema>;
 export const LevelDefRawSchema = z.object({
   $schema: z.string().optional(),
   version: z.literal(1),
-  textures: z.record(z.string(), TextureDefSchema).optional(),
+  textures: z.record(z.string(), LevelTextureDefRawSchema).optional(),
   materials: z.record(z.string(), MaterialDefRawSchema).optional(),
   assets: z.record(z.string(), AssetDefRawSchema),
   objects: z.array(z.union([ObjectDefSchema, ObjectGroupDefSchema])),
@@ -998,7 +1091,7 @@ export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;
 
 export const MaterialsFileSchema = z.object({
   $schema: z.string().optional(),
-  textures: z.record(z.string(), TextureDefSchema).optional(),
+  textures: z.record(z.string(), LevelTextureDefRawSchema).optional(),
   materials: z.record(z.string(), MaterialDefRawSchema).optional(),
 });
 export type MaterialsFile = z.infer<typeof MaterialsFileSchema>;

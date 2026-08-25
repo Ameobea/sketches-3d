@@ -7,45 +7,34 @@ import type { TextureOutputMeta } from 'src/geoscript/geotoyAPIClient';
 import type { GeneratedTexture } from 'src/geoscript/runner/types';
 
 /**
- * Material texture slots reference a texture tab's `render_texture` output through a
- * sentinel handle string, `procedural:<tabId>:<outputName>`, flowing through the same
- * string-handle plumbing as library texture ids. Each handle owns one stable
- * `DataTexture`: materials capture it at build time and every run's outputs are uploaded
- * into it in place, so material builds and texture evals never need ordering.
+ * Each `procedural:` handle owns one stable `DataTexture`: materials capture it at build
+ * time and every run's outputs are uploaded into it in place, so material builds and
+ * texture evals never need ordering. Handle string format lives in
+ * `proceduralHandleFormat.ts` (re-exported here) so server code can parse handles without
+ * pulling in THREE/conf.
  *
  * Pixels are stored linear (non-sRGB) in the output's materialization format — `rgba8`
  * unless overridden per output (see `formatOptionsForChannels`). The values are the
  * geoscript f32s themselves, matching what the 2D preview shows before its sRGB display
  * transform; u8 formats quantize with a [0,1] clamp at upload.
  */
-export const PROCEDURAL_HANDLE_PREFIX = 'procedural:';
-/** `render_texture_stack` outputs. Stack-ness lives in the handle so the registry can
- *  create the right placeholder kind (`DataArrayTexture`) before the producing tab has
- *  ever run; consumers detect stack-backed slots via `instanceof`. */
-export const PROCEDURAL_STACK_HANDLE_PREFIX = 'procedural-stack:';
-
-/** True for both single (`procedural:`) and stack (`procedural-stack:`) handles. */
-export const isProceduralHandle = (handle: string): boolean =>
-  handle.startsWith(PROCEDURAL_HANDLE_PREFIX) || handle.startsWith(PROCEDURAL_STACK_HANDLE_PREFIX);
-
-export const isStackHandle = (handle: string): boolean => handle.startsWith(PROCEDURAL_STACK_HANDLE_PREFIX);
+export {
+  PROCEDURAL_HANDLE_PREFIX,
+  PROCEDURAL_STACK_HANDLE_PREFIX,
+  isProceduralHandle,
+  isStackHandle,
+  buildProceduralHandle,
+  parseProceduralHandle,
+} from './proceduralHandleFormat';
+import {
+  buildProceduralHandle,
+  isProceduralHandle,
+  isStackHandle,
+  parseProceduralHandle,
+} from './proceduralHandleFormat';
 
 /** Material slots that accept stack handles. */
 export const STACK_CAPABLE_SLOTS: readonly string[] = ['map', 'normalMap', 'roughnessMap', 'pomHeightMap'];
-
-export const buildProceduralHandle = (tabId: string, output: string, stack = false): string =>
-  `${stack ? PROCEDURAL_STACK_HANDLE_PREFIX : PROCEDURAL_HANDLE_PREFIX}${tabId}:${output}`;
-
-/** Output names are free-form and may contain `:`; tab ids can't, so split on the first. */
-export const parseProceduralHandle = (
-  handle: string
-): { tabId: string; output: string; stack: boolean } | null => {
-  if (!isProceduralHandle(handle)) return null;
-  const stack = isStackHandle(handle);
-  const rest = handle.slice((stack ? PROCEDURAL_STACK_HANDLE_PREFIX : PROCEDURAL_HANDLE_PREFIX).length);
-  const ix = rest.indexOf(':');
-  return ix > 0 ? { tabId: rest.slice(0, ix), output: rest.slice(ix + 1), stack } : null;
-};
 
 const registry = new Map<string, THREE.DataTexture | THREE.DataArrayTexture>();
 
@@ -190,6 +179,46 @@ const encodePixels = (
   }
 };
 
+const applyGeneratedTexture = (tex: THREE.DataTexture | THREE.DataArrayTexture, t: GeneratedTexture) => {
+  const isStack = t.layers > 1;
+  const format = t.format ?? DEFAULT_FORMAT;
+  const isFloat = format.endsWith('32f');
+  let minName = t.minFilter ?? DEFAULT_MIN_FILTER;
+  if (isFloat) minName = clampMinFilterForFloat(minName);
+  const genMips = !isFloat && minName.includes('mipmap');
+  const { data, glFormat, type } = encodePixels(t, format);
+
+  // GL storage is immutable (texStorage2D/3D): a dimension/format/mip-count change needs
+  // a fresh GL texture, which dispose() forces while keeping this JS instance (and every
+  // material holding it).
+  if (
+    tex.image.width !== t.width ||
+    tex.image.height !== t.height ||
+    (isStack && (tex.image as THREE.DataArrayTexture['image']).depth !== t.layers) ||
+    tex.format !== glFormat ||
+    tex.type !== type ||
+    tex.generateMipmaps !== genMips
+  ) {
+    tex.dispose();
+  }
+  tex.image = (
+    isStack
+      ? { data, width: t.width, height: t.height, depth: t.layers }
+      : { data, width: t.width, height: t.height }
+  ) as THREE.DataTexture['image'];
+  tex.format = glFormat;
+  tex.type = type;
+  tex.generateMipmaps = genMips;
+  // Tightly-packed u8 rows aren't 4-byte multiples in general.
+  tex.unpackAlignment = format === 'r8' || format === 'rg8' ? 1 : 4;
+  tex.minFilter = FILTERS[minName] ?? FILTERS[DEFAULT_MIN_FILTER];
+  tex.magFilter = (FILTERS[t.magFilter ?? defaultMagFilter()] ??
+    FILTERS[defaultMagFilter()]) as THREE.MagnificationTextureFilter;
+  tex.wrapS = tex.wrapT = WRAP[t.wrap];
+  tex.anisotropy = getDefaultAnisotropy();
+  tex.needsUpdate = true;
+};
+
 /** In-place upload of a run's outputs into any matching placeholder textures. Stack
  *  outputs only match stack-handle entries (and vice versa) since the handle key encodes
  *  stack-ness — a kind change under the same output name needs a re-pick, not an upload. */
@@ -197,47 +226,17 @@ export const uploadProceduralTextures = (textures: GeneratedTexture[]) => {
   for (const t of textures) {
     const sep = t.sourceModule.indexOf(':');
     if (sep <= 0) continue;
-    const isStack = t.layers > 1;
-    const tex = registry.get(buildProceduralHandle(t.sourceModule.slice(0, sep), t.name, isStack));
-    if (!tex) continue;
-
-    const format = t.format ?? DEFAULT_FORMAT;
-    const isFloat = format.endsWith('32f');
-    let minName = t.minFilter ?? DEFAULT_MIN_FILTER;
-    if (isFloat) minName = clampMinFilterForFloat(minName);
-    const genMips = !isFloat && minName.includes('mipmap');
-    const { data, glFormat, type } = encodePixels(t, format);
-
-    // GL storage is immutable (texStorage2D/3D): a dimension/format/mip-count change needs
-    // a fresh GL texture, which dispose() forces while keeping this JS instance (and every
-    // material holding it).
-    if (
-      tex.image.width !== t.width ||
-      tex.image.height !== t.height ||
-      (isStack && (tex.image as THREE.DataArrayTexture['image']).depth !== t.layers) ||
-      tex.format !== glFormat ||
-      tex.type !== type ||
-      tex.generateMipmaps !== genMips
-    ) {
-      tex.dispose();
-    }
-    tex.image = (
-      isStack
-        ? { data, width: t.width, height: t.height, depth: t.layers }
-        : { data, width: t.width, height: t.height }
-    ) as THREE.DataTexture['image'];
-    tex.format = glFormat;
-    tex.type = type;
-    tex.generateMipmaps = genMips;
-    // Tightly-packed u8 rows aren't 4-byte multiples in general.
-    tex.unpackAlignment = format === 'r8' || format === 'rg8' ? 1 : 4;
-    tex.minFilter = FILTERS[minName] ?? FILTERS[DEFAULT_MIN_FILTER];
-    tex.magFilter = (FILTERS[t.magFilter ?? defaultMagFilter()] ??
-      FILTERS[defaultMagFilter()]) as THREE.MagnificationTextureFilter;
-    tex.wrapS = tex.wrapT = WRAP[t.wrap];
-    tex.anisotropy = getDefaultAnisotropy();
-    tex.needsUpdate = true;
+    const tex = registry.get(buildProceduralHandle(t.sourceModule.slice(0, sep), t.name, t.layers > 1));
+    if (tex) applyGeneratedTexture(tex, t);
   }
+};
+
+/** Fresh standalone texture for a run output (level-def consumption); identical config to the
+ *  registry upload path so level renders match Geotoy exactly. Pixels stay linear (non-sRGB). */
+export const createGeneratedTexture = (t: GeneratedTexture): THREE.DataTexture | THREE.DataArrayTexture => {
+  const tex = t.layers > 1 ? new THREE.DataArrayTexture() : new THREE.DataTexture();
+  applyGeneratedTexture(tex, t);
+  return tex;
 };
 
 const TEXTURE_SLOTS = [

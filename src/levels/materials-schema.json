@@ -11,66 +11,470 @@
         "type": "string"
       },
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "type": "string"
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "wrapS": {
+                "type": "string",
+                "enum": [
+                  "repeat",
+                  "clamp",
+                  "mirror"
+                ]
+              },
+              "wrapT": {
+                "type": "string",
+                "enum": [
+                  "repeat",
+                  "clamp",
+                  "mirror"
+                ]
+              },
+              "magFilter": {
+                "type": "string",
+                "enum": [
+                  "nearest",
+                  "linear"
+                ]
+              },
+              "minFilter": {
+                "type": "string",
+                "enum": [
+                  "nearest",
+                  "nearestMipNearest",
+                  "nearestMipLinear",
+                  "linearMipLinear"
+                ]
+              },
+              "anisotropy": {
+                "type": "number"
+              },
+              "colorSpace": {
+                "type": "string",
+                "enum": [
+                  "srgb",
+                  ""
+                ]
+              },
+              "format": {
+                "type": "string",
+                "enum": [
+                  "rgba",
+                  "rg",
+                  "red"
+                ]
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": false
           },
-          "wrapS": {
-            "type": "string",
-            "enum": [
-              "repeat",
-              "clamp",
-              "mirror"
-            ]
-          },
-          "wrapT": {
-            "type": "string",
-            "enum": [
-              "repeat",
-              "clamp",
-              "mirror"
-            ]
-          },
-          "magFilter": {
-            "type": "string",
-            "enum": [
-              "nearest",
-              "linear"
-            ]
-          },
-          "minFilter": {
-            "type": "string",
-            "enum": [
-              "nearest",
-              "nearestMipNearest",
-              "nearestMipLinear",
-              "linearMipLinear"
-            ]
-          },
-          "anisotropy": {
-            "type": "number"
-          },
-          "colorSpace": {
-            "type": "string",
-            "enum": [
-              "srgb",
-              ""
-            ]
-          },
-          "format": {
-            "type": "string",
-            "enum": [
-              "rgba",
-              "rg",
-              "red"
-            ]
+          {
+            "type": "object",
+            "properties": {
+              "geotoyComposition": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "version": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "tab": {
+                "type": "string"
+              },
+              "output": {
+                "type": "string"
+              },
+              "inputs": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "float"
+                        },
+                        "value": {
+                          "type": "number"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "int"
+                        },
+                        "value": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "bool"
+                        },
+                        "value": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "color"
+                        },
+                        "value": {
+                          "anyOf": [
+                            {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "string",
+                                  "pattern": "^#[0-9a-fA-F]{6}$"
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "select"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "vec3"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "number"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "transform"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "pos": {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            "rot": {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            },
+                            "scale": {
+                              "type": "array",
+                              "items": [
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                },
+                                {
+                                  "type": "number"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "pos",
+                            "rot",
+                            "scale"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "spline"
+                        },
+                        "value": {
+                          "type": "array",
+                          "items": {
+                            "type": "array",
+                            "items": [
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              },
+                              {
+                                "type": "number"
+                              }
+                            ]
+                          }
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "ramp"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "scalar": {
+                              "type": "boolean"
+                            },
+                            "stops": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "pos": {
+                                    "type": "number"
+                                  },
+                                  "value": {
+                                    "minItems": 1,
+                                    "maxItems": 3,
+                                    "type": "array",
+                                    "items": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "ease": {
+                                    "type": "string",
+                                    "enum": [
+                                      "linear",
+                                      "smooth",
+                                      "smoother",
+                                      "step"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "pos",
+                                  "value",
+                                  "ease"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "extend": {
+                              "type": "string",
+                              "enum": [
+                                "clamp",
+                                "repeat",
+                                "mirror"
+                              ]
+                            },
+                            "space": {
+                              "type": "string",
+                              "enum": [
+                                "linear",
+                                "oklab",
+                                "oklch",
+                                "srgb"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "scalar",
+                            "stops",
+                            "extend",
+                            "space"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "image_levels"
+                        },
+                        "value": {
+                          "type": "object",
+                          "properties": {
+                            "in_lo": {
+                              "type": "number"
+                            },
+                            "in_hi": {
+                              "type": "number"
+                            },
+                            "out_lo": {
+                              "type": "number"
+                            },
+                            "out_hi": {
+                              "type": "number"
+                            },
+                            "gamma": {
+                              "type": "number"
+                            }
+                          },
+                          "required": [
+                            "in_lo",
+                            "in_hi",
+                            "out_lo",
+                            "out_hi",
+                            "gamma"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "type",
+                        "value"
+                      ],
+                      "additionalProperties": false
+                    }
+                  ]
+                }
+              }
+            },
+            "required": [
+              "geotoyComposition",
+              "output"
+            ],
+            "additionalProperties": false
           }
-        },
-        "required": [
-          "url"
-        ],
-        "additionalProperties": false
+        ]
       }
     },
     "materials": {

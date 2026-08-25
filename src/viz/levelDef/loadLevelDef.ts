@@ -13,7 +13,12 @@ import {
   instantiateLevelObject,
   meshesFromRunObjects,
 } from './levelObjectUtils';
-import type { GeneratedObject, RenderedControl, RenderedGizmo } from 'src/geoscript/runner/types';
+import type {
+  GeneratedObject,
+  GeneratedTexture,
+  RenderedControl,
+  RenderedGizmo,
+} from 'src/geoscript/runner/types';
 import type {
   AssetDef,
   BehaviorSpec,
@@ -21,14 +26,17 @@ import type {
   CsgTreeNode,
   GeoscriptAssetMeta,
   GeotoyCompositionAssetDef,
+  GeotoyProcTextureDef,
   LevelDef,
   ObjectDef,
   ObjectGroupDef,
   ParkourRegion,
+  TextureDef,
 } from './types';
-import { TEXTURE_SLOTS } from './types';
+import { TEXTURE_SLOTS, isGeotoyProcTexture } from './types';
 import type { ContactRegion } from '../collision';
-import { compileTree, buildInjectedValues } from 'src/geoscript/treeCodegen';
+import { buildCompositionRunInputs, normalizeCompositionRunOutputs } from './compositionRun';
+import { createGeneratedTexture } from 'src/geotoy/modules/proceduralTextures';
 import { injectInputs, warnUnmatchedInputs } from './inputInjection';
 import { canonicalizeInputs, djb2Hash, expandParamVariants, type InputsJson } from './paramVariants';
 import {
@@ -263,6 +271,17 @@ export const BAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_t
 
 /** Leaves the root transform on `obj.transform`. Use when the consumer wants it separable (e.g. editor gizmo). */
 export const UNBAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | render';
+
+/** The run inputs for a composition asset's mesh-tab bake (shared with the editor's variant rebaker). */
+export const buildCompositionAssetRunInputs = (
+  def: GeotoyCompositionAssetDef,
+  inputs: InputsJson | undefined
+) =>
+  buildCompositionRunInputs(
+    { id: def.treeId ?? 'main', kind: 'mesh', tree: def.tree, preludeEjected: def.preludeEjected },
+    def.depTabs ?? [],
+    inputs
+  );
 
 /**
  * Runs a single geoscript code string through the geoscript worker and returns the
@@ -578,13 +597,14 @@ export const loadLevelDef = (
   // The geoscript worker hosts Manifold (used for convex-hull derivation) alongside the
   // geoscript runtime.  Acquire it lazily — only if some asset actually needs the worker
   // (geoscript/csg assets or assets with `colliderShape: 'convexHull'`).
-  const needsExecutor = Object.values(levelDef.assets).some(
-    def =>
-      def.type === 'geoscript' ||
-      def.type === 'csg' ||
-      def.type === 'geotoyComposition' ||
-      def.colliderShape === 'convexHull'
-  );
+  const needsExecutor =
+    Object.values(levelDef.assets).some(
+      def =>
+        def.type === 'geoscript' ||
+        def.type === 'csg' ||
+        def.type === 'geotoyComposition' ||
+        def.colliderShape === 'convexHull'
+    ) || Object.values(levelDef.textures ?? {}).some(isGeotoyProcTexture);
   const sharedExecutor: GeoscriptExecutor | undefined = needsExecutor
     ? viz.getGeoscriptExecutor()
     : undefined;
@@ -979,40 +999,59 @@ export const loadLevelDef = (
     if (physicsReady) maybeRegisterPhysics(viz.fpCtx!, levelObj);
   };
 
+  // Effective (variant) asset id → base asset id; procedural texture entries reference the base.
+  const variantBase = new Map<string, string>();
+  for (const [base, vids] of paramVariants.variantsByBase) {
+    for (const vid of vids) variantBase.set(vid, base);
+  }
+
   const resolveCompositionAssets = async (): Promise<void> => {
     const compIds = sortedAssetIds.filter(id => assetDefs[id].type === 'geotoyComposition');
-    if (compIds.length === 0) return;
+
+    // Standalone geotoy texture entries grouped by run key — one geoscript run per group.
+    const textureRunGroups = new Map<string, NonNullable<GeotoyProcTextureDef['run']>>();
+    for (const def of procTexPending.values()) {
+      if (def.run && !textureRunGroups.has(def.run.key)) textureRunGroups.set(def.run.key, def.run);
+    }
+
+    // Terminal failsafe: anything still pending once every run has settled (or when no run
+    // could ever produce it) is failed so dependent materials build without the map.
+    const finishRemaining = () => {
+      for (const texName of procTexPending.keys()) {
+        console.error(`[levelDef] procedural texture "${texName}" was never produced by any run`);
+      }
+      failProceduralTextures(() => true);
+    };
+
+    if (compIds.length === 0 && textureRunGroups.size === 0) {
+      finishRemaining();
+      return;
+    }
     if (!sharedExecutor) {
-      console.error('[levelDef] geotoyComposition assets present but no geoscript executor available');
+      console.error('[levelDef] geotoy composition runs required but no geoscript executor available');
+      failProceduralTextures(() => true);
       return;
     }
 
-    const prelude = await sharedExecutor.getPrelude('mesh');
-
-    const jobs: GeoscriptJob[] = compIds.map(id => {
+    const compJobs: GeoscriptJob[] = compIds.map(id => {
       const def = assetDefs[id] as GeotoyCompositionAssetDef;
       if (def.rootNodeName) {
         console.warn(
           `[levelDef] composition "${id}": rootNodeName scoping is not supported in v1; importing the whole tree`
         );
       }
-      const compiled = compileTree(def.tree);
-      const preludeEjected = def.preludeEjected ?? false;
-      const ambientSources: string[] = [];
-      if (!preludeEjected) ambientSources.push(prelude);
-      if (def.tree.globalsSource.trim().length > 0) ambientSources.push(def.tree.globalsSource);
-      const asyncDeps = def._meta?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [];
+      const run = buildCompositionAssetRunInputs(def, def.inputs);
       return {
         id,
-        modules: compiled.modules,
-        code: compiled.rootSource,
-        includePrelude: !preludeEjected,
-        ambientSources,
-        gizmoValues: injectInputs(buildInjectedValues(def.tree), def.inputs, [
-          ...Object.keys(compiled.modules),
-          '_root',
-        ]),
-        asyncDeps,
+        modules: run.modules,
+        code: run.code,
+        includePrelude: !def.preludeEjected,
+        preludeKind: run.preludeKind,
+        tabAmbients: run.tabAmbients,
+        rootModuleName: run.rootModuleName,
+        textureParams: run.textureParams,
+        gizmoValues: run.gizmoValues,
+        asyncDeps: def._meta?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [],
         deps: [],
         collectMetadata: false,
         availableMaterials: def.materialNames ?? [],
@@ -1020,29 +1059,73 @@ export const loadLevelDef = (
       };
     });
 
-    const promises = sharedExecutor.submit(jobs);
-    await Promise.all(
-      compIds.map(id =>
-        promises.get(id)!.then(res => {
-          if (res.error) {
-            console.error(`[levelDef] composition asset "${id}" error:`, res.error);
-            return;
-          }
-          const def = assetDefs[id] as GeotoyCompositionAssetDef;
-          warnUnmatchedInputs(id, def.inputs, res.controls, res.gizmos);
-          if (res.controls.length > 0) assetControls.set(id, res.controls);
-          if (res.gizmos.length > 0) assetGizmos.set(id, res.gizmos);
-          const baked = bakeCompositionMeshes(def.tree, res.objects);
-          compositionBaked.set(id, baked);
-          if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
-          for (const objDef of assetToObjDefs.get(id) ?? []) {
-            const group = nodeById.get(objDef.id);
-            if (!group || !isCompositionNode(group)) continue;
-            baked.forEach((bm, i) => placeCompositionChild(group, objDef, id, def, bm, i));
-          }
-        })
-      )
-    );
+    const texRunJobId = (key: string) => `__geotoyTexRun__:${key}`;
+    const texRunJobs: GeoscriptJob[] = [...textureRunGroups.entries()].map(([key, group]) => {
+      const [root, ...deps] = group.tabs;
+      const run = buildCompositionRunInputs(root, deps, group.inputs);
+      return {
+        id: texRunJobId(key),
+        modules: run.modules,
+        code: run.code,
+        includePrelude: false,
+        preludeKind: run.preludeKind,
+        tabAmbients: run.tabAmbients,
+        rootModuleName: run.rootModuleName,
+        textureParams: run.textureParams,
+        gizmoValues: run.gizmoValues,
+        asyncDeps: [],
+        deps: [],
+        collectMetadata: false,
+        availableMaterials: [],
+        defaultMaterialName: null,
+      };
+    });
+
+    const promises = sharedExecutor.submit([...compJobs, ...texRunJobs]);
+    try {
+      await Promise.all([
+        ...compIds.map(id =>
+          promises.get(id)!.then(res => {
+            if (res.error) {
+              // Don't fail the asset's pending textures here — a sibling variant run of the
+              // same base asset may still supply them; the terminal sweep covers total failure.
+              console.error(`[levelDef] composition asset "${id}" error:`, res.error);
+              return;
+            }
+            const def = assetDefs[id] as GeotoyCompositionAssetDef;
+            const treeId = def.treeId ?? 'main';
+            const controls = normalizeCompositionRunOutputs(res.controls, treeId);
+            const gizmos = normalizeCompositionRunOutputs(res.gizmos, treeId);
+            warnUnmatchedInputs(id, def.inputs, controls, gizmos);
+            if (controls.length > 0) assetControls.set(id, controls);
+            if (gizmos.length > 0) assetGizmos.set(id, gizmos);
+            const baked = bakeCompositionMeshes(def.tree, res.objects, treeId);
+            compositionBaked.set(id, baked);
+            if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
+            // First successful run (base or variant) supplies the asset's procedural textures.
+            const baseId = variantBase.get(id) ?? id;
+            consumeRunTextures(res.objects, d => d.asset === baseId, `composition asset "${id}"`);
+            for (const objDef of assetToObjDefs.get(id) ?? []) {
+              const group = nodeById.get(objDef.id);
+              if (!group || !isCompositionNode(group)) continue;
+              baked.forEach((bm, i) => placeCompositionChild(group, objDef, id, def, bm, i));
+            }
+          })
+        ),
+        ...[...textureRunGroups.keys()].map(key =>
+          promises.get(texRunJobId(key))!.then(res => {
+            if (res.error) {
+              console.error(`[levelDef] geotoy texture run "${key}" error:`, res.error);
+              failProceduralTextures(d => d.run?.key === key);
+              return;
+            }
+            consumeRunTextures(res.objects, d => d.run?.key === key, `geotoy texture run "${key}"`);
+          })
+        ),
+      ]);
+    } finally {
+      finishRemaining();
+    }
   };
 
   const tryBuildMaterial = (matName: string) => {
@@ -1091,35 +1174,113 @@ export const loadLevelDef = (
   const texturePool = new TextureFetchPool(8, 3);
   const textureEntries = Object.entries(levelDef.textures ?? {});
 
-  const textureFetchPromises = textureEntries.map(([texName, texDef]) =>
-    texturePool.load(texDef, texName).then(
-      tex => {
-        // Upload to GPU immediately so cost is spread across the loading window
-        // rather than spiking on the first render frame after loadingComplete resolves.
-        viz.renderer.initTexture(tex);
-        loadedTextures.set(texName, tex);
+  // Geotoy-procedural entries resolve from geoscript runs (the owning composition asset's bake,
+  // or a standalone texture run) rather than URL fetches. Settled inside the composition-run
+  // phase, which `objects`/`complete` already await.
+  const procTexPending = new Map<string, GeotoyProcTextureDef>();
+  for (const [texName, texDef] of textureEntries) {
+    if (isGeotoyProcTexture(texDef)) procTexPending.set(texName, texDef);
+  }
 
-        // Mark this texture as loaded in every material that references it
-        for (const [matName, pending] of matTexPending) {
-          if (pending.has(texName)) {
-            pending.delete(texName);
-            matTexLoaded.get(matName)!.set(texName, tex);
-            tryBuildMaterial(matName);
-          }
-        }
-      },
-      err => {
-        console.error(`[levelDef] Texture "${texName}" failed after all retries:`, err);
-        // Still advance: remove from pending sets so materials aren't blocked forever
-        for (const [matName, pending] of matTexPending) {
-          if (pending.has(texName)) {
-            pending.delete(texName);
-            tryBuildMaterial(matName);
-          }
+  /** Adopt (or on `null`, give up on) a pending procedural texture, unblocking its materials. */
+  const finishProceduralTexture = (texName: string, tex: THREE.Texture | null) => {
+    if (!procTexPending.delete(texName)) return;
+    if (tex) {
+      viz.renderer.initTexture(tex);
+      loadedTextures.set(texName, tex);
+    }
+    for (const [matName, pending] of matTexPending) {
+      if (pending.has(texName)) {
+        pending.delete(texName);
+        if (tex) matTexLoaded.get(matName)!.set(texName, tex);
+        // Contained: a build throw (e.g. a custom uniform whose texture failed) must not
+        // reject the composition-run chain and take mesh placement down with it.
+        try {
+          tryBuildMaterial(matName);
+        } catch (err) {
+          console.error(`[levelDef] building material "${matName}" failed:`, err);
         }
       }
-    )
-  );
+    }
+  };
+
+  const failProceduralTextures = (pred: (def: GeotoyProcTextureDef) => boolean) => {
+    for (const [texName, def] of [...procTexPending]) {
+      if (pred(def)) finishProceduralTexture(texName, null);
+    }
+  };
+
+  /** Settle every pending procedural texture matching `pred` from a run's texture outputs. */
+  const consumeRunTextures = (
+    objects: GeneratedObject[],
+    pred: (def: GeotoyProcTextureDef) => boolean,
+    runLabel: string
+  ) => {
+    const texOuts = objects.filter((o): o is GeneratedTexture => o.type === 'texture');
+    for (const [texName, def] of [...procTexPending]) {
+      if (!pred(def)) continue;
+      // Last match wins, mirroring Geotoy's registry upload loop (later renders overwrite).
+      // Slot-kind fidelity: a `stack` flag from the authoring handle must match the output's.
+      let match: GeneratedTexture | undefined;
+      for (const t of texOuts) {
+        const sep = t.sourceModule.indexOf(':');
+        if (
+          sep > 0 &&
+          t.sourceModule.slice(0, sep) === def.tab &&
+          t.name === def.output &&
+          (def.stack === undefined || t.layers > 1 === def.stack)
+        ) {
+          match = t;
+        }
+      }
+      if (!match) {
+        console.error(
+          `[levelDef] ${runLabel} produced no texture output "${def.output}" from tab "${def.tab}" for texture "${texName}"`
+        );
+      }
+      let tex: THREE.Texture | null = null;
+      if (match) {
+        try {
+          tex = createGeneratedTexture(match);
+        } catch (err) {
+          console.error(`[levelDef] materializing procedural texture "${texName}" failed:`, err);
+        }
+      }
+      finishProceduralTexture(texName, tex);
+    }
+  };
+
+  const textureFetchPromises = textureEntries
+    .filter((e): e is [string, TextureDef] => !isGeotoyProcTexture(e[1]))
+    .map(([texName, texDef]) =>
+      texturePool.load(texDef, texName).then(
+        tex => {
+          // Upload to GPU immediately so cost is spread across the loading window
+          // rather than spiking on the first render frame after loadingComplete resolves.
+          viz.renderer.initTexture(tex);
+          loadedTextures.set(texName, tex);
+
+          // Mark this texture as loaded in every material that references it
+          for (const [matName, pending] of matTexPending) {
+            if (pending.has(texName)) {
+              pending.delete(texName);
+              matTexLoaded.get(matName)!.set(texName, tex);
+              tryBuildMaterial(matName);
+            }
+          }
+        },
+        err => {
+          console.error(`[levelDef] Texture "${texName}" failed after all retries:`, err);
+          // Still advance: remove from pending sets so materials aren't blocked forever
+          for (const [matName, pending] of matTexPending) {
+            if (pending.has(texName)) {
+              pending.delete(texName);
+              tryBuildMaterial(matName);
+            }
+          }
+        }
+      )
+    );
 
   // --- Topo-sort assets for dependency ordering ---
 

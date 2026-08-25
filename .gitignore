@@ -42,3 +42,8 @@ src/viz/wasm/interp_bench
 geo_compositions/*.geo
 geo_compositions/_index.tsv
 corpus_renders/
+bench
+geo_compositions
+CLAUDE.md
+GEOSCRIPT_FOR_LLMS.md
+PAPERCUTS.md

@@ -1,4 +1,4 @@
-import type { MaterialDefRaw, MaterialExtendsRef, TextureDef } from './types';
+import type { AnyLevelTextureDef, MaterialDefRaw, MaterialExtendsRef } from './types';
 
 const isPlainObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -23,7 +23,7 @@ const deepMerge = (base: unknown, over: unknown): unknown => {
  */
 export type ExternalParentResolver = (
   ref: Extract<MaterialExtendsRef, { type: 'library' | 'geotoy' }>,
-  textures: Record<string, TextureDef>
+  textures: Record<string, AnyLevelTextureDef>
 ) => Promise<MaterialDefRaw>;
 
 /**
@@ -36,7 +36,7 @@ export type ExternalParentResolver = (
 export const resolveMaterialExtends = async (
   materials: Record<string, MaterialDefRaw>,
   resolveExternal: ExternalParentResolver,
-  textures: Record<string, TextureDef>
+  textures: Record<string, AnyLevelTextureDef>
 ): Promise<Record<string, MaterialDefRaw>> => {
   const resolved = new Map<string, MaterialDefRaw>();
   const resolving = new Set<string>();

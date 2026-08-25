@@ -10,23 +10,32 @@ import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
 import { resolveExternalParent, resolveLibraryMaterials } from './libraryMaterials.server';
 import { inlineGeotoyMaterialTextures, resolveGeotoyMaterial } from './geotoyMaterials.server';
 import { compMaterialKey } from 'src/geoscript/runner/bakeComposition';
+import { referencedTabIds } from 'src/geoscript/treeCodegen';
 import { resolveMaterialExtends } from './materialExtends.server';
-import { LevelDefSchema, LevelDefRawSchema, normalizeRawDefColors } from './types';
+import { LevelDefSchema, LevelDefRawSchema, isGeotoyTextureRaw, normalizeRawDefColors } from './types';
 import type {
+  AnyLevelTextureDef,
+  CompositionTabDef,
   GeotoyCompositionAssetDef,
   GeotoyCompositionAssetDefRaw,
+  GeotoyTextureDefRaw,
   LevelDef,
+  LevelTextureDef,
+  LevelTextureDefRaw,
   MaterialDef,
   ObjectDef,
   ObjectGroupDef,
-  TextureDef,
 } from './types';
+import { canonicalizeInputs, djb2Hash } from './paramVariants';
 import {
   getCompositionLatest,
   getCompositionVersion,
   getGeotoyAPIBaseURL,
   isCompositionDocV2,
   readVersionMetadata,
+  type CompositionVersion,
+  type CompositionVersionMetadata,
+  type TreeEntry,
 } from 'src/geoscript/geotoyAPIClient';
 
 /**
@@ -81,6 +90,82 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
   };
 };
 
+type CompositionDocCache = Map<string, Promise<CompositionVersion>>;
+
+/**
+ * Fetch a composition version (latest when `version` is omitted) and validate the v2 container.
+ * Deduped through `cache` per level load — so an asset and a texture entry referencing the same
+ * composition share one round-trip AND resolve `latest` to the same version.
+ */
+const fetchCompositionDoc = (
+  compositionId: number,
+  version: number | undefined,
+  label: string,
+  cache: CompositionDocCache
+): Promise<CompositionVersion> => {
+  const key = `${compositionId}@${version ?? 'latest'}`;
+  let p = cache.get(key);
+  if (!p) {
+    p = (async () => {
+      const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
+      const baseUrl = getGeotoyAPIBaseURL();
+      let resolved;
+      try {
+        resolved =
+          version !== undefined
+            ? await getCompositionVersion(
+                compositionId,
+                version,
+                globalThis.fetch,
+                undefined,
+                adminToken,
+                baseUrl
+              )
+            : await getCompositionLatest(compositionId, globalThis.fetch, undefined, adminToken, baseUrl);
+      } catch (err) {
+        throw new Error(
+          `[loadLevelData] Failed to resolve ${label} (composition ${compositionId}): ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+      if (!isCompositionDocV2(resolved.tree)) {
+        throw new Error(
+          `[loadLevelData] ${label} (composition ${compositionId}) returned a non-v2 composition container`
+        );
+      }
+      return resolved;
+    })();
+    cache.set(key, p);
+  }
+  return p;
+};
+
+const buildTabDef = (
+  entry: TreeEntry,
+  meta: CompositionVersionMetadata | undefined,
+  render: boolean
+): CompositionTabDef => {
+  const tabMeta = meta?.tabs?.[entry.id];
+  const out: CompositionTabDef = { id: entry.id, kind: entry.kind, tree: entry.tree };
+  if (tabMeta?.preludeEjected) out.preludeEjected = true;
+  if (tabMeta?.kind === 'texture' && tabMeta.textureParams && Object.keys(tabMeta.textureParams).length > 0) {
+    out.textureParams = tabMeta.textureParams;
+  }
+  if (render) out.render = true;
+  return out;
+};
+
+/**
+ * Widen `runSet` (tab ids, entry tab first) with tabs pulled in transitively by qualified
+ * imports (`from "<tabId>:…"`) anywhere in the set — mirrors Geotoy's `buildRunInput` scan.
+ */
+const closeOverImportedTabs = (runSet: string[], byId: Map<string, TreeEntry>): void => {
+  for (let i = 0; i < runSet.length; i += 1) {
+    for (const ref of referencedTabIds(byId.get(runSet[i])!.tree)) {
+      if (byId.has(ref) && !runSet.includes(ref)) runSet.push(ref);
+    }
+  }
+};
+
 /**
  * Resolves a `geotoyComposition` asset by fetching its tree from the geotoy backend and
  * inlining it, so the client receives a self-contained payload (no compositions-API auth at
@@ -90,45 +175,44 @@ const markGeneratedNode = (node: ObjectDef | ObjectGroupDef): ObjectDef | Object
 const resolveCompositionAsset = async (
   assetId: string,
   def: GeotoyCompositionAssetDefRaw,
-  synthesized: Record<string, TextureDef>,
-  autoImported: Record<string, MaterialDef>
+  synthesized: Record<string, AnyLevelTextureDef>,
+  autoImported: Record<string, MaterialDef>,
+  docCache: CompositionDocCache
 ): Promise<GeotoyCompositionAssetDef> => {
-  const adminToken = process.env.GEOTOY_ADMIN_TOKEN || undefined;
-  const baseUrl = getGeotoyAPIBaseURL();
-  let version;
-  try {
-    version =
-      def.version !== undefined
-        ? await getCompositionVersion(
-            def.compositionId,
-            def.version,
-            globalThis.fetch,
-            undefined,
-            adminToken,
-            baseUrl
-          )
-        : await getCompositionLatest(def.compositionId, globalThis.fetch, undefined, adminToken, baseUrl);
-  } catch (err) {
-    throw new Error(
-      `[loadLevelData] Failed to resolve geotoyComposition asset "${assetId}" (composition ${def.compositionId}): ${err instanceof Error ? err.message : String(err)}`
-    );
+  const version = await fetchCompositionDoc(
+    def.compositionId,
+    def.version,
+    `geotoyComposition asset "${assetId}"`,
+    docCache
+  );
+  const trees = version.tree.trees;
+  let meshEntry;
+  if (def.tab !== undefined) {
+    meshEntry = trees.find(t => t.id === def.tab);
+    if (!meshEntry || meshEntry.kind !== 'mesh') {
+      const meshTabs = trees.filter(t => t.kind === 'mesh').map(t => `"${t.id}"`);
+      throw new Error(
+        `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}): tab "${def.tab}" ${meshEntry ? 'is not a mesh tab' : 'not found'}; mesh tabs: ${meshTabs.join(', ')}`
+      );
+    }
+  } else {
+    meshEntry = trees.find(t => t.kind === 'mesh');
+    if (!meshEntry) {
+      throw new Error(
+        `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no mesh tree`
+      );
+    }
   }
-  if (!isCompositionDocV2(version.tree)) {
-    throw new Error(
-      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) returned a non-v2 composition container`
-    );
-  }
-  const meshEntry = version.tree.trees.find(t => t.kind === 'mesh');
-  if (!meshEntry) {
-    throw new Error(
-      `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no mesh tree`
-    );
-  }
-  const resolved: GeotoyCompositionAssetDef = { ...def, tree: meshEntry.tree };
-  // Per-tab now; this path binds the default mesh tree, so read that tab's flag. Validated
+  const resolved: GeotoyCompositionAssetDef = { ...def, tree: meshEntry.tree, treeId: meshEntry.id };
+  // Per-tab now; this path binds the selected mesh tree, so read that tab's flag. Validated
   // rather than optional-chained: baking with the wrong prelude changes the geometry.
   const versionMeta = readVersionMetadata(version.metadata);
   if (versionMeta?.tabs?.[meshEntry.id]?.preludeEjected) resolved.preludeEjected = true;
+
+  const byId = new Map(trees.map(t => [t.id, t]));
+  const textureTabIds = new Set(trees.filter(t => t.kind === 'texture').map(t => t.id));
+  // Texture tabs referenced by auto-imported palette materials; filled during inlining below.
+  const refTabIds = new Set<string>();
 
   const palette = versionMeta?.materials;
   if (palette) {
@@ -153,7 +237,8 @@ const resolveCompositionAsset = async (
           autoImported[compMaterialKey(assetId, name)] = await inlineGeotoyMaterialTextures(
             paletteDef,
             synthesized,
-            `composition ${def.compositionId} material "${name}"`
+            `composition ${def.compositionId} material "${name}"`,
+            { assetId, compTabIds: textureTabIds, refTabIds }
           );
         } catch (err) {
           console.warn(
@@ -167,7 +252,71 @@ const resolveCompositionAsset = async (
       `[loadLevelData] geotoyComposition asset "${assetId}" (composition ${def.compositionId}) has no material palette in metadata; \`set_material\` calls in its tree may fail`
     );
   }
+
+  // Run set mirrors Geotoy's: the mesh tab, then material-referenced texture tabs (render
+  // deps — their roots are side-effect-imported so `render_texture` fires), then tabs pulled
+  // in transitively by qualified imports anywhere in the set.
+  const runSet = [meshEntry.id, ...refTabIds];
+  closeOverImportedTabs(runSet, byId);
+  if (runSet.length > 1) {
+    resolved.depTabs = runSet.slice(1).map(id => buildTabDef(byId.get(id)!, versionMeta, refTabIds.has(id)));
+  }
   return resolved;
+};
+
+/**
+ * Resolves a geotoy-sourced texture entry (`{ geotoyComposition, tab?, output }`) by inlining
+ * the target texture tab + its transitive import deps as a standalone run payload. Entries
+ * resolving to the same composition version + inputs share a run `key` so the client runs the
+ * program once. `docCache` dedupes backend fetches within one level load.
+ */
+const resolveGeotoyTexture = async (
+  texName: string,
+  def: GeotoyTextureDefRaw,
+  docCache: CompositionDocCache
+): Promise<LevelTextureDef> => {
+  const label = `geotoy texture "${texName}"`;
+  const version = await fetchCompositionDoc(def.geotoyComposition, def.version, label, docCache);
+  const trees = version.tree.trees;
+  const textureTabs = trees.filter(t => t.kind === 'texture');
+  let entry;
+  if (def.tab !== undefined) {
+    entry = trees.find(t => t.id === def.tab);
+    if (!entry || entry.kind !== 'texture') {
+      throw new Error(
+        `[loadLevelData] ${label} (composition ${def.geotoyComposition}): tab "${def.tab}" ${entry ? 'is not a texture tab' : 'not found'}; texture tabs: ${textureTabs.map(t => `"${t.id}"`).join(', ')}`
+      );
+    }
+  } else {
+    if (textureTabs.length !== 1) {
+      throw new Error(
+        `[loadLevelData] ${label} (composition ${def.geotoyComposition}) has ${textureTabs.length} texture tabs; specify one with \`tab\`: ${textureTabs.map(t => `"${t.id}"`).join(', ')}`
+      );
+    }
+    entry = textureTabs[0];
+  }
+
+  const versionMeta = readVersionMetadata(version.metadata);
+  const knownOutputs = versionMeta?.tabs?.[entry.id];
+  if (knownOutputs?.kind === 'texture' && knownOutputs.textureOutputs?.length) {
+    if (!knownOutputs.textureOutputs.some(o => o.name === def.output)) {
+      console.warn(
+        `[loadLevelData] ${label}: output "${def.output}" not among tab "${entry.id}"'s last-known outputs (${knownOutputs.textureOutputs.map(o => o.name).join(', ')}); the run may not produce it`
+      );
+    }
+  }
+
+  const byId = new Map(trees.map(t => [t.id, t]));
+  const runSet = [entry.id];
+  closeOverImportedTabs(runSet, byId);
+  const inputsKey = def.inputs && Object.keys(def.inputs).length > 0 ? canonicalizeInputs(def.inputs) : '';
+  const run = {
+    key: `${def.geotoyComposition}@${version.id}:${entry.id}${inputsKey ? `:${djb2Hash(inputsKey)}` : ''}`,
+    rootTabId: entry.id,
+    tabs: runSet.map(id => buildTabDef(byId.get(id)!, versionMeta, false)),
+    ...(def.inputs ? { inputs: def.inputs } : {}),
+  };
+  return { kind: 'geotoyProcedural', tab: entry.id, output: def.output, run };
 };
 
 /**
@@ -238,15 +387,18 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
 
   const withLibrary = resolveLibraryMaterials(rawResult.data);
   // Flattening `extends` can itself pull in geotoy/library parents and synthesize their textures.
-  const synthesizedTextures: Record<string, TextureDef> = {};
+  const synthesizedTextures: Record<string, AnyLevelTextureDef> = {};
   // Anonymous materials auto-imported from composition palettes; merged into `materials` below.
   const autoImportedMaterials: Record<string, MaterialDef> = {};
   const flatMaterials = withLibrary.materials
     ? await resolveMaterialExtends(withLibrary.materials, resolveExternalParent, synthesizedTextures)
     : withLibrary.materials;
 
-  // Asset + material resolution are independent and both make geotoy-backend round-trips; overlap them.
-  const [resolvedAssets, resolvedMaterials] = await Promise.all([
+  const compositionDocCache = new Map<string, Promise<CompositionVersion>>();
+
+  // Asset + material + texture resolution are independent and all make geotoy-backend
+  // round-trips; overlap them.
+  const [resolvedAssets, resolvedMaterials, resolvedTextures] = await Promise.all([
     Promise.all(
       Object.entries(withLibrary.assets).map(async ([assetId, assetDef]) => {
         if (assetDef.type === 'geoscript' && 'file' in assetDef) {
@@ -260,7 +412,13 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
         if (assetDef.type === 'geotoyComposition') {
           return [
             assetId,
-            await resolveCompositionAsset(assetId, assetDef, synthesizedTextures, autoImportedMaterials),
+            await resolveCompositionAsset(
+              assetId,
+              assetDef,
+              synthesizedTextures,
+              autoImportedMaterials,
+              compositionDocCache
+            ),
           ];
         }
         return [assetId, assetDef];
@@ -283,11 +441,23 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
           })
         ).then(Object.fromEntries)
       : Promise.resolve(flatMaterials),
+    withLibrary.textures
+      ? Promise.all(
+          Object.entries(withLibrary.textures as Record<string, LevelTextureDefRaw>).map(
+            async ([texName, texDef]) => [
+              texName,
+              isGeotoyTextureRaw(texDef)
+                ? await resolveGeotoyTexture(texName, texDef, compositionDocCache)
+                : texDef,
+            ]
+          )
+        ).then(Object.fromEntries)
+      : Promise.resolve(withLibrary.textures),
   ]);
 
   const mergedTextures = Object.keys(synthesizedTextures).length
-    ? { ...withLibrary.textures, ...synthesizedTextures }
-    : withLibrary.textures;
+    ? { ...resolvedTextures, ...synthesizedTextures }
+    : resolvedTextures;
   const mergedMaterials = Object.keys(autoImportedMaterials).length
     ? { ...(resolvedMaterials ?? {}), ...autoImportedMaterials }
     : resolvedMaterials;

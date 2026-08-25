@@ -14,7 +14,8 @@ import {
   type MaterialDef,
   type MaterialDefRaw,
   type MaterialExtendsRef,
-  type TextureDef,
+  type AnyLevelTextureDef,
+  type LevelTextureDefRaw,
 } from './types';
 
 export const LIBRARY_MATERIAL_PREFIX = '__ASSETS__/materials/';
@@ -101,7 +102,7 @@ export const resolveLibraryMaterials = (def: LevelDefRaw): LevelDefRaw => {
   collectLibraryRefs(def.objects, objRefs);
 
   const materials = { ...(def.materials ?? {}) };
-  const textures: Record<string, TextureDef> = { ...(def.textures ?? {}) };
+  const textures: Record<string, LevelTextureDefRaw> = { ...(def.textures ?? {}) };
 
   const pullIn = (ref: string): void => {
     if (ref in materials) return;
@@ -147,10 +148,10 @@ export const libraryMaterialExists = (ref: string): boolean =>
  */
 export const resolveLibraryMaterial = async (
   ref: string
-): Promise<{ material: MaterialDef; textures: Record<string, TextureDef> }> => {
+): Promise<{ material: MaterialDef; textures: Record<string, AnyLevelTextureDef> }> => {
   const probe = { version: 1, assets: {}, objects: [{ material: ref }] } as unknown as LevelDefRaw;
   const withLib = resolveLibraryMaterials(probe);
-  const textures: Record<string, TextureDef> = { ...(withLib.textures ?? {}) };
+  const textures: Record<string, AnyLevelTextureDef> = { ...(withLib.textures ?? {}) };
   const flat = await resolveMaterialExtends(withLib.materials ?? {}, resolveExternalParent, textures);
   const parsed = MaterialDefSchema.safeParse(flat[ref]);
   if (!parsed.success) {
@@ -167,7 +168,7 @@ export const resolveLibraryMaterial = async (
  */
 export async function resolveExternalParent(
   ref: Extract<MaterialExtendsRef, { type: 'library' | 'geotoy' }>,
-  textures: Record<string, TextureDef>
+  textures: Record<string, AnyLevelTextureDef>
 ): Promise<MaterialDefRaw> {
   if (ref.type === 'geotoy') {
     return (await resolveGeotoyMaterial(ref.materialId, textures)) as MaterialDefRaw;

@@ -57,14 +57,16 @@ export const splitQualifiedInputKey = (
 };
 
 /**
- * Level-def inputs are addressed by bare name — spread across every named module so whichever
- * module declares the matching `input_*`/`gizmo(...)` picks its value up — or `module/handle`-
- * qualified to target exactly one module. Merges onto (and returns) `base`.
+ * Level-def inputs are addressed by bare name — spread across `spreadModuleNames` (default: all
+ * of `moduleNames`) so whichever module declares the matching `input_*`/`gizmo(...)` picks its
+ * value up — or `module/handle`-qualified to target exactly one module (resolved against the
+ * full `moduleNames`). Merges onto (and returns) `base`.
  */
 export const injectInputs = (
   base: GizmoValuesByModule,
   inputs: Record<string, InputValueJson> | undefined,
-  moduleNames: string[]
+  moduleNames: string[],
+  spreadModuleNames: string[] = moduleNames
 ): GizmoValuesByModule => {
   if (!inputs || Object.keys(inputs).length === 0) return base;
   for (const [id, v] of Object.entries(inputs)) {
@@ -73,7 +75,7 @@ export const injectInputs = (
     if (qualified) {
       (base[qualified.module] ??= {})[qualified.handleId] = wire;
     } else {
-      for (const mod of moduleNames) (base[mod] ??= {})[id] = wire;
+      for (const mod of spreadModuleNames) (base[mod] ??= {})[id] = wire;
     }
   }
   return base;

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 import { ROOT_NODE_NAME, type TreeDef } from '../geotoyAPIClient';
-import { buildModuleNameToNodeId } from '../treeCodegen';
+import { buildModuleNameToNodeId, qualifyModuleName } from '../treeCodegen';
 import { buildParentMap } from 'src/geotoy/modules/treeOps';
 import type { GeneratedObject } from './types';
 import { buildWorldMatrixCache, type NodeWorldInstance } from './worldMatrixCache';
@@ -54,16 +54,33 @@ const IDENTITY_INSTANCE: NodeWorldInstance[] = [{ world: new THREE.Matrix4(), pa
  * rendered lights/paths. Geometry is shared across instance copies — consumers set per-copy
  * `Object3D` matrices rather than mutating verts.
  */
-export const bakeCompositionMeshes = (tree: TreeDef, objects: GeneratedObject[]): BakedCompositionMesh[] => {
+export const bakeCompositionMeshes = (
+  tree: TreeDef,
+  objects: GeneratedObject[],
+  tabId?: string
+): BakedCompositionMesh[] => {
   const worldMatrices = buildWorldMatrixCache(tree, buildParentMap(tree));
-  const moduleToNode = buildModuleNameToNodeId(tree);
+  const moduleToNode = buildModuleNameToNodeId(tree, tabId);
+  const rootModule = qualifyModuleName(ROOT_NODE_NAME, tabId);
   const out: BakedCompositionMesh[] = [];
+  const droppedModules = new Set<string>();
 
   for (const obj of objects) {
     if (obj.type !== 'mesh') continue;
-    const namedModule = obj.sourceModule && obj.sourceModule !== ROOT_NODE_NAME;
+    const namedModule = obj.sourceModule && obj.sourceModule !== rootModule;
     const nodeId = namedModule ? moduleToNode[obj.sourceModule] : undefined;
-    if (namedModule && !nodeId) continue; // module no longer maps to a live node
+    // Skip modules that don't map to a live node in the imported tree — dep-tab renders
+    // (no transform context here) and stale module names. Geotoy would show dep-tab
+    // renders, so make the divergence loud.
+    if (namedModule && !nodeId) {
+      if (!droppedModules.has(obj.sourceModule)) {
+        droppedModules.add(obj.sourceModule);
+        console.warn(
+          `[bakeComposition] dropping mesh rendered by module "${obj.sourceModule}" — not part of the imported tab's tree`
+        );
+      }
+      continue;
+    }
 
     const insts = (nodeId ? worldMatrices.get(nodeId) : null) ?? IDENTITY_INSTANCE;
     for (const inst of insts) {
