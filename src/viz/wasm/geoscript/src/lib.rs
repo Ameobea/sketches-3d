@@ -30,6 +30,7 @@ use pest::{
 use pest_derive::Parser;
 use rand_pcg::Pcg32;
 use seq::EagerSeq;
+use siphasher::sip128::{Hasher128, SipHasher};
 use smallvec::SmallVec;
 
 #[cfg(target_arch = "wasm32")]
@@ -1387,6 +1388,9 @@ pub struct ConstEvalCacheEntry {
   last_access: u64,
   /// Allocations charged to this entry in `retained`, released when it is evicted.
   retained_ids: Vec<usize>,
+  /// Inputs whose addresses this entry's key names (see [`EvalCtx::memoize_control_builtin`]),
+  /// held so a freed allocation can't be recycled under a still-live key.
+  _pins: Vec<Value>,
 }
 
 pub struct ConstEvalCache {
@@ -1426,6 +1430,12 @@ impl ConstEvalCache {
 
   pub fn retained_bytes(&self) -> usize {
     self.retained_bytes
+  }
+
+  /// Whether some entry holds the allocation at `addr` alive, and so will still be handing out
+  /// that same address on the next run.
+  fn holds(&self, addr: usize) -> bool {
+    self.retained.contains_key(&addr)
   }
 
   pub fn max_bytes(&self) -> usize {
@@ -1507,18 +1517,32 @@ impl ConstEvalCache {
   }
 
   pub(crate) fn insert(&mut self, key: u128, value: Value, rng_end_state: Option<Pcg32>) {
+    self.insert_pinned(key, value, rng_end_state, Vec::new())
+  }
+
+  pub(crate) fn insert_pinned(
+    &mut self,
+    key: u128,
+    value: Value,
+    rng_end_state: Option<Pcg32>,
+    pins: Vec<Value>,
+  ) {
     if self.max_entries == 0 {
       return;
     }
 
     let stamp = self.tick();
-    let retained_ids = self.charge(&value);
+    let mut retained_ids = self.charge(&value);
+    for pin in &pins {
+      retained_ids.extend(self.charge(pin));
+    }
     match self.entries.get_mut(&key) {
       Some(entry) => {
         let stale = std::mem::replace(&mut entry.retained_ids, retained_ids);
         entry.value = value;
         entry.rng_end_state = rng_end_state;
         entry.last_access = stamp;
+        entry._pins = pins;
         self.release(&stale);
       }
       None => {
@@ -1529,6 +1553,7 @@ impl ConstEvalCache {
             rng_end_state,
             last_access: stamp,
             retained_ids,
+            _pins: pins,
           },
         );
       }
@@ -4017,6 +4042,51 @@ impl EvalCtx {
       .module_exports_lru
       .borrow_mut()
       .retain(|n| exports.contains_key(n));
+  }
+
+  /// Memoizes deterministic, expensive work inside a builtin that can't const-fold because it
+  /// also registers an editor control.  `input` hashes by address, like the const-eval cache's
+  /// own mesh/texture keys, and the entry pins it so a freed allocation can't be recycled under
+  /// a still-live key.  The caller must hash every other input the work depends on via `params`,
+  /// and must keep the control registration itself outside — only the compute is skipped on a
+  /// hit.  Entries live in the const-eval cache, so they share its LRU, byte cap and clearing.
+  pub(crate) fn memoize_control_builtin(
+    &self,
+    domain: &'static str,
+    input: &Value,
+    params: impl FnOnce(&mut SipHasher) -> Option<()>,
+    compute: impl FnOnce() -> Result<Value, ErrorStack>,
+  ) -> Result<Value, ErrorStack> {
+    use std::hash::Hash;
+
+    let addr = match input {
+      Value::Mesh(mesh) => Rc::as_ptr(mesh) as usize,
+      Value::Texture(tex) => Rc::as_ptr(tex) as usize,
+      other => unreachable!("unsupported memo input: {other:?}"),
+    };
+    let mut hasher = SipHasher::new_with_keys(0, 0);
+    domain.hash(&mut hasher);
+    addr.hash(&mut hasher);
+    if params(&mut hasher).is_none() {
+      return compute();
+    }
+    let key = hasher.finish128().as_u128();
+
+    if let Some(hit) = self.const_eval_cache.borrow_mut().get(key) {
+      return Ok(hit.value);
+    }
+    let value = compute()?;
+    // An input the cache doesn't already hold is rebuilt from scratch next run, at a new
+    // address — the entry could never hit, and would only push out ones that can.
+    if self.const_eval_cache.borrow().holds(addr) {
+      self.const_eval_cache.borrow_mut().insert_pinned(
+        key,
+        value.clone(),
+        None,
+        vec![input.clone()],
+      );
+    }
+    Ok(value)
   }
 
   pub fn invalidate_module_cache(&self) {

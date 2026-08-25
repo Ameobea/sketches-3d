@@ -1,5 +1,6 @@
 //! Image-processing builtins: `resize`, `dilate`/`erode`, `concat_channels`, levels.
 
+use std::hash::Hash;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -646,7 +647,8 @@ pub(crate) fn input_image_levels_impl(
 ) -> Result<Value, ErrorStack> {
   let c = super::input_common(ctx, arg_refs, args, kwargs, 3)?;
   let has_override = c.injected.is_some();
-  let tex = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
+  let tex_val = arg_refs[1].resolve(args, kwargs);
+  let tex = tex_val.as_texture().unwrap();
 
   let injected = c.injected.as_ref().and_then(|v| match v {
     Value::Map(m) => Some(LevelsParams::from_map(m)),
@@ -695,7 +697,24 @@ pub(crate) fn input_image_levels_impl(
     stats: Some(tex.stats()),
     has_override,
   });
-  Ok(apply_levels(tex, params))
+  // identity is `apply_levels`' own passthrough, so it's not worth a cache entry
+  if params.as_array() == IDENTITY_LEVELS.as_array() {
+    return Ok(Value::Texture(Rc::clone(tex)));
+  }
+  // Registering the control makes this side-effectful, which blocks const folding of the call;
+  // memoize so a rerun that touched neither the source texture nor the levels doesn't remap
+  // every texel again.
+  ctx.memoize_control_builtin(
+    "input_image_levels",
+    tex_val,
+    |hasher| {
+      for f in params.as_array() {
+        f.to_bits().hash(hasher);
+      }
+      Some(())
+    },
+    || Ok(apply_levels(tex, params)),
+  )
 }
 
 #[cfg(test)]
@@ -1032,5 +1051,22 @@ out = blit(masked, base, filter="nearest")
       get_tex(&ctx, "t").storage_id(),
       get_tex(&ctx, "d").storage_id()
     );
+  }
+
+  /// Registering a control makes `input_image_levels` side-effectful, which blocks const folding
+  /// of the call — so the remap has to be memoized, or every rerun walks every texel again.
+  #[test]
+  fn levels_memoized_across_reruns() {
+    let ctx = crate::EvalCtx::default();
+    let src = "texture(64, 64, |uv| uv.x) | input_image_levels('lv', default={ in_hi: 0.5 }) | \
+               render_texture(name='out')";
+    let run = || {
+      ctx.rendered_textures.inner.borrow_mut().clear();
+      ctx.rendered_controls.inner.borrow_mut().clear();
+      crate::run_as_fresh_run(&ctx, src);
+      assert_eq!(ctx.rendered_controls.inner.borrow().len(), 1);
+      ctx.rendered_textures.inner.borrow()[0].texture.storage_id()
+    };
+    assert_eq!(run(), run());
   }
 }

@@ -2,6 +2,7 @@ use mesh::triangle_intersection::TriTriIntersectionType;
 use paste::paste;
 use rand_pcg::Pcg32;
 use std::cmp::Reverse;
+use std::hash::Hash;
 use std::marker::ConstParamTy;
 use std::rc::Rc;
 use std::str::FromStr;
@@ -4921,7 +4922,8 @@ fn compute_uvs_impl(
     1 => (1, 0, 4, 5, 6),
     _ => unimplemented!(),
   };
-  let mesh = arg_refs[mesh_ix].resolve(args, kwargs).as_mesh().unwrap();
+  let mesh_val = arg_refs[mesh_ix].resolve(args, kwargs);
+  let mesh = mesh_val.as_mesh().unwrap();
   let ty = UvType::from_str(arg_refs[type_ix].resolve(args, kwargs).as_str().unwrap())?;
   let scale = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
   let n_cones = arg_refs[3].resolve(args, kwargs).as_int().unwrap();
@@ -4981,16 +4983,29 @@ fn compute_uvs_impl(
   }
 
   let sharp_threshold_rad = ctx.read_sharp_angle_threshold_degrees().to_radians();
-  let out = compute_uvs(
-    mesh,
-    params.ty,
-    params.scale,
-    params.n_cones.max(0) as u32,
-    sharp_threshold_rad,
-    params.options.as_deref(),
+  // The control registration above is what makes this builtin side-effectful, and that blocks
+  // const folding for the whole call — so the solve (seconds, for a big BFF unwrap) would
+  // otherwise re-run on every rerun even when neither the mesh nor the params moved.
+  ctx.memoize_control_builtin(
+    "compute_uvs",
+    mesh_val,
+    |hasher| {
+      sharp_threshold_rad.to_bits().hash(hasher);
+      params.hash_into(hasher)
+    },
+    || {
+      let out = compute_uvs(
+        mesh,
+        params.ty,
+        params.scale,
+        params.n_cones.max(0) as u32,
+        sharp_threshold_rad,
+        params.options.as_deref(),
+      )
+      .map_err(|err| err.wrap("Error in `compute_uvs`"))?;
+      Ok(Value::Mesh(Rc::new(out)))
+    },
   )
-  .map_err(|err| err.wrap("Error in `compute_uvs`"))?;
-  Ok(Value::Mesh(Rc::new(out)))
 }
 
 fn compute_normals_impl(

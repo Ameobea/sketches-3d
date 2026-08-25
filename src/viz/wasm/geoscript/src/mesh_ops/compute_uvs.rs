@@ -1,4 +1,10 @@
-use std::{cell::RefCell, f32::consts::TAU, rc::Rc, str::FromStr};
+use std::{
+  cell::RefCell,
+  f32::consts::TAU,
+  hash::{Hash, Hasher},
+  rc::Rc,
+  str::FromStr,
+};
 
 use fxhash::FxHashMap;
 use mesh::{
@@ -190,6 +196,32 @@ impl UvParams {
       map.insert("options".to_owned(), Value::Map(Rc::clone(options)));
     }
     Value::Map(Rc::new(map))
+  }
+
+  /// Content hash for the solve memo.  `None` for an option value this doesn't know how to
+  /// hash, which skips memoization rather than risking a key collision between distinct params.
+  pub fn hash_into(&self, hasher: &mut impl Hasher) -> Option<()> {
+    self.ty.canonical_name().hash(hasher);
+    self.scale.to_bits().hash(hasher);
+    self.n_cones.hash(hasher);
+    let Some(options) = self.options.as_ref() else {
+      return Some(());
+    };
+    // `FxHashMap` iteration order isn't a function of contents alone
+    let mut keys: Vec<&str> = options.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    for key in keys {
+      key.hash(hasher);
+      match &options[key] {
+        Value::Nil => 0u8.hash(hasher),
+        Value::Bool(v) => (1u8, v).hash(hasher),
+        Value::Int(v) => (2u8, v).hash(hasher),
+        Value::Float(v) => (3u8, v.to_bits()).hash(hasher),
+        Value::String(v) => (4u8, v).hash(hasher),
+        _ => return None,
+      }
+    }
+    Some(())
   }
 
   /// Strict parse of an injected control value; `None` on any malformed/missing field so
@@ -1164,7 +1196,11 @@ fn cylindrical_uvs(
 // native `planar` path plus argument/dispatch handling.  The BFF path is verified in-browser.
 #[cfg(test)]
 mod tests {
+  use std::rc::Rc;
+
   use mesh::linked_mesh::ChannelStore;
+
+  use super::{UvParams, UvType};
 
   fn render_uvs(src: &str) -> Vec<[f32; 2]> {
     let ctx = crate::parse_and_eval_program(src).unwrap();
@@ -1356,6 +1392,63 @@ mod tests {
       crate::parse_and_eval_program("box(1, 1, 1) | compute_uvs(type='planar', scale=0) | render")
         .unwrap_err();
     assert!(format!("{err}").contains("scale"), "got: {err}");
+  }
+
+  const NAMED_SRC: &str = "box(2, 2, 2) | compute_uvs(type='planar', name='uv') | render";
+
+  /// One rerun of `NAMED_SRC` on a warm ctx, asserting the control re-registers every time
+  /// (a memo that swallowed it would make the control vanish on rerun).
+  fn rerun(ctx: &crate::EvalCtx) -> Rc<crate::MeshHandle> {
+    ctx.rendered_meshes.inner.borrow_mut().clear();
+    ctx.rendered_controls.inner.borrow_mut().clear();
+    crate::run_as_fresh_run(ctx, NAMED_SRC);
+    assert_eq!(ctx.rendered_controls.inner.borrow().len(), 1);
+    Rc::clone(&ctx.rendered_meshes.inner.borrow()[0].mesh)
+  }
+
+  fn uv_max_radius(mesh: &crate::MeshHandle) -> f32 {
+    let ChannelStore::Vec2(uv) = &mesh.mesh.vertex_channels["uv"].store else {
+      panic!("expected a Vec2 `uv` channel");
+    };
+    uv.values().map(|v| v[0].hypot(v[1])).fold(0f32, f32::max)
+  }
+
+  /// Registering a control makes `compute_uvs` side-effectful, which blocks const folding of the
+  /// call — so the solve has to be memoized itself, or every rerun re-solves from scratch.
+  #[test]
+  fn solve_memoized_across_reruns() {
+    let ctx = crate::EvalCtx::default();
+    // holding run 0's output across run 1 keeps its address off the free list, so pointer
+    // equality here can't be an allocator coincidence
+    let first = rerun(&ctx);
+    let second = rerun(&ctx);
+    assert!(Rc::ptr_eq(&first, &second));
+  }
+
+  /// ...and the memo must not outlive the control value it was computed under.
+  #[test]
+  fn injected_params_invalidate_memo() {
+    let ctx = crate::EvalCtx::default();
+    *ctx.current_module.borrow_mut() = Some("root".to_owned());
+    let inject = |scale: f32| {
+      let params = UvParams {
+        ty: UvType::Planar,
+        scale,
+        n_cones: 0,
+        options: None,
+      };
+      crate::inject_gizmo(&ctx, "root", "uv", params.to_map_value());
+    };
+
+    let base = uv_max_radius(&rerun(&ctx));
+    inject(3.);
+    let scaled = uv_max_radius(&rerun(&ctx));
+    assert!(
+      (scaled / base - 3.).abs() < 1e-3,
+      "{scaled} should be 3x {base}"
+    );
+    inject(1.);
+    assert!((uv_max_radius(&rerun(&ctx)) - base).abs() < 1e-4);
   }
 }
 

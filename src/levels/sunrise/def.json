@@ -21,7 +21,11 @@
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(1)",
-      "_meta": { "runtimeMs": 4.3, "count": 5, "codeHash": "961b4562" }
+      "_meta": { "runtimeMs": 4.2, "count": 5, "codeHash": "961b4562" }
+    },
+    "trench": {
+      "type": "geotoyComposition",
+      "compositionId": 132
     }
   },
   "objects": [
@@ -30,6 +34,12 @@
       "asset": "box",
       "scale": [30, 5, 30],
       "position": [0, -0.5, 0]
+    },
+    {
+      "id": "trench",
+      "asset": "trench",
+      "position": [30, -0.5, 30],
+      "scale": [2, 2, 2]
     }
   ]
 }
