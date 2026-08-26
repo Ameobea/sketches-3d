@@ -11332,6 +11332,52 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
+  "srandf" => FnDef {
+    module: "rand",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic random float between `min` and `max` for `seed`.",
+        return_type: &[ArgType::Float],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic random float between 0. and 1. for `seed`.",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
   "randi" => FnDef {
     module: "rand",
     examples: &[],
@@ -11353,12 +11399,58 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Returns a random integer between `min` and `max` (inclusive)",
+        description: "Returns a random integer in `[min, max)`.  If `min == max`, returns `min`.",
         return_type: &[ArgType::Int],
       },
       FnSignature {
         arg_defs: &[],
         description: "Returns a random integer.  Any 64-bit integer is equally possible, positive or negative.",
+        return_type: &[ArgType::Int],
+      },
+    ],
+  },
+  "srandi" => FnDef {
+    module: "rand",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic random integer in `[min, max)` for `seed`. If `min == max`, returns `min`.",
+        return_type: &[ArgType::Int],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic random integer for `seed`. Any 64-bit integer is equally possible, positive or negative.",
         return_type: &[ArgType::Int],
       },
     ],
@@ -11410,6 +11502,79 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       FnSignature {
         arg_defs: &[],
         description: "Returns a random Vec3 where each component is between 0. and 1.",
+        return_type: &[ArgType::Vec3],
+      },
+    ],
+  },
+  "srandv" => FnDef {
+    module: "rand",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic Vec3 for `seed` where each component is between the corresponding components of `min` and `max`.",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "min",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "max",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic Vec3 for `seed` where each component is between `min` and `max`.",
+        return_type: &[ArgType::Vec3],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "seed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a deterministic Vec3 for `seed` where each component is between 0. and 1.",
         return_type: &[ArgType::Vec3],
       },
     ],

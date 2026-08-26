@@ -822,7 +822,8 @@ impl<'a> AnalysisWalker<'a> {
 
   /// Resolve `lhs | f(args)` where the rhs is a written-out call.  Returns the pipeline result
   /// type and the matched signature index (for hover).  Mirrors the runtime: a partial-application
-  /// rhs is invoked with `lhs` appended; a fully-applied rhs degrades the `|` to `bit_or`.
+  /// rhs or a fully-applied call returning a callable is invoked with `lhs`; a fully-applied
+  /// non-callable rhs degrades the `|` to `bit_or`.
   fn walk_pipeline_call(
     &mut self,
     name: Sym,
@@ -849,7 +850,13 @@ impl<'a> AnalysisWalker<'a> {
 
     match classify_pipe_rhs_call(self.ctx, name, arg_types, kwarg_types) {
       PipeRhsKind::Complete { ty: rhs_ty, def_ix } => {
-        // `f(args)` is fully applied → a concrete value; `|` is a `bit_or(lhs, value)`.
+        // A fully-applied higher-order function still produces a callable that the pipeline
+        // invokes. Builtin signatures do not currently describe that callable's return type.
+        if matches!(rhs_ty.as_single_arg_type(), Some(ArgType::Callable)) {
+          return (AbstractType::Unknown, Some(def_ix));
+        }
+
+        // `f(args)` is fully applied to a non-callable value; `|` is a `bit_or(lhs, value)`.
         let result = self.infer_pipeline_bitor(&lhs_ty, &rhs_ty, name, loc);
         (result, Some(def_ix))
       }

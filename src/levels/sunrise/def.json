@@ -7,22 +7,56 @@
       "type": "hemisphere",
       "skyColor": "#f0f0f4",
       "groundColor": "#8f8f8f",
-      "intensity": 1.2
+      "intensity": 0.3
     },
     {
       "id": "sun",
       "type": "directional",
       "color": "#d7d7d0",
-      "intensity": 0.3,
-      "position": [-300, -1000, 0],
-      "castShadow": true
+      "intensity": 1,
+      "position": [370.6451, 200, -465.498],
+      "castShadow": false
     }
   ],
   "materials": {
     "path_wall": {
       "type": "customShader",
-      "extends": { "type": "composition", "asset": "trench", "name": "stone" },
-      "parkour": { "climb": { "maxClimbAngle": 0.3 } }
+      "extends": {
+        "type": "composition",
+        "asset": "trench",
+        "name": "stone"
+      },
+      "parkour": {
+        "climb": {
+          "maxClimbAngle": 0.3
+        }
+      },
+      "props": {
+        "color": "#b4b4b4",
+        "metalness": 0.1
+      },
+      "nonPermeable": true
+    },
+    "hex_patched": {
+      "type": "customShader",
+      "extends": {
+        "type": "composition",
+        "asset": "vertebrae_monolith",
+        "name": "hex"
+      },
+      "props": {
+        "color": "#f8f8f8",
+        "metalness": 0
+      }
+    },
+    "cliffs": {
+      "type": "customShader",
+      "extends": {
+        "type": "composition",
+        "asset": "trench",
+        "name": "stone"
+      },
+      "nonPermeable": true
     }
   },
   "assets": {
@@ -37,6 +71,21 @@
       "materialMap": {
         "stone": "path_wall"
       }
+    },
+    "cliffs": {
+      "type": "geotoyComposition",
+      "compositionId": 132,
+      "materialMap": {
+        "streaked_cement": "cliffs"
+      },
+      "tab": "scene"
+    },
+    "vertebrae_monolith": {
+      "type": "geotoyComposition",
+      "compositionId": 133,
+      "materialMap": {
+        "hex": "hex_patched"
+      }
     }
   },
   "objects": [
@@ -44,13 +93,189 @@
       "id": "spawn_platform",
       "asset": "box",
       "scale": [30, 5, 30],
-      "position": [0, -0.5, 0]
+      "position": [0, 58.4511, 0],
+      "rotation": [0, 0, 0],
+      "material": "hex_patched"
     },
     {
       "id": "trench",
       "asset": "trench",
-      "position": [30, -0.5, 30],
-      "scale": [2, 2, 2]
+      "position": [30, 56.8839, 3.9489],
+      "scale": [2, 2, 2],
+      "rotation": [0, 0, 0]
+    },
+    {
+      "id": "bg_cliffs",
+      "children": [
+        {
+          "id": "cliffs",
+          "asset": "cliffs",
+          "position": [-1590.5477, -2253.0278, -1363.0102],
+          "rotation": [0, 1.5702, 0],
+          "scale": [6.5693, 6.1148, 5.1121]
+        },
+        {
+          "id": "cliffs_1",
+          "asset": "cliffs",
+          "position": [-1342.141, -1764.2691, 4594.4703],
+          "rotation": [0, 1.6603, 0],
+          "scale": [13.4859, 10.264, 10.4946]
+        },
+        {
+          "id": "cliffs_2",
+          "asset": "cliffs",
+          "position": [-2022.3128, -2368.3193, 552.7377],
+          "rotation": [0, 1.1765, 0],
+          "scale": [6.5693, 5.1121, 5.1121]
+        },
+        {
+          "id": "cliffs_3",
+          "asset": "cliffs",
+          "position": [-2190.9476, 2195.8976, 3211.4624],
+          "rotation": [0, 1.9243, 0],
+          "scale": [20.3758, 21.914, 15.8562]
+        },
+        {
+          "id": "cliffs_5",
+          "asset": "cliffs",
+          "position": [-638.1586, 521.9721, -6404.6653],
+          "rotation": [0, 0.6512, 0],
+          "scale": [23.1742, 24.3396, 18.0339]
+        },
+        {
+          "id": "cliffs_4",
+          "asset": "cliffs",
+          "position": [-2330.5553, -237.8615, 262.0779],
+          "rotation": [0, 1.377, 0],
+          "scale": [8, 10.6844, 6.2255]
+        },
+        {
+          "id": "cliffs_6",
+          "asset": "cliffs",
+          "position": [7716.8891, 164.0263, 8364.7722],
+          "rotation": [0, 2.7571, 0],
+          "scale": [23.1742, 24.3396, 18.0339]
+        },
+        {
+          "id": "cliffs_7",
+          "asset": "cliffs",
+          "position": [1237.5238, 2465.3181, 7551.7536],
+          "rotation": [0, 2.704, 0],
+          "scale": [23.1742, 39.8251, 18.0339]
+        },
+        {
+          "id": "cliffs_8",
+          "asset": "cliffs",
+          "position": [-4286.1737, 2723.2029, -3170.087],
+          "rotation": [0, 1.0719, 0],
+          "scale": [23.4702, 40.5232, 12.4476]
+        },
+        {
+          "id": "cliffs_9",
+          "asset": "cliffs",
+          "position": [5659.0918, -521.4169, -10670.7808],
+          "rotation": [0, 0.0615, 0],
+          "scale": [23.1742, 18.5742, 18.0339]
+        },
+        {
+          "id": "cliffs_10",
+          "asset": "cliffs",
+          "position": [-2091.205, -572.0793, -2696.2356],
+          "rotation": [0, 1.377, 0],
+          "scale": [12.9361, 17.2768, 10.0667]
+        },
+        {
+          "id": "cliffs_11",
+          "asset": "cliffs",
+          "position": [5209.5729, 2426.9034, -11811.3228],
+          "rotation": [0, 0.0615, 0],
+          "scale": [23.9496, 18.2166, 17.6867]
+        },
+        {
+          "id": "cliffs_12",
+          "asset": "cliffs",
+          "position": [14771.7766, -605.9775, 6168.0006],
+          "rotation": [-3.1416, 0.3845, -3.1416],
+          "scale": [23.1742, 17.8182, 18.0339]
+        },
+        {
+          "id": "cliffs_13",
+          "asset": "cliffs",
+          "position": [13297.7518, 2634.8627, 8701.1096],
+          "rotation": [0, -2.714, 0],
+          "scale": [19.8474, 17.8182, 18.0339]
+        }
+      ],
+      "position": [138.4928, 3078.4209, 1887.2188],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "vertebrae",
+      "children": [
+        {
+          "id": "vertebrae_monolith_4",
+          "asset": "vertebrae_monolith",
+          "position": [-55.3504, 21.121, 521.1708],
+          "rotation": [0, 0.7948, 0],
+          "scale": [3.686, 3.0082, 3.0082],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 12
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_3",
+          "asset": "vertebrae_monolith",
+          "position": [1163.1884, 20.621, -557.6726],
+          "rotation": [0, 0.9228, 0],
+          "scale": [9.1307, 7.4518, 7.4518],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 13
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_2",
+          "asset": "vertebrae_monolith",
+          "position": [-1256.9848, -61.5845, -78.0223],
+          "rotation": [0, 2.3199, 0],
+          "scale": [2.8066, 3.4932, 2.8066],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_1",
+          "asset": "vertebrae_monolith",
+          "position": [204.34, 12.973, 440.5163],
+          "rotation": [0, -2.6226, 0],
+          "scale": [4.4092, 3.495, 3.495],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 12
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith",
+          "asset": "vertebrae_monolith",
+          "position": [-55.1932, 6.8695, -325.992],
+          "rotation": [0, 2.1447, 0],
+          "scale": [2.2577, 2.2577, 2.2577]
+        }
+      ],
+      "position": [1070.7786, -152.3935, 581.4844],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
     }
   ]
 }

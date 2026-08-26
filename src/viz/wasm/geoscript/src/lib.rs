@@ -9085,6 +9085,141 @@ b = randv()
 }
 
 #[test]
+fn test_seeded_rng_calls_are_deterministic() {
+  let ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx(
+    r#"
+f0 = srandf(42)
+f1 = srandf(42)
+f2 = srandf(43)
+i0 = srandi(42)
+i1 = srandi(42)
+i2 = srandi(-9223372036854775807 - 1)
+v0 = srandv(42)
+v1 = srandv(42)
+v2 = srandv(9223372036854775807)
+"#
+    .to_string(),
+    &ctx,
+    false,
+  )
+  .unwrap();
+
+  assert_eq!(
+    ctx.get_global("f0").unwrap().as_float().unwrap(),
+    ctx.get_global("f1").unwrap().as_float().unwrap()
+  );
+  assert_ne!(
+    ctx.get_global("f0").unwrap().as_float().unwrap(),
+    ctx.get_global("f2").unwrap().as_float().unwrap()
+  );
+  assert_eq!(
+    ctx.get_global("i0").unwrap().as_int().unwrap(),
+    ctx.get_global("i1").unwrap().as_int().unwrap()
+  );
+  assert_eq!(
+    ctx.get_global("v0").unwrap().as_vec3().unwrap(),
+    ctx.get_global("v1").unwrap().as_vec3().unwrap()
+  );
+  assert!(ctx.get_global("i2").unwrap().as_int().is_some());
+  assert!(ctx.get_global("v2").unwrap().as_vec3().is_some());
+}
+
+#[test]
+fn test_seeded_rng_calls_do_not_advance_global_rng() {
+  let seeded_ctx = EvalCtx::default();
+  seeded_ctx.reset_rng_to_default();
+  parse_and_eval_program_with_ctx(
+    r#"
+before = randf()
+seeded_f = srandf(7)
+seeded_i = srandi(7)
+seeded_v = srandv(7)
+after = randf()
+"#
+    .to_string(),
+    &seeded_ctx,
+    false,
+  )
+  .unwrap();
+
+  let baseline_ctx = EvalCtx::default();
+  baseline_ctx.reset_rng_to_default();
+  parse_and_eval_program_with_ctx(
+    r#"
+before = randf()
+after = randf()
+"#
+    .to_string(),
+    &baseline_ctx,
+    false,
+  )
+  .unwrap();
+
+  assert_eq!(
+    seeded_ctx.get_global("before").unwrap().as_float().unwrap(),
+    baseline_ctx
+      .get_global("before")
+      .unwrap()
+      .as_float()
+      .unwrap()
+  );
+  assert_eq!(
+    seeded_ctx.get_global("after").unwrap().as_float().unwrap(),
+    baseline_ctx
+      .get_global("after")
+      .unwrap()
+      .as_float()
+      .unwrap()
+  );
+}
+
+#[test]
+fn test_seeded_rng_matches_set_seed_first_draw() {
+  let seeded_ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx(
+    r#"
+f = srandf(123, -5, 5)
+i = srandi(123, -5, 5)
+v = srandv(123, vec3(-5, -4, -3), vec3(5, 4, 3))
+"#
+    .to_string(),
+    &seeded_ctx,
+    false,
+  )
+  .unwrap();
+
+  let stateful_ctx = EvalCtx::default();
+  parse_and_eval_program_with_ctx(
+    r#"
+set_rng_seed(123)
+f = randf(-5, 5)
+set_rng_seed(123)
+i = randi(-5, 5)
+set_rng_seed(123)
+v = randv(vec3(-5, -4, -3), vec3(5, 4, 3))
+"#
+    .to_string(),
+    &stateful_ctx,
+    false,
+  )
+  .unwrap();
+
+  assert_eq!(
+    seeded_ctx.get_global("f").unwrap().as_float().unwrap(),
+    stateful_ctx.get_global("f").unwrap().as_float().unwrap()
+  );
+  assert_eq!(
+    seeded_ctx.get_global("i").unwrap().as_int().unwrap(),
+    stateful_ctx.get_global("i").unwrap().as_int().unwrap()
+  );
+  assert_eq!(
+    seeded_ctx.get_global("v").unwrap().as_vec3().unwrap(),
+    stateful_ctx.get_global("v").unwrap().as_vec3().unwrap()
+  );
+}
+
+#[test]
 fn test_module_scope_isolation_and_export_in_main() {
   let ctx = EvalCtx::default();
 

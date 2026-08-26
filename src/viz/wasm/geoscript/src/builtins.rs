@@ -1636,6 +1636,17 @@ fn set_rng_seed_impl(
   }
 }
 
+fn rng_from_i64_seed(seed: i64) -> Pcg32 {
+  let mut rng = Pcg32::from_seed(unsafe { std::mem::transmute((seed, seed)) });
+
+  // Keep seeded builtins aligned with `set_rng_seed(seed); rand*()`.
+  let _ = rng.next_u64();
+  let _ = rng.next_u64();
+  let _ = rng.next_u64();
+
+  rng
+}
+
 fn set_sharp_angle_threshold_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -2122,6 +2133,35 @@ fn randi_impl(
   }
 }
 
+fn srandi_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+  let mut rng = rng_from_i64_seed(seed);
+
+  match def_ix {
+    0 => {
+      let min = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
+      let max = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
+
+      if max < min {
+        return Err(ErrorStack::new(format!(
+          "Invalid range for rand_int: min ({min}) must be less than or equal to max ({max})"
+        )));
+      } else if min == max {
+        return Ok(Value::Int(min));
+      }
+
+      Ok(Value::Int(rng.random_range(min..max)))
+    }
+    1 => Ok(Value::Int(rng.random())),
+    _ => unimplemented!(),
+  }
+}
+
 fn randv_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -2173,6 +2213,59 @@ fn randv_impl(
   }
 }
 
+fn srandv_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  fn invalid_bounds_err(min: impl Display, max: impl Display) -> ErrorStack {
+    ErrorStack::new(format!(
+      "Invalid range for rand_vec3: min ({min}) must be less than or equal to max ({max})"
+    ))
+  }
+
+  let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+  let mut rng = rng_from_i64_seed(seed);
+
+  match def_ix {
+    0 => {
+      let min = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
+      let max = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
+      if min == max {
+        return Ok(Value::Vec3(*min));
+      } else if min.x > max.x || min.y > max.y || min.z > max.z {
+        return Err(invalid_bounds_err(min, max));
+      }
+      Ok(Value::Vec3(Vec3::new(
+        rng.random_range(min.x..max.x),
+        rng.random_range(min.y..max.y),
+        rng.random_range(min.z..max.z),
+      )))
+    }
+    1 => {
+      let min = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      if min > max {
+        return Err(invalid_bounds_err(min, max));
+      } else if min == max {
+        return Ok(Value::Vec3(Vec3::new(min, min, min)));
+      }
+      Ok(Value::Vec3(Vec3::new(
+        rng.random_range(min..max),
+        rng.random_range(min..max),
+        rng.random_range(min..max),
+      )))
+    }
+    2 => Ok(Value::Vec3(Vec3::new(
+      rng.random(),
+      rng.random(),
+      rng.random(),
+    ))),
+    _ => unimplemented!(),
+  }
+}
+
 fn randf_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -2187,6 +2280,26 @@ fn randf_impl(
       Ok(Value::Float(ctx.rng().random_range(min..max)))
     }
     1 => Ok(Value::Float(ctx.rng().random())),
+    _ => unimplemented!(),
+  }
+}
+
+fn srandf_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let seed = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
+  let mut rng = rng_from_i64_seed(seed);
+
+  match def_ix {
+    0 => {
+      let min = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+      let max = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+      Ok(Value::Float(rng.random_range(min..max)))
+    }
+    1 => Ok(Value::Float(rng.random())),
     _ => unimplemented!(),
   }
 }
@@ -11502,11 +11615,20 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "randf" => builtin_fn!(randf, |def_ix, arg_refs, args, kwargs, ctx| {
     randf_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "srandf" => builtin_fn!(srandf, |def_ix, arg_refs, args, kwargs, _ctx| {
+    srandf_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "randv" => builtin_fn!(randv, |def_ix, arg_refs, args, kwargs, ctx| {
     randv_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "srandv" => builtin_fn!(srandv, |def_ix, arg_refs, args, kwargs, _ctx| {
+    srandv_impl(def_ix, arg_refs, args, kwargs)
+  }),
   "randi" => builtin_fn!(randi, |def_ix, arg_refs, args, kwargs, ctx| {
     randi_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "srandi" => builtin_fn!(srandi, |def_ix, arg_refs, args, kwargs, _ctx| {
+    srandi_impl(def_ix, arg_refs, args, kwargs)
   }),
   "fbm" => builtin_fn!(fbm, |def_ix, arg_refs, args, kwargs, _ctx| {
     fbm_impl(def_ix, arg_refs, args, kwargs)

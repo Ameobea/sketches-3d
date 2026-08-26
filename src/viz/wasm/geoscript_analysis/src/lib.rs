@@ -862,6 +862,44 @@ out = (walls)
   }
 
   #[test]
+  fn test_pipeline_into_higher_order_call_no_error() {
+    let src = r#"
+base = spectral_noise(
+  bands=[
+    [-4.260, -2.130, 0.000, -2.130],
+    [-6.203, -3.923, -1.796, -2.930],
+    [-6.998, -5.962, -4.634, -5.613],
+    [-8.511, -7.046, -6.808, -7.974],
+    [-9.411, -8.943, -8.298, -9.231],
+    [-10.327, -9.763, -9.449, -10.355],
+    [-11.281, -11.326, -11.133, -11.387],
+    [-12.977, -12.954, -12.927, -13.028]
+  ],
+  kernels=[
+    [0.039619, 0.000000, -1.828, -2.450, 3.142, -0.588]
+  ],
+  seed=0
+)
+  | color_ramp(stops=[
+    [-2.418, srgb(0x090c10)],
+    [0.339, srgb(0x182634)],
+    [0.511, srgb(0x1a3048)],
+    [1.189, srgb(0x2c4252)],
+    [1.366, srgb(0x374346)],
+    [1.762, srgb(0x354958)],
+    [1.987, srgb(0x3f4d5b)],
+    [2.418, srgb(0x586577)]
+  ])
+"#;
+    let result = analyze(src);
+    assert!(
+      result.diagnostics.is_empty(),
+      "expected no diagnostics, got: {:?}",
+      result.diagnostics
+    );
+  }
+
+  #[test]
   fn test_pipeline_into_fully_applied_call_is_bitor_error() {
     // `box(..) | v3(x, y, 10)`: `v3(...)` is fully applied → a concrete `vec3`, so `|` degrades to
     // `bit_or`, and `mesh | vec3` matches no overload.  This must surface as an inline error.

@@ -3803,6 +3803,40 @@ fn test_rng_const_folding_top_level() {
 }
 
 #[test]
+fn test_seeded_rng_const_folds_without_global_rng_state() {
+  for name in ["srandf", "srandi", "srandv"] {
+    let Some(Value::Callable(callable)) = resolve_global(name) else {
+      panic!("Expected `{name}` to resolve to a callable");
+    };
+    assert!(!callable.is_side_effectful(), "`{name}` should be pure");
+    assert!(
+      !callable.is_rng_dependent(),
+      "`{name}` should not require global rng state"
+    );
+  }
+
+  let ctx = EvalCtx::default();
+  ctx.reset_rng_to_default();
+  let rng_before = ctx.rng_state();
+  let mut ast = crate::parse_program_src(&ctx, "a = srandf(7)").unwrap();
+  optimize_ast(&ctx, &mut ast).unwrap();
+
+  match &ast.statements[0] {
+    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => {
+      assert!(matches!(
+        expr,
+        Expr::Literal {
+          value: Value::Float(_),
+          ..
+        }
+      ));
+    }
+    _ => unreachable!(),
+  }
+  assert_eq!(ctx.rng_state(), rng_before);
+}
+
+#[test]
 fn test_const_eval_cache_persists_across_runs() {
   let code = "a = box(1) | scale(0.2) | trans(0, 10, 0)";
 

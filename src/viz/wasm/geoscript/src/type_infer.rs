@@ -304,13 +304,13 @@ pub fn is_valid_partial_prefix(
 /// rhs`.
 ///
 /// The runtime evaluates `rhs` to a value *before* deciding how `|` behaves: when `f(args)` is a
-/// partial application the value is a callable and the pipeline invokes it with `lhs`; when
-/// `f(args)` is complete the value is concrete and `|` degrades to `bit_or(lhs, value)`.  Non-
-/// concrete arg types act as wildcards so e.g. `v3(x, y, 10)` with unknown `x`/`y` still classifies
-/// as a complete `vec3`.
+/// partial application or a complete higher-order call returns a callable, the pipeline invokes
+/// it with `lhs`; when a complete call returns a non-callable value, `|` degrades to
+/// `bit_or(lhs, value)`. Non-concrete arg types act as wildcards so e.g. `v3(x, y, 10)` with
+/// unknown `x`/`y` still classifies as a complete `vec3`.
 pub enum PipeRhsKind {
-  /// `f(args)` fully binds a signature → a concrete value of this type (and the matched def
-  /// index).
+  /// `f(args)` fully binds a signature, with this return type and matched definition index. The
+  /// return type may itself be callable.
   Complete { ty: AbstractType, def_ix: usize },
   /// No signature fully binds but the args are a valid prefix → a callable to pipe into.
   Partial,
@@ -420,8 +420,8 @@ pub fn classify_pipe_rhs_call(
     return PipeRhsKind::Indeterminate;
   }
 
-  // A signature bound entirely by concrete args is authoritative: the runtime produces a value
-  // here regardless of any longer overload, so `|` degrades to `bit_or`.
+  // A signature bound entirely by concrete args is authoritative: the runtime produces its
+  // declared return type here regardless of any longer overload.
   for (def_ix, sig) in sigs.iter().enumerate() {
     if sig_fully_binds(sig, arg_types, kwarg_types, true) {
       return PipeRhsKind::Complete {

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { N8AOPostPass } from 'n8ao';
 
 import type { Viz } from 'src/viz';
 import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
@@ -10,8 +11,13 @@ import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
+import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
+  viz.camera.near = 2;
+  viz.camera.far = 50_000;
+  viz.camera.updateProjectionMatrix();
+
   const playerHeight = 5;
   const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
@@ -41,7 +47,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(0, 3, 0),
+        pos: new THREE.Vector3(0, 63, 0),
         rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
       },
     },
@@ -100,19 +106,24 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       layers: [],
       background: gradientBackground({
         stops: [
-          { position: 0.0, color: 0x8c9db1 },
-          { position: 0.489, color: 0xaabac9 },
-          { position: 0.676, color: 0xbfc4c6 },
-          { position: 0.768, color: 0xc8c2bb },
-          { position: 0.856, color: 0xcbb5a5 },
-          { position: 0.905, color: 0xc5a597 },
-          { position: 0.944, color: 0xb29790 },
-          { position: 1.0, color: 0x828283 },
+          // { position: 0.0, color: 0x8c9db1 },
+          // { position: 0.489, color: 0xaabac9 },
+          // { position: 0.676, color: 0xbfc4c6 },
+          // { position: 0.768, color: 0xc8c2bb },
+          // { position: 0.856, color: 0xcbb5a5 },
+          // { position: 0.905, color: 0xc5a597 },
+          // { position: 0.944, color: 0xb29790 },
+          // { position: 1.0, color: 0x828283 },
+          { position: 0.0, color: 0xc37790 },
+          { position: 0.348624, color: 0xc16f86 },
+          { position: 0.513761, color: 0xa56a83 },
+          { position: 0.876147, color: 0x895b6a },
+          { position: 1.0, color: 0x825461 },
         ]
           .map(({ position, color }) => ({ position: 1 - position, color }))
           .reverse(),
         horizonMode: HorizonMode.SolidBelow,
-        belowColor: 0x060301,
+        belowColor: 0x0,
         lutResolution: {
           [GraphicsQuality.Low]: 32,
           [GraphicsQuality.Medium]: 64,
@@ -128,15 +139,91 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    toneMapping: { mode: 'agx', exposure: 1.2 },
-    autoUpdateShadowMap: true,
+    toneMapping: { mode: 'agx', exposure: 1 },
+    autoUpdateShadowMap: false,
     emissiveBypass: true,
-    skyBypassTonemap: false,
+    skyBypassTonemap: true,
     skyStack,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
         ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.45, luminanceSoftKnee: 0.02 }
         : null,
+    fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
+          // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
+          if (depth >= 0.9999) {
+            return vec4(0.0);
+          }
+          float yActivation = smoothstep(-60., -50., worldPos.y);
+          float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
+          float fogFactor = smoothstep(140., 2310., distToPlayer) * yActivation * 0.83;
+          return vec4(vec3(0.1, 0.035, 0.04) * 0.5, fogFactor);
+        }`,
+    addMiddlePasses: (composer, viz, quality) => {
+      const qualityParams = {
+        [GraphicsQuality.Low]: {
+          baseRaymarchStepCount: 40,
+          octaveCount: 3,
+          renderScale: 0.25,
+          fogFadeOutRangeY: 8,
+          fogFadeOutPow: 1.6,
+          globalScale: 1.4,
+          noisePow: 1.5,
+          noiseBias: 0.5,
+          jbuExtent: 1,
+          jbuSpatialSigma: 1.3,
+          jbuDepthSigma: 0.05,
+        },
+        [GraphicsQuality.Medium]: { baseRaymarchStepCount: 30 },
+        [GraphicsQuality.High]: { baseRaymarchStepCount: 60 },
+      }[quality];
+      const volumetricPass = new VolumetricPass(viz.scene, viz.camera as THREE.PerspectiveCamera, {
+        fogMinY: -90,
+        fogMaxY: -40,
+        fogColorHighDensity: new THREE.Vector3(0.024, 0.024, 0.01).multiplyScalar(0.3),
+        fogColorLowDensity: new THREE.Vector3(0.035, 0.03, 0.04).multiplyScalar(0.8),
+        ambientLightColor: new THREE.Color(0x5d4444),
+        ambientLightIntensity: 2.2,
+        heightFogStartY: -90,
+        heightFogEndY: -55,
+        heightFogFactor: 0.54,
+        maxRayLength: 1000,
+        minStepLength: 0.1,
+        noiseBias: 0.1,
+        noisePow: 2.4,
+        fogFadeOutRangeY: 38,
+        fogFadeOutPow: 0.6,
+        fogDensityMultiplier: 0.82,
+        postDensityMultiplier: 1.7,
+        noiseMovementPerSecond: new THREE.Vector2(-2.3, 1.3),
+        globalScale: 1,
+        halfRes: quality <= GraphicsQuality.Medium,
+        ...qualityParams,
+      });
+      composer.addPass(volumetricPass);
+      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
+
+      if (vizConf.graphics.quality > GraphicsQuality.Low) {
+        const n8aoPass = new N8AOPostPass(
+          viz.scene,
+          viz.camera,
+          viz.renderer.domElement.width,
+          viz.renderer.domElement.height
+        );
+        composer.addPass(n8aoPass);
+        n8aoPass.gammaCorrection = false;
+        n8aoPass.enabled = vizConf.graphics.quality > GraphicsQuality.Medium;
+        n8aoPass.configuration.intensity = 2;
+        n8aoPass.configuration.aoRadius = 5;
+        n8aoPass.configuration.halfRes = vizConf.graphics.quality <= GraphicsQuality.Medium;
+        n8aoPass.setQualityMode(
+          {
+            [GraphicsQuality.Low]: 'Low',
+            [GraphicsQuality.Medium]: 'Low',
+            [GraphicsQuality.High]: 'High',
+          }[vizConf.graphics.quality]
+        );
+      }
+    },
   });
 
   const handle = viz.levelLoadHandle!;
