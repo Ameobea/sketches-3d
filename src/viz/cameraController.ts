@@ -8,7 +8,6 @@ import {
   DefaultThirdPersonInitialAzimuth,
   DefaultThirdPersonDistance,
   DefaultThirdPersonFOV,
-  DefaultThirdPersonCameraCollisionBias,
   DefaultThirdPersonMinCameraDistance,
   DefaultThirdPersonCameraExtendSpeed,
   SoftOcclusionWidthThreshold,
@@ -41,6 +40,20 @@ export interface CameraControllerParams {
   getFirstPersonFOV: () => number;
   getThirdPersonXrayEnabled: () => boolean;
   cameraRayTest: CameraRayTestFn;
+  /**
+   * Sweeps a sphere of `radius` from→to, returning the first-touch fraction (1 = clear).
+   * `nonPermeableOnly` limits hits to non-permeable-tagged bodies.
+   */
+  cameraSphereSweep: (
+    fromX: number,
+    fromY: number,
+    fromZ: number,
+    toX: number,
+    toY: number,
+    toZ: number,
+    radius: number,
+    nonPermeableOnly: boolean
+  ) => number;
   /**
    * Returns the world-space hit normal from the most recent cameraRayTest call.
    * (0,0,0) when the last cast had no hit.
@@ -83,7 +96,8 @@ export class CameraController {
   private zoomSpeed = DefaultZoomSpeed;
   private thirdPersonFOV = DefaultThirdPersonFOV;
   private fovTransitionDistance = DefaultFovTransitionDistance;
-  private cameraCollisionBias = DefaultThirdPersonCameraCollisionBias;
+  /** Explicit override from the view mode config; null = derive from the camera frustum. */
+  private configuredCollisionBias: number | null = null;
   private minCameraDistance = DefaultThirdPersonMinCameraDistance;
   private cameraExtendSpeed = DefaultThirdPersonCameraExtendSpeed;
 
@@ -94,6 +108,7 @@ export class CameraController {
   private readonly getFirstPersonFOV: () => number;
   private readonly getThirdPersonXrayEnabled: () => boolean;
   private readonly cameraRayTest: CameraRayTestFn;
+  private readonly cameraSphereSweep: CameraControllerParams['cameraSphereSweep'];
   private readonly getLastRayHitNormal: () => { x: number; y: number; z: number };
   private readonly getLastRayHitNonPermeable: () => boolean;
 
@@ -113,6 +128,7 @@ export class CameraController {
     this.getFirstPersonFOV = params.getFirstPersonFOV;
     this.getThirdPersonXrayEnabled = params.getThirdPersonXrayEnabled;
     this.cameraRayTest = params.cameraRayTest;
+    this.cameraSphereSweep = params.cameraSphereSweep;
     this.getLastRayHitNormal = params.getLastRayHitNormal;
     this.getLastRayHitNonPermeable = params.getLastRayHitNonPermeable;
 
@@ -157,7 +173,7 @@ export class CameraController {
       this.minPolarAngle = viewMode.minPolarAngle ?? DefaultThirdPersonMinPolar;
       this.maxPolarAngle = viewMode.maxPolarAngle ?? DefaultThirdPersonMaxPolar;
       this.thirdPersonFOV = viewMode.cameraFOV ?? DefaultThirdPersonFOV;
-      this.cameraCollisionBias = viewMode.cameraCollisionBias ?? DefaultThirdPersonCameraCollisionBias;
+      this.configuredCollisionBias = viewMode.cameraCollisionBias ?? null;
       this.minCameraDistance = viewMode.minCameraDistance ?? DefaultThirdPersonMinCameraDistance;
       this.cameraExtendSpeed = viewMode.cameraExtendSpeed ?? DefaultThirdPersonCameraExtendSpeed;
 
@@ -285,6 +301,33 @@ export class CameraController {
     document.body.removeEventListener('wheel', this.handleWheel);
   }
 
+  /**
+   * Clearance the camera needs from geometry in every direction: the near-plane corner
+   * sits `near * sqrt(1 + tan²(fov/2) * (1 + aspect²))` from the camera center, and
+   * anything closer than that to a surface can clip through it. Used as the sphere-sweep
+   * radius and as the along-ray pull-back in the soft-occlusion layer walk. Derived from
+   * the live frustum unless overridden via the view mode's `cameraCollisionBias`
+   * (floored so a configured 0 can't degenerate the sweep sphere).
+   */
+  private get cameraClearance(): number {
+    if (this.configuredCollisionBias !== null) {
+      return Math.max(this.configuredCollisionBias, 0.05);
+    }
+    const halfH = Math.tan(THREE.MathUtils.degToRad(this.camera.fov) * 0.5);
+    const aspect = this.camera.aspect;
+    return this.camera.near * Math.sqrt(1 + halfH * halfH * (1 + aspect * aspect)) * 1.1;
+  }
+
+  /** Move currentDistance toward `target`: snap in instantly, extend out at cameraExtendSpeed. */
+  private approachDistance(target: number, dtSecs: number): number {
+    if (target < this.currentDistance) {
+      this.currentDistance = target;
+    } else {
+      this.currentDistance = Math.min(target, this.currentDistance + this.cameraExtendSpeed * dtSecs);
+    }
+    return this.currentDistance;
+  }
+
   private applyCollision(dtSecs: number): number {
     const maxDist = this.targetDistance;
 
@@ -305,30 +348,60 @@ export class CameraController {
       return this.applyCollisionSoft(maxDist, idealX, idealY, idealZ, dtSecs);
     }
 
-    // SoftOcclusion disabled — plain hard snap.
+    // SoftOcclusion disabled — plain hard snap. The swept sphere stops with `cameraClearance`
+    // of room in every direction, covering walls a thin ray would miss (e.g. pivoting the
+    // camera flush along a wall never intersects the eye→camera ray, but clips the near plane).
     this.isSoftOccluded = false;
-    const hitFraction = this.cameraRayTest(
+    const hitFraction = this.cameraSphereSweep(
       this.eyePos.x,
       this.eyePos.y,
       this.eyePos.z,
       idealX,
       idealY,
-      idealZ
+      idealZ,
+      this.cameraClearance,
+      false
     );
     const collisionDist =
-      hitFraction < 1.0
-        ? Math.max(this.minCameraDistance, hitFraction * maxDist - this.cameraCollisionBias)
-        : maxDist;
-    if (collisionDist < this.currentDistance) {
-      this.currentDistance = collisionDist;
-    } else {
-      this.currentDistance = Math.min(
-        collisionDist,
-        maxDist,
-        this.currentDistance + this.cameraExtendSpeed * dtSecs
-      );
+      hitFraction < 1.0 ? Math.max(this.minCameraDistance, hitFraction * maxDist) : maxDist;
+    return this.approachDistance(collisionDist, dtSecs);
+  }
+
+  /**
+   * Soft-occlusion collision: the ray-based layer walk decides placement; a sphere sweep
+   * backstops the flush-wall case (see applyCollision). The sweep is restricted to
+   * non-permeable bodies so thin-geometry dithering keeps working — which means ordinary
+   * untagged walls are NOT covered by the backstop in this mode and can still clip the
+   * near plane when pivoted against flush.
+   */
+  private applyCollisionSoft(
+    maxDist: number,
+    idealX: number,
+    idealY: number,
+    idealZ: number,
+    dtSecs: number
+  ): number {
+    const dist = this.applyCollisionSoftRay(maxDist, idealX, idealY, idealZ, dtSecs);
+    if (dist <= this.minCameraDistance) {
+      return dist;
     }
-    return this.currentDistance;
+    const t = dist / maxDist;
+    const frac = this.cameraSphereSweep(
+      this.eyePos.x,
+      this.eyePos.y,
+      this.eyePos.z,
+      this.eyePos.x + this.offset.x * t,
+      this.eyePos.y + this.offset.y * t,
+      this.eyePos.z + this.offset.z * t,
+      this.cameraClearance,
+      true
+    );
+    if (frac < 1.0) {
+      const clamped = Math.max(this.minCameraDistance, frac * dist);
+      this.currentDistance = clamped;
+      return clamped;
+    }
+    return dist;
   }
 
   /**
@@ -340,7 +413,7 @@ export class CameraController {
    *
    * Each layer costs 2 raycasts (entry + exit).  MAX_LAYERS caps the total work.
    */
-  private applyCollisionSoft(
+  private applyCollisionSoftRay(
     maxDist: number,
     idealX: number,
     idealY: number,
@@ -381,13 +454,8 @@ export class CameraController {
         this.isSoftOccluded = hasSoftLayer;
         const margin =
           SoftOcclusionInsideMarginBase + SoftOcclusionInsideMarginThicknessScale * lastThickness;
-        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraCollisionBias - margin);
-        if (snapDist < this.currentDistance) {
-          this.currentDistance = snapDist;
-        } else {
-          this.currentDistance = Math.min(snapDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
-        }
-        return this.currentDistance;
+        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraClearance - margin);
+        return this.approachDistance(snapDist, dtSecs);
       }
 
       const insideDist = entryDist + STEP;
@@ -398,13 +466,8 @@ export class CameraController {
         this.isSoftOccluded = hasSoftLayer;
         const margin =
           SoftOcclusionInsideMarginBase + SoftOcclusionInsideMarginThicknessScale * lastThickness;
-        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraCollisionBias - margin);
-        if (snapDist < this.currentDistance) {
-          this.currentDistance = snapDist;
-        } else {
-          this.currentDistance = Math.min(snapDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
-        }
-        return this.currentDistance;
+        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraClearance - margin);
+        return this.approachDistance(snapDist, dtSecs);
       }
 
       // Cast from just inside the layer to find where it exits.
@@ -436,13 +499,8 @@ export class CameraController {
         // Any thin layers already accumulated between eye and here will still be dithered.
         this.isSoftOccluded = hasSoftLayer;
         const margin = SoftOcclusionInsideMarginBase + SoftOcclusionInsideMarginThicknessScale * thickness;
-        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraCollisionBias - margin);
-        if (snapDist < this.currentDistance) {
-          this.currentDistance = snapDist;
-        } else {
-          this.currentDistance = Math.min(snapDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
-        }
-        return this.currentDistance;
+        const snapDist = Math.max(this.minCameraDistance, entryDist - this.cameraClearance - margin);
+        return this.approachDistance(snapDist, dtSecs);
       }
 
       // Thin layer — mark it and continue probing from just past its exit.
@@ -468,21 +526,15 @@ export class CameraController {
           SoftOcclusionInsideMarginBase + SoftOcclusionInsideMarginThicknessScale * lastThickness;
         const snapDist = Math.max(
           this.minCameraDistance,
-          (1.0 - checkFrac) * maxDist - this.cameraCollisionBias - margin
+          (1.0 - checkFrac) * maxDist - this.cameraClearance - margin
         );
         this.isSoftOccluded = hasSoftLayer;
-        if (snapDist < this.currentDistance) {
-          this.currentDistance = snapDist;
-        } else {
-          this.currentDistance = Math.min(snapDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
-        }
-        return this.currentDistance;
+        return this.approachDistance(snapDist, dtSecs);
       }
     }
 
     this.isSoftOccluded = hasSoftLayer;
-    this.currentDistance = Math.min(maxDist, this.currentDistance + this.cameraExtendSpeed * dtSecs);
-    return this.currentDistance;
+    return this.approachDistance(maxDist, dtSecs);
   }
 
   private computeFOV(): number {

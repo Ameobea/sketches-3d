@@ -1,5 +1,11 @@
 <script lang="ts">
-  import type { EnvironmentConfig, TextureID, User } from 'src/geoscript/geotoyAPIClient';
+  import type {
+    EmissiveBloomSettings,
+    EnvironmentConfig,
+    TextureID,
+    User,
+  } from 'src/geoscript/geotoyAPIClient';
+  import { DEFAULT_EMISSIVE_BLOOM_CONFIG } from 'src/viz/postprocessing/defaultPostprocessing';
   import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
   import TexturePicker from 'src/geotoy/panels/materialEditor/TexturePicker.svelte';
   import TexturePreview from 'src/geotoy/panels/materialEditor/TexturePreview.svelte';
@@ -7,10 +13,12 @@
   let {
     isOpen = $bindable(),
     environment = $bindable(),
+    emissiveBloom = $bindable(),
     me,
   }: {
     isOpen: boolean;
     environment: EnvironmentConfig | undefined;
+    emissiveBloom: EmissiveBloomSettings | undefined;
     me: User | null | undefined;
   } = $props();
 
@@ -58,6 +66,19 @@
 
   const intensityOf = (): number => environment?.intensity ?? 1;
   const backgroundOn = (): boolean => environment?.setBackground !== false;
+
+  const BLOOM_DEFAULTS = { ...DEFAULT_EMISSIVE_BLOOM_CONFIG, luminanceSoftKnee: 0 };
+  const BLOOM_KNOBS = [
+    { key: 'intensity', label: 'intensity', max: 4, step: 0.05 },
+    { key: 'radius', label: 'radius', max: 1, step: 0.01 },
+    { key: 'luminanceThreshold', label: 'threshold', max: 1, step: 0.01 },
+    { key: 'luminanceSoftKnee', label: 'soft knee', max: 0.5, step: 0.01 },
+  ] as const;
+  const bloomVal = (key: (typeof BLOOM_KNOBS)[number]['key']): number =>
+    emissiveBloom?.[key] ?? BLOOM_DEFAULTS[key] ?? 0;
+  const bloomUpdate = (key: (typeof BLOOM_KNOBS)[number]['key'], v: number) => {
+    emissiveBloom = { ...emissiveBloom, [key]: v };
+  };
   const pickedTexture = $derived(
     equirect && equirect.textureId >= 0 ? Textures.textures[equirect.textureId] : undefined
   );
@@ -156,6 +177,27 @@
             <span class="hint">use environment as the scene background</span>
           </div>
         {/if}
+
+        <div class="section-header">
+          <span>emissive bloom</span>
+          {#if emissiveBloom}
+            <button class="btn" onclick={() => (emissiveBloom = undefined)}>reset</button>
+          {/if}
+        </div>
+        {#each BLOOM_KNOBS as knob (knob.key)}
+          <div class="row">
+            <span class="label">{knob.label}</span>
+            <input
+              type="range"
+              min="0"
+              max={knob.max}
+              step={knob.step}
+              value={bloomVal(knob.key)}
+              oninput={e => bloomUpdate(knob.key, (e.target as HTMLInputElement).valueAsNumber)}
+            />
+            <span class="value">{bloomVal(knob.key).toFixed(2)}</span>
+          </div>
+        {/each}
       </div>
     {/if}
   </div>
@@ -240,6 +282,17 @@
   .hint {
     font-size: 11px;
     color: #777;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+    padding-top: 8px;
+    border-top: 1px solid #383838;
+    font-size: 12px;
+    color: #aaa;
   }
 
   .select,

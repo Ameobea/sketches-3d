@@ -48,7 +48,8 @@ void main() {
     float linear = max(luma - threshold, 0.0);
     contribution = max(soft, linear) / max(luma, 1e-5);
   } else {
-    contribution = smoothstep(threshold - smoothing * 0.5, threshold + smoothing * 0.5, luma);
+    // max() keeps edge1 > edge0 when smoothing is 0 (equal edges are UB in GLSL).
+    contribution = smoothstep(threshold - smoothing * 0.5, threshold + max(smoothing * 0.5, 1e-6), luma);
   }
 
   color *= contribution;

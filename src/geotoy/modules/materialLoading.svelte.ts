@@ -3,6 +3,7 @@ import { DataTexture } from 'three';
 import { getMultipleTextures, type TextureID } from 'src/geoscript/geotoyAPIClient';
 import { LoadedTextures, type MaterialDef } from 'src/geoscript/materials';
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
+import { TEXTURE_SLOTS } from 'src/viz/materials/schema';
 import { loadTexture } from 'src/viz/textureLoading';
 
 let fallbackTex: THREE.Texture | null = null;
@@ -65,14 +66,8 @@ export const referencedTextureIDsForDef = (mat: MaterialDef): TextureID[] => {
   }
   const p = mat.props;
   const textureIDs: TextureID[] = [];
-  for (const handle of [
-    p.map,
-    p.normalMap,
-    p.roughnessMap,
-    p.metalnessMap,
-    p.clearcoatNormalMap,
-    p.pomHeightMap,
-  ]) {
+  for (const slot of TEXTURE_SLOTS) {
+    const handle = p[slot];
     // Non-numeric handles (procedural refs) aren't library textures and have no metadata.
     if (handle != null && Number.isFinite(Number(handle))) {
       textureIDs.push(Number(handle));

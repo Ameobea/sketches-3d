@@ -10,7 +10,7 @@ uniform float gammaExponent;
 varying vec2 vUv;
 varying vec3 vWorldRay;
 
-#if defined(HAS_FOG) || defined(SKY_BYPASS_TONEMAP)
+#ifdef HAS_FOG
 uniform sampler2D depthBuffer;
 #endif
 #if defined(HAS_FOG) && !defined(FOG_DISABLED)
@@ -61,16 +61,12 @@ vec3 reconstructWorldPos(float depth) {
 void main() {
   vec4 color = texture2D(inputBuffer, vUv);
 
-  // Sky-bypass detection: fragments at the far plane (depth ≈ 1) are treated as
-  // sky / no geometry and skip the tone-mapping stage entirely, preserving the
-  // color authored by the sky material. All downstream passes (sRGB encode,
-  // emissive composite, bloom, gamma, dither) still run.
-  //
-  // TODO: do we even need this anymore now that skystack can render the sky into
-  // the emissive buffer directly?
-  bool bypassToneMap = false;
-  #ifdef SKY_BYPASS_TONEMAP
-    bypassToneMap = texture2D(depthBuffer, vUv).r >= 0.9999;
+  // Volumetric fog coverage exported in the scene buffer's alpha (see VolumetricPass).
+  // Attenuates the distance fog + emissive composite so neither repaints content
+  // hidden under opaque fog using the depth of geometry beneath it.
+  float fogCoverage = 0.0;
+  #ifdef SCENE_ALPHA_IS_FOG_COVERAGE
+  fogCoverage = clamp(color.a, 0.0, 1.0);
   #endif
 
   // Fog blend runs in linear space, before tone mapping, so the fog color is
@@ -88,32 +84,32 @@ void main() {
     //                              float depth, float curTimeSeconds)
     // Returns vec4(fogColor.rgb, fogFactor) where fogFactor=0 is clear, 1 is full fog.
     fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
+    fogResult.a *= 1.0 - fogCoverage;
     color.rgb = mix(color.rgb, fogResult.rgb, fogResult.a);
   }
   #endif
 
-  if (!bypassToneMap) {
-    #if defined(TONE_MAPPING_ACES)
-      color.rgb = ACESFilmicToneMapping(color.rgb);
-    #elif defined(TONE_MAPPING_CINEON)
-      color.rgb = CineonToneMapping(color.rgb);
-    #elif defined(TONE_MAPPING_REINHARD)
-      color.rgb = ReinhardToneMapping(color.rgb);
-    #elif defined(TONE_MAPPING_AGX)
-      color.rgb = AgXToneMapping(color.rgb);
-    #elif defined(TONE_MAPPING_NEUTRAL)
-      color.rgb = NeutralToneMapping(color.rgb);
-    #else
-      // 'none': apply exposure and hard-clamp
-      color.rgb = min(color.rgb * toneMappingExposure, vec3(1.0));
-    #endif
-  }
+  #if defined(TONE_MAPPING_ACES)
+    color.rgb = ACESFilmicToneMapping(color.rgb);
+  #elif defined(TONE_MAPPING_CINEON)
+    color.rgb = CineonToneMapping(color.rgb);
+  #elif defined(TONE_MAPPING_REINHARD)
+    color.rgb = ReinhardToneMapping(color.rgb);
+  #elif defined(TONE_MAPPING_AGX)
+    color.rgb = AgXToneMapping(color.rgb);
+  #elif defined(TONE_MAPPING_NEUTRAL)
+    color.rgb = NeutralToneMapping(color.rgb);
+  #else
+    // 'none': apply exposure and hard-clamp
+    color.rgb = min(color.rgb * toneMappingExposure, vec3(1.0));
+  #endif
 
   color.rgb = linearToSRGB(color.rgb);
 
 #ifdef HAS_EMISSIVE_BUFFER
 {
   vec4 emissive = texture2D(emissiveBuffer, vUv);
+  emissive.a *= 1.0 - fogCoverage;
   // Apply the same fog factor computed above to the emissive sample so the
   // composite matches the fogged scene below. The bloom path is pre-fogged
   // in EmissiveBloomPass's filter step (so blurred halos attenuate correctly);
@@ -130,9 +126,10 @@ void main() {
 
 #ifdef HAS_EMISSIVE_BLOOM
 {
-  // Additive bloom glow from the MipmapBlur of the emissive buffer.
+  // Additive bloom glow from the MipmapBlur of the emissive buffer, attenuated by
+  // fog coverage so halos don't detach from sources hidden under volumetric fog.
   vec4 bloom = texture2D(emissiveBloomBuffer, vUv);
-  color.rgb += linearToSRGB(bloom.rgb) * bloomIntensity;
+  color.rgb += linearToSRGB(bloom.rgb) * bloomIntensity * (1.0 - fogCoverage);
 }
 #endif
 
@@ -159,5 +156,5 @@ void main() {
 
   color.rgb += noise * amplitude;
 
-  gl_FragColor = color;
+  gl_FragColor = vec4(color.rgb, 1.0);
 }

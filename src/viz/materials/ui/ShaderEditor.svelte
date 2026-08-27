@@ -4,8 +4,7 @@
   import type { KeyBinding } from '@codemirror/view';
   import { untrack } from 'svelte';
   import { buildEditor, buildGLSLLanguage } from 'src/geoscript/editor';
-  import { buildDefaultShaders } from 'src/geoscript/geotoyMaterialConvert';
-  import type { ShaderSlots } from './shaderSlots';
+  import { buildDefaultShaders, editorSlotNames, type ShaderSlots } from './shaderSlots';
 
   type State = { type: 'physical' | 'basic'; shaders: ShaderSlots };
 
@@ -26,23 +25,7 @@
 
   type ShaderName = keyof ShaderSlots;
 
-  const shaderList = $derived<readonly ShaderName[]>(
-    shaderState.type === 'basic'
-      ? ['color']
-      : pomEnabled
-        ? [
-            'color',
-            'common',
-            'lightAttenuation',
-            'stackIndex',
-            'roughness',
-            'metalness',
-            'iridescence',
-            'pomHeight',
-            'pomNormal',
-          ]
-        : ['color', 'common', 'lightAttenuation', 'stackIndex', 'roughness', 'metalness', 'iridescence']
-  );
+  const shaderList = $derived<readonly ShaderName[]>(editorSlotNames(shaderState.type, pomEnabled));
 
   let activeShader = $state<ShaderName>('color');
 

@@ -14,10 +14,6 @@ import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  viz.camera.near = 2;
-  viz.camera.far = 50_000;
-  viz.camera.updateProjectionMatrix();
-
   const playerHeight = 5;
   const playerRadius = 1.5;
   const playerMesh = new THREE.Mesh(
@@ -105,20 +101,16 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       horizonBlend: 0.03,
       layers: [],
       background: gradientBackground({
+        // Stops are scene-referred (pre-AgX, pinned to exposure 1): each is AgXToneMapping⁻¹
+        // of the intended display color, so the sky renders to c37790 / c16f86 / a56a83 /
+        // 895b6a / 825461 after the FinalPass tone map. Regenerate with scripts/agx-invert
+        // if retuning stops or exposure.
         stops: [
-          // { position: 0.0, color: 0x8c9db1 },
-          // { position: 0.489, color: 0xaabac9 },
-          // { position: 0.676, color: 0xbfc4c6 },
-          // { position: 0.768, color: 0xc8c2bb },
-          // { position: 0.856, color: 0xcbb5a5 },
-          // { position: 0.905, color: 0xc5a597 },
-          // { position: 0.944, color: 0xb29790 },
-          // { position: 1.0, color: 0x828283 },
-          { position: 0.0, color: 0xc37790 },
-          { position: 0.348624, color: 0xc16f86 },
-          { position: 0.513761, color: 0xa56a83 },
-          { position: 0.876147, color: 0x895b6a },
-          { position: 1.0, color: 0x825461 },
+          { position: 0.0, color: 0xd95888 },
+          { position: 0.348624, color: 0xd24f7b },
+          { position: 0.513761, color: 0xa65479 },
+          { position: 0.876147, color: 0x804c5e },
+          { position: 1.0, color: 0x784656 },
         ]
           .map(({ position, color }) => ({ position: 1 - position, color }))
           .reverse(),
@@ -142,20 +134,18 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     toneMapping: { mode: 'agx', exposure: 1 },
     autoUpdateShadowMap: false,
     emissiveBypass: true,
-    skyBypassTonemap: true,
     skyStack,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
         ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.45, luminanceSoftKnee: 0.02 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
-          // Sky pixels sit at the far plane; skip fogging so the gradient sky is untouched.
-          if (depth >= 0.9999) {
+          if (depth >= 1.) {
             return vec4(0.0);
           }
-          float yActivation = smoothstep(-60., -50., worldPos.y);
+          float yActivation = smoothstep(-60., -50., worldPos.y) * (1. - smoothstep(5500., 9000., worldPos.y));
           float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
-          float fogFactor = smoothstep(140., 2310., distToPlayer) * yActivation * 0.83;
+          float fogFactor = smoothstep(240., 4310., distToPlayer) * yActivation * 0.88;
           return vec4(vec3(0.1, 0.035, 0.04) * 0.5, fogFactor);
         }`,
     addMiddlePasses: (composer, viz, quality) => {
@@ -199,9 +189,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         halfRes: quality <= GraphicsQuality.Medium,
         ...qualityParams,
       });
-      composer.addPass(volumetricPass);
-      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
-
+      // AO must composite before the fog so it doesn't re-darken fog-covered pixels
+      // using the depth/normals of geometry hidden underneath.
       if (vizConf.graphics.quality > GraphicsQuality.Low) {
         const n8aoPass = new N8AOPostPass(
           viz.scene,
@@ -223,6 +212,9 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
           }[vizConf.graphics.quality]
         );
       }
+
+      composer.addPass(volumetricPass);
+      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
     },
   });
 
@@ -240,5 +232,5 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     pkManager.setMaterials(undefined, { checkpointMeshes, dashTokens });
   });
 
-  return pkManager.buildSceneConfig();
+  return { ...pkManager.buildSceneConfig(), camera: { near: 0.5, far: 50_000 } };
 };

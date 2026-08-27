@@ -98,18 +98,65 @@ export const ShaderShadersJsonSchema = z.object({
   constants: z.record(z.string(), ShaderConstantJsonSchema).optional(),
 });
 
-/** Texture-bearing slots on `CustomShaderMatDef.props`; values are texture-registry keys. */
-export const TEXTURE_SLOTS = [
-  'map',
-  'normalMap',
-  'roughnessMap',
-  'metalnessMap',
-  'lightMap',
-  'transmissionMap',
-  'clearcoatNormalMap',
-  'pomHeightMap',
+/**
+ * Per-slot facts for every texture-bearing slot on `CustomShaderMatDef.props` — the single
+ * source that slot lists, the loaders, the editor picker, and the server texture inliner all
+ * derive from. Adding a slot means one entry here plus its `ShaderPropsJsonSchema` field (a
+ * tripwire at the bottom of this file enforces the pair).
+ *
+ * - `srgb`: color data, sampled/decoded as sRGB.
+ * - `stacks`: may reference a texture stack (`DataArrayTexture`); other slots reject stacks.
+ * - `red`: single-channel heightmap — loaded as RedFormat with mipmaps off.
+ * - `noPicker`: not offered by the material editor's texture picker.
+ */
+export const TEXTURE_SLOT_META = {
+  map: { srgb: true, stacks: true },
+  normalMap: { stacks: true },
+  roughnessMap: { stacks: true },
+  metalnessMap: {},
+  emissiveMap: { srgb: true },
+  transmissionMap: { noPicker: true },
+  clearcoatNormalMap: {},
+  pomHeightMap: { stacks: true, red: true },
+} as const satisfies Record<string, { srgb?: true; stacks?: true; red?: true; noPicker?: true }>;
+
+export type TextureSlot = keyof typeof TEXTURE_SLOT_META;
+export const TEXTURE_SLOTS = Object.keys(TEXTURE_SLOT_META) as readonly TextureSlot[];
+export const STACK_CAPABLE_SLOTS: readonly TextureSlot[] = TEXTURE_SLOTS.filter(
+  s => 'stacks' in TEXTURE_SLOT_META[s]
+);
+/** Slots offered by the material editor's texture picker. */
+export type PhysicalMaterialTextureField = {
+  [K in TextureSlot]: (typeof TEXTURE_SLOT_META)[K] extends { noPicker: true } ? never : K;
+}[TextureSlot];
+
+/** Props holding 0xRRGGBB sRGB color ints. Drives the level-def "#rrggbb" authoring layer
+ *  (hex-string input + on-disk round-trip in `colorUtils`/the Raw schemas). */
+export const COLOR_PROPS = ['color', 'sheenColor', 'emissive'] as const;
+
+/**
+ * Every GLSL-string slot on `shaders`, in editor-sidebar order — the single source for the
+ * shader editor's slot list, the level-def `{ file }` widening + server `.glsl` inliner, and
+ * the builder's copy list. `editor` is the sidebar short name (null = not editor-exposed);
+ * `pomOnly` slots are listed only while POM is enabled.
+ */
+export const SHADER_SLOTS = [
+  { key: 'colorShader', editor: 'color' },
+  { key: 'commonShader', editor: 'common' },
+  { key: 'customVertexFragment', editor: null },
+  { key: 'lightAttenuationShader', editor: 'lightAttenuation' },
+  { key: 'normalShader', editor: null },
+  { key: 'stackIndexShader', editor: 'stackIndex' },
+  { key: 'roughnessShader', editor: 'roughness' },
+  { key: 'metalnessShader', editor: 'metalness' },
+  { key: 'emissiveShader', editor: 'emissive' },
+  { key: 'iridescenceShader', editor: 'iridescence' },
+  { key: 'displacementShader', editor: null },
+  { key: 'pomHeightShader', editor: 'pomHeight', pomOnly: true },
+  { key: 'pomNormalShader', editor: 'pomNormal', pomOnly: true },
 ] as const;
-export type TextureSlot = (typeof TEXTURE_SLOTS)[number];
+export type ShaderSlotKey = (typeof SHADER_SLOTS)[number]['key'];
+export const SHADER_SLOT_KEYS = SHADER_SLOTS.map(s => s.key) as readonly ShaderSlotKey[];
 
 /** Serializable CustomShaderProps — texture slots as string keys into textures registry */
 export const ShaderPropsJsonSchema = z.object({
@@ -117,8 +164,10 @@ export const ShaderPropsJsonSchema = z.object({
   roughness: z.number().optional(),
   metalness: z.number().optional(),
   normalScale: z.number().optional(),
+  /** Emissive color (sRGB hex). Multiplied by `emissiveMap` + `emissiveIntensity`; the product
+   *  feeds the `emissiveShader` slot. */
+  emissive: z.number().optional(),
   emissiveIntensity: z.number().optional(),
-  lightMapIntensity: z.number().optional(),
   envMapIntensity: z.number().optional(),
   opacity: z.number().optional(),
   alphaTest: z.number().optional(),
@@ -152,7 +201,7 @@ export const ShaderPropsJsonSchema = z.object({
   normalMap: z.string().optional(),
   roughnessMap: z.string().optional(),
   metalnessMap: z.string().optional(),
-  lightMap: z.string().optional(),
+  emissiveMap: z.string().optional(),
   transmissionMap: z.string().optional(),
   clearcoatNormalMap: z.string().optional(),
   /** Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`. */
@@ -362,6 +411,18 @@ export const MaterialDefSchema = z.discriminatedUnion('type', [
   CustomBasicShaderMatDefSchema,
   GeneratedMatDefSchema,
 ]);
+
+// A table entry without its matching schema field must fail to compile with the offending
+// name — silent drift is how `lightMap` went dead and `stackIndexShader` lost file refs.
+type TexSlotMissingFromProps = Exclude<TextureSlot, keyof ShaderPropsJson>;
+type ShaderSlotMissingFromSchema = Exclude<ShaderSlotKey, keyof ShaderShadersJson>;
+type ColorPropMissingFromProps = Exclude<(typeof COLOR_PROPS)[number], keyof ShaderPropsJson>;
+const _schemaCoversTables: [
+  TexSlotMissingFromProps extends never ? true : TexSlotMissingFromProps,
+  ShaderSlotMissingFromSchema extends never ? true : ShaderSlotMissingFromSchema,
+  ColorPropMissingFromProps extends never ? true : ColorPropMissingFromProps,
+] = [true, true, true];
+void _schemaCoversTables;
 
 export type AmbientDistanceAmpParams = z.infer<typeof AmbientDistanceAmpParamsSchema>;
 export type TriplanarMappingParamsJson = z.infer<typeof TriplanarMappingParamsJsonSchema>;

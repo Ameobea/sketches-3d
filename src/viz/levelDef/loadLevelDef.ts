@@ -1600,6 +1600,7 @@ export const loadLevelDef = (
     }
 
     viz.postprocessingController?.rescanPomMeshes();
+    viz.postprocessingController?.rescanTransparentMeshes();
     return meshes;
   });
 

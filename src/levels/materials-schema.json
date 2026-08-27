@@ -519,10 +519,20 @@
                   "normalScale": {
                     "type": "number"
                   },
-                  "emissiveIntensity": {
-                    "type": "number"
+                  "emissive": {
+                    "anyOf": [
+                      {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^#[0-9a-fA-F]{6}$"
+                      }
+                    ]
                   },
-                  "lightMapIntensity": {
+                  "emissiveIntensity": {
                     "type": "number"
                   },
                   "envMapIntensity": {
@@ -642,7 +652,7 @@
                   "metalnessMap": {
                     "type": "string"
                   },
-                  "lightMap": {
+                  "emissiveMap": {
                     "type": "string"
                   },
                   "transmissionMap": {
@@ -1025,7 +1035,23 @@
                     ]
                   },
                   "stackIndexShader": {
-                    "type": "string"
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "file": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "file"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
                   },
                   "roughnessShader": {
                     "anyOf": [
@@ -1751,13 +1777,17 @@
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "jumpRetention": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "rampUpSeconds": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "followSurfaceSlope": {
                         "type": "boolean"
@@ -1773,13 +1803,18 @@
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -1791,13 +1826,19 @@
                 "type": "array",
                 "items": [
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 ]
               },
@@ -1945,13 +1986,17 @@
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "jumpRetention": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "rampUpSeconds": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "followSurfaceSlope": {
                         "type": "boolean"
@@ -1967,13 +2012,18 @@
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -1985,13 +2035,19 @@
                 "type": "array",
                 "items": [
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 ]
               }
@@ -2021,13 +2077,17 @@
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "jumpRetention": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1
                       },
                       "rampUpSeconds": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       },
                       "followSurfaceSlope": {
                         "type": "boolean"
@@ -2043,13 +2103,18 @@
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
-                        "type": "number"
+                        "type": "number",
+                        "minimum": 0
                       }
                     },
                     "additionalProperties": false
@@ -2061,13 +2126,19 @@
                 "type": "array",
                 "items": [
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   },
                   {
-                    "type": "number"
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
                   }
                 ]
               }

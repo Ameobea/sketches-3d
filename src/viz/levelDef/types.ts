@@ -11,6 +11,8 @@ import {
   ClimbSurfaceConfigSchema,
   ExternalVelocityDampingOverrideFields,
   TEXTURE_SLOTS,
+  type COLOR_PROPS,
+  type ShaderSlotKey,
 } from 'src/viz/materials/schema';
 import type { TreeDef as GeotoyTreeDef } from 'src/geoscript/geotoyAPIClient';
 import { COLOR_KEYS, hexStrToInt } from './colorUtils';
@@ -367,10 +369,11 @@ export const isGeotoyTextureRaw = (def: AnyLevelTextureDef): def is GeotoyTextur
 // library materials) stay below.
 export * from 'src/viz/materials/schema';
 
-/** Like ShaderPropsJsonSchema but `color` and `sheenColor` accept "#rrggbb" strings. */
+/** Like ShaderPropsJsonSchema but the color props accept "#rrggbb" strings. */
 const ShaderPropsJsonRawSchema = ShaderPropsJsonSchema.extend({
   color: ColorInputSchema.optional(),
   sheenColor: ColorInputSchema.optional(),
+  emissive: ColorInputSchema.optional(),
 });
 
 /** A GLSL shader snippet as an inline string or a file reference resolved server-side. */
@@ -383,6 +386,7 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   colorShader: ShaderGlslFieldRawSchema.optional(),
   lightAttenuationShader: ShaderGlslFieldRawSchema.optional(),
   normalShader: ShaderGlslFieldRawSchema.optional(),
+  stackIndexShader: ShaderGlslFieldRawSchema.optional(),
   roughnessShader: ShaderGlslFieldRawSchema.optional(),
   metalnessShader: ShaderGlslFieldRawSchema.optional(),
   emissiveShader: ShaderGlslFieldRawSchema.optional(),
@@ -391,6 +395,22 @@ const ShaderShadersJsonRawSchema = ShaderShadersJsonSchema.extend({
   pomHeightShader: ShaderGlslFieldRawSchema.optional(),
   pomNormalShader: ShaderGlslFieldRawSchema.optional(),
 });
+
+// Compile-time: every slot/color prop declared in the shared tables must be widened in the
+// Raw authoring layer above — a missed one silently loses `{ file }` refs / "#rrggbb" input.
+type RawShadersIn = z.input<typeof ShaderShadersJsonRawSchema>;
+type SlotNotFileWidened = {
+  [K in ShaderSlotKey]: { file: string } extends NonNullable<RawShadersIn[K]> ? never : K;
+}[ShaderSlotKey];
+type RawPropsIn = z.input<typeof ShaderPropsJsonRawSchema>;
+type ColorNotHexWidened = {
+  [K in (typeof COLOR_PROPS)[number]]: string extends NonNullable<RawPropsIn[K]> ? never : K;
+}[(typeof COLOR_PROPS)[number]];
+const _rawWidened: [
+  SlotNotFileWidened extends never ? true : SlotNotFileWidened,
+  ColorNotHexWidened extends never ? true : ColorNotHexWidened,
+] = [true, true];
+void _rawWidened;
 
 /**
  * Target of a material `extends`: another material defined in the same file (`local`), a

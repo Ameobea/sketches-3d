@@ -1,8 +1,11 @@
 /**
  * Generates JSON Schema files from the Zod level def schemas.
  * Run with: yarn gen:level-schema
+ *
+ * `--check` renders without writing and exits 1 if any committed file is stale
+ * (wired into `yarn run check` so schema edits can't silently skip regeneration).
  */
-import { writeFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { z } from 'zod';
 
@@ -18,6 +21,9 @@ import {
 const schemasDir = join(import.meta.dirname, '../../../src/levels');
 const assetsSchemasDir = join(import.meta.dirname, '../../../src/assets');
 
+const checkMode = process.argv.includes('--check');
+const stale: string[] = [];
+
 const write = (
   filename: string,
   schema: Record<string, unknown>,
@@ -28,7 +34,18 @@ const write = (
   schema.title = title;
   schema.$id = id;
   const outPath = join(dir, filename);
-  writeFileSync(outPath, JSON.stringify(schema, null, 2) + '\n', 'utf-8');
+  const rendered = JSON.stringify(schema, null, 2) + '\n';
+  if (checkMode) {
+    let current: string | null = null;
+    try {
+      current = readFileSync(outPath, 'utf-8');
+    } catch {
+      // missing counts as stale
+    }
+    if (current !== rendered) stale.push(outPath);
+    return;
+  }
+  writeFileSync(outPath, rendered, 'utf-8');
   console.log('Wrote', outPath);
 };
 
@@ -74,3 +91,9 @@ write(
   'https://ameo.design/schemas/library-material.json',
   assetsSchemasDir
 );
+
+if (checkMode && stale.length) {
+  console.error(`Stale generated schema(s) — run \`yarn gen:level-schema\` and commit:`);
+  for (const p of stale) console.error(`  ${p}`);
+  process.exit(1);
+}

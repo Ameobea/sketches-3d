@@ -44,11 +44,26 @@ export class PreviewScene {
     this.group.name = 'texture-preview';
     $effect(() => {
       const byName = deps.materialRuntime.byName;
+      const inlinePass = deps.viz.postprocessingController?.inlineEmissivePass;
       for (const obj of this.objects) {
-        if (obj instanceof THREE.Mesh) obj.material = runtimeMaterialFor(byName, obj.userData.materialName);
+        if (!(obj instanceof THREE.Mesh)) continue;
+        const mat = runtimeMaterialFor(byName, obj.userData.materialName);
+        obj.material = mat;
+        if (inlinePass) {
+          if (mat.userData.inlineEmissiveBypass) inlinePass.addMesh(obj);
+          else inlinePass.removeMesh(obj);
+        }
       }
       schedulePomRescan(deps.viz);
     });
+  }
+
+  /** Detach a preview object, unregistering meshes from the inline-emissive pass first. */
+  private removeObject(obj: RenderedObject) {
+    if (obj instanceof THREE.Mesh) {
+      this.deps.viz.postprocessingController?.inlineEmissivePass?.removeMesh(obj);
+    }
+    removeRenderedObject(this.group, obj);
   }
 
   /** `result.objects` must already be filtered to what the preview shows. */
@@ -66,7 +81,7 @@ export class PreviewScene {
     for (const obj of prevObjects) {
       const key = obj.userData.reuseKey as string | undefined;
       if (typeof key === 'string' && populated.reusedKeys.has(key)) continue;
-      removeRenderedObject(this.group, obj);
+      this.removeObject(obj);
     }
     if (this.autoFrame) {
       this.autoFrame = false;
@@ -75,7 +90,7 @@ export class PreviewScene {
   }
 
   clear = () => {
-    for (const obj of this.objects) removeRenderedObject(this.group, obj);
+    for (const obj of this.objects) this.removeObject(obj);
     this.objects = [];
     this.group.removeFromParent();
   };

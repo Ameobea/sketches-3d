@@ -1,10 +1,6 @@
-export type PhysicalMaterialTextureField =
-  | 'map'
-  | 'normalMap'
-  | 'roughnessMap'
-  | 'metalnessMap'
-  | 'clearcoatNormalMap'
-  | 'pomHeightMap';
+import type { PhysicalMaterialTextureField } from 'src/viz/materials/schema';
+
+export type { PhysicalMaterialTextureField };
 
 /**
  * Capabilities + intents a host (Geotoy / level editor) supplies to the shared `MaterialForm`.

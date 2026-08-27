@@ -2,23 +2,11 @@ import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import { getAssetsDir } from './levelPaths.server';
+import { SHADER_SLOT_KEYS } from 'src/viz/materials/schema';
 import type { MaterialDef, MaterialDefRaw } from './types';
 
 /** Shader fields that may be externalized to `.glsl` files via `{ file }` in the raw def. */
-export const SHADER_GLSL_FIELDS = [
-  'customVertexFragment',
-  'commonShader',
-  'colorShader',
-  'lightAttenuationShader',
-  'normalShader',
-  'roughnessShader',
-  'metalnessShader',
-  'emissiveShader',
-  'iridescenceShader',
-  'displacementShader',
-  'pomHeightShader',
-  'pomNormalShader',
-] as const;
+export const SHADER_GLSL_FIELDS = SHADER_SLOT_KEYS;
 
 /** Resolves a shader `file` reference to an absolute path (`__ASSETS__/` → shared assets dir). */
 export const resolveGlslPath = (levelDir: string, file: string): string =>

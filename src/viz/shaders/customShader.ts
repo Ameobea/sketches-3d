@@ -833,8 +833,9 @@ export const buildCustomShaderArgs = (
     metalnessMap,
     stackIndex = 0,
     pomHeightMap,
+    emissive,
+    emissiveMap,
     emissiveIntensity,
-    lightMapIntensity,
     fogMultiplier,
     mapDisableDistance: rawMapDisableDistance,
     mapDisableDistanceAxes = 'xyz',
@@ -906,6 +907,7 @@ export const buildCustomShaderArgs = (
     normalMap,
     clearcoatNormalMap,
     metalnessMap,
+    emissiveMap,
   };
   // LINEAR-magnified slots get the texel-center snap above Low quality (textures default to LINEAR
   // there so hardware anisotropic filtering stays on); Low keeps plain sampling everywhere.
@@ -1020,14 +1022,16 @@ export const buildCustomShaderArgs = (
   }
   uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
   uniforms.uvTransform = { value: uvTransform ?? new THREE.Matrix3().identity() };
-  if (emissiveIntensity !== undefined) {
-    uniforms.emissiveIntensity = { value: emissiveIntensity };
+  if (emissive !== undefined) {
+    uniforms.emissive = { value: typeof emissive === 'number' ? new THREE.Color(emissive) : emissive };
+  }
+  uniforms.emissiveIntensity = { value: emissiveIntensity ?? 1 };
+  if (emissiveMap) {
+    uniforms.emissiveMap = { value: emissiveMap };
+    uniforms.emissiveMapTransform = { value: new THREE.Matrix3().identity() };
   }
   uniforms.specularIntensity = { value: 1 };
   uniforms.specularColor = { value: new THREE.Color(0xffffff) };
-  if (lightMapIntensity !== undefined) {
-    uniforms.lightMapIntensity = { value: lightMapIntensity };
-  }
   uniforms.playerShadowPos = { value: playerShadowPos };
   uniforms.playerShadowParams = { value: playerShadowParams };
   uniforms.psGridData = { value: psGridData };
@@ -1054,6 +1058,9 @@ export const buildCustomShaderArgs = (
 
   if (hasStacks && tileBreaking) {
     throw new Error('Texture stacks cannot be combined with tile breaking');
+  }
+  if (emissiveMap instanceof THREE.DataArrayTexture) {
+    throw new Error('Texture stacks are not supported for the emissiveMap slot');
   }
   if (stackMap && usePackedDiffuseNormalGBA) {
     throw new Error('Texture stacks cannot be used with packed diffuse/normal GBA maps');
@@ -1159,6 +1166,7 @@ export const buildCustomShaderArgs = (
   const needRoughnessMapMean = !!roughnessMap && meanConsumersActive;
   const needNormalMapMean = !!normalMap && meanConsumersActive;
   const needClearcoatNormalMapMean = !!clearcoatNormalMap && meanConsumersActive;
+  const needEmissiveMapMean = !!emissiveMap && meanConsumersActive;
   if (needMapMean) {
     uniforms.mapMeanColor = { value: getTextureMeanColor(map!) };
   }
@@ -1170,6 +1178,9 @@ export const buildCustomShaderArgs = (
   }
   if (needClearcoatNormalMapMean) {
     uniforms.clearcoatNormalMapMeanColor = { value: getTextureMeanColor(clearcoatNormalMap!) };
+  }
+  if (needEmissiveMapMean) {
+    uniforms.emissiveMapMeanColor = { value: getTextureMeanColor(emissiveMap!) };
   }
 
   const triplanarPosSym = pom ? 'triplanarSamplePos' : 'vTriplanarPos';
@@ -1336,6 +1347,24 @@ export const buildCustomShaderArgs = (
           roughnessFactor = mix(roughnessFactor, roughnessFactor * channelRoughness, textureActivation);
         }
       #endif`;
+  };
+
+  // Samples with the material's UV scheme (triplanar / tile-breaking / mesh UVs) rather than
+  // the stock `emissivemap_fragment` chunk, which only knows `vEmissiveMapUv`.
+  const buildEmissiveMapFragment = () => {
+    if (!emissiveMap) {
+      return '';
+    }
+    const uv = pomGen || pomTangent ? '_pomGenUv' : 'vEmissiveMapUv';
+    const sampleExpr = useTriplanarMapping
+      ? `triplanarTexture(emissiveMap, ${triplanarPosSym}, vec2(uvTransform[0][0], uvTransform[1][1]), ${triplanarNormalSym}, emissiveMapMeanColor)`
+      : tileBreaking
+        ? buildTileBreakSampleExpr('emissiveMap', uv, tileBreaking)
+        : sample2D('emissiveMap', uv);
+    return /* glsl */ `
+  #ifdef USE_EMISSIVEMAP
+    totalEmissiveRadiance *= ${sampleExpr}.rgb;
+  #endif`;
   };
 
   const buildNormalMapFragment = () => {
@@ -1707,6 +1736,9 @@ void main() {
   #if defined(USE_METALNESSMAP) && defined(USE_UV)
     vMetalnessMapUv = ( metalnessMapTransform * vec3( vUv, 1 ) ).xy;
   #endif
+  #if defined(USE_EMISSIVEMAP) && defined(USE_UV)
+    vEmissiveMapUv = ( emissiveMapTransform * vec3( vUv, 1 ) ).xy;
+  #endif
   #if defined(USE_CLEARCOAT_NORMALMAP)
     vClearcoatNormalMapUv = ( clearcoatNormalMapTransform * vec3( vUv, 1 ) ).xy;
   #endif
@@ -1738,6 +1770,7 @@ layout(location = 1) out vec4 outEmissiveBypass;
 
 uniform vec3 diffuse;
 uniform vec3 emissive;
+uniform float emissiveIntensity;
 uniform float roughness;
 uniform float metalness;
 uniform float opacity;
@@ -1907,6 +1940,7 @@ ${needMapMean ? 'uniform vec4 mapMeanColor;' : ''}
 ${needRoughnessMapMean ? 'uniform vec4 roughnessMapMeanColor;' : ''}
 ${needNormalMapMean ? 'uniform vec4 normalMapMeanColor;' : ''}
 ${needClearcoatNormalMapMean ? 'uniform vec4 clearcoatNormalMapMeanColor;' : ''}
+${needEmissiveMapMean ? 'uniform vec4 emissiveMapMeanColor;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 ${pomTangent ? 'varying vec3 vWorldTangent;' : ''}
@@ -2136,7 +2170,7 @@ void main() {
   ${pom ? buildPomMainBlock(pomBounded, pomProjected, pomGrid, pomSafe, pomAnalytic, pomTexturing, pom.normalEps, pomSelfShadow ? { strength: pomSelfShadow.strength } : null, !!pomHeightMap, pomHitFrame && pomProjected ? '_pomHitData = gridComputeHit(domProject(_pomHit, domAxis(_pomNormalW)));' : null) : ''}
 
 	ReflectedLight reflectedLight = ReflectedLight( vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ), vec3( 0.0 ) );
-	vec3 totalEmissiveRadiance = emissive;
+	vec3 totalEmissiveRadiance = emissive * emissiveIntensity;
 	#include <logdepthbuf_fragment>
   vec4 sampledDiffuseColor_ = diffuseColor;
 	${buildMapFragment()}
@@ -2186,7 +2220,7 @@ void main() {
   }
   ${metalnessReverseColorRamp ? 'metalnessFactor = metalnessFromColor(sampledDiffuseColor_.rgb);' : ''}
 
-	#include <emissivemap_fragment>
+  ${buildEmissiveMapFragment()}
   ${
     emissiveShader
       ? /* glsl */ `
@@ -2329,6 +2363,8 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
   public normalMapType?: THREE.NormalMapTypes;
   public roughnessMap?: THREE.Texture;
   public metalnessMap?: THREE.Texture;
+  /** Read by `WebGLPrograms.getParameters` to drive the `USE_EMISSIVEMAP` define. */
+  public emissiveMap?: THREE.Texture;
 
   public clearcoat?: number;
   public clearcoatRoughness?: number;
@@ -2434,9 +2470,8 @@ export const buildCustomShader = (
     mat.clearcoatNormalMap = props.clearcoatNormalMap;
     mat.uniforms.clearcoatNormalMap.value = props.clearcoatNormalMap;
   }
-  if (props.emissiveIntensity !== undefined) {
-    (mat as any).emissiveIntensity = props.emissiveIntensity;
-    mat.uniforms.emissiveIntensity.value = props.emissiveIntensity;
+  if (props.emissiveMap) {
+    mat.emissiveMap = props.emissiveMap;
   }
   if (props.transparent) {
     (mat as any).transparent = props.transparent;

@@ -25,6 +25,12 @@ import { EmissiveClearPass } from 'src/viz/passes/emissiveClearPass';
 import { InlineEmissivePass, INLINE_EMISSIVE_LAYER } from 'src/viz/passes/inlineEmissivePass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
+import {
+  TransparentPass,
+  TRANSPARENT_PASS_LAYER,
+  isAutoTransparentMesh,
+} from 'src/viz/passes/transparentPass';
+import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import { PomExitBufferManager } from 'src/viz/postprocessing/pomExitBuffer';
 import type { SkyStack } from 'src/viz/SkyStack';
@@ -46,6 +52,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   public csm: CascadedShadowMap | null = null;
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
   public readonly inlineEmissivePass: InlineEmissivePass | null;
+  public readonly transparentPass: TransparentPass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
   private readonly renderFrameCb: (timeDiffSeconds: number) => void;
@@ -62,7 +69,8 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     emissiveBypassPass: EmissiveBypassPass | null = null,
     emissiveBloomPass: EmissiveBloomPass | null = null,
     finalPass: FinalPass | null = null,
-    inlineEmissivePass: InlineEmissivePass | null = null
+    inlineEmissivePass: InlineEmissivePass | null = null,
+    transparentPass: TransparentPass | null = null
   ) {
     this.viz = viz;
     this.effectComposer = effectComposer;
@@ -71,6 +79,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.renderer = renderer;
     this.emissiveBypassPass = emissiveBypassPass;
     this.inlineEmissivePass = inlineEmissivePass;
+    this.transparentPass = transparentPass;
     this.emissiveBloomPass = emissiveBloomPass;
     this.finalPass = finalPass;
     this.renderFrameCb = renderFrameCb;
@@ -97,6 +106,12 @@ export class PostprocessingPipelineController implements PostprocessingControlle
       if (pass instanceof RenderPass) {
         // DepthPass / MainRenderPass render the scene with `pass.camera` (protected on the base).
         (pass as any).camera = camera;
+      } else if (
+        pass instanceof EmissiveBypassPass ||
+        pass instanceof InlineEmissivePass ||
+        pass instanceof TransparentPass
+      ) {
+        pass.setMainCamera(camera);
       } else if (typeof pass.configureSampleDependentPasses === 'function') {
         // n8ao: set its scene camera and recompile the ORTHO define (only injected at configure time).
         pass.camera = camera;
@@ -136,6 +151,18 @@ export class PostprocessingPipelineController implements PostprocessingControlle
         this.emissiveBypassPass!.addBypassMesh(obj);
       }
     });
+    this.viz.invalidate();
+  }
+
+  /**
+   * Adopt transparent meshes added after the initial first-frame scan, and release
+   * adopted ones whose materials became opaque or that left the scene.
+   */
+  rescanTransparentMeshes(): void {
+    if (!this.transparentPass) {
+      return;
+    }
+    this.transparentPass.syncAdoptedMeshes(this.viz.scene);
     this.viz.invalidate();
   }
 
@@ -218,11 +245,6 @@ export interface ConfigureDefaultPostprocessingPipelineParams {
   /** See doc comment of `FinalPass` for usage of this. */
   fogShader?: string;
   /**
-   * When true, fragments at the depth-buffer far plane skip tone mapping in FinalPass,
-   * so sky shaders' authored colors are preserved 1:1. See `FinalPass` for details.
-   */
-  skyBypassTonemap?: boolean;
-  /**
    * Unified sky sub-pipeline. When provided, its pass is inserted immediately
    * after the main render pass; it owns the emissive RT that is then shared
    * with the emissive bypass pass (bypass meshes render on top of sky content).
@@ -283,7 +305,6 @@ export const configureDefaultPostprocessingPipeline = ({
   emissiveBloom = {} as EmissiveBloomConfig | null,
   emissiveBypassAmbientIntensity = 2.8,
   fogShader,
-  skyBypassTonemap = false,
   skyStack,
   pomExitBuffers = false,
   shadowContactFix = true,
@@ -310,6 +331,7 @@ export const configureDefaultPostprocessingPipeline = ({
   let renderPass: MainRenderPass | RenderPass;
   let depthPass: DepthPass | null = null;
   let depthPrePassMaterial: THREE.Material | null = null;
+  let transparentPass: TransparentPass | null = null;
 
   if (useDepthPrePass) {
     viz.renderer.autoClear = false;
@@ -346,21 +368,27 @@ export const configureDefaultPostprocessingPipeline = ({
       effectComposer.addPass(new EmissiveClearPass(skyStack.emissiveRT));
       effectComposer.addPass(skyStack.pass);
     }
+
+    // Transparent meshes render here — after the sky composite, before scene middle
+    // passes — so they blend over defined content (sky included) and the volumetric
+    // fog composites over them. See TransparentPass for the adoption rules.
+    const transparentStableDepth = effectComposer.stableDepthTarget;
+    if (transparentStableDepth?.depthTexture) {
+      transparentPass = new TransparentPass(viz.scene, viz.camera as THREE.PerspectiveCamera);
+      transparentPass.setStableDepthTexture(transparentStableDepth.depthTexture as THREE.DepthTexture);
+      effectComposer.addPass(transparentPass);
+    }
   } else {
     renderPass = new RenderPass(viz.scene, viz.camera);
     effectComposer.addPass(renderPass);
   }
 
-  addMiddlePasses?.(effectComposer, viz, quality);
-
-  if (postEffects?.length) {
-    const hdrFxPass = new EffectPass(viz.camera, ...postEffects);
-    effectComposer.addPass(hdrFxPass);
-  }
-
+  // Emissive producers run before the scene's middle passes so the volumetric fog
+  // composites over their scene-color writes and its coverage alpha (written into
+  // the scene buffer by VolumetricPass) survives to FinalPass. The bloom blur runs
+  // after the middle passes, off the completed emissiveRT.
   let emissiveBypassPass: EmissiveBypassPass | null = null;
   let inlineEmissivePass: InlineEmissivePass | null = null;
-  let emissiveBlurPass: EmissiveBloomPass | null = null;
   if (emissiveBypass) {
     const { width, height } = viz.renderer.domElement;
 
@@ -389,9 +417,8 @@ export const configureDefaultPostprocessingPipeline = ({
     }
     effectComposer.addPass(emissiveBypassPass);
 
-    // Inline-emissive meshes render once into [sceneColor, emissiveRT]. After the
-    // bypass pass (which clears emissiveRT as first-writer) and before bloom so the
-    // inline emissive blooms too.
+    // Inline-emissive meshes render once into [sceneColor, emissiveRT], after the
+    // bypass pass and before bloom so the inline emissive blooms too.
     inlineEmissivePass = new InlineEmissivePass(
       viz.scene,
       viz.camera as THREE.PerspectiveCamera,
@@ -402,30 +429,47 @@ export const configureDefaultPostprocessingPipeline = ({
     inlineEmissivePass.setStableDepthTexture(stableDepthTgt.depthTexture as THREE.DepthTexture);
     effectComposer.addPass(inlineEmissivePass);
 
-    if (emissiveBloom !== null) {
-      const qualityLevels = {
-        [GraphicsQuality.Low]: 3,
-        [GraphicsQuality.Medium]: 5,
-        [GraphicsQuality.High]: 6,
-      };
-      const bloomConfig: EmissiveBloomConfig = {
-        levels: qualityLevels[quality],
-        ...DEFAULT_EMISSIVE_BLOOM_CONFIG,
-        ...emissiveBloom,
-      };
-      emissiveBlurPass = new EmissiveBloomPass(emissiveBypassPass.emissiveRT, bloomConfig, fogShader, viz);
-      effectComposer.addPass(emissiveBlurPass);
-    }
-
     // emissive pass objects shouldn't be impacted by the main scene's lighting, so we create a
     // dedicated static light just for that pass.
     const bypassAmbientLight = new THREE.AmbientLight(0xffffff, emissiveBypassAmbientIntensity);
     bypassAmbientLight.layers.disableAll();
     bypassAmbientLight.layers.enable(EMISSIVE_BYPASS_LAYER);
     viz.scene.add(bypassAmbientLight);
+  }
 
-    // Defer mesh layer assignment to the first render frame. By then viz.scene.add(loadedWorld)
-    // (and any other scene population) has completed, regardless of which setup path was used.
+  addMiddlePasses?.(effectComposer, viz, quality);
+
+  // A VolumetricPass exports fog coverage in the scene buffer's alpha channel;
+  // FinalPass uses it to keep the distance fog + emissive composite from repainting
+  // content hidden under opaque fog.
+  const fogCoverageInAlpha = (effectComposer as unknown as { passes: { enabled: boolean }[] }).passes.some(
+    p => p.enabled && p instanceof VolumetricPass
+  );
+
+  if (postEffects?.length) {
+    const hdrFxPass = new EffectPass(viz.camera, ...postEffects);
+    effectComposer.addPass(hdrFxPass);
+  }
+
+  let emissiveBlurPass: EmissiveBloomPass | null = null;
+  if (emissiveBypassPass && emissiveBloom !== null) {
+    const qualityLevels = {
+      [GraphicsQuality.Low]: 3,
+      [GraphicsQuality.Medium]: 5,
+      [GraphicsQuality.High]: 6,
+    };
+    const bloomConfig: EmissiveBloomConfig = {
+      levels: qualityLevels[quality],
+      ...DEFAULT_EMISSIVE_BLOOM_CONFIG,
+      ...emissiveBloom,
+    };
+    emissiveBlurPass = new EmissiveBloomPass(emissiveBypassPass.emissiveRT, bloomConfig, fogShader, viz);
+    effectComposer.addPass(emissiveBlurPass);
+  }
+
+  // Defer mesh pass assignment to the first render frame. By then viz.scene.add(loadedWorld)
+  // (and any other scene population) has completed, regardless of which setup path was used.
+  if (emissiveBypassPass || inlineEmissivePass || transparentPass) {
     let autoAssigned = false;
     viz.registerBeforeRenderCb(() => {
       if (autoAssigned) {
@@ -440,9 +484,11 @@ export const configureDefaultPostprocessingPipeline = ({
 
         const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
         if (mats.some(m => m?.userData?.emissiveBypass)) {
-          emissiveBypassPass!.addBypassMesh(obj);
+          emissiveBypassPass?.addBypassMesh(obj);
         } else if (mats.some(m => m?.userData?.inlineEmissiveBypass)) {
-          inlineEmissivePass!.addMesh(obj);
+          inlineEmissivePass?.addMesh(obj);
+        } else if (transparentPass && isAutoTransparentMesh(obj)) {
+          transparentPass.addTransparentMesh(obj);
         }
       });
     });
@@ -477,7 +523,7 @@ export const configureDefaultPostprocessingPipeline = ({
     emissiveBloomBuffer: emissiveBlurPass?.bloomTexture ?? null,
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
     fogShader,
-    skyBypassTonemap,
+    fogCoverageInAlpha,
   });
   effectComposer.addPass(finalPass);
 
@@ -554,15 +600,22 @@ export const configureDefaultPostprocessingPipeline = ({
         obj.shadow.camera.updateProjectionMatrix();
         obj.shadow.needsUpdate = true;
       });
-      // Make inline-emissive meshes (off layer 0) visible to three's shadow-caster
-      // filter (which tests the main camera's layers) for this single baked frame, so
-      // they cast into the baked map; every subsequent color frame has it disabled.
+      // Make inline-emissive + adopted transparent meshes (off layer 0) visible to
+      // three's shadow-caster filter (which tests the main camera's layers) for this
+      // single baked frame, so they cast into the baked map; every subsequent color
+      // frame has them disabled.
       if (inlineEmissivePass) {
         viz.camera.layers.enable(INLINE_EMISSIVE_LAYER);
+      }
+      if (transparentPass) {
+        viz.camera.layers.enable(TRANSPARENT_PASS_LAYER);
       }
       composerRender(timeDiffSeconds);
       if (inlineEmissivePass) {
         viz.camera.layers.disable(INLINE_EMISSIVE_LAYER);
+      }
+      if (transparentPass) {
+        viz.camera.layers.disable(TRANSPARENT_PASS_LAYER);
       }
       viz.scene.traverse(obj => {
         if (!(obj instanceof THREE.DirectionalLight)) {
@@ -598,7 +651,8 @@ export const configureDefaultPostprocessingPipeline = ({
     emissiveBypassPass,
     emissiveBlurPass,
     finalPass,
-    inlineEmissivePass
+    inlineEmissivePass,
+    transparentPass
   );
   controller.csm = csm;
   if (pomRescanCb) {

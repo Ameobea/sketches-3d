@@ -10,6 +10,7 @@ import {
   defaultTabMetadata,
   NAME_RE,
   type CompositionDoc,
+  type EmissiveBloomSettings,
   type EnvironmentConfig,
   type MeshTabView,
   type TabMetadata,
@@ -52,6 +53,7 @@ export interface GeotoyTab {
   view: TabView | null;
   readonly preludeEjected: boolean;
   readonly environment?: EnvironmentConfig;
+  readonly emissiveBloom?: EmissiveBloomSettings;
   /** Texture tabs: `render_texture` outputs from the tab's last run (persisted in tab
    *  metadata so a fresh load can offer them before the tab has executed). */
   readonly textureOutputs: readonly TextureOutputMeta[];
@@ -98,6 +100,7 @@ const buildTabs = (
       view: meta.view ?? null,
       preludeEjected: meta.preludeEjected,
       environment: meta.kind === 'mesh' ? meta.environment : undefined,
+      emissiveBloom: meta.kind === 'mesh' ? meta.emissiveBloom : undefined,
       textureOutputs: (meta.kind === 'texture' ? meta.textureOutputs : undefined) ?? [],
       textureParams: (meta.kind === 'texture' ? meta.textureParams : undefined) ?? {},
     };
@@ -132,6 +135,7 @@ export class GeotoyTabs {
               preludeEjected: t.preludeEjected,
               view: (t.view as MeshTabView | null) ?? undefined,
               environment: t.environment,
+              emissiveBloom: t.emissiveBloom,
             }
           : {
               kind: 'texture' as const,
@@ -166,6 +170,10 @@ export class GeotoyTabs {
 
   setEnvironment(id: string, environment: EnvironmentConfig | undefined): void {
     this.patch(id, { environment });
+  }
+
+  setEmissiveBloom(id: string, emissiveBloom: EmissiveBloomSettings | undefined): void {
+    this.patch(id, { emissiveBloom });
   }
 
   /** Sync a texture tab's output index from a completed run; no-op when unchanged so

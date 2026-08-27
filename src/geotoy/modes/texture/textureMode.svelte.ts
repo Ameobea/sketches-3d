@@ -210,6 +210,12 @@ export class TextureMode implements Mode {
     return this.preview3d && t ? this.deps.getTabs().find(x => x.id === t.tabId)?.environment : undefined;
   });
 
+  /** Same inheritance for the target tab's emissive-bloom overrides. */
+  readonly previewEmissiveBloom = $derived.by(() => {
+    const t = this.previewTarget;
+    return this.preview3d && t ? this.deps.getTabs().find(x => x.id === t.tabId)?.emissiveBloom : undefined;
+  });
+
   /** `tab › node[ › export]` from the live trees; missing parts read as such. */
   readonly previewTargetLabel: string | null = $derived.by(() => {
     const t = this.previewTarget;

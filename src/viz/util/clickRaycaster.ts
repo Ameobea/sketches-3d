@@ -13,6 +13,9 @@ const DRAG_THRESHOLD_SQ = 16;
 
 export const installClickRaycaster = (opts: ClickRaycasterOpts): (() => void) => {
   const raycaster = new THREE.Raycaster();
+  // Meshes routed to dedicated passes (inline emissive bypass, etc.) live off layer 0;
+  // selection should see them regardless of render-layer plumbing.
+  raycaster.layers.enableAll();
   const downPos = new THREE.Vector2();
   const ndc = new THREE.Vector2();
   let pointerMoved = false;

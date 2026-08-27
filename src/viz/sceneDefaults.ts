@@ -22,7 +22,6 @@ export const DefaultThirdPersonMaxPolar = Math.PI - 0.05;
 export const DefaultThirdPersonInitialPolar = Math.PI / 3;
 export const DefaultThirdPersonInitialAzimuth = Math.PI;
 export const DefaultThirdPersonFOV = 75;
-export const DefaultThirdPersonCameraCollisionBias = 0.25;
 export const DefaultThirdPersonMinCameraDistance = 1.0;
 export const DefaultThirdPersonCameraExtendSpeed = 220.0;
 

@@ -27,12 +27,16 @@ export const removeRenderedObject = (parent: THREE.Object3D, obj: RenderedObject
 };
 
 let pomRescanQueued = false;
-/** Material swaps invalidate the bounded-silhouette manager's per-mesh registry. */
+/**
+ * Material swaps invalidate the bounded-silhouette manager's per-mesh registry and
+ * the transparent pass's mesh adoption.
+ */
 export const schedulePomRescan = (viz: Viz) => {
   if (pomRescanQueued) return;
   pomRescanQueued = true;
   queueMicrotask(() => {
     pomRescanQueued = false;
     viz.postprocessingController?.rescanPomMeshes();
+    viz.postprocessingController?.rescanTransparentMeshes();
   });
 };

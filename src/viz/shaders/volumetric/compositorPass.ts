@@ -106,6 +106,8 @@ export class VolumetricCompositorPass extends Pass {
     _deltaTime?: number | undefined,
     _stencilTest?: boolean | undefined
   ): void {
+    // near/far live on the camera and may change after construction (SceneConfig.camera).
+    this.updateUniforms();
     (this.fullscreenMaterial as VolumetricCompositorMaterial).uniforms.sceneDiffuse.value =
       inputBuffer.texture;
 

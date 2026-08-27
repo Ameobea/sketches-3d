@@ -44,5 +44,9 @@ export const buildMeshPipeline = (
     },
     autoUpdateShadowMap: !renderMode,
     toneMapping: { mode: 'neutral', exposure: 1 },
+    emissiveBypass: true,
+    // runtimeThreshold: the per-tab bloom knobs drive threshold/softKnee live via
+    // setEmissiveBloom, which needs the filter chain allocated up front.
+    emissiveBloom: { runtimeThreshold: true },
     pomExitBuffers: true,
   });

@@ -3,6 +3,23 @@ import * as THREE from 'three';
 
 export const EMISSIVE_BYPASS_LAYER = 31;
 
+/** Clone that renders only `layer`, tracking the main camera by matrix-object reference. */
+export const buildLayerRenderCamera = (
+  mainCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera,
+  layer: number
+): THREE.PerspectiveCamera | THREE.OrthographicCamera => {
+  const cam = mainCamera.clone();
+  cam.layers.disableAll();
+  cam.layers.enable(layer);
+  cam.matrixAutoUpdate = false;
+  cam.matrixWorldAutoUpdate = false;
+  cam.matrixWorld = mainCamera.matrixWorld;
+  cam.matrixWorldInverse = mainCamera.matrixWorldInverse;
+  cam.projectionMatrix = mainCamera.projectionMatrix;
+  cam.projectionMatrixInverse = mainCamera.projectionMatrixInverse;
+  return cam;
+};
+
 /**
  * Composites registered bypass meshes onto a dedicated RGBA HalfFloat render target
  * (`emissiveRT`), which `EmissiveClearPass` clears ahead of it each frame.
@@ -17,7 +34,7 @@ export const EMISSIVE_BYPASS_LAYER = 31;
  * cause emissive bypass meshes to occlude and be occluded by main-scene meshes.
  */
 export class EmissiveBypassPass extends Pass {
-  private readonly bypassCamera: THREE.PerspectiveCamera;
+  private bypassCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   readonly emissiveRT: THREE.WebGLRenderTarget;
   /**
    * When true, another subsystem (e.g. `SkyStackPass`) owns `emissiveRT` and is
@@ -25,7 +42,7 @@ export class EmissiveBypassPass extends Pass {
    * bypass meshes on top; clearing is `EmissiveClearPass`'s job either way.
    */
   private readonly rtIsExternal: boolean;
-  private readonly _mainCamera: THREE.PerspectiveCamera;
+  private _mainCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   public readonly scene: THREE.Scene;
   private readonly _registeredMeshes = new Set<THREE.Mesh>();
 
@@ -44,16 +61,7 @@ export class EmissiveBypassPass extends Pass {
     this.scene = scene;
     this._mainCamera = mainCamera;
     this.needsSwap = false;
-
-    this.bypassCamera = mainCamera.clone() as THREE.PerspectiveCamera;
-    this.bypassCamera.layers.disableAll();
-    this.bypassCamera.layers.enable(EMISSIVE_BYPASS_LAYER);
-    this.bypassCamera.matrixAutoUpdate = false;
-    this.bypassCamera.matrixWorldAutoUpdate = false;
-    this.bypassCamera.matrixWorld = mainCamera.matrixWorld;
-    this.bypassCamera.matrixWorldInverse = mainCamera.matrixWorldInverse;
-    this.bypassCamera.projectionMatrix = mainCamera.projectionMatrix;
-    this.bypassCamera.projectionMatrixInverse = mainCamera.projectionMatrixInverse;
+    this.bypassCamera = buildLayerRenderCamera(mainCamera, EMISSIVE_BYPASS_LAYER);
 
     if (externalEmissiveRT) {
       this.emissiveRT = externalEmissiveRT;
@@ -73,6 +81,12 @@ export class EmissiveBypassPass extends Pass {
     this._registeredMeshes.add(mesh);
     mesh.layers.disable(0);
     mesh.layers.enable(EMISSIVE_BYPASS_LAYER);
+  }
+
+  /** Rebind after the scene's camera object is swapped (e.g. ortho/perspective toggle). */
+  setMainCamera(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void {
+    this._mainCamera = camera;
+    this.bypassCamera = buildLayerRenderCamera(camera, EMISSIVE_BYPASS_LAYER);
   }
 
   /**
@@ -123,7 +137,11 @@ export class EmissiveBypassPass extends Pass {
     renderer.setRenderTarget(this.emissiveRT);
     const savedBackground = this.scene.background;
     this.scene.background = null;
+    // Never re-bake shadow maps from the layer-31 camera (it sees ~no casters).
+    const savedShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
     renderer.render(this.scene, this.bypassCamera);
+    renderer.shadowMap.autoUpdate = savedShadowAutoUpdate;
     this.scene.background = savedBackground;
   }
 

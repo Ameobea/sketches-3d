@@ -58,6 +58,19 @@ export type EnvironmentConfig =
       setBackground?: boolean;
     };
 
+/** Per-tab emissive-bloom overrides pushed to the postprocessing pipeline; unset fields fall
+ *  back to the pipeline defaults (`DEFAULT_EMISSIVE_BLOOM_CONFIG`). */
+export interface EmissiveBloomSettings {
+  /** Multiplier on the bloom texture at composite time. Default 0.8. */
+  intensity?: number;
+  /** Upsample blend radius (0-1): lower = tighter per-feature glow. Default 0.35. */
+  radius?: number;
+  /** Luminance gate: pixels below this don't bloom. Default 0. */
+  luminanceThreshold?: number;
+  /** When > 0, softens the gate with a UE4-style knee of this width. Default 0. */
+  luminanceSoftKnee?: number;
+}
+
 export interface MeshTabView {
   cameraPosition: [number, number, number];
   target: [number, number, number];
@@ -136,6 +149,7 @@ export type TabMetadata =
       preludeEjected: boolean;
       view?: MeshTabView;
       environment?: EnvironmentConfig;
+      emissiveBloom?: EmissiveBloomSettings;
     }
   | {
       kind: 'texture';
@@ -187,6 +201,7 @@ export interface TransientRenderMetadata {
   materials?: MaterialDefinitions;
   preludeEjected?: boolean;
   environment?: EnvironmentConfig;
+  emissiveBloom?: EmissiveBloomSettings;
 }
 
 export const defaultTabMetadata = (kind: TreeKind): TabMetadata =>

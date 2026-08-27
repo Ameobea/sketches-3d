@@ -105,7 +105,6 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     toneMapping: { mode: 'agx', exposure: 1.2 },
     autoUpdateShadowMap: true,
     emissiveBypass: true,
-    skyBypassTonemap: false,
     skyStack,
     pomExitBuffers: vizConf.graphics.quality > GraphicsQuality.Medium,
     emissiveBloom:

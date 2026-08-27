@@ -65,8 +65,13 @@ export interface PostprocessingController {
   setFogEnabled(enabled: boolean): void;
   readonly hasFinalPass: boolean;
   readonly emissiveBypassPass: { addBypassMesh(mesh: THREE.Mesh): void } | null;
-  readonly inlineEmissivePass: { addMesh(mesh: THREE.Mesh): void } | null;
+  readonly inlineEmissivePass: {
+    addMesh(mesh: THREE.Mesh): void;
+    removeMesh(mesh: THREE.Mesh): void;
+  } | null;
   rescanPomMeshes(): void;
+  /** Adopt transparent meshes added to the scene after the initial first-frame scan. */
+  rescanTransparentMeshes(): void;
   /** Re-point every pass at a new scene camera (e.g. perspective↔orthographic swap). */
   setCamera?(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void;
 }
@@ -1234,6 +1239,12 @@ export const initViz = (
       ...((await sceneLoader(viz, scene, vizConfig.current, userData)) ?? {}),
     };
     viz.sceneConf = sceneConf;
+    if (sceneConf.camera) {
+      const cam = viz.camera as THREE.PerspectiveCamera;
+      cam.near = sceneConf.camera.near ?? cam.near;
+      cam.far = sceneConf.camera.far ?? cam.far;
+      cam.updateProjectionMatrix();
+    }
     const rawSpawnPos = sceneConf.locations[sceneConf.spawnLocation];
     viz.spawnPos = {
       pos: Array.isArray(rawSpawnPos.pos)

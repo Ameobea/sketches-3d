@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 
+import { buildLayerRenderCamera } from 'src/viz/passes/emissiveBypassPass';
 import { HijackedMRTPass } from 'src/viz/passes/hijackedMRTPass';
 
 export const INLINE_EMISSIVE_LAYER = 30;
@@ -29,8 +30,8 @@ export const INLINE_EMISSIVE_LAYER = 30;
 export class InlineEmissivePass extends HijackedMRTPass {
   public readonly scene: THREE.Scene;
   public readonly emissiveRT: THREE.WebGLRenderTarget;
-  private readonly renderCamera: THREE.PerspectiveCamera;
-  private readonly _mainCamera: THREE.PerspectiveCamera;
+  private renderCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
+  private _mainCamera: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   private readonly _registeredMeshes = new Set<THREE.Mesh>();
 
   private readonly _frustum = new THREE.Frustum();
@@ -50,23 +51,30 @@ export class InlineEmissivePass extends HijackedMRTPass {
     this._mainCamera = mainCamera;
     this.emissiveRT = emissiveRT;
 
-    this.renderCamera = mainCamera.clone() as THREE.PerspectiveCamera;
-    this.renderCamera.layers.disableAll();
-    this.renderCamera.layers.enable(INLINE_EMISSIVE_LAYER);
-    this.renderCamera.matrixAutoUpdate = false;
-    this.renderCamera.matrixWorldAutoUpdate = false;
-    this.renderCamera.matrixWorld = mainCamera.matrixWorld;
-    this.renderCamera.matrixWorldInverse = mainCamera.matrixWorldInverse;
-    this.renderCamera.projectionMatrix = mainCamera.projectionMatrix;
-    this.renderCamera.projectionMatrixInverse = mainCamera.projectionMatrixInverse;
+    this.renderCamera = buildLayerRenderCamera(mainCamera, INLINE_EMISSIVE_LAYER);
+  }
+
+  /** Rebind after the scene's camera object is swapped (e.g. ortho/perspective toggle). */
+  setMainCamera(camera: THREE.PerspectiveCamera | THREE.OrthographicCamera): void {
+    this._mainCamera = camera;
+    this.renderCamera = buildLayerRenderCamera(camera, INLINE_EMISSIVE_LAYER);
   }
 
   addMesh(mesh: THREE.Mesh): void {
+    // Re-arm even for already-registered meshes: callers re-add on every scene sync,
+    // and lights created since the last sync (live geoscript runs) need layer 30.
+    this._lightsSynced = false;
     if (this._registeredMeshes.has(mesh)) return;
     this._registeredMeshes.add(mesh);
     mesh.layers.disable(0);
     mesh.layers.enable(INLINE_EMISSIVE_LAYER);
-    this._lightsSynced = false;
+  }
+
+  /** Return the mesh to the main pass (layer 0). No-op if not registered. */
+  removeMesh(mesh: THREE.Mesh): void {
+    if (!this._registeredMeshes.delete(mesh)) return;
+    mesh.layers.disable(INLINE_EMISSIVE_LAYER);
+    mesh.layers.enable(0);
   }
 
   /** Share the composer's stable depth so meshes depth-test/-write against the scene. */
@@ -114,7 +122,12 @@ export class InlineEmissivePass extends HijackedMRTPass {
     // pixels via the depth test.
     const savedBackground = this.scene.background;
     this.scene.background = null;
+    // This render must never re-bake shadow maps — the layer-30 camera would filter
+    // the caster set down to inline meshes only, clobbering the scene's maps.
+    const savedShadowAutoUpdate = renderer.shadowMap.autoUpdate;
+    renderer.shadowMap.autoUpdate = false;
     renderer.render(this.scene, this.renderCamera);
+    renderer.shadowMap.autoUpdate = savedShadowAutoUpdate;
     this.scene.background = savedBackground;
   }
 }

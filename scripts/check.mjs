@@ -70,10 +70,11 @@ const svelteMachineArgs = [
 if (useTsgo) {
   svelteMachineArgs.push('--tsgo');
 }
-const [svelteResult, lintResult, ctrlResult] = await Promise.all([
+const [svelteResult, lintResult, ctrlResult, schemaResult] = await Promise.all([
   run(process.execPath, svelteMachineArgs),
   run(process.execPath, [cliPath('oxlint', 'bin', 'oxlint'), '--format', 'unix', '--deny-warnings']),
   run(process.execPath, [join(process.cwd(), 'scripts', 'lint-control-chars.mjs')]),
+  run(process.execPath, [cliPath('tsx', 'dist', 'cli.mjs'), 'src/viz/levelDef/genSchema.ts', '--check']),
 ]);
 
 if (svelteResult.error) {
@@ -107,6 +108,13 @@ if (ctrlResult.error) {
 }
 if (ctrlResult.status !== 0) {
   fail('control-chars', `${ctrlResult.stdout}${ctrlResult.stderr}`, ctrlResult.status);
+}
+
+if (schemaResult.error) {
+  fail('gen-level-schema', schemaResult.error.message);
+}
+if (schemaResult.status !== 0) {
+  fail('gen-level-schema', `${schemaResult.stdout}${schemaResult.stderr}`, schemaResult.status);
 }
 
 process.stdout.write('CHECK OK\n');

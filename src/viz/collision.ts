@@ -573,6 +573,18 @@ export class BulletPhysics {
       getThirdPersonXrayEnabled: () => viz.vizConfig.current.gameplay.thirdPersonXray,
       cameraRayTest: (fx, fy, fz, tx, ty, tz) =>
         this.playerController.cameraRayTest(this.collisionWorld, fx, fy, fz, tx, ty, tz),
+      cameraSphereSweep: (fx, fy, fz, tx, ty, tz, radius, nonPermeableOnly) =>
+        this.playerController.cameraSphereSweep(
+          this.collisionWorld,
+          fx,
+          fy,
+          fz,
+          tx,
+          ty,
+          tz,
+          radius,
+          nonPermeableOnly
+        ),
       getLastRayHitNormal: () => ({
         x: this.playerController.getCameraRayHitNormalX(),
         y: this.playerController.getCameraRayHitNormalY(),

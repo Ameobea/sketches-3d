@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import { getDefaultAnisotropy, getDefaultMagFilter } from 'src/viz/conf';
 
 import type { MaterialDef } from 'src/geoscript/materials';
+import { TEXTURE_SLOTS } from 'src/viz/materials/schema';
 import type { TextureOutputMeta } from 'src/geoscript/geotoyAPIClient';
 import type { GeneratedTexture } from 'src/geoscript/runner/types';
 
@@ -33,8 +34,7 @@ import {
   parseProceduralHandle,
 } from './proceduralHandleFormat';
 
-/** Material slots that accept stack handles. */
-export const STACK_CAPABLE_SLOTS: readonly string[] = ['map', 'normalMap', 'roughnessMap', 'pomHeightMap'];
+export { STACK_CAPABLE_SLOTS } from 'src/viz/materials/schema';
 
 const registry = new Map<string, THREE.DataTexture | THREE.DataArrayTexture>();
 
@@ -238,15 +238,6 @@ export const createGeneratedTexture = (t: GeneratedTexture): THREE.DataTexture |
   applyGeneratedTexture(tex, t);
   return tex;
 };
-
-const TEXTURE_SLOTS = [
-  'map',
-  'normalMap',
-  'roughnessMap',
-  'metalnessMap',
-  'clearcoatNormalMap',
-  'pomHeightMap',
-] as const;
 
 export const proceduralHandlesForDef = (def: MaterialDef): string[] => {
   if (def.type !== 'customShader' || !def.props) return [];

@@ -45,6 +45,13 @@ export interface EmissiveBloomConfig {
    * then a subtractive linear region above it.
    */
   luminanceSoftKnee?: number;
+  /**
+   * Allocate the luminance-filter chain even when the initial threshold is 0, so
+   * `setLuminanceThreshold`/`setLuminanceSoftKnee` work at runtime (they are no-ops
+   * otherwise — the chain is only built at construction). The filter render is
+   * skipped while the gate is an identity, so an idle chain costs nothing per frame.
+   */
+  runtimeThreshold?: boolean;
 }
 
 /**
@@ -135,7 +142,7 @@ export class EmissiveBloomPass extends Pass {
     this.blur = new DualKawaseBlurPass(config.levels ?? 8, config.radius ?? 0.85);
 
     const thresh = config.luminanceThreshold ?? 0;
-    const hasThreshold = thresh > 0;
+    const hasThreshold = thresh > 0 || !!config.runtimeThreshold;
 
     if (hasThreshold || this.hasFog) {
       this.filterRT = new THREE.WebGLRenderTarget(sourceRT.width, sourceRT.height, {
@@ -205,7 +212,11 @@ export class EmissiveBloomPass extends Pass {
   ): void {
     let blurInput = this.sourceRT;
 
-    if (this.filterMat && this.filterRT) {
+    const filterIsIdentity =
+      !this.hasFog &&
+      !((this.filterMat?.uniforms.threshold?.value ?? 0) > 0) &&
+      !((this.filterMat?.uniforms.softKnee?.value ?? 0) > 0);
+    if (this.filterMat && this.filterRT && !filterIsIdentity) {
       this.filterMat.uniforms.tInput.value = this.sourceRT.texture;
       if (this.hasFog && this.viz) {
         this.filterMat.uniforms.fogCameraPos.value.setFromMatrixPosition(this.viz.camera.matrixWorld);

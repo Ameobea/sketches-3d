@@ -87,9 +87,14 @@ export interface CustomShaderProps {
    */
   useDisplacementNormals?: boolean;
   uvTransform?: THREE.Matrix3;
+  /** Emissive color (linear radiance). Multiplied by `emissiveMap` and `emissiveIntensity`;
+   *  the product is the `e` input to the `emissiveShader` slot. Default black. */
+  emissive?: number | THREE.Color;
+  /** Emissive tint texture (sRGB). Sampled with the material's UV scheme (triplanar /
+   *  tile-breaking / mesh UVs) and multiplied onto `emissive` — set `emissive` to white
+   *  for the map's own colors. Stacks are not supported in this slot. */
+  emissiveMap?: THREE.Texture;
   emissiveIntensity?: number;
-  lightMap?: THREE.Texture;
-  lightMapIntensity?: number;
   /** Prefiltered (PMREM) env texture; falls back to the scene env when omitted. */
   envMap?: THREE.Texture;
   envMapIntensity?: number;

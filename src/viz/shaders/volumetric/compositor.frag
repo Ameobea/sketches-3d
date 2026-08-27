@@ -83,5 +83,6 @@ void main() {
   float fogDensity = totalWeight > 0.0 ? totalDensity / totalWeight : 0.0;
 
   vec3 sceneColor = texture2D(sceneDiffuse, vUv).rgb;
-  gl_FragColor = vec4(mix(sceneColor, fogColor, fogDensity), 1.0);
+  // Output alpha = fog coverage, consumed by FinalPass (SCENE_ALPHA_IS_FOG_COVERAGE).
+  gl_FragColor = vec4(mix(sceneColor, fogColor, fogDensity), fogDensity);
 }

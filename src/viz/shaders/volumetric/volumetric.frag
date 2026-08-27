@@ -354,8 +354,8 @@ void main() {
 
   #ifdef DO_DIRECT_COMPOSITING
   vec3 diffuse = texture2D(sceneDiffuse, vUv).rgb;
-  // composite the fog color over the diffuse color using the density stored in the alpha channel
-  gl_FragColor = vec4(mix(diffuse, fogColor.rgb, fogColor.a), 1.0);
+  // Output alpha = fog coverage, consumed by FinalPass (SCENE_ALPHA_IS_FOG_COVERAGE).
+  gl_FragColor = vec4(mix(diffuse, fogColor.rgb, fogColor.a), fogColor.a);
   #else
   gl_FragColor = fogColor.rgba;
   #ifdef NEEDS_COMPOSITING

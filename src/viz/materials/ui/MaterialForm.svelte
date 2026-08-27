@@ -227,6 +227,34 @@
         </div>
       </FormField>
     {/if}
+    <FormField
+      label="emissive"
+      help="Emissive color. Multiplied by the emissive map and intensity; the `emissive` shader slot receives the product and can replace it entirely."
+    >
+      <ColorPicker value={cs.props.emissive ?? 0} onchange={n => (cs.props.emissive = n)} />
+    </FormField>
+    <FormField label="emissive intensity">
+      <input
+        type="range"
+        min="0"
+        max="10"
+        step="0.1"
+        value={cs.props.emissiveIntensity ?? 1}
+        oninput={e => (cs.props.emissiveIntensity = (e.target as HTMLInputElement).valueAsNumber)}
+      />
+      <span>{(cs.props.emissiveIntensity ?? 1).toFixed(1)}</span>
+    </FormField>
+    {@render texField('emissive map', 'emissiveMap', cs.props.emissiveMap, h => (cs.props.emissiveMap = h))}
+    <FormField
+      label="emissive bypass"
+      help="Routes all emissive (color, map, and the `emissive` shader slot) around tone mapping and into the bloom pass. The lit base renders normally; bright emissive composites over it and glows."
+    >
+      <input
+        type="checkbox"
+        checked={!!cs.inlineEmissiveBypass}
+        onchange={e => (cs.inlineEmissiveBypass = (e.target as HTMLInputElement).checked || undefined)}
+      />
+    </FormField>
     <FormField label="texture scale" help="The scale of the texture coordinates.">
       <input
         type="number"

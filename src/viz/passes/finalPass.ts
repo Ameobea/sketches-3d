@@ -14,9 +14,10 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     emissiveBloomBuffer: THREE.Texture | null,
     bloomIntensity: number,
     fogShader: string | undefined,
-    skyBypassTonemap: boolean
+    fogCoverageInAlpha: boolean
   ) {
     const defines: Record<string, string> = {};
+    if (fogCoverageInAlpha) defines.SCENE_ALPHA_IS_FOG_COVERAGE = '1';
     if (toneMapping === 'aces') defines.TONE_MAPPING_ACES = '1';
     else if (toneMapping === 'cineon') defines.TONE_MAPPING_CINEON = '1';
     else if (toneMapping === 'reinhard') defines.TONE_MAPPING_REINHARD = '1';
@@ -26,9 +27,8 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     if (emissiveBuffer !== null) defines.HAS_EMISSIVE_BUFFER = '1';
     if (emissiveBloomBuffer !== null) defines.HAS_EMISSIVE_BLOOM = '1';
     if (fogShader) defines.HAS_FOG = '1';
-    if (skyBypassTonemap) defines.SKY_BYPASS_TONEMAP = '1';
 
-    const needsDepth = !!fogShader || skyBypassTonemap;
+    const needsDepth = !!fogShader;
 
     const uniforms: Record<string, THREE.IUniform> = {
       inputBuffer: { value: null },
@@ -110,7 +110,7 @@ export class FinalPass extends Pass {
       emissiveBloomBuffer = null,
       bloomIntensity = 1.0,
       fogShader,
-      skyBypassTonemap = false,
+      fogCoverageInAlpha = false,
     }: {
       toneMapping?: ToneMappingMode;
       exposure?: number;
@@ -125,17 +125,19 @@ export class FinalPass extends Pass {
        *                     float depth, float curTimeSeconds)
        *
        * Returns vec4(fogColor.rgb, fogFactor) where fogFactor=0 is clear, 1 is full fog.
-       * `depth` is the raw depth buffer value in [0,1]; depth >= ~0.9999 means sky / no geometry.
+       * `depth` is the raw depth buffer value in [0,1]; `depth >= 1.0` means sky / no geometry
+       * (the float depth texture's far-plane clear value is exactly 1.0).
        * Uses GLSL ES 1.00 style (texture2D, etc.) since the final pass does not use GLSL3.
        */
       fogShader?: string;
       /**
-       * When true, fragments at the depth-buffer far plane (sky / no geometry) skip tone
-       * mapping and the exposure scale, going straight to sRGB encoding. Lets sky shaders
-       * author display-referred colors that are preserved 1:1 through the pipeline. sRGB
-       * encoding, gamma, dither, emissive composite, and bloom still run normally.
+       * When true, the scene buffer's alpha channel carries volumetric fog coverage
+       * (exported by `VolumetricPass`); the distance fog and emissive composite are
+       * attenuated by it so neither repaints content hidden under opaque fog. Set
+       * automatically by `configureDefaultPostprocessingPipeline` when a
+       * `VolumetricPass` is present.
        */
-      skyBypassTonemap?: boolean;
+      fogCoverageInAlpha?: boolean;
     } = {}
   ) {
     super('FinalPass', undefined, new THREE.Camera());
@@ -147,10 +149,10 @@ export class FinalPass extends Pass {
       emissiveBloomBuffer,
       bloomIntensity,
       fogShader,
-      skyBypassTonemap
+      fogCoverageInAlpha
     );
     this.hasFogShader = !!fogShader;
-    this.needsDepth = !!fogShader || skyBypassTonemap;
+    this.needsDepth = !!fogShader;
     this.fullscreenMaterial = this.mat;
 
     if (this.needsDepth) {

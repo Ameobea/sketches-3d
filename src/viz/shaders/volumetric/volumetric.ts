@@ -182,6 +182,11 @@ class VolumetricMaterial extends THREE.ShaderMaterial {
       uniforms,
       fragmentShader: VolumetricFragmentShader,
       vertexShader: VolumetricVertexShader,
+      // The fullscreen triangle sits at z=1.0 and the composer's ping-pong buffers
+      // carry real scene-depth attachments — depth must stay off or the composite
+      // depends on pass-order parity.
+      depthTest: false,
+      depthWrite: false,
       defines: {
         ...((params.renderScale ?? (params.halfRes ? 0.5 : 1)) < 1
           ? { NEEDS_COMPOSITING: '1' }

@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 
 import { buildMaterial as buildSharedMaterial } from 'src/viz/materials';
-import type { CustomShaderMatDef, CustomBasicShaderMatDef } from 'src/viz/materials/schema';
+import {
+  TEXTURE_SLOT_META,
+  TEXTURE_SLOTS,
+  type CustomShaderMatDef,
+  type CustomBasicShaderMatDef,
+} from 'src/viz/materials/schema';
 import { loadTexture } from 'src/viz/textureLoading';
 import { Textures } from 'src/geotoy/panels/materialEditor/state.svelte';
-import { buildDefaultShaders, linearRgbToSrgbHex, type RGBColor } from './geotoyMaterialConvert';
 import {
   getProceduralTexture,
   isProceduralHandle,
@@ -12,8 +16,6 @@ import {
 } from 'src/geotoy/modules/proceduralTextures';
 import type { TextureID } from './geotoyAPIClient';
 
-export { buildDefaultShaders };
-export type { RGBColor };
 export type { CustomShaderMatDef, CustomBasicShaderMatDef } from 'src/viz/materials/schema';
 
 /** Geotoy materials are always shader-based (no level-only `generated` variant) and always carry a
@@ -143,82 +145,48 @@ export const buildMaterial = (
   }
 
   const p = def.props ?? {};
-  for (const slot of ['metalnessMap', 'clearcoatNormalMap'] as const) {
+  const slotPs = TEXTURE_SLOTS.map(slot => {
     const h = p[slot];
-    if (h != null && isStackHandle(h)) {
+    const meta = TEXTURE_SLOT_META[slot];
+    if (h != null && !('stacks' in meta) && isStackHandle(h)) {
       throw new Error(`Texture stacks are not supported for the ${slot} slot`);
     }
-  }
-  const mapP = maybeLoadTexture(loader, p.map);
-  const normalMapP = maybeLoadTexture(loader, p.normalMap);
-  const roughnessMapP = maybeLoadTexture(loader, p.roughnessMap);
-  const metalnessMapP = maybeLoadTexture(loader, p.metalnessMap);
-  const clearcoatNormalMapP = maybeLoadTexture(loader, p.clearcoatNormalMap);
-  const pomHeightMapP = maybeLoadPomHeightTexture(loader, p.pomHeightMap);
+    return 'red' in meta ? maybeLoadPomHeightTexture(loader, h) : maybeLoadTexture(loader, h);
+  });
 
   const uniformTexUrls = Object.values(def.shaders?.customUniforms ?? {}).flatMap(u =>
     u.type === 'sampler2D' && /^https?:\/\//.test(u.value) ? [u.value] : []
   );
   const uniformTexPs = uniformTexUrls.map(url => loadUrlTexture(loader, url));
 
-  type Tex = THREE.Texture | undefined;
-  const finish = (
-    r: {
-      map: Tex;
-      normalMap: Tex;
-      roughnessMap: Tex;
-      metalnessMap: Tex;
-      clearcoatNormalMap: Tex;
-      pomHeightMap: Tex;
-    },
-    uniformTexs: THREE.Texture[]
-  ): THREE.Material => {
+  const finish = (slotTexs: (THREE.Texture | undefined)[], uniformTexs: THREE.Texture[]): THREE.Material => {
     const textures = new Map<string, THREE.Texture>();
-    const put = (handle: string | undefined, tex: Tex, srgb = false) => {
-      if (handle != null && tex) {
-        // Procedural textures hold linear geoscript values, never sRGB-encoded bytes.
-        if (srgb && !isProceduralHandle(handle)) tex.colorSpace = THREE.SRGBColorSpace;
-        textures.set(handle, tex);
+    TEXTURE_SLOTS.forEach((slot, i) => {
+      const handle = p[slot];
+      const tex = slotTexs[i];
+      if (handle == null || !tex) return;
+      // Procedural textures hold linear geoscript values, never sRGB-encoded bytes.
+      if ('srgb' in TEXTURE_SLOT_META[slot] && !isProceduralHandle(handle)) {
+        tex.colorSpace = THREE.SRGBColorSpace;
       }
-    };
-    put(p.map, r.map, true);
-    put(p.normalMap, r.normalMap);
-    put(p.roughnessMap, r.roughnessMap);
-    put(p.metalnessMap, r.metalnessMap);
-    put(p.clearcoatNormalMap, r.clearcoatNormalMap);
-    put(p.pomHeightMap, r.pomHeightMap);
+      textures.set(handle, tex);
+    });
     uniformTexUrls.forEach((url, i) => textures.set(url, uniformTexs[i]));
     const mat = buildSharedMaterial(def, textures);
     mat.name = id;
     return mat;
   };
 
-  const slotsP = [
-    mapP,
-    normalMapP,
-    roughnessMapP,
-    metalnessMapP,
-    clearcoatNormalMapP,
-    pomHeightMapP,
-  ] as const;
-  if ([...slotsP, ...uniformTexPs].every(v => !(v instanceof Promise))) {
-    return finish(
-      {
-        map: mapP as Tex,
-        normalMap: normalMapP as Tex,
-        roughnessMap: roughnessMapP as Tex,
-        metalnessMap: metalnessMapP as Tex,
-        clearcoatNormalMap: clearcoatNormalMapP as Tex,
-        pomHeightMap: pomHeightMapP as Tex,
-      },
-      uniformTexPs as THREE.Texture[]
-    );
+  if ([...slotPs, ...uniformTexPs].every(v => !(v instanceof Promise))) {
+    return finish(slotPs as (THREE.Texture | undefined)[], uniformTexPs as THREE.Texture[]);
   }
-  return Promise.all([Promise.all(slotsP), Promise.all(uniformTexPs)]).then(
-    ([[map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap], uniformTexs]) =>
-      finish({ map, normalMap, roughnessMap, metalnessMap, clearcoatNormalMap, pomHeightMap }, uniformTexs)
+  return Promise.all([Promise.all(slotPs), Promise.all(uniformTexPs)]).then(([slotTexs, uniformTexs]) =>
+    finish(slotTexs, uniformTexs)
   );
 };
+
+const linearRgbToSrgbHex = (c: { r: number; g: number; b: number }): number =>
+  new THREE.Color().setRGB(c.r, c.g, c.b).getHex(THREE.SRGBColorSpace);
 
 export const buildDefaultMaterial = (name: string): MaterialDef => ({
   type: 'customShader',

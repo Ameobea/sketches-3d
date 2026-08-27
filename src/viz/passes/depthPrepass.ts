@@ -18,8 +18,8 @@ export class DepthPass extends RenderPass implements Resizable {
    * Optional non-dithering depth-only material used in a second prepass step for meshes flagged
    * `occlusionExclude` (the player, `nonPermeable` walls, etc). Without this second step those
    * meshes leave depth at the far plane, which makes downstream consumers (SkyStack's
-   * `discardIfOccluded`, FinalPass's sky-bypass tone-map gate, FinalPass's emissive composite)
-   * mistake their pixels for sky and bleed sky color through them.
+   * `discardIfOccluded`, scene fog shaders' far-plane depth checks) mistake their pixels for
+   * sky and bleed sky color through them.
    */
   private plainDepthMaterial: THREE.Material | null;
 

@@ -377,6 +377,8 @@
     getEditorHooks: () => gizmoController.editorHooks,
     getEnvironment: () =>
       tabs.active.kind === 'mesh' ? tabs.active.environment : textureMode.previewEnvironment,
+    getEmissiveBloom: () =>
+      tabs.active.kind === 'mesh' ? tabs.active.emissiveBloom : textureMode.previewEmissiveBloom,
   });
   const textureMode = new TextureMode({
     getTreeState: () => treeState,
@@ -1480,6 +1482,7 @@
 <EnvironmentSettings
   bind:isOpen={environmentSettingsOpen}
   bind:environment={() => tabs.active.environment, env => tabs.setEnvironment(tabs.active.id, env)}
+  bind:emissiveBloom={() => tabs.active.emissiveBloom, s => tabs.setEmissiveBloom(tabs.active.id, s)}
   me={userData?.me}
 />
 

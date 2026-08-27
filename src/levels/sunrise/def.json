@@ -56,7 +56,13 @@
         "asset": "trench",
         "name": "stone"
       },
-      "nonPermeable": true
+      "nonPermeable": true,
+      "props": {
+        "transparent": true
+      },
+      "shaders": {
+        "colorShader": "vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) { return vec4(baseColor, 1. - smoothstep(5500., 9000., pos.y)); }"
+      }
     }
   },
   "assets": {
@@ -86,6 +92,10 @@
       "materialMap": {
         "hex": "hex_patched"
       }
+    },
+    "bloom_monolith": {
+      "type": "geotoyComposition",
+      "compositionId": 134
     }
   },
   "objects": [
@@ -117,14 +127,14 @@
         {
           "id": "cliffs_1",
           "asset": "cliffs",
-          "position": [-1342.141, -1764.2691, 4594.4703],
+          "position": [-1342.141, -1609.7856, 4594.4703],
           "rotation": [0, 1.6603, 0],
           "scale": [13.4859, 10.264, 10.4946]
         },
         {
           "id": "cliffs_2",
           "asset": "cliffs",
-          "position": [-2022.3128, -2368.3193, 552.7377],
+          "position": [-2330.6188, -2368.3193, 839.3912],
           "rotation": [0, 1.1765, 0],
           "scale": [6.5693, 5.1121, 5.1121]
         },
@@ -145,7 +155,7 @@
         {
           "id": "cliffs_4",
           "asset": "cliffs",
-          "position": [-2330.5553, -237.8615, 262.0779],
+          "position": [-2324.4026, -237.8615, -84.7454],
           "rotation": [0, 1.377, 0],
           "scale": [8, 10.6844, 6.2255]
         },
@@ -166,7 +176,7 @@
         {
           "id": "cliffs_8",
           "asset": "cliffs",
-          "position": [-4286.1737, 2723.2029, -3170.087],
+          "position": [-3801.5607, 2723.2029, -3032.159],
           "rotation": [0, 1.0719, 0],
           "scale": [23.4702, 40.5232, 12.4476]
         },
@@ -229,8 +239,8 @@
         {
           "id": "vertebrae_monolith_3",
           "asset": "vertebrae_monolith",
-          "position": [1163.1884, 20.621, -557.6726],
-          "rotation": [0, 0.9228, 0],
+          "position": [1163.1884, -57.8402, -557.6726],
+          "rotation": [-0.0686, 0.921, 0.0521],
           "scale": [9.1307, 7.4518, 7.4518],
           "inputs": {
             "seed": {
@@ -276,6 +286,13 @@
       "position": [1070.7786, -152.3935, 581.4844],
       "rotation": [0, 0, 0],
       "scale": [1, 1, 1]
+    },
+    {
+      "id": "bloom_monolith",
+      "asset": "bloom_monolith",
+      "position": [1758.9724, 452.1389, 1424.6159],
+      "rotation": [0, 0, 0],
+      "scale": [25.6227, 25.6227, 25.6227]
     }
   ]
 }

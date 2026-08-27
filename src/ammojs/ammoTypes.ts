@@ -172,6 +172,12 @@ export interface BtKinematicCharacterController {
     fromX: number, fromY: number, fromZ: number,
     toX: number,   toY: number,   toZ: number
   ): number;
+  cameraSphereSweep(
+    world: BtDiscreteDynamicsWorld,
+    fromX: number, fromY: number, fromZ: number,
+    toX: number,   toY: number,   toZ: number,
+    radius: number, nonPermeableOnly: boolean
+  ): number;
   getCameraRayHitNormalX(): number;
   getCameraRayHitNormalY(): number;
   getCameraRayHitNormalZ(): number;

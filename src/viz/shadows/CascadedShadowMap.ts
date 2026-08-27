@@ -69,7 +69,7 @@ export interface CascadedShadowMapParams {
   /** Sun light; only its direction (position→target) is read, refreshed every update. */
   light: THREE.DirectionalLight;
   cascades?: number;
-  /** Cap on cascade coverage distance; defaults to `camera.far`. */
+  /** Cap on cascade coverage distance; defaults to the camera's live `far`. */
   maxDistance?: number;
   /** Split blend: 0 = uniform, 1 = logarithmic. */
   lambda?: number;
@@ -116,7 +116,7 @@ export class CascadedShadowMap {
   /** Packed-depth cascade layers (sampler2DArray). Object identity stays stable for uniform sharing. */
   readonly depthRT: THREE.WebGLArrayRenderTarget;
 
-  maxDistance: number;
+  maxDistance: number | null;
   lambda: number;
   mapSize: number;
   lightMargin: number;
@@ -138,7 +138,7 @@ export class CascadedShadowMap {
     this.camera = params.camera;
     this.light = params.light;
     this.cascades = params.cascades ?? 3;
-    this.maxDistance = params.maxDistance ?? params.camera.far;
+    this.maxDistance = params.maxDistance ?? null;
     this.lambda = params.lambda ?? 0.5;
     this.mapSize = params.mapSize ?? 2048;
     this.lightMargin = params.lightMargin ?? 150;
@@ -159,7 +159,7 @@ export class CascadedShadowMap {
 
   private computeBreaks() {
     const near = this.camera.near;
-    const far = Math.min(this.camera.far, this.maxDistance);
+    const far = Math.min(this.camera.far, this.maxDistance ?? Infinity);
     const n = this.cascades;
     this.breaks.length = 0;
     for (let i = 1; i < n; i += 1) {
@@ -179,7 +179,7 @@ export class CascadedShadowMap {
     camera.updateProjectionMatrix();
 
     this.computeBreaks();
-    this.mainFrustum.setFromProjectionMatrix(camera.projectionMatrix, this.maxDistance);
+    this.mainFrustum.setFromProjectionMatrix(camera.projectionMatrix, this.maxDistance ?? camera.far);
     this.mainFrustum.split(this.breaks, this.frustums);
 
     _lightDir.copy(this.light.target.position).sub(this.light.position);

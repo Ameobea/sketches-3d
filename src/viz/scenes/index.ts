@@ -129,8 +129,10 @@ export type ViewMode =
       initialAzimuthAngle?: number;
       cameraFOV?: number;
       /**
-       * Clearance (in world units) kept between the camera and any occluding surface.
-       * Default: 0.25
+       * Clearance (in world units) kept between the camera and any occluding surface —
+       * the camera collision sphere-sweep radius, and the along-ray pull-back in the
+       * soft-occlusion layer walk. Default: derived from the live camera frustum
+       * (near-plane corner extent × 1.1) so the near plane can't poke through walls.
        */
       cameraCollisionBias?: number;
       /**
@@ -173,6 +175,11 @@ export type ViewMode =
 
 export interface SceneConfig {
   viewMode?: ViewMode;
+  /**
+   * Camera frustum planes (defaults: near 0.07, far 3000). Applied right after the
+   * scene loader returns — safe because passes read camera params live each frame.
+   */
+  camera?: { near?: number; far?: number };
   locations: SceneLocations;
   spawnLocation: string;
   /**

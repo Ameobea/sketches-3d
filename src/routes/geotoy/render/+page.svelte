@@ -88,6 +88,7 @@
                 preludeEjected: flat.preludeEjected ?? false,
                 view: flat.view ?? DefaultView,
                 environment: flat.environment,
+                emissiveBloom: flat.emissiveBloom,
               },
             },
             activeTreeId: entry.id,

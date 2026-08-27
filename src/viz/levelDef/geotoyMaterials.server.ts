@@ -1,19 +1,22 @@
 import { getGeotoyAPIBaseURL, getMaterial, getMultipleTextures } from 'src/geoscript/geotoyAPIClient';
 import { parseProceduralHandle } from 'src/geotoy/modules/proceduralHandleFormat';
+import { TEXTURE_SLOT_META, TEXTURE_SLOTS } from 'src/viz/materials/schema';
 import type { AnyLevelTextureDef, MaterialDef, TextureDef } from './types';
 
-/** Texture-bearing slots of a customShader def + their sampler semantics. Geotoy handles in these
- *  slots are texture ids; everything else (base color is the only sRGB slot) samples linearly. */
-const GEOTOY_TEXTURE_SLOTS: Record<string, Partial<TextureDef>> = {
-  map: { colorSpace: 'srgb' },
-  normalMap: {},
-  roughnessMap: {},
-  metalnessMap: {},
-  lightMap: {},
-  transmissionMap: {},
-  clearcoatNormalMap: {},
-  pomHeightMap: { format: 'red' },
-};
+/** Texture-bearing slots of a customShader def + their sampler semantics, derived from the
+ *  shared slot table. Geotoy handles in these slots are texture ids. */
+const GEOTOY_TEXTURE_SLOTS: Record<string, Partial<TextureDef>> = Object.fromEntries(
+  TEXTURE_SLOTS.map(slot => {
+    const m = TEXTURE_SLOT_META[slot];
+    return [
+      slot,
+      {
+        ...('srgb' in m ? { colorSpace: 'srgb' as const } : {}),
+        ...('red' in m ? { format: 'red' as const } : {}),
+      },
+    ];
+  })
+);
 
 const geotoyTextureKey = (texId: number, cfg: Partial<TextureDef>): string =>
   `__geotoy__/${texId}${cfg.colorSpace === 'srgb' ? '/srgb' : ''}${cfg.format ? `/${cfg.format}` : ''}`;

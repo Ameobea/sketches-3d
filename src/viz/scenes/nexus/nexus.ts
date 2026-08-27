@@ -493,9 +493,8 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
         halfRes: quality <= GraphicsQuality.Medium,
         ...qualityParams,
       });
-      composer.addPass(volumetricPass);
-      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
-
+      // AO must composite before the fog so it doesn't re-darken fog-covered pixels
+      // using the depth/normals of geometry hidden underneath.
       if (vizConf.graphics.quality > GraphicsQuality.Low) {
         const n8aoPass = new N8AOPostPass(
           viz.scene,
@@ -517,6 +516,9 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
           }[vizConf.graphics.quality]
         );
       }
+
+      composer.addPass(volumetricPass);
+      viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
     },
     toneMapping: { exposure: 0.5, mode: 'agx' },
     // toneMapping: { exposure: 1, mode: 'aces' },

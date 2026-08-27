@@ -10,12 +10,14 @@ import type {
   CustomUniformDef,
   MaterialClassName,
 } from 'src/viz/shaders/customShader.types';
-import type {
-  CustomUniformJson,
-  MaterialDef,
-  ShaderPropsJson,
-  ShaderOptionsJson,
-  ShaderShadersJson,
+import {
+  SHADER_SLOT_KEYS,
+  TEXTURE_SLOTS,
+  type CustomUniformJson,
+  type MaterialDef,
+  type ShaderPropsJson,
+  type ShaderOptionsJson,
+  type ShaderShadersJson,
 } from './schema';
 
 const SIDE_MAP: Record<NonNullable<ShaderPropsJson['side']>, THREE.Side> = {
@@ -61,8 +63,8 @@ const resolveShaderProps = (
     'roughness',
     'metalness',
     'normalScale',
+    'emissive',
     'emissiveIntensity',
-    'lightMapIntensity',
     'envMapIntensity',
     'opacity',
     'alphaTest',
@@ -89,17 +91,10 @@ const resolveShaderProps = (
 
   if (propsJson.side !== undefined) props.side = SIDE_MAP[propsJson.side];
 
-  const resolveTexture = (key: string | undefined): THREE.Texture | undefined =>
-    key !== undefined ? textures.get(key) : undefined;
-
-  props.map = resolveTexture(propsJson.map);
-  props.normalMap = resolveTexture(propsJson.normalMap);
-  props.roughnessMap = resolveTexture(propsJson.roughnessMap);
-  props.metalnessMap = resolveTexture(propsJson.metalnessMap);
-  props.lightMap = resolveTexture(propsJson.lightMap);
-  props.transmissionMap = resolveTexture(propsJson.transmissionMap);
-  props.clearcoatNormalMap = resolveTexture(propsJson.clearcoatNormalMap);
-  props.pomHeightMap = resolveTexture(propsJson.pomHeightMap);
+  for (const slot of TEXTURE_SLOTS) {
+    const key = propsJson[slot];
+    props[slot] = key !== undefined ? textures.get(key) : undefined;
+  }
 
   if (propsJson.uvScale !== undefined) {
     props.uvTransform = new THREE.Matrix3().scale(propsJson.uvScale[0], propsJson.uvScale[1]);
@@ -180,23 +175,11 @@ const resolveShaderShaders = (
 ): CustomShaderShaders => {
   const shaders: CustomShaderShaders = {};
   copyDefined(shaders, shadersJson, [
-    'customVertexFragment',
-    'commonShader',
-    'colorShader',
-    'lightAttenuationShader',
-    'normalShader',
-    'stackIndexShader',
-    'roughnessShader',
+    ...SHADER_SLOT_KEYS,
     'roughnessReverseColorRamp',
-    'metalnessShader',
     'metalnessReverseColorRamp',
-    'emissiveShader',
-    'iridescenceShader',
     'iridescenceReverseColorRamp',
-    'displacementShader',
     'includeNoiseShadersVertex',
-    'pomHeightShader',
-    'pomNormalShader',
     'constants',
   ]);
   if (shadersJson.customUniforms !== undefined)

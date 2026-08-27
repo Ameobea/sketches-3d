@@ -72,17 +72,16 @@ export abstract class HijackedMRTPass extends Pass {
     }
 
     if (this.boundAttachment0 !== tex0 || this.boundAttachment1 !== tex1) {
+      // three memoizes FBO bindings, so stay on the already-bound FBO — a raw unbind
+      // to null here would desync the cache and the caller's render would land on the
+      // canvas for this frame.
       gl.bindFramebuffer(gl.FRAMEBUFFER, mrtFBO);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex0, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, tex1, 0);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       this.boundAttachment0 = tex0;
       this.boundAttachment1 = tex1;
     }
 
-    // Re-bind (the rebind above unbinds to null) so three's state + drawBuffers are
-    // set for the caller's render.
-    renderer.setRenderTarget(this.backingMRT);
     return true;
   }
 
