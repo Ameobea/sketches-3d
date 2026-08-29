@@ -7,14 +7,14 @@
       "type": "hemisphere",
       "skyColor": "#f0f0f4",
       "groundColor": "#8f8f8f",
-      "intensity": 0.3
+      "intensity": 0.22
     },
     {
       "id": "sun",
       "type": "directional",
       "color": "#d7d7d0",
-      "intensity": 1,
-      "position": [370.6451, 200, -465.498],
+      "intensity": 0.5,
+      "position": [-497.4378, 200, -223.6099],
       "castShadow": false
     }
   ],
@@ -37,6 +37,19 @@
       },
       "nonPermeable": true
     },
+    "path_wall_triplanar": {
+      "type": "customShader",
+      "extends": {
+        "type": "local",
+        "name": "path_wall"
+      },
+      "props": {
+        "uvScale": [0.003, 0.003]
+      },
+      "options": {
+        "useTriplanarMapping": true
+      }
+    },
     "hex_patched": {
       "type": "customShader",
       "extends": {
@@ -47,6 +60,12 @@
       "props": {
         "color": "#f8f8f8",
         "metalness": 0
+      }
+    },
+    "core_patched": {
+      "type": "customShader",
+      "props": {
+        "color": "#000000"
       }
     },
     "cliffs": {
@@ -63,13 +82,31 @@
       "shaders": {
         "colorShader": "vec4 getFragColor(vec3 baseColor, vec3 pos, vec3 normal, float curTimeSeconds, SceneCtx ctx) { return vec4(baseColor, 1. - smoothstep(5500., 9000., pos.y)); }"
       }
+    },
+    "spire": {
+      "type": "customShader",
+      "extends": {
+        "type": "local",
+        "name": "path_wall"
+      },
+      "props": {
+        "uvScale": [0.008, 0.008]
+      },
+      "options": {
+        "useTriplanarMapping": true
+      },
+      "parkour": {
+        "climb": {
+          "maxClimbAngle": 1
+        }
+      }
     }
   },
   "assets": {
     "box": {
       "type": "geoscript",
       "code": "export mesh = box(1)",
-      "_meta": { "runtimeMs": 4.2, "count": 5, "codeHash": "961b4562" }
+      "_meta": { "runtimeMs": 7.7, "count": 5, "codeHash": "961b4562" }
     },
     "trench": {
       "type": "geotoyComposition",
@@ -90,23 +127,56 @@
       "type": "geotoyComposition",
       "compositionId": 133,
       "materialMap": {
-        "hex": "hex_patched"
+        "hex": "hex_patched",
+        "core": "core_patched"
       }
     },
     "bloom_monolith": {
       "type": "geotoyComposition",
       "compositionId": 134
+    },
+    "spire": {
+      "type": "geotoyComposition",
+      "compositionId": 135,
+      "materialMap": {
+        "default": "spire"
+      }
+    },
+    "csg_box": {
+      "type": "csg",
+      "tree": {
+        "op": "difference",
+        "children": [
+          {
+            "asset": "box",
+            "position": [0.0059, -0.5214, 0.0108],
+            "rotation": [-0.028, 0.1033, -0.0051],
+            "scale": [10.6229, 127.3343, 36.9125]
+          },
+          {
+            "asset": "box",
+            "position": [-5.9435, 0, -20.1033],
+            "rotation": [0, 0.7125, 0],
+            "scale": [12.9704, 129.0658, 9.834]
+          },
+          {
+            "asset": "box",
+            "position": [-8.8481, 65.2909, 0.0028],
+            "rotation": [0, 0, -0.4239],
+            "scale": [10, 10, 32.92]
+          },
+          {
+            "asset": "box",
+            "position": [-4.0237, 0, 16.1867],
+            "rotation": [0, -0.9901, 0],
+            "scale": [30.3645, 129.0658, 9.834]
+          }
+        ]
+      },
+      "_meta": { "runtimeMs": 15.8, "count": 4, "codeHash": "20eb4aaa", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [
-    {
-      "id": "spawn_platform",
-      "asset": "box",
-      "scale": [30, 5, 30],
-      "position": [0, 58.4511, 0],
-      "rotation": [0, 0, 0],
-      "material": "hex_patched"
-    },
     {
       "id": "trench",
       "asset": "trench",
@@ -226,9 +296,9 @@
         {
           "id": "vertebrae_monolith_4",
           "asset": "vertebrae_monolith",
-          "position": [-55.3504, 21.121, 521.1708],
-          "rotation": [0, 0.7948, 0],
-          "scale": [3.686, 3.0082, 3.0082],
+          "position": [4619.1206, 21.5353, 8789.2419],
+          "rotation": [-0.0376, 0.7648, 0.0391],
+          "scale": [26.0474, 21.2577, 21.2577],
           "inputs": {
             "seed": {
               "type": "int",
@@ -239,8 +309,8 @@
         {
           "id": "vertebrae_monolith_3",
           "asset": "vertebrae_monolith",
-          "position": [1163.1884, -57.8402, -557.6726],
-          "rotation": [-0.0686, 0.921, 0.0521],
+          "position": [895.5586, -57.8402, -2526.9752],
+          "rotation": [-0.0686, -0.6906, 0.0521],
           "scale": [9.1307, 7.4518, 7.4518],
           "inputs": {
             "seed": {
@@ -252,9 +322,9 @@
         {
           "id": "vertebrae_monolith_2",
           "asset": "vertebrae_monolith",
-          "position": [-1256.9848, -61.5845, -78.0223],
+          "position": [-1324.8517, -87.8086, -119.8214],
           "rotation": [0, 2.3199, 0],
-          "scale": [2.8066, 3.4932, 2.8066],
+          "scale": [4.8516, 6.0385, 4.8516],
           "inputs": {
             "seed": {
               "type": "int",
@@ -265,9 +335,9 @@
         {
           "id": "vertebrae_monolith_1",
           "asset": "vertebrae_monolith",
-          "position": [204.34, 12.973, 440.5163],
-          "rotation": [0, -2.6226, 0],
-          "scale": [4.4092, 3.495, 3.495],
+          "position": [1315.8486, -16.014, 5997.0705],
+          "rotation": [-0.0698, 0.9324, 0.0517],
+          "scale": [21.706, 17.2055, 17.2055],
           "inputs": {
             "seed": {
               "type": "int",
@@ -276,11 +346,69 @@
           }
         },
         {
-          "id": "vertebrae_monolith",
+          "id": "vertebrae_monolith_5",
           "asset": "vertebrae_monolith",
-          "position": [-55.1932, 6.8695, -325.992],
-          "rotation": [0, 2.1447, 0],
-          "scale": [2.2577, 2.2577, 2.2577]
+          "position": [-980.617, 36.6198, 188.0484],
+          "rotation": [0, 2.391, 0],
+          "scale": [4.8516, 6.0385, 4.8516],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_6",
+          "asset": "vertebrae_monolith",
+          "position": [-5673.9226, 5805.6903, 539.8741],
+          "rotation": [0.488, 2.7273, 1.268],
+          "scale": [24.4971, 30.49, 24.4971],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_7",
+          "asset": "vertebrae_monolith",
+          "position": [-2043.473, 5806.1903, 8519.2154],
+          "rotation": [0.4111, -3.0208, 1.4144],
+          "scale": [40.8585, 50.854, 40.8585],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_8",
+          "asset": "vertebrae_monolith",
+          "position": [-503.6261, 5806.6903, 11011.1353],
+          "rotation": [2.7278, -0.1107, -1.7757],
+          "scale": [58.7011, 73.0616, 58.7011],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
+        },
+        {
+          "id": "vertebrae_monolith_9",
+          "asset": "vertebrae_monolith",
+          "position": [-4573.6632, 2614.8434, 1823.9602],
+          "rotation": [0.5255, -3.0791, 1.4713],
+          "scale": [24.4971, 30.49, 24.4971],
+          "inputs": {
+            "seed": {
+              "type": "int",
+              "value": 16
+            }
+          }
         }
       ],
       "position": [1070.7786, -152.3935, 581.4844],
@@ -290,9 +418,75 @@
     {
       "id": "bloom_monolith",
       "asset": "bloom_monolith",
-      "position": [1758.9724, 452.1389, 1424.6159],
+      "position": [3845.2827, -626.3425, -134.6007],
       "rotation": [0, 0, 0],
-      "scale": [25.6227, 25.6227, 25.6227]
+      "scale": [130.5755, 90.9967, 130.5755]
+    },
+    {
+      "id": "spire",
+      "asset": "spire",
+      "position": [-7.0333, -119.2381, 1.0847],
+      "rotation": [0, -1.4418, 0],
+      "scale": [3.1945, 4.4656, 3.1945]
+    },
+    {
+      "id": "spire_1",
+      "asset": "spire",
+      "position": [-56.9134, -103.5479, -33.6405],
+      "rotation": [0.0129, 0.6039, -0.0187],
+      "scale": [3.1945, 4.4656, 3.1945],
+      "inputs": {
+        "seed": {
+          "type": "int",
+          "value": 14
+        }
+      }
+    },
+    {
+      "id": "cap0",
+      "asset": "csg_box",
+      "position": [29.9996, -3.0744, 0.0808],
+      "material": "path_wall_triplanar",
+      "rotation": [0.0226, 0.1151, -0.0122],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "cap1",
+      "asset": "csg_box",
+      "position": [177.1471, 51.5758, 165.4885],
+      "material": "path_wall_triplanar",
+      "rotation": [0.0411, 1.7306, -0.0031],
+      "scale": [1, 1, 1]
+    },
+    {
+      "id": "cap2",
+      "asset": "csg_box",
+      "position": [189.4256, 51.5758, 202.0977],
+      "material": "path_wall_triplanar",
+      "rotation": [0.0411, -1.089, -0.0031],
+      "scale": [1.2079, 1, 1.2079]
+    },
+    {
+      "id": "trench_1",
+      "asset": "trench",
+      "position": [222.5249, 111.2848, 278.8817],
+      "rotation": [0, -0.5648, 0],
+      "scale": [2, 2, 2],
+      "inputs": {
+        "path": {
+          "type": "spline",
+          "value": [
+            [-33.8008, 0, -23.293],
+            [-16.6644, 0, -14.5638],
+            [21.4978, 0.8933, -6.3346],
+            [39.3293, 2.3146, -5.0863],
+            [45.8971, 5.3474, -4.0131],
+            [62.7149, 10.9335, 2.2304],
+            [75.6406, 20.6065, 11.878],
+            [88.3368, 27.3408, 48.0646]
+          ]
+        }
+      }
     }
   ]
 }

@@ -1123,7 +1123,7 @@ export const loadLevelDef = (
             for (const objDef of assetToObjDefs.get(id) ?? []) {
               const group = nodeById.get(objDef.id);
               if (!group || !isCompositionNode(group)) continue;
-              baked.forEach((bm, i) => placeCompositionChild(group, objDef, id, def, bm, i));
+              baked.forEach((bm, i) => placeCompositionChild(group, objDef, baseId, def, bm, i));
             }
           })
         ),

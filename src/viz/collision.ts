@@ -552,11 +552,9 @@ export class BulletPhysics {
     if (dashConf.cancelFallVelocity) {
       this.playerController.setDashCancelFallVelocity(true);
     }
-    // Initial charge count — authoritative starting value before any tokens are collected.
-    // C++ owns charge state after this; the JS store is a read-only UI mirror.
     this.playerController.setDashCharges(dashConf.chargeConfig?.curCharges.current ?? Infinity);
-
-    // Dynamic config (viewMode / moveSpeed) is picked up each subtick.
+    this.playerController.captureInitialDashState();
+    this.playerController.saveDashCheckpointState();
     this.syncDynamicControllerConfig();
   };
 

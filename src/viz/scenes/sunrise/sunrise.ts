@@ -14,8 +14,8 @@ import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  const playerHeight = 5;
-  const playerRadius = 1.5;
+  const playerHeight = 5 * (4 / 5);
+  const playerRadius = 1.5 * (4 / 5);
   const playerMesh = new THREE.Mesh(
     new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
     buildCustomShader(
@@ -43,8 +43,8 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     vizConf,
     {
       spawn: {
-        pos: new THREE.Vector3(0, 63, 0),
-        rot: new THREE.Vector3(-0.35, -Math.PI / 2, 0),
+        pos: new THREE.Vector3(-60.84717559814453, 75.0699462890625, -30.913288116455078),
+        rot: new THREE.Vector3(-0.4938416043904166, -2.0060360431671143, 0),
       },
     },
     scoreThresholds,
@@ -78,7 +78,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         coyoteTimeSeconds: 0.135,
         externalVelocityGroundDampingFactor: new THREE.Vector3(0.99999995, 0.99999995, 0.99999995),
         maxSlopeRadians: 1.4,
-        oobYThreshold: -200,
+        oobYThreshold: -80,
         // slopeSlide: {
         //   minAngle: 0.4,
         //   maxSpeed: 80,
@@ -131,22 +131,22 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
   configureDefaultPostprocessingPipeline({
     viz,
     quality: vizConf.graphics.quality,
-    toneMapping: { mode: 'agx', exposure: 1 },
+    toneMapping: { mode: 'agx', exposure: 0.7 },
     autoUpdateShadowMap: false,
     emissiveBypass: true,
     skyStack,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.45, luminanceSoftKnee: 0.02 }
+        ? { intensity: 4.0, levels: 3, luminanceThreshold: 0.02, radius: 0.25, luminanceSoftKnee: 0.08 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
           if (depth >= 1.) {
-            return vec4(0.0);
+            return vec4(0.);
           }
           float yActivation = smoothstep(-60., -50., worldPos.y) * (1. - smoothstep(5500., 9000., worldPos.y));
           float distToPlayer = distance(worldPos.xz, playerPos.xz) + 0.01 * abs(worldPos.y - playerPos.y);
-          float fogFactor = smoothstep(240., 4310., distToPlayer) * yActivation * 0.88;
-          return vec4(vec3(0.1, 0.035, 0.04) * 0.5, fogFactor);
+          float fogFactor = smoothstep(240., 4810., distToPlayer) * yActivation * 0.88;
+          return vec4(vec3(0.1, 0.035, 0.04) * 0.44, fogFactor);
         }`,
     addMiddlePasses: (composer, viz, quality) => {
       const qualityParams = {
@@ -172,7 +172,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         fogColorHighDensity: new THREE.Vector3(0.024, 0.024, 0.01).multiplyScalar(0.3),
         fogColorLowDensity: new THREE.Vector3(0.035, 0.03, 0.04).multiplyScalar(0.8),
         ambientLightColor: new THREE.Color(0x5d4444),
-        ambientLightIntensity: 2.2,
+        ambientLightIntensity: 0.2,
         heightFogStartY: -90,
         heightFogEndY: -55,
         heightFogFactor: 0.54,
@@ -184,9 +184,11 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         fogFadeOutPow: 0.6,
         fogDensityMultiplier: 0.82,
         postDensityMultiplier: 1.7,
-        noiseMovementPerSecond: new THREE.Vector2(-2.3, 1.3),
-        globalScale: 1,
+        noiseMovementPerSecond: new THREE.Vector2(-4.3, 2.3),
+        globalScale: 0.5,
         halfRes: quality <= GraphicsQuality.Medium,
+        lightIntensity: 0,
+        lightFalloffDistance: 0,
         ...qualityParams,
       });
       // AO must composite before the fog so it doesn't re-darken fog-covered pixels
