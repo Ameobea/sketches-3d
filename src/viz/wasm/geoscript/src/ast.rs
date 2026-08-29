@@ -330,6 +330,12 @@ pub struct ClosureArg {
 }
 
 #[derive(Clone, Debug)]
+pub struct ArrayLiteralElem {
+  pub expr: Expr,
+  pub splat: bool,
+}
+
+#[derive(Clone, Debug)]
 pub enum MapLiteralEntry {
   KeyValue { key: String, value: Expr },
   Splat { expr: Expr },
@@ -399,7 +405,7 @@ pub enum Expr {
     loc: SourceLoc,
   },
   ArrayLiteral {
-    elements: Vec<Expr>,
+    elements: Vec<ArrayLiteralElem>,
     loc: SourceLoc,
   },
   MapLiteral {
@@ -504,8 +510,8 @@ impl Expr {
       }
       Expr::ArrayLiteral { elements, .. } => {
         cb(self);
-        for expr in elements {
-          expr.traverse(cb);
+        for elem in elements {
+          elem.expr.traverse(cb);
         }
       }
       Expr::MapLiteral { entries, .. } => {
@@ -619,13 +625,13 @@ impl Expr {
       Expr::ArrayLiteral { .. } => {
         cb(self);
         let Expr::ArrayLiteral {
-          elements: exprs, ..
+          elements: elems, ..
         } = self
         else {
           return;
         };
-        for expr in exprs.iter_mut() {
-          expr.traverse_mut(cb);
+        for elem in elems.iter_mut() {
+          elem.expr.traverse_mut(cb);
         }
       }
       Expr::MapLiteral { .. } => {
@@ -1260,7 +1266,11 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
     Rule::array_literal => {
       let elems = expr
         .into_inner()
-        .map(|e| parse_expr(ctx, e))
+        .map(|e| match e.as_rule() {
+          Rule::array_splat => parse_expr(ctx, e.into_inner().next().unwrap())
+            .map(|expr| ArrayLiteralElem { expr, splat: true }),
+          _ => parse_expr(ctx, e).map(|expr| ArrayLiteralElem { expr, splat: false }),
+        })
         .collect::<Result<Vec<_>, ErrorStack>>()?;
       Ok(Expr::ArrayLiteral {
         elements: elems,
@@ -1635,7 +1645,10 @@ fn parse_path_block(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack>
   }
 
   let array_lit = Expr::ArrayLiteral {
-    elements: temp_idents,
+    elements: temp_idents
+      .into_iter()
+      .map(|expr| ArrayLiteralElem { expr, splat: false })
+      .collect(),
     loc,
   };
   let flatten_call = Expr::Call {
@@ -2545,9 +2558,9 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       },
     },
     Expr::ArrayLiteral {
-      elements: exprs, ..
-    } => exprs.iter().fold(DynType::Const, |acc, expr| {
-      acc | get_dyn_type(expr, local_scope)
+      elements: elems, ..
+    } => elems.iter().fold(DynType::Const, |acc, elem| {
+      acc | get_dyn_type(&elem.expr, local_scope)
     }),
     Expr::MapLiteral { entries, .. } => entries.iter().fold(DynType::Const, |acc, entry| {
       acc | get_dyn_type(entry.expr(), local_scope)

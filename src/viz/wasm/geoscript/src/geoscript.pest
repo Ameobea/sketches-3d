@@ -91,7 +91,9 @@ fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
 closure_body                 = _{ bracketed_closure_body }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
 
-array_literal                = { "[" ~ (expr ~ ("," ~ expr)*)? ~ ","? ~ "]" }
+array_splat                  = { "*" ~ expr }
+array_elem                   = _{ array_splat | expr }
+array_literal                = { "[" ~ (array_elem ~ ("," ~ array_elem)*)? ~ ","? ~ "]" }
 map_kv                       = { (ident | string_literal) ~ ":" ~ expr }
 map_splat                    = { "*" ~ expr }
 map_entry                    = _{ map_kv | map_splat }

@@ -644,7 +644,7 @@ impl<'a> AnalysisWalker<'a> {
       }
       Expr::ArrayLiteral { elements, .. } => {
         for el in elements {
-          self.walk_expr(el);
+          self.walk_expr(&el.expr);
         }
         AbstractType::Concrete(ArgType::Sequence)
       }

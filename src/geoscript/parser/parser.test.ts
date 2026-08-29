@@ -107,6 +107,12 @@ const CASES: Case[] = [
   { src: 'f(x=@pi)', expected: { ok: 1 } },
   { src: '@ sin(1.0)', expected: { err: true } },
   { src: '@x = 1', expected: { err: true } },
+  // Array splats
+  { src: '[*a, 3]', expected: { ok: 1 } },
+  { src: '[0, *a, *b]', expected: { ok: 1 } },
+  { src: '[*f(1), *(0..3)]', expected: { ok: 1 } },
+  { src: '[a * b]', expected: { ok: 1 } },
+  { src: '[**a]', expected: { err: true } },
 ];
 
 interface LezerResult {

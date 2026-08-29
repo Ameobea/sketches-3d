@@ -17,8 +17,8 @@ use fxhash::{FxHashMap, FxHashSet};
 
 use crate::{
   ast::{
-    BinOp, ClosureBody, Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, SourceLoc,
-    Statement, VarRes,
+    ArrayLiteralElem, BinOp, ClosureBody, Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry,
+    SourceLoc, Statement, VarRes,
   },
   builtins::{fn_defs::get_builtin_fn_sig_entry_ix, FUNCTION_ALIASES},
   Closure, EvalCtx, Scope, Sym, Value,
@@ -106,7 +106,7 @@ impl GuardCtx<'_> {
           && call.args.iter().all(|a| self.liftable(a))
           && call.kwargs.values().all(|a| self.liftable(a))
       }
-      Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.liftable(e)),
+      Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.liftable(&e.expr)),
       Expr::MapLiteral { entries, .. } => entries.iter().all(|e| match e {
         MapLiteralEntry::KeyValue { value, .. } => self.liftable(value),
         MapLiteralEntry::Splat { expr } => self.liftable(expr),
@@ -265,7 +265,7 @@ impl GuardCtx<'_> {
       }
       Expr::ArrayLiteral { elements, .. } => {
         for e in elements {
-          self.visit_expr(e);
+          self.visit_expr(&e.expr);
         }
       }
       Expr::MapLiteral { entries, .. } => {
@@ -336,7 +336,11 @@ pub(crate) fn extract_guards(ctx: &EvalCtx, input: &Closure) -> Option<Closure> 
     stmts.pop();
   }
   stmts.push(Statement::Expr(Expr::ArrayLiteral {
-    elements: gcx.guards,
+    elements: gcx
+      .guards
+      .into_iter()
+      .map(|expr| ArrayLiteralElem { expr, splat: false })
+      .collect(),
     loc: SourceLoc::default(),
   }));
 

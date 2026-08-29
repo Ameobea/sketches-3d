@@ -665,7 +665,7 @@ fn for_each_child(e: &Expr, f: &mut impl FnMut(&Expr)) {
       call.args.iter().for_each(&mut *f);
       call.kwargs.values().for_each(f);
     }
-    Expr::ArrayLiteral { elements, .. } => elements.iter().for_each(f),
+    Expr::ArrayLiteral { elements, .. } => elements.iter().for_each(|el| f(&el.expr)),
     Expr::MapLiteral { entries, .. } => entries.iter().for_each(|en| f(en.expr())),
     Expr::Conditional {
       cond,
@@ -730,7 +730,7 @@ fn for_each_child_mut_infallible(e: &mut Expr, f: &mut impl FnMut(&mut Expr)) {
       call.args.iter_mut().for_each(&mut *f);
       call.kwargs.values_mut().for_each(f);
     }
-    Expr::ArrayLiteral { elements, .. } => elements.iter_mut().for_each(f),
+    Expr::ArrayLiteral { elements, .. } => elements.iter_mut().for_each(|el| f(&mut el.expr)),
     Expr::MapLiteral { entries, .. } => entries.iter_mut().for_each(|en| match en {
       MapLiteralEntry::KeyValue { value, .. } => f(value),
       MapLiteralEntry::Splat { expr } => f(expr),

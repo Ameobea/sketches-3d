@@ -19,8 +19,8 @@ use fxhash::{FxHashMap, FxHasher};
 
 use crate::{
   ast::{
-    BinOp, CaptureFrom, DestructurePattern, Expr, FunctionCall, FunctionCallTarget,
-    MapLiteralEntry, PrefixOp, ResolvedBody, Statement, VarRes,
+    ArrayLiteralElem, BinOp, CaptureFrom, DestructurePattern, Expr, FunctionCall,
+    FunctionCallTarget, MapLiteralEntry, PrefixOp, ResolvedBody, Statement, VarRes,
   },
   builtins::{fn_defs::fn_sigs, resolve_tile_period, tex_kernels as kern},
   get_args, noise_batch,
@@ -1115,7 +1115,7 @@ impl<'a> Compiler<'a> {
           _ => true,
         })
       }),
-      Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.expr_is_uniform(e)),
+      Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.expr_is_uniform(&e.expr)),
       Expr::MapLiteral { entries, .. } => entries.iter().all(|e| self.expr_is_uniform(e.expr())),
       Expr::Conditional {
         cond,
@@ -1286,12 +1286,20 @@ impl<'a> Compiler<'a> {
       Expr::Range { .. } => bail("range over a varying value", loc),
       Expr::ArrayLiteral { elements, .. } => {
         let mut els = Vec::with_capacity(elements.len());
+        let mut eager = true;
         for e in elements {
-          els.push(self.compile_expr(e)?);
+          let v = self.compile_expr(&e.expr)?;
+          if e.splat {
+            let s = self.seq_elements(&v, e.expr.loc())?;
+            eager &= s.eager;
+            els.extend(s.els.iter().cloned());
+          } else {
+            els.push(v);
+          }
         }
         Ok(AbsVal::Seq(AbsSeq {
           els: Rc::new(els),
-          eager: true,
+          eager,
         }))
       }
       Expr::MapLiteral { .. } => bail("map literal containing varying values", loc),
@@ -3225,7 +3233,12 @@ impl Renamer<'_> {
       Expr::ArrayLiteral { elements, loc } => Expr::ArrayLiteral {
         elements: elements
           .iter()
-          .map(|e| self.expr(e))
+          .map(|e| {
+            Ok(ArrayLiteralElem {
+              expr: self.expr(&e.expr)?,
+              splat: e.splat,
+            })
+          })
           .collect::<Result<_, _>>()?,
         loc: *loc,
       },
@@ -3399,7 +3412,7 @@ fn walk_expr_shallow(expr: &Expr, cb: &mut impl FnMut(&Expr)) {
     }
     Expr::ArrayLiteral { elements, .. } => {
       for e in elements {
-        walk_expr_shallow(e, cb);
+        walk_expr_shallow(&e.expr, cb);
       }
     }
     Expr::MapLiteral { entries, .. } => {

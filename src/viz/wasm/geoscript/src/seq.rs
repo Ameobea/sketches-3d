@@ -677,6 +677,70 @@ pub(crate) struct ChainSeq {
   pub inner: VecDeque<Rc<dyn Sequence>>,
 }
 
+/// Builds an array literal's value.  Non-splat elements and eager splats accumulate into
+/// materialized runs; a lazy splat is chained as-is without being consumed, so the result is
+/// an `EagerSeq` unless a lazy seq was splatted, in which case it's a `ChainSeq` of the runs
+/// and lazy segments.
+#[derive(Default)]
+pub(crate) struct ArrayLitBuilder {
+  run: Vec<Value>,
+  segments: Vec<Rc<dyn Sequence>>,
+}
+
+impl ArrayLitBuilder {
+  pub fn with_capacity(cap: usize) -> Self {
+    Self {
+      run: Vec::with_capacity(cap),
+      segments: Vec::new(),
+    }
+  }
+
+  pub fn push(&mut self, val: Value) {
+    self.run.push(val);
+  }
+
+  pub fn push_splat(&mut self, val: Value) -> Result<(), ErrorStack> {
+    let Value::Sequence(seq) = val else {
+      return Err(ErrorStack::new(format!(
+        "Tried to splat value of type {:?} into array; expected a sequence.",
+        val.get_type()
+      )));
+    };
+    match crate::seq_as_eager(&*seq) {
+      Some(eager) => self.run.extend(eager.inner.iter().cloned()),
+      None => {
+        self.flush_run();
+        self.segments.push(seq);
+      }
+    }
+    Ok(())
+  }
+
+  fn flush_run(&mut self) {
+    if !self.run.is_empty() {
+      let run = std::mem::take(&mut self.run);
+      self.segments.push(Rc::new(EagerSeq {
+        inner: Rc::new(run),
+      }));
+    }
+  }
+
+  pub fn finish(mut self) -> Value {
+    if self.segments.is_empty() {
+      return Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(self.run),
+      }));
+    }
+    self.flush_run();
+    if self.segments.len() == 1 {
+      return Value::Sequence(self.segments.pop().unwrap());
+    }
+    Value::Sequence(Rc::new(ChainSeq {
+      inner: self.segments.into(),
+    }))
+  }
+}
+
 impl ChainSeq {
   pub(crate) fn new(ctx: &EvalCtx, seqs: Rc<dyn Sequence>) -> Result<Self, ErrorStack> {
     let seqs = seqs

@@ -540,7 +540,7 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
 
     Expr::ArrayLiteral { elements, .. } => {
       for el in elements {
-        infer_expr(ctx, env, el);
+        infer_expr(ctx, env, &el.expr);
       }
       AbstractType::Concrete(ArgType::Sequence)
     }

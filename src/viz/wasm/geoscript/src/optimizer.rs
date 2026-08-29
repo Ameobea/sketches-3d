@@ -23,7 +23,7 @@ use crate::{
   },
   match_binop_by_arg_types,
   resolve::resolve_global,
-  seq::EagerSeq,
+  seq::ArrayLitBuilder,
   type_infer::infer_expr,
   ArgType, Callable, Closure, ErrorStack, EvalCtx, Program, Scope, Sym, Value, Vec2, Vec3,
 };
@@ -333,7 +333,7 @@ fn expr_contains_fold_unsafe_effects(expr: &Expr, allow_rng: bool) -> bool {
     Expr::Ident { .. } => false,
     Expr::ArrayLiteral { elements, .. } => elements
       .iter()
-      .any(|e| expr_contains_fold_unsafe_effects(e, allow_rng)),
+      .any(|e| expr_contains_fold_unsafe_effects(&e.expr, allow_rng)),
     Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| match entry {
       MapLiteralEntry::KeyValue { value, .. } => {
         expr_contains_fold_unsafe_effects(value, allow_rng)
@@ -412,7 +412,7 @@ fn expr_reads_hit(expr: &Expr, bound: &fxhash::FxHashSet<Sym>, local_scope: &Sco
       call: FunctionCall { args, kwargs, .. },
       ..
     } => args.iter().any(&hit) || kwargs.values().any(&hit),
-    Expr::ArrayLiteral { elements, .. } => elements.iter().any(&hit),
+    Expr::ArrayLiteral { elements, .. } => elements.iter().any(|e| hit(&e.expr)),
     Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| match entry {
       MapLiteralEntry::KeyValue { value, .. } => hit(value),
       MapLiteralEntry::Splat { expr } => hit(expr),
@@ -680,11 +680,12 @@ fn hash_expr(
       Some(())
     }
     Expr::ArrayLiteral {
-      elements: exprs, ..
+      elements: elems, ..
     } => {
-      exprs.len().hash(hasher);
-      for expr in exprs {
-        hash_expr(expr, hasher, uses, config)?;
+      elems.len().hash(hasher);
+      for elem in elems {
+        elem.splat.hash(hasher);
+        hash_expr(&elem.expr, hasher, uses, config)?;
       }
       Some(())
     }
@@ -2288,15 +2289,16 @@ fn fold_constants<'a>(
     }
     Expr::Literal { .. } => Ok(()),
     Expr::ArrayLiteral {
-      elements: exprs,
+      elements: elems,
       loc,
     } => {
-      for inner in exprs.iter_mut() {
-        optimize_expr(ctx, local_scope, inner, allow_rng_const_eval)?;
+      for elem in elems.iter_mut() {
+        optimize_expr(ctx, local_scope, &mut elem.expr, allow_rng_const_eval)?;
       }
 
-      // if all elements are literals, can fold into an `EagerSeq`
-      if exprs.iter().all(|e| e.is_literal()) {
+      // if all elements are literals, can fold.  Lazy splats are chained without being
+      // consumed, so this is effect-free regardless of what the splatted seqs do.
+      if elems.iter().all(|e| e.expr.is_literal()) {
         let array_discriminant = std::mem::discriminant(&Expr::ArrayLiteral {
           elements: vec![],
           loc: SourceLoc::default(),
@@ -2304,9 +2306,10 @@ fn fold_constants<'a>(
         let cache_lookup =
           const_eval_cache_lookup_with(ctx, allow_rng_const_eval, |hasher, uses| {
             array_discriminant.hash(hasher);
-            exprs.len().hash(hasher);
-            for inner in exprs.iter() {
-              hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())?;
+            elems.len().hash(hasher);
+            for elem in elems.iter() {
+              elem.splat.hash(hasher);
+              hash_expr(&elem.expr, hasher, uses, ExprHashConfig::const_eval())?;
             }
             Some(())
           });
@@ -2316,13 +2319,19 @@ fn fold_constants<'a>(
             return Ok(());
           }
         }
-        let values = exprs
-          .iter()
-          .map(|e| e.as_literal().unwrap().clone())
-          .collect::<Vec<_>>();
-        let val = Value::Sequence(Rc::new(EagerSeq {
-          inner: Rc::new(values),
-        }));
+        let mut builder = ArrayLitBuilder::with_capacity(elems.len());
+        for elem in elems.iter() {
+          let literal = elem.expr.as_literal().unwrap().clone();
+          if elem.splat {
+            builder.push_splat(literal).map_err(|err| {
+              let (line, col) = ctx.resolve_loc(*loc);
+              err.with_loc(line, col)
+            })?;
+          } else {
+            builder.push(literal);
+          }
+        }
+        let val = builder.finish();
         if let Some(lookup) = cache_lookup {
           const_eval_cache_store(ctx, lookup, val.clone());
         }
@@ -2990,6 +2999,36 @@ fn test_vec3_const_folding() {
     _ => unreachable!(),
   };
   assert!(matches!(val, Value::Vec3(v) if v.x == 4. && v.y == 2. && v.z == 3.));
+}
+
+#[test]
+fn test_array_splat_const_folding() {
+  let ctx = EvalCtx::default();
+  let fold_stmt = |code: &str| -> Value {
+    let mut ast = crate::parse_program_src(&ctx, code).unwrap();
+    optimize_ast(&ctx, &mut ast).unwrap();
+    match &ast.statements[0] {
+      TopLevelStatement::Statement(Statement::Expr(expr)) => expr.as_literal().unwrap().clone(),
+      _ => unreachable!(),
+    }
+  };
+
+  // a lazy splat folds to a literal chain without being consumed...
+  let val = fold_stmt("[*(0..5), 9]");
+  let Value::Sequence(seq) = &val else {
+    panic!("expected literal seq, got {val:?}");
+  };
+  assert!(crate::seq_as_eager(&**seq).is_none());
+
+  // ...and doesn't poison downstream folds
+  assert!(matches!(fold_stmt("[*(0..5), 9] | last"), Value::Int(9)));
+
+  // all-eager splats fold to a plain eager seq
+  let val = fold_stmt("[*[1, 2], 3]");
+  let Value::Sequence(seq) = &val else {
+    panic!("expected literal seq, got {val:?}");
+  };
+  assert_eq!(crate::seq_as_eager(&**seq).unwrap().inner.len(), 3);
 }
 
 #[test]

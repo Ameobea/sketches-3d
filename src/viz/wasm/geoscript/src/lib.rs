@@ -49,7 +49,7 @@ use crate::{
   materials::Material,
   mesh_ops::mesh_boolean::{drop_manifold_mesh_handle, eval_mesh_boolean, MeshBooleanOp},
   optimizer::optimize_ast,
-  seq::{ChainSeq, IntRange, MapSeq},
+  seq::{ArrayLitBuilder, ChainSeq, IntRange, MapSeq},
 };
 
 /// Only meaningful on wasm; see the module docs. Consumers that produce a wasm cdylib declare
@@ -3203,14 +3203,18 @@ impl EvalCtx {
       Expr::ArrayLiteral {
         elements: elems, ..
       } => {
-        let mut evaluated = Vec::with_capacity(elems.len());
+        let mut builder = ArrayLitBuilder::with_capacity(elems.len());
         for elem in elems {
-          let val = self.eval_expr_env(elem, env)?;
-          evaluated.push(val);
+          let val = self.eval_expr_env(&elem.expr, env)?;
+          if elem.splat {
+            builder
+              .push_splat(val)
+              .map_err(|err| self.locate_err(err, elem.expr.loc()))?;
+          } else {
+            builder.push(val);
+          }
         }
-        Ok(Value::Sequence(Rc::new(EagerSeq {
-          inner: Rc::new(evaluated),
-        })))
+        Ok(builder.finish())
       }
       Expr::MapLiteral { entries, .. } => {
         let mut evaluated = FxHashMap::default();
@@ -5436,6 +5440,12 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("f(x=@pi)", ParseOutcome::Ok(1)),
   ("@ sin(1.0)", ParseOutcome::Err("")),
   ("@x = 1", ParseOutcome::Err("")),
+  // Array splats
+  ("[*a, 3]", ParseOutcome::Ok(1)),
+  ("[0, *a, *b]", ParseOutcome::Ok(1)),
+  ("[*f(1), *(0..3)]", ParseOutcome::Ok(1)),
+  ("[a * b]", ParseOutcome::Ok(1)),
+  ("[**a]", ParseOutcome::Err("")),
 ];
 
 #[cfg(test)]
@@ -7844,6 +7854,72 @@ v = {b: 1, *y}
   };
   assert_eq!(v.len(), 1);
   assert_eq!(v.get("b").unwrap().as_int(), Some(2));
+}
+
+#[test]
+fn test_array_splat() {
+  let src = r#"
+a = [1, 2]
+b = [*a, 3]
+c = [0, *b, 4]
+
+// dynamic (non-const-foldable) path
+f = |x| [*x, 3]
+d = f([1, 2])
+
+// a lazy splat makes the result a lazy chain
+lazy = [*(0..3 | map(|x| x * 2)), 99]
+e = lazy | collect
+g = [*(0..2), *[]] | collect
+h = f(0..2)
+
+first = c[0]
+"#;
+
+  let ctx = parse_and_eval_program(src).unwrap();
+
+  let seq = |name: &str| ctx.get_global(name).unwrap().as_sequence().unwrap().clone();
+  let ints = |name: &str| -> Vec<i64> {
+    seq_as_eager(&*seq(name))
+      .unwrap_or_else(|| panic!("expected `{name}` to be an EagerSeq"))
+      .inner
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect()
+  };
+
+  assert_eq!(ints("b"), vec![1, 2, 3]);
+  assert_eq!(ints("c"), vec![0, 1, 2, 3, 4]);
+  assert_eq!(ints("d"), vec![1, 2, 3]);
+  assert_eq!(ints("e"), vec![0, 2, 4, 99]);
+  assert_eq!(ints("g"), vec![0, 1]);
+  assert_eq!(ctx.get_global("first").unwrap().as_int(), Some(0));
+
+  // lazy splats stay lazy until collected; consuming them still yields the right elements
+  for (name, expected) in [("lazy", vec![0, 2, 4, 99]), ("h", vec![0, 1, 3])] {
+    let seq = seq(name);
+    assert!(
+      seq_as_eager(&*seq).is_none(),
+      "expected `{name}` to be lazy"
+    );
+    let vals = seq
+      .consume(&ctx)
+      .map(|v| v.unwrap().as_int().unwrap())
+      .collect::<Vec<_>>();
+    assert_eq!(vals, expected);
+  }
+
+  let err = parse_and_eval_program("x = [*1, 2]").unwrap_err();
+  assert!(
+    format!("{err:?}").contains("expected a sequence"),
+    "{err:?}"
+  );
+
+  let err = parse_and_eval_program("f = |x| [*x]\ny = f(1)").unwrap_err();
+  assert!(
+    format!("{err:?}").contains("expected a sequence"),
+    "{err:?}"
+  );
 }
 
 #[test]

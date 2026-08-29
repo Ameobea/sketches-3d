@@ -67,7 +67,9 @@ ClosureParamList {
   Pipe commaSep<Parameter { (Identifier | ArrayDestructure | MapDestructure) TypeHint? ("=" FnArgDefaultValue)? }> Pipe
 }
 
-ArrayExpr { "[" (Expr ~maybedestructure ("," Expr?)*)? "]" }
+ArraySplat { "*" Expr }
+arrayElem { Expr | ArraySplat }
+ArrayExpr { "[" (arrayElem ~maybedestructure ("," arrayElem?)*)? "]" }
 MapExpr { "{" (MapEntry ~maybedestructure ("," MapEntry)*)? ","? "}" ~maybeblock }
 
 Expr {

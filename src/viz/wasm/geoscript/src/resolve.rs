@@ -218,7 +218,7 @@ impl Resolver {
       Expr::Closure { .. } => self.resolve_closure_expr(expr, binding_name),
       Expr::ArrayLiteral { elements, .. } => {
         for e in elements {
-          self.walk_expr(e, None);
+          self.walk_expr(&mut e.expr, None);
         }
       }
       Expr::MapLiteral { entries, .. } => {
