@@ -1,5 +1,6 @@
 //! Image-processing builtins: `resize`, `dilate`/`erode`, `concat_channels`, levels.
 
+use crate::ValueMap;
 use std::hash::Hash;
 use std::rc::Rc;
 
@@ -555,7 +556,7 @@ impl LevelsParams {
   }
 
   /// Missing keys fall back to identity values.
-  pub(crate) fn from_map(m: &FxHashMap<String, Value>) -> LevelsParams {
+  pub(crate) fn from_map(m: &ValueMap) -> LevelsParams {
     let d = IDENTITY_LEVELS;
     let g = |k: &str, d: f32| m.get(k).and_then(|v| v.as_float()).unwrap_or(d);
     LevelsParams {
@@ -578,7 +579,7 @@ impl LevelsParams {
   }
 
   pub(crate) fn to_map_value(self) -> Value {
-    let mut m = FxHashMap::default();
+    let mut m = ValueMap::default();
     for (k, v) in LEVELS_KEYS.iter().zip(self.as_array()) {
       m.insert((*k).to_owned(), Value::Float(v));
     }

@@ -1,6 +1,6 @@
+use crate::ValueMap;
 use std::str::FromStr;
 
-use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
 use nalgebra::Matrix4;
 use nanoserde::SerJson;
@@ -134,7 +134,7 @@ pub struct ShadowMapSize {
 }
 
 impl ShadowMapSize {
-  fn from_map(map: &FxHashMap<String, Value>) -> Result<Self, ErrorStack> {
+  fn from_map(map: &ValueMap) -> Result<Self, ErrorStack> {
     let width = map.get("width").and_then(Value::as_int).unwrap_or(2048 * 2);
     if width <= 0 {
       return Err(ErrorStack::new(
@@ -189,7 +189,7 @@ pub struct ShadowCamera {
 }
 
 impl ShadowCamera {
-  pub(crate) fn from_map(map: &FxHashMap<String, Value>) -> Result<Self, ErrorStack> {
+  pub(crate) fn from_map(map: &ValueMap) -> Result<Self, ErrorStack> {
     let mut this = Self::default();
     for (key, val) in map {
       match key.as_str() {

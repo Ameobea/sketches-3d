@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
 use bitvec::prelude::*;
@@ -2130,7 +2131,7 @@ impl DynamicCallable for StaticProfileOuter {
     // If profile is itself a path sampler (|v| -> vec2), use it directly as both sampler and
     // path_samplers so critical t values flow through to the dynamic profile machinery.
     if as_path_sampler(&self.profile).is_some() {
-      let mut map = FxHashMap::default();
+      let mut map = ValueMap::default();
       map.insert(
         "sampler".to_owned(),
         Value::Callable(Rc::clone(&self.profile)),
@@ -2154,7 +2155,7 @@ impl DynamicCallable for StaticProfileOuter {
     });
     match &self.profile_samplers {
       Some(ps_cb) => {
-        let mut map = FxHashMap::default();
+        let mut map = ValueMap::default();
         map.insert("sampler".to_owned(), Value::Callable(inner));
         map.insert(
           "path_samplers".to_owned(),
@@ -3598,7 +3599,7 @@ rail_sweep(
         _ctx: &EvalCtx,
       ) -> Result<Value, ErrorStack> {
         // Return a map with sampler and adaptive: true
-        let mut map = FxHashMap::default();
+        let mut map = crate::ValueMap::default();
         map.insert(
           "sampler".to_owned(),
           Value::Callable(Rc::clone(&self.sampler)),
@@ -3717,7 +3718,7 @@ rail_sweep(
         _kwargs: &FxHashMap<Sym, Value>,
         _ctx: &EvalCtx,
       ) -> Result<Value, ErrorStack> {
-        let mut map = FxHashMap::default();
+        let mut map = crate::ValueMap::default();
         map.insert(
           "sampler".to_owned(),
           Value::Callable(Rc::clone(&self.sampler)),

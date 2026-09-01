@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::{
   cell::RefCell,
   f32::consts::TAU,
@@ -156,7 +157,7 @@ pub fn compute_uvs(
   scale: f32,
   n_cones: u32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   match uv_type {
     UvType::Planar => planar_uvs(mesh, scale),
@@ -180,12 +181,12 @@ pub struct UvParams {
   pub ty: UvType,
   pub scale: f32,
   pub n_cones: i64,
-  pub options: Option<Rc<FxHashMap<String, Value>>>,
+  pub options: Option<Rc<ValueMap>>,
 }
 
 impl UvParams {
   pub fn to_map_value(&self) -> Value {
-    let mut map = FxHashMap::default();
+    let mut map = ValueMap::default();
     map.insert(
       "type".to_owned(),
       Value::String(self.ty.canonical_name().to_owned()),
@@ -226,7 +227,7 @@ impl UvParams {
 
   /// Strict parse of an injected control value; `None` on any malformed/missing field so
   /// stale stored values degrade to the source defaults instead of erroring.
-  pub fn from_map(map: &FxHashMap<String, Value>) -> Option<Self> {
+  pub fn from_map(map: &ValueMap) -> Option<Self> {
     let ty = UvType::from_str(map.get("type")?.as_str()?).ok()?;
     let scale = map.get("scale")?.as_float()?;
     let n_cones = map.get("n_cones").and_then(|v| v.as_int()).unwrap_or(0);
@@ -295,7 +296,7 @@ pub fn uv_params_value_from_wire_json(json: &str) -> Result<Value, ErrorStack> {
   let wire = UvParamsWire::deserialize_json(json)
     .map_err(|err| ErrorStack::new(format!("invalid uv_params control JSON: {err}")))?;
   let ty = UvType::from_str(&wire.ty)?;
-  let mut options = FxHashMap::default();
+  let mut options = ValueMap::default();
   for key in family_option_keys(ty) {
     let val = match *key {
       "up" => wire.up.clone().map(Value::String),
@@ -390,9 +391,7 @@ struct UvAlign {
 const ALIGN_AXES: &[&str] = &["+x", "-x", "+y", "-y", "+z", "-z"];
 const ALIGN_UV_AXES: &[&str] = &["+v", "+u", "-v", "-u"];
 
-fn parse_align_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<Option<UvAlign>, ErrorStack> {
+fn parse_align_options(options: Option<&ValueMap>) -> Result<Option<UvAlign>, ErrorStack> {
   let Some(map) = options else { return Ok(None) };
   let mut up = None;
   let mut fallback = "-z".to_owned();
@@ -459,7 +458,7 @@ fn bff_uvs(
   scale: f32,
   n_cones: u32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_uv_unwrap_loaded()?;
   let align = parse_align_options(options)?;
@@ -566,9 +565,7 @@ struct TubeOptions {
   detwist: bool,
 }
 
-fn parse_tube_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<TubeOptions, ErrorStack> {
+fn parse_tube_options(options: Option<&ValueMap>) -> Result<TubeOptions, ErrorStack> {
   let mut out = TubeOptions {
     caps: true,
     cap_angle_rad: None,
@@ -646,9 +643,7 @@ struct StripOptions {
   planar_fallback: bool,
 }
 
-fn parse_strip_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<StripOptions, ErrorStack> {
+fn parse_strip_options(options: Option<&ValueMap>) -> Result<StripOptions, ErrorStack> {
   let mut out = StripOptions {
     strip_angle_rad: None,
     layout: 0,
@@ -713,7 +708,7 @@ fn tube_uvs(
   mesh: &MeshHandle,
   scale: f32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   let opts = parse_tube_options(options)?;
 
@@ -782,7 +777,7 @@ fn strip_uvs(
   mesh: &MeshHandle,
   scale: f32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   let opts = parse_strip_options(options)?;
   let split_angle = opts.strip_angle_rad.unwrap_or(sharp_threshold_rad);
@@ -849,7 +844,7 @@ fn bff_uvs(
   _scale: f32,
   _n_cones: u32,
   _sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   parse_align_options(options)?;
   Err(ErrorStack::new(
@@ -976,9 +971,7 @@ struct CylindricalOptions {
   normalize_v: bool,
 }
 
-fn parse_cylindrical_options(
-  options: Option<&FxHashMap<String, Value>>,
-) -> Result<CylindricalOptions, ErrorStack> {
+fn parse_cylindrical_options(options: Option<&ValueMap>) -> Result<CylindricalOptions, ErrorStack> {
   let mut out = CylindricalOptions { normalize_v: false };
   let Some(map) = options else { return Ok(out) };
   for key in map.keys() {
@@ -1007,7 +1000,7 @@ fn cylindrical_uvs(
   mesh: &MeshHandle,
   scale: f32,
   sharp_threshold_rad: f32,
-  options: Option<&FxHashMap<String, Value>>,
+  options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   let opts = parse_cylindrical_options(options)?;
   let axis = cylinder_axis(&mesh.mesh)?;

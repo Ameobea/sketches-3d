@@ -16,6 +16,8 @@ use std::{
 use arrayvec::ArrayVec;
 use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::{FxHashMap, FxHashSet, FxHasher64};
+
+pub mod value_map;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::{Matrix4, Vector2, Vector4};
 use nanoserde::SerJson;
@@ -32,6 +34,7 @@ use rand_pcg::Pcg32;
 use seq::EagerSeq;
 use siphasher::sip128::{Hasher128, SipHasher};
 use smallvec::SmallVec;
+pub use value_map::ValueMap;
 
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_boolean::get_last_manifold_err;
@@ -1238,7 +1241,7 @@ pub enum Value {
   Mesh(Rc<MeshHandle>),
   Callable(Rc<Callable>),
   Sequence(Rc<dyn Sequence>),
-  Map(Rc<FxHashMap<String, Value>>),
+  Map(Rc<ValueMap>),
   Material(Rc<Material>),
   Light(Box<Light>),
   String(String),
@@ -1645,7 +1648,7 @@ impl Value {
     }
   }
 
-  fn as_map(&self) -> Option<&FxHashMap<String, Value>> {
+  fn as_map(&self) -> Option<&ValueMap> {
     match self {
       Value::Map(map) => Some(map.as_ref()),
       _ => None,
@@ -2755,7 +2758,7 @@ fn translate_through_edits(edits: &[Edit], line: u32, col: u32) -> (u32, u32) {
 /// hit, which lets the natural `replayed_this_run` short-circuit handle dedup.
 pub struct ModuleExportsCacheEntry {
   pub source_hash: u64,
-  pub exports: Rc<FxHashMap<String, Value>>,
+  pub exports: Rc<ValueMap>,
   pub own_renders: Vec<RenderedMesh>,
   pub own_lights: Vec<RenderedLight>,
   pub own_paths: Vec<RenderedPath>,
@@ -2860,7 +2863,7 @@ pub struct EvalCtx {
   /// Host-injected gizmo values: `module name -> handleId -> Value` (Vec3 or Mat4).
   /// Replaces the entire map per run (set via the wasm boundary before eval); a
   /// missing entry means the call falls back to its `default`/zero.
-  pub gizmo_values: RefCell<FxHashMap<String, FxHashMap<String, Value>>>,
+  pub gizmo_values: RefCell<FxHashMap<String, ValueMap>>,
   /// Host-injected per-output texture GPU params, keyed `"{tab}\0{output name}"` where
   /// `tab` is the module-name prefix before the first `:`. Replaced wholesale per run
   /// alongside `gizmo_values`; consulted by `render_texture`.
@@ -3272,7 +3275,7 @@ impl EvalCtx {
         Ok(builder.finish())
       }
       Expr::MapLiteral { entries, .. } => {
-        let mut evaluated = FxHashMap::default();
+        let mut evaluated = ValueMap::default();
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { key, value } => {
@@ -3516,6 +3519,19 @@ impl EvalCtx {
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `fold`"));
       }
+      if builtin_name == "path_union" {
+        let combined_iter = ChainSeq::new(
+          self,
+          Rc::new(EagerSeq {
+            inner: Rc::new(vec![initial_val, Value::Sequence(seq)]),
+          }),
+        )
+        .map_err(|err| {
+          err.wrap("Internal error creating chained sequence when folding `path_union`")
+        })?;
+        return builtins::path_boolean::path_union_seq(self, Rc::new(combined_iter))
+          .map_err(|err| err.wrap("Error invoking `path_union` in `fold`"));
+      }
     }
 
     let mut acc = initial_val;
@@ -3553,6 +3569,10 @@ impl EvalCtx {
           MeshBooleanOp::from_str(builtin_name),
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `reduce`"));
+      }
+      if builtin_name == "path_union" {
+        return builtins::path_boolean::path_union_seq(self, seq)
+          .map_err(|err| err.wrap("Error invoking `path_union` in `reduce`"));
       }
     }
 
@@ -4311,7 +4331,7 @@ impl EvalCtx {
       // recursing into nested maps with per-type tag bytes.
       Some(Value::Map(map)) => {
         hasher.write_u8(9);
-        fn hash_map(hasher: &mut FxHasher64, map: &FxHashMap<String, Value>) {
+        fn hash_map(hasher: &mut FxHasher64, map: &ValueMap) {
           use std::hash::Hasher;
           let mut keys: Vec<&String> = map.keys().collect();
           keys.sort();
@@ -4504,7 +4524,7 @@ impl EvalCtx {
     None
   }
 
-  fn resolve_module(&self, module_name: &str) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+  fn resolve_module(&self, module_name: &str) -> Result<Rc<ValueMap>, ErrorStack> {
     let qualified = self.qualify_module_name(module_name);
     // Diagnostics report the name as the user wrote it; the host's `<tabId>:` prefix is an
     // internal key and appears nowhere in their source.
@@ -4535,7 +4555,7 @@ impl EvalCtx {
     &self,
     module_name: &str,
     as_written: &str,
-  ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+  ) -> Result<Rc<ValueMap>, ErrorStack> {
     // Already replayed this run — skip side effects, just return exports.
     if self.replayed_this_run.borrow().contains(module_name) {
       if let Some(entry) = self.module_exports.borrow().get(module_name) {
@@ -4686,7 +4706,7 @@ impl EvalCtx {
     module_name: &str,
     as_written: &str,
     source: &str,
-  ) -> Result<Rc<FxHashMap<String, Value>>, ErrorStack> {
+  ) -> Result<Rc<ValueMap>, ErrorStack> {
     // RAII guard: swaps in module context, restores on drop so every early
     // return below is correct by construction.
     struct ModuleCtxGuard<'a> {
@@ -4780,7 +4800,7 @@ impl EvalCtx {
       .unwrap_or_default();
 
     // Convert Sym keys to String keys for the Value::Map representation
-    let string_map: FxHashMap<String, Value> = export_map
+    let string_map: ValueMap = export_map
       .into_iter()
       .map(|(sym, val)| {
         let name = self.with_resolved_sym(sym, |s| s.to_owned());
@@ -4927,7 +4947,7 @@ impl EvalCtx {
   }
 
   #[cold]
-  fn desymbolicate_kwargs(&self, kwargs: &FxHashMap<Sym, Value>) -> FxHashMap<String, Value> {
+  fn desymbolicate_kwargs(&self, kwargs: &FxHashMap<Sym, Value>) -> ValueMap {
     kwargs
       .iter()
       .map(|(k, v)| (self.with_resolved_sym(*k, |s| s.to_owned()), v.clone()))
@@ -5790,6 +5810,71 @@ print(result, asdf=result, x=4.2)
   let result = result.as_int().expect("Expected result to be an Int");
   // (0+1) + (1+1) + (2+1) + (3+1) + (4+1) = 15
   assert_eq!(result, 15);
+}
+
+#[test]
+fn test_sort_min_max() {
+  let src = r#"
+nums = [3, 1, 2] | sort
+desc = [3, 1, 2] | sort(desc=true)
+mixed = [2, 0.5, 1] | sort
+people = [{ name: "a", age: 30 }, { name: "b", age: 25 }, { name: "c", age: 30 }]
+by_age = people | sort(by=|p| p.age, stable=true) -> |p| p.name
+composite = people | sort(by=|p| [-p.age, p.name]) -> |p| p.name
+oldest = (people | max(by=|p| p.age)).name
+youngest = (people | min(by=|p| p.age)).name
+empty_min = [] | min
+smallest_str = ["b", "a", "c"] | min
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  let seq = |name: &str| -> Vec<Value> {
+    let val = ctx.get_global(name).unwrap();
+    val
+      .as_sequence()
+      .unwrap()
+      .consume(&ctx)
+      .map(Result::unwrap)
+      .collect()
+  };
+  let string = |val: &Value| match val {
+    Value::String(s) => s.clone(),
+    other => panic!("expected string, got {other:?}"),
+  };
+  let ints = |name: &str| {
+    seq(name)
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect::<Vec<_>>()
+  };
+  let strs = |name: &str| seq(name).iter().map(string).collect::<Vec<_>>();
+
+  assert_eq!(ints("nums"), [1, 2, 3]);
+  assert_eq!(ints("desc"), [3, 2, 1]);
+  assert_eq!(
+    seq("mixed")
+      .iter()
+      .map(|v| v.as_float().unwrap())
+      .collect::<Vec<_>>(),
+    [0.5, 1., 2.]
+  );
+  assert_eq!(strs("by_age"), ["b", "a", "c"]);
+  assert_eq!(strs("composite"), ["a", "c", "b"]);
+  assert_eq!(string(&ctx.get_global("oldest").unwrap()), "a");
+  assert_eq!(string(&ctx.get_global("youngest").unwrap()), "b");
+  assert!(matches!(ctx.get_global("empty_min").unwrap(), Value::Nil));
+  assert_eq!(string(&ctx.get_global("smallest_str").unwrap()), "a");
+
+  for (src, expected) in [
+    ("x = [v3(1, 2, 3), v3(0, 0, 0)] | sort", "Sort keys must be"),
+    (r#"x = [1, "a"] | sort"#, "same kind"),
+    (r#"x = [[1, "a"], [1, 2]] | max"#, "same kind"),
+  ] {
+    let err = parse_and_eval_program(src).unwrap_err().to_string();
+    assert!(
+      err.contains(expected),
+      "unexpected error for `{src}`: {err}"
+    );
+  }
 }
 
 #[test]
@@ -8640,7 +8725,7 @@ fn test_random_module_cache_requires_matching_rng_state() {
   let mut rng_end = rng_start.clone();
   rng_end.advance(1);
 
-  let mut stale_exports = FxHashMap::default();
+  let mut stale_exports = ValueMap::default();
   stale_exports.insert("x".to_string(), Value::Int(1));
   let stale_entry = Rc::new(ModuleExportsCacheEntry {
     source_hash: EvalCtx::compute_source_hash("export x = 2"),
@@ -9695,7 +9780,7 @@ fn test_cached_cycle_validation_walk_errors() {
   let entry = |src: &str, dep: (&str, u64)| {
     Rc::new(ModuleExportsCacheEntry {
       source_hash: EvalCtx::compute_source_hash(src),
-      exports: Rc::new(FxHashMap::default()),
+      exports: Rc::new(ValueMap::default()),
       own_renders: Vec::new(),
       own_lights: Vec::new(),
       own_paths: Vec::new(),

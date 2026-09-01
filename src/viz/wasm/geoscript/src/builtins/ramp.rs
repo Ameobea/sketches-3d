@@ -5,6 +5,7 @@
 //! edges, zero quantization); ramps with closure easings or non-linear color-space mixing
 //! bake a 256-entry lerp-sampled LUT so the expensive math runs only at construct.
 
+use crate::ValueMap;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -441,7 +442,7 @@ fn parse_pair_seq(
 }
 
 fn parse_map_stop(
-  map: &FxHashMap<String, Value>,
+  map: &ValueMap,
   default_ease: &Ease,
   fn_name: &str,
 ) -> Result<RawStop, ErrorStack> {

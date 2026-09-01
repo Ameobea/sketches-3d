@@ -110,8 +110,7 @@ impl Walk {
         }
       }
       Value::Map(map) => {
-        let bytes = size_of::<crate::FxHashMap<String, Value>>()
-          + map.len() * (size_of::<(String, Value)>() + 1);
+        let bytes = size_of::<crate::ValueMap>() + map.len() * (size_of::<(String, Value)>() + 1);
         if !self.charge(Rc::as_ptr(map) as usize, bytes) {
           return;
         }

@@ -33,6 +33,7 @@ tessellation = { path = "../tessellation" }
 svgtypes = "0.16.1"
 lyon_tessellation = "1.0"
 lyon_extra = "1.0"
+im-rc = { version = "15.1", features = ["pool"] }
 
 # Native builds call the UV solvers directly; on wasm they live in a separate
 # lazily-loaded module reached via FFI, keeping faer/gemm out of this blob.

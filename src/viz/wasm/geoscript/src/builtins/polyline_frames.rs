@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -115,7 +116,7 @@ fn dedup<V: Copy>(pts: Vec<V>, dist_sq: impl Fn(&V, &V) -> f32) -> Vec<V> {
 }
 
 fn frame_map(t: f32, pos: Value, tangent: Value, normal: Value, binormal: Option<Value>) -> Value {
-  let mut map: FxHashMap<String, Value> = FxHashMap::default();
+  let mut map: ValueMap = ValueMap::default();
   map.insert("t".to_owned(), Value::Float(t));
   map.insert("pos".to_owned(), pos);
   map.insert("tangent".to_owned(), tangent);
@@ -467,7 +468,7 @@ mod tests {
   use super::*;
   use crate::parse_and_eval_program;
 
-  fn eval_frames(src: &str) -> Vec<Rc<FxHashMap<String, Value>>> {
+  fn eval_frames(src: &str) -> Vec<Rc<ValueMap>> {
     let ctx = parse_and_eval_program(src).unwrap();
     let Some(Value::Sequence(seq)) = ctx.get_global("f") else {
       panic!("expected `f` to be a sequence");
@@ -481,11 +482,11 @@ mod tests {
       .collect()
   }
 
-  fn v2(frame: &FxHashMap<String, Value>, key: &str) -> Vec2 {
+  fn v2(frame: &ValueMap, key: &str) -> Vec2 {
     *frame.get(key).unwrap().as_vec2().unwrap()
   }
 
-  fn v3(frame: &FxHashMap<String, Value>, key: &str) -> Vec3 {
+  fn v3(frame: &ValueMap, key: &str) -> Vec3 {
     *frame.get(key).unwrap().as_vec3().unwrap()
   }
 

@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::any::Any;
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -2727,27 +2728,25 @@ impl PathSampler for PathTracerCallable {
 /// While users could in principle hand-construct these maps, that is not a supported
 /// public API and the function therefore emits clear errors when fields are missing or
 /// have the wrong type.
-pub(crate) fn map_to_draw_command(
-  map: &FxHashMap<String, Value>,
-) -> Result<DrawCommand, ErrorStack> {
+pub(crate) fn map_to_draw_command(map: &ValueMap) -> Result<DrawCommand, ErrorStack> {
   let kind = map
     .get("type")
     .and_then(|v| v.as_str())
     .ok_or_else(|| ErrorStack::new("draw command map missing string `type` field"))?;
 
-  fn get_vec2(map: &FxHashMap<String, Value>, key: &str) -> Result<Vec2, ErrorStack> {
+  fn get_vec2(map: &ValueMap, key: &str) -> Result<Vec2, ErrorStack> {
     map
       .get(key)
       .and_then(|v| v.as_vec2().copied())
       .ok_or_else(|| ErrorStack::new(format!("draw command map missing vec2 field `{key}`")))
   }
-  fn get_float(map: &FxHashMap<String, Value>, key: &str) -> Result<f32, ErrorStack> {
+  fn get_float(map: &ValueMap, key: &str) -> Result<f32, ErrorStack> {
     map
       .get(key)
       .and_then(|v| v.as_float())
       .ok_or_else(|| ErrorStack::new(format!("draw command map missing numeric field `{key}`")))
   }
-  fn get_bool(map: &FxHashMap<String, Value>, key: &str) -> Result<bool, ErrorStack> {
+  fn get_bool(map: &ValueMap, key: &str) -> Result<bool, ErrorStack> {
     map
       .get(key)
       .and_then(|v| v.as_bool())
@@ -4637,9 +4636,9 @@ p = build_path(cmds)
       Value::Map(m) => m.clone(),
       _ => panic!("expected Map, got {v:?}"),
     };
-    let f = |m: &FxHashMap<String, Value>, k: &str| m.get(k).and_then(|v| v.as_float()).unwrap();
-    let i = |m: &FxHashMap<String, Value>, k: &str| m.get(k).and_then(|v| v.as_int()).unwrap();
-    let s = |m: &FxHashMap<String, Value>, k: &str| {
+    let f = |m: &ValueMap, k: &str| m.get(k).and_then(|v| v.as_float()).unwrap();
+    let i = |m: &ValueMap, k: &str| m.get(k).and_then(|v| v.as_int()).unwrap();
+    let s = |m: &ValueMap, k: &str| {
       m.get(k)
         .and_then(|v| v.as_str().map(str::to_owned))
         .unwrap()

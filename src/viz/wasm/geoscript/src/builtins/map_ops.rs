@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -8,7 +9,7 @@ use crate::{
   seq_as_eager, ArgRef, ErrorStack, EvalCtx, Sym, Value, EMPTY_KWARGS,
 };
 
-fn as_map_rc(val: &Value) -> Rc<FxHashMap<String, Value>> {
+fn as_map_rc(val: &Value) -> Rc<ValueMap> {
   match val {
     Value::Map(map) => Rc::clone(map),
     _ => unreachable!(),
@@ -31,7 +32,7 @@ pub(crate) fn from_entries_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
-  let mut map = FxHashMap::default();
+  let mut map = ValueMap::default();
   for (i, res) in seq.consume(ctx).enumerate() {
     let entry =
       res.map_err(|err| err.wrap("Error evaluating sequence passed to `from_entries`"))?;
@@ -134,7 +135,7 @@ fn update_path(
     return leaf(cur);
   };
   let mut map = match cur {
-    None | Some(Value::Nil) => FxHashMap::default(),
+    None | Some(Value::Nil) => ValueMap::default(),
     Some(Value::Map(map)) => (**map).clone(),
     Some(other) => {
       return Err(ErrorStack::new(format!(

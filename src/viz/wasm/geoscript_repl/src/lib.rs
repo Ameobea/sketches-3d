@@ -1046,7 +1046,7 @@ pub fn geoscript_repl_set_gizmo_values(
   values_json: Vec<String>,
 ) {
   let ctx = unsafe { &mut *ctx };
-  let mut map: FxHashMap<String, FxHashMap<String, Value>> = FxHashMap::default();
+  let mut map: FxHashMap<String, geoscript::ValueMap> = FxHashMap::default();
   for ((module, handle), vjson) in module_names
     .iter()
     .zip(handle_ids.iter())

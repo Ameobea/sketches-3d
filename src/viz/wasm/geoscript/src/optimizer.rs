@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::{
   cell::{Cell, RefCell},
   hash::Hash,
@@ -2421,7 +2422,7 @@ fn fold_constants<'a>(
             return Ok(());
           }
         }
-        let mut map = FxHashMap::default();
+        let mut map = ValueMap::default();
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { key, value } => {

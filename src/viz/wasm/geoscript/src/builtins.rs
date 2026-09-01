@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use mesh::triangle_intersection::TriTriIntersectionType;
 use paste::paste;
 use rand_pcg::Pcg32;
@@ -84,6 +85,7 @@ pub(crate) mod path_critical_points;
 pub(crate) mod polyline_frames;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
+pub(crate) mod sort;
 pub(crate) mod spectral_noise;
 pub(crate) mod tex_kernels;
 pub(crate) mod texture;
@@ -6042,7 +6044,7 @@ fn is_self_intersecting_impl(
       match result {
         None => Ok(Value::Nil),
         Some(ixn) => {
-          let mut map = FxHashMap::default();
+          let mut map = ValueMap::default();
 
           // tri0: sequence of 3 Vec3 vertices
           map.insert(
@@ -8748,7 +8750,7 @@ fn path_reflect_axis_impl(
 }
 
 pub(crate) fn make_tagged_map(entries: &[(&str, Value)]) -> Value {
-  let mut map: FxHashMap<String, Value> = FxHashMap::default();
+  let mut map: ValueMap = ValueMap::default();
   for (k, v) in entries {
     map.insert((*k).to_owned(), v.clone());
   }
@@ -9045,7 +9047,7 @@ fn path_reverse_impl(
             .get("reversed")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-          let mut new_map: FxHashMap<String, Value> = (**map).clone();
+          let mut new_map: ValueMap = (**map).clone();
           new_map.insert("reversed".to_owned(), Value::Bool(!cur));
           Ok(Value::Map(Rc::new(new_map)))
         }
@@ -9285,7 +9287,7 @@ fn path_frame_impl(
     }
   }
 
-  let mut map: FxHashMap<String, Value> = FxHashMap::default();
+  let mut map: ValueMap = ValueMap::default();
   map.insert("pos".to_owned(), Value::Vec2(pos));
   map.insert("tangent".to_owned(), Value::Vec2(tangent));
   map.insert("normal".to_owned(), Value::Vec2(normal));
@@ -11007,6 +11009,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "reverse" => builtin_fn!(reverse, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     reverse_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "sort" => builtin_fn!(sort, |_def_ix, arg_refs, args, kwargs, ctx| {
+    sort::sort_impl(ctx, arg_refs, args, kwargs)
+  }),
   "collect" => builtin_fn!(collect, |def_ix, arg_refs: &[ArgRef], args, kwargs, ctx| {
     collect_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
@@ -11067,11 +11072,13 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let rhs = arg_refs[1].resolve(args, kwargs);
     mod_impl(def_ix, lhs.clone(), rhs.clone())
   }),
-  "max" => builtin_fn!(max, |def_ix, arg_refs, args, kwargs, _ctx| {
-    max_impl(def_ix, arg_refs, args, kwargs)
+  "max" => builtin_fn!(max, |def_ix, arg_refs, args, kwargs, ctx| match def_ix {
+    8 => sort::min_max_seq_impl::<true>(ctx, arg_refs, args, kwargs),
+    _ => max_impl(def_ix, arg_refs, args, kwargs),
   }),
-  "min" => builtin_fn!(min, |def_ix, arg_refs, args, kwargs, _ctx| {
-    min_impl(def_ix, arg_refs, args, kwargs)
+  "min" => builtin_fn!(min, |def_ix, arg_refs, args, kwargs, ctx| match def_ix {
+    8 => sort::min_max_seq_impl::<false>(ctx, arg_refs, args, kwargs),
+    _ => min_impl(def_ix, arg_refs, args, kwargs),
   }),
   "clamp" => builtin_fn!(clamp, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     clamp_impl(def_ix, arg_refs, args, kwargs)

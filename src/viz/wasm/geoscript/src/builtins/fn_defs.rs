@@ -1,3 +1,4 @@
+use crate::ValueMap;
 use std::{f32::consts::PI, ptr::addr_of, rc::Rc};
 
 use fxhash::FxHashMap;
@@ -5276,6 +5277,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Component-wise maximum of two Vec4s",
         return_type: &[ArgType::Vec4],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "sequence",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "by",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Key function with signature `|x: T, ix: int|: K`, where `K` is an int, float, string, bool, or a list of those (compared element-wise, so `[primary, secondary]` sorts on multiple keys).  Elements are used as their own keys if omitted."
+          },
+        ],
+        description: "Returns the element of the sequence with the largest key, or `nil` if the sequence is empty.  The first of several equal-key elements wins.",
+        return_type: &[ArgType::Any],
+      },
     ],
   },
   "min" => FnDef {
@@ -5441,6 +5462,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Component-wise minimum of two Vec4s",
         return_type: &[ArgType::Vec4],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "sequence",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "by",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Key function with signature `|x: T, ix: int|: K`, where `K` is an int, float, string, bool, or a list of those (compared element-wise, so `[primary, secondary]` sorts on multiple keys).  Elements are used as their own keys if omitted."
+          },
+        ],
+        description: "Returns the element of the sequence with the smallest key, or `nil` if the sequence is empty.  The first of several equal-key elements wins.",
+        return_type: &[ArgType::Any],
       },
     ],
   },
@@ -6168,6 +6209,46 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Appends a value to the end of a sequence, returning a new sequence.  The old sequence is left unchanged.\n\nIf the sequence is not eager (as produced by the `collect` function, an array literal, or similar), it will be collected into memory before this happens.\n\nNote that this isn't very efficient and requires collecting and/or cloning the underlying sequence.  It's better to keep things lazy and use sequences and sequence combinators where possible.",
         return_type: &[ArgType::Sequence]
       }
+    ],
+  },
+  "sort" => FnDef {
+    module: "seq",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "sequence",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "by",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Key function with signature `|x: T, ix: int|: K`, where `K` is an int, float, string, bool, or a list of those (compared element-wise, so `[primary, secondary]` sorts on multiple keys).  Elements are used as their own keys if omitted."
+          },
+          ArgDef {
+            name: "stable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "If true, elements with equal keys keep their original relative order"
+          },
+          ArgDef {
+            name: "desc",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "Sort in descending order"
+          },
+        ],
+        description: "Sorts a sequence by key in ascending order.  Ints and floats compare with each other numerically; mixing any other key kinds is an error.  The key function is called once per element.  \n\nThis is NOT lazy and will evaluate the entire sequence immediately and collect all of its elements into memory.",
+        return_type: &[ArgType::Sequence],
+      },
     ],
   },
   "reverse" => FnDef {
@@ -12566,7 +12647,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Map, ArgType::Int),
             default_value: DefaultValue::Optional(|| {
               let shadow_map_size = DirectionalLight::default().shadow_map_size;
-              Value::Map(Rc::new(FxHashMap::from_iter([
+              Value::Map(Rc::new(ValueMap::from_iter([
                 ("width".to_string(), Value::Int(shadow_map_size.width as i64)),
                 ("height".to_string(), Value::Int(shadow_map_size.height as i64)),
               ].into_iter())))
@@ -13299,6 +13380,54 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers; they will treat nested subpaths as holes under their own fill rule.",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "paths",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of path callables to union together."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to `nonzero` for the `clipper` engine and `evenodd` for `cgal` (the only rule `cgal` accepts)."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(64)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the inputs as closed/open."
+          },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Backend: `clipper` (default; fast, fixed-point) or `cgal` (slower, exact-arithmetic via `Polygon_set_2` over EPECK)."
+          },
+        ],
+        description: "Computes the union of every path in a sequence in a single boolean pass.  Much faster than chaining pairwise unions (`reduce(path_union)` and `fold(init, path_union)` route here automatically), since each pairwise step would re-sample and re-analyze the growing result.  Options and engines behave as for the two-path form; with `engine=\"cgal\"` the inputs are combined pairwise internally.",
         return_type: &[ArgType::Callable],
       }
     ]

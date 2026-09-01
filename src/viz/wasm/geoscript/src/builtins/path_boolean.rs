@@ -1,6 +1,5 @@
 use fxhash::FxHashMap;
 
-#[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
@@ -13,7 +12,7 @@ use crate::builtins::trace_path::{
   as_path_sampler, as_path_tracer, polylines_to_draw_commands, sample_path_subpaths, FillRule,
   PathTracerCallable,
 };
-use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
+use crate::{ArgRef, ErrorStack, EvalCtx, Sequence, Sym, Value, EMPTY_KWARGS};
 #[cfg(target_arch = "wasm32")]
 use crate::{Callable, Vec2};
 
@@ -194,74 +193,89 @@ fn run_clipper_boolean(
       critical_t_values: Vec::new(),
     };
   }
-
-  let is_self_union = op == BooleanOp::Union
+  if op == BooleanOp::Union
     && subject_coords == clip_coords
-    && subject_path_lengths == clip_path_lengths;
-  let pre_op_vertices = if is_self_union {
-    collect_vertex_set(subject_coords)
-  } else {
-    collect_vertex_set_multi(subject_coords, clip_coords)
-  };
-
+    && subject_path_lengths == clip_path_lengths
+  {
+    return run_clipper_self_union(subject_coords, subject_path_lengths, fill_rule);
+  }
+  let pre_op_vertices = collect_vertex_set_multi(subject_coords, clip_coords);
   let op_code = match op {
-    BooleanOp::Union => {
-      if is_self_union {
-        4
-      } else {
-        0
-      }
-    }
+    BooleanOp::Union => 0,
     BooleanOp::Intersect => 1,
     BooleanOp::Difference => 2,
     BooleanOp::Xor => 3,
   };
-  if is_self_union {
-    clipper2_boolean_flat(
-      op_code,
-      fill_rule,
-      subject_coords,
-      subject_path_lengths,
-      &[],
-      &[],
-    );
-  } else {
-    clipper2_boolean_flat(
-      op_code,
-      fill_rule,
-      subject_coords,
-      subject_path_lengths,
-      clip_coords,
-      clip_path_lengths,
-    );
-  }
+  clipper2_boolean_flat(
+    op_code,
+    fill_rule,
+    subject_coords,
+    subject_path_lengths,
+    clip_coords,
+    clip_path_lengths,
+  );
+  read_clipper_output(pre_op_vertices)
+}
 
+/// Unions every subject path in one pass (Clipper2 op 4), so a whole set of pieces costs one
+/// sweep instead of a chain of pairwise unions.
+#[cfg(target_arch = "wasm32")]
+fn run_clipper_self_union(coords: &[f32], path_lengths: &[u32], fill_rule: u32) -> BooleanResult {
+  if coords.is_empty() || path_lengths.is_empty() {
+    return BooleanResult {
+      paths: Vec::new(),
+      critical_t_values: Vec::new(),
+    };
+  }
+  let pre_op_vertices = collect_vertex_set(coords);
+  clipper2_boolean_flat(4, fill_rule, coords, path_lengths, &[], &[]);
+  read_clipper_output(pre_op_vertices)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_clipper_output(pre_op_vertices: VertexSet) -> BooleanResult {
   let out_coords = clipper2_get_output_coords_f32();
   let out_lengths = clipper2_get_output_path_lengths_flat();
   clipper2_clear_output_flat();
+  let paths = paths_from_flat(&out_coords, &out_lengths);
+  let critical_t_values = global_critical_points(&paths, &pre_op_vertices);
+  BooleanResult {
+    paths,
+    critical_t_values,
+  }
+}
 
-  let mut paths = Vec::with_capacity(out_lengths.len());
+#[cfg(target_arch = "wasm32")]
+fn paths_from_flat(coords: &[f32], lengths: &[u32]) -> Vec<Vec<Vec2>> {
+  let mut paths = Vec::with_capacity(lengths.len());
   let mut coord_ix = 0usize;
-  for len in out_lengths {
+  for &len in lengths {
     let mut path = Vec::with_capacity(len as usize);
     for _ in 0..len {
-      if coord_ix + 1 >= out_coords.len() {
+      if coord_ix + 1 >= coords.len() {
         break;
       }
-      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
+      path.push(Vec2::new(coords[coord_ix], coords[coord_ix + 1]));
       coord_ix += 2;
     }
     if path.len() >= 2 {
       paths.push(path);
     }
   }
+  paths
+}
 
-  let critical_t_values = global_critical_points(&paths, &pre_op_vertices);
-
-  BooleanResult {
-    paths,
-    critical_t_values,
+#[cfg(target_arch = "wasm32")]
+fn paths_to_flat(paths: &[Vec<Vec2>]) -> (Vec<f32>, Vec<u32>) {
+  let mut coords = Vec::with_capacity(paths.iter().map(|p| p.len() * 2).sum());
+  let lengths = paths.iter().map(|p| p.len() as u32).collect();
+  for p in paths {
+    for pt in p {
+      coords.push(pt.x);
+      coords.push(pt.y);
+    }
   }
+  (coords, lengths)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -367,6 +381,156 @@ fn sample_path_to_coords(
 }
 
 #[cfg(target_arch = "wasm32")]
+struct BooleanOpts {
+  fill_rule: FillRule,
+  curve_angle_radians: f32,
+  sample_count: usize,
+  closed_override: Option<bool>,
+  engine: BooleanEngine,
+}
+
+/// `opt_refs` are the `fill_rule, curve_angle_degrees, sample_count, closed, engine` arg refs.
+#[cfg(target_arch = "wasm32")]
+fn parse_boolean_opts(
+  ctx: &EvalCtx,
+  opt_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  fn_name: &str,
+) -> Result<BooleanOpts, ErrorStack> {
+  let fill_rule_val = opt_refs[0].resolve(args, kwargs);
+
+  let curve_angle_degrees =
+    ctx.resolve_curve_angle_degrees(opt_refs[1].resolve(args, kwargs)) as f64;
+  if curve_angle_degrees <= 0.0 {
+    return Err(ErrorStack::new(format!(
+      "Invalid curve_angle_degrees for `{fn_name}`; expected > 0, found: {curve_angle_degrees}"
+    )));
+  }
+  let curve_angle_radians = (curve_angle_degrees as f32).to_radians();
+
+  let sample_count_val = opt_refs[2].resolve(args, kwargs);
+  let sample_count = match sample_count_val.as_int() {
+    Some(v) => v,
+    None => {
+      return Err(ErrorStack::new(format!(
+        "Invalid sample_count for `{fn_name}`; expected int, found: {sample_count_val:?}"
+      )))
+    }
+  };
+  let sample_count = sample_count.max(2) as usize;
+
+  let closed_override_val = opt_refs[3].resolve(args, kwargs);
+  let closed_override = match closed_override_val {
+    Value::Bool(b) => Some(*b),
+    Value::Nil => None,
+    _ => {
+      return Err(ErrorStack::new(format!(
+        "Invalid closed argument for `{fn_name}`; expected bool or nil, found: \
+         {closed_override_val:?}"
+      )))
+    }
+  };
+
+  let engine = parse_engine(opt_refs[4].resolve(args, kwargs), fn_name)?;
+
+  // Engine-specific default fill rule when caller leaves it unset (nil): Clipper2's
+  // historical default is NonZero; CGAL's `Polygon_set_2` natively combines subpaths
+  // under EvenOdd so we default to that to avoid forcing the user to opt in twice.
+  let fill_rule = if matches!(fill_rule_val, Value::Nil) {
+    match engine {
+      BooleanEngine::Clipper => FillRule::NonZero,
+      BooleanEngine::Cgal => FillRule::EvenOdd,
+    }
+  } else {
+    FillRule::parse(fill_rule_val, fn_name)?
+  };
+
+  match engine {
+    BooleanEngine::Clipper => {
+      crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
+      if !clipper2_get_is_loaded() {
+        return Err(ErrorStack::new_uninitialized_module("clipper2"));
+      }
+    }
+    BooleanEngine::Cgal => {
+      crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
+      if !cgal_get_is_loaded() {
+        return Err(ErrorStack::new_uninitialized_module("cgal"));
+      }
+      if fill_rule != FillRule::EvenOdd {
+        return Err(ErrorStack::new(format!(
+          "`{fn_name}` with engine=\"cgal\" only supports fill_rule=\"evenodd\"; got \
+           {fill_rule:?}.  Re-run with engine=\"clipper\" for other fill rules."
+        )));
+      }
+    }
+  }
+
+  Ok(BooleanOpts {
+    fill_rule,
+    curve_angle_radians,
+    sample_count,
+    closed_override,
+    engine,
+  })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn sample_boolean_input(
+  ctx: &EvalCtx,
+  callable: &Rc<Callable>,
+  opts: &BooleanOpts,
+  fn_name: &str,
+) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
+  sample_path_to_coords(
+    ctx,
+    callable,
+    opts.curve_angle_radians,
+    opts.sample_count,
+    opts.closed_override,
+    fn_name,
+  )
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cached_boolean(
+  cache_key: Vec<u32>,
+  run: impl FnOnce() -> Result<BooleanResult, ErrorStack>,
+) -> Result<BooleanResult, ErrorStack> {
+  if let Some(cached) = bool_result_cache::get(&cache_key) {
+    return Ok(cached);
+  }
+  let result = run()?;
+  bool_result_cache::insert(cache_key, &result);
+  Ok(result)
+}
+
+#[cfg(target_arch = "wasm32")]
+fn boolean_result_value(ctx: &EvalCtx, result: BooleanResult, fn_name: &str) -> Value {
+  let critical_points = Some(result.critical_t_values);
+  let draw_cmds = polylines_to_draw_commands(result.paths.into_iter().map(|p| (p, true)));
+  let interned_t_kwarg = ctx.interned_symbols.intern("t");
+  let mut tracer = PathTracerCallable::new_with_critical_points(
+    false,
+    false,
+    false,
+    draw_cmds,
+    interned_t_kwarg,
+    critical_points,
+  );
+  // The op's fill rule is already resolved into the output: rings are non-crossing and
+  // winding-consistent, so nesting-based evenodd describes the region exactly.  Carrying the
+  // winding-dependent input rule forward instead would push downstream tessellation onto the
+  // lyon path, which mishandles the collinear touch configurations boolean outputs contain.
+  tracer.fill_rule = Some(FillRule::EvenOdd);
+  Value::Callable(Rc::new(Callable::Dynamic {
+    name: fn_name.to_owned(),
+    inner: Box::new(tracer),
+  }))
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn path_boolean_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -392,155 +556,109 @@ pub fn path_boolean_impl(
         ))
       })?;
 
-      let fill_rule_val = arg_refs[2].resolve(args, kwargs);
-
-      let curve_angle_degrees =
-        ctx.resolve_curve_angle_degrees(arg_refs[3].resolve(args, kwargs)) as f64;
-      if curve_angle_degrees <= 0.0 {
-        return Err(ErrorStack::new(format!(
-          "Invalid curve_angle_degrees for `{fn_name}`; expected > 0, found: {curve_angle_degrees}"
-        )));
-      }
-      let curve_angle_radians = (curve_angle_degrees as f32).to_radians();
-
-      let sample_count_val = arg_refs[4].resolve(args, kwargs);
-      let sample_count = match sample_count_val.as_int() {
-        Some(v) => v,
-        None => {
-          return Err(ErrorStack::new(format!(
-            "Invalid sample_count for `{fn_name}`; expected int, found: {sample_count_val:?}"
-          )))
-        }
-      };
-      let sample_count = sample_count.max(2) as usize;
-
-      let closed_override_val = arg_refs[5].resolve(args, kwargs);
-      let closed_override = match closed_override_val {
-        Value::Bool(b) => Some(*b),
-        Value::Nil => None,
-        _ => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `{fn_name}`; expected bool or nil, found: \
-             {closed_override_val:?}"
-          )))
-        }
-      };
-
-      let engine = parse_engine(arg_refs[6].resolve(args, kwargs), fn_name)?;
-
-      // Engine-specific default fill rule when caller leaves it unset (nil): Clipper2's
-      // historical default is NonZero; CGAL's `Polygon_set_2` natively combines subpaths
-      // under EvenOdd so we default to that to avoid forcing the user to opt in twice.
-      let fill_rule_enum = if matches!(fill_rule_val, Value::Nil) {
-        match engine {
-          BooleanEngine::Clipper => FillRule::NonZero,
-          BooleanEngine::Cgal => FillRule::EvenOdd,
-        }
-      } else {
-        FillRule::parse(fill_rule_val, fn_name)?
-      };
-
-      match engine {
-        BooleanEngine::Clipper => {
-          crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
-          if !clipper2_get_is_loaded() {
-            return Err(ErrorStack::new_uninitialized_module("clipper2"));
-          }
-        }
-        BooleanEngine::Cgal => {
-          crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
-          if !cgal_get_is_loaded() {
-            return Err(ErrorStack::new_uninitialized_module("cgal"));
-          }
-          if fill_rule_enum != FillRule::EvenOdd {
-            return Err(ErrorStack::new(format!(
-              "`{fn_name}` with engine=\"cgal\" only supports fill_rule=\"evenodd\"; got \
-               {fill_rule_enum:?}.  Re-run with engine=\"clipper\" for other fill rules."
-            )));
-          }
-        }
-      }
-
-      let (subject_coords, subject_lengths) = sample_path_to_coords(
-        ctx,
-        subject_callable,
-        curve_angle_radians,
-        sample_count,
-        closed_override,
-        fn_name,
-      )?;
-
-      let (clip_coords, clip_lengths) = sample_path_to_coords(
-        ctx,
-        clip_callable,
-        curve_angle_radians,
-        sample_count,
-        closed_override,
-        fn_name,
-      )?;
+      let opts = parse_boolean_opts(ctx, &arg_refs[2..], args, kwargs, fn_name)?;
+      let (subject_coords, subject_lengths) =
+        sample_boolean_input(ctx, subject_callable, &opts, fn_name)?;
+      let (clip_coords, clip_lengths) = sample_boolean_input(ctx, clip_callable, &opts, fn_name)?;
 
       let op_ix = op as u32;
-      let engine_discriminant = match engine {
+      let engine_discriminant = match opts.engine {
         BooleanEngine::Clipper => op_ix,
         BooleanEngine::Cgal => 8 + op_ix,
       };
+      let fill_rule = opts.fill_rule.to_clipper2_u32();
       let cache_key = bool_result_cache::build_key(
         engine_discriminant,
-        fill_rule_enum.to_clipper2_u32(),
+        fill_rule,
         &subject_coords,
         &subject_lengths,
         &clip_coords,
         &clip_lengths,
       );
+      let result = cached_boolean(cache_key, || match opts.engine {
+        BooleanEngine::Clipper => Ok(run_clipper_boolean(
+          &subject_coords,
+          &subject_lengths,
+          &clip_coords,
+          &clip_lengths,
+          fill_rule,
+          op,
+        )),
+        BooleanEngine::Cgal => run_cgal_boolean(
+          &subject_coords,
+          &subject_lengths,
+          &clip_coords,
+          &clip_lengths,
+          op,
+          fn_name,
+        ),
+      })?;
+      Ok(boolean_result_value(ctx, result, fn_name))
+    }
+    // n-ary union of a whole sequence: one boolean pass instead of a pairwise chain that
+    // re-samples and re-analyzes the growing accumulator at every step
+    1 => {
+      let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
+      let opts = parse_boolean_opts(ctx, &arg_refs[1..], args, kwargs, fn_name)?;
+      let mut inputs: Vec<(Vec<f32>, Vec<u32>)> = Vec::new();
+      for (i, res) in seq.consume(ctx).enumerate() {
+        let val = res
+          .map_err(|err| err.wrap(format!("Error evaluating sequence passed to `{fn_name}`")))?;
+        let callable = val.as_callable().ok_or_else(|| {
+          ErrorStack::new(format!(
+            "Invalid element at index {i} in sequence passed to `{fn_name}`; expected path \
+             Callable, found: {val:?}"
+          ))
+        })?;
+        inputs.push(sample_boolean_input(ctx, callable, &opts, fn_name)?);
+      }
 
-      let boolean_result = if let Some(cached) = bool_result_cache::get(&cache_key) {
-        cached
-      } else {
-        let result = match engine {
-          BooleanEngine::Clipper => run_clipper_boolean(
-            &subject_coords,
-            &subject_lengths,
-            &clip_coords,
-            &clip_lengths,
-            fill_rule_enum.to_clipper2_u32(),
-            op,
-          ),
-          BooleanEngine::Cgal => run_cgal_boolean(
-            &subject_coords,
-            &subject_lengths,
-            &clip_coords,
-            &clip_lengths,
-            op,
-            fn_name,
-          )?,
-        };
-        bool_result_cache::insert(cache_key, &result);
-        result
+      let fill_rule = opts.fill_rule.to_clipper2_u32();
+      let result = match opts.engine {
+        BooleanEngine::Clipper => {
+          let mut coords = Vec::new();
+          let mut lengths = Vec::new();
+          for (c, l) in &inputs {
+            coords.extend_from_slice(c);
+            lengths.extend_from_slice(l);
+          }
+          let cache_key = bool_result_cache::build_key(16, fill_rule, &coords, &lengths, &[], &[]);
+          cached_boolean(cache_key, || {
+            Ok(run_clipper_self_union(&coords, &lengths, fill_rule))
+          })?
+        }
+        // CGAL has no n-ary entry point, so fold pairwise; a lone input still goes through the
+        // op so it gets normalized like the clipper path does
+        BooleanEngine::Cgal => {
+          let mut inputs = inputs.into_iter();
+          let (mut acc_coords, mut acc_lengths) = inputs.next().unwrap_or_default();
+          let mut result = None;
+          for (coords, lengths) in inputs {
+            let r = run_cgal_boolean(
+              &acc_coords,
+              &acc_lengths,
+              &coords,
+              &lengths,
+              BooleanOp::Union,
+              fn_name,
+            )?;
+            (acc_coords, acc_lengths) = paths_to_flat(&r.paths);
+            result = Some(r);
+          }
+          match result {
+            Some(r) => r,
+            None => run_cgal_boolean(
+              &acc_coords,
+              &acc_lengths,
+              &acc_coords,
+              &acc_lengths,
+              BooleanOp::Union,
+              fn_name,
+            )?,
+          }
+        }
       };
-
-      let critical_points = Some(boolean_result.critical_t_values);
-
-      let draw_cmds =
-        polylines_to_draw_commands(boolean_result.paths.into_iter().map(|p| (p, true)));
-
-      let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let mut tracer = PathTracerCallable::new_with_critical_points(
-        false,
-        false,
-        false,
-        draw_cmds,
-        interned_t_kwarg,
-        critical_points,
-      );
-      // The op's fill rule is already resolved into the output: rings are non-crossing and
-      // winding-consistent, so nesting-based evenodd describes the region exactly.  Carrying the
-      // winding-dependent input rule forward instead would push downstream tessellation onto the
-      // lyon path, which mishandles the collinear touch configurations boolean outputs contain.
-      tracer.fill_rule = Some(FillRule::EvenOdd);
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: fn_name.to_owned(),
-        inner: Box::new(tracer),
-      })))
+      Ok(boolean_result_value(ctx, result, fn_name))
     }
     _ => unimplemented!(),
   }
@@ -549,19 +667,16 @@ pub fn path_boolean_impl(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn path_boolean_impl(
   _ctx: &EvalCtx,
-  def_ix: usize,
+  _def_ix: usize,
   _arg_refs: &[ArgRef],
   _args: &[Value],
   _kwargs: &FxHashMap<Sym, Value>,
   _op: (),
   fn_name: &str,
 ) -> Result<Value, ErrorStack> {
-  match def_ix {
-    0 => Err(ErrorStack::new(format!(
-      "`{fn_name}` is only supported in wasm builds"
-    ))),
-    _ => unimplemented!(),
-  }
+  Err(ErrorStack::new(format!(
+    "`{fn_name}` is only supported in wasm builds"
+  )))
 }
 
 // Wrapper functions for each operation
@@ -866,4 +981,17 @@ pub fn path_intersects_impl(
     )),
     _ => unimplemented!(),
   }
+}
+
+/// `path_union` over a whole sequence with default options; the `fold`/`reduce` fast path.
+pub fn path_union_seq(ctx: &EvalCtx, seq: Rc<dyn Sequence>) -> Result<Value, ErrorStack> {
+  let arg_refs = [
+    ArgRef::Positional(0),
+    ArgRef::Default(Value::Nil),
+    ArgRef::Default(Value::Nil),
+    ArgRef::Default(Value::Int(64)),
+    ArgRef::Default(Value::Nil),
+    ArgRef::Default(Value::Nil),
+  ];
+  path_union_impl(ctx, 1, &arg_refs, &[Value::Sequence(seq)], EMPTY_KWARGS)
 }

@@ -1,6 +1,6 @@
+use crate::ValueMap;
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
-use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
@@ -486,24 +486,21 @@ pub(crate) enum MapIterMode {
 
 #[derive(Debug)]
 pub(crate) struct MapIterSeq<const MODE: MapIterMode> {
-  pub map: Rc<FxHashMap<String, Value>>,
+  pub map: Rc<ValueMap>,
 }
 
 pub(crate) struct MapIter<const MODE: MapIterMode> {
-  iter: std::collections::hash_map::Iter<'static, String, Value>,
+  iter: crate::value_map::Iter<'static>,
   #[allow(dead_code)]
-  map: Rc<FxHashMap<String, Value>>,
+  map: Rc<ValueMap>,
 }
 
 impl<const MODE: MapIterMode> MapIter<MODE> {
-  pub fn new(map: Rc<FxHashMap<String, Value>>) -> Self {
+  pub fn new(map: Rc<ValueMap>) -> Self {
     // safe because the held `Rc` keeps the map alive for the life of the iterator, the map
     // is never mutated once shared, and its heap allocation is address-stable
     let iter = unsafe {
-      std::mem::transmute::<
-        std::collections::hash_map::Iter<'_, String, Value>,
-        std::collections::hash_map::Iter<'static, String, Value>,
-      >(map.iter())
+      std::mem::transmute::<crate::value_map::Iter<'_>, crate::value_map::Iter<'static>>(map.iter())
     };
     Self { iter, map }
   }
