@@ -109,6 +109,7 @@ impl GuardCtx<'_> {
       Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.liftable(&e.expr)),
       Expr::MapLiteral { entries, .. } => entries.iter().all(|e| match e {
         MapLiteralEntry::KeyValue { value, .. } => self.liftable(value),
+        MapLiteralEntry::Computed { key, value } => self.liftable(key) && self.liftable(value),
         MapLiteralEntry::Splat { expr } => self.liftable(expr),
       }),
       Expr::Conditional {
@@ -272,6 +273,10 @@ impl GuardCtx<'_> {
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { value, .. } => self.visit_expr(value),
+            MapLiteralEntry::Computed { key, value } => {
+              self.visit_expr(key);
+              self.visit_expr(value);
+            }
             MapLiteralEntry::Splat { expr } => self.visit_expr(expr),
           }
         }

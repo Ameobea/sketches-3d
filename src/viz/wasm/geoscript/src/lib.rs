@@ -282,6 +282,17 @@ pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {
   seq.downcast_ref::<EagerSeq>()
 }
 
+pub(crate) fn map_key_from_value(val: &Value) -> Result<String, ErrorStack> {
+  match val {
+    Value::String(s) => Ok(s.clone()),
+    Value::Int(i) => Ok(i.to_string()),
+    _ => Err(ErrorStack::new(format!(
+      "Invalid map key of type {:?}; expected string or int",
+      val.get_type()
+    ))),
+  }
+}
+
 #[derive(Clone)]
 pub struct PartiallyAppliedFn {
   inner: Rc<Callable>,
@@ -2016,6 +2027,28 @@ pub(crate) fn get_args(
   let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
   let mut valid_partial: bool = false;
   let any_args_provided = !args.is_empty() || !kwargs.is_empty();
+  // Excess positionals are tolerated only when no signature could consume them all
+  // (counting only arg slots not already bound by a provided kwarg): combinators pass
+  // `(val, index)` to callbacks that are free to ignore the index, same as closures
+  // ignore extra args. Otherwise a sig must consume every positional so a shorter
+  // overload can't silently swallow a longer, mistyped call.
+  let max_positional_capacity = defs
+    .iter()
+    .filter(|def| {
+      kwargs
+        .keys()
+        .all(|key| def.arg_defs.iter().any(|arg| arg.interned_name == *key))
+    })
+    .map(|def| {
+      def
+        .arg_defs
+        .iter()
+        .filter(|arg| !kwargs.contains_key(&arg.interned_name))
+        .count()
+    })
+    .max()
+    .unwrap_or(0);
+  let allow_excess_args = args.len() > max_positional_capacity;
   'def: for (def_ix, def) in defs.iter().enumerate() {
     // if a kwarg was passed which isn't defined in this function signature, skip
     for &kwarg_key in kwargs.keys() {
@@ -2063,6 +2096,10 @@ pub(crate) fn get_args(
       }
 
       arg_refs.push(arg_ref);
+    }
+
+    if !allow_excess_args && pos_arg_ix != args.len() {
+      continue 'def;
     }
 
     // valid args found for the whole def, so the function call is valid
@@ -2154,6 +2191,24 @@ pub fn match_signature_by_arg_types(
   }
 
   let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
+  // mirrors `get_args`' excess-positional rule; the two must agree
+  let max_positional_capacity = sigs
+    .iter()
+    .filter(|sig| {
+      kwarg_types
+        .iter()
+        .all(|(key, _)| sig.arg_defs.iter().any(|arg| arg.interned_name == *key))
+    })
+    .map(|sig| {
+      sig
+        .arg_defs
+        .iter()
+        .filter(|arg| !kwarg_types.iter().any(|(sym, _)| *sym == arg.interned_name))
+        .count()
+    })
+    .max()
+    .unwrap_or(0);
+  let allow_excess_args = positional_types.len() > max_positional_capacity;
 
   'sig: for (sig_ix, sig) in sigs.iter().enumerate() {
     // Skip sigs that don't recognize a provided kwarg
@@ -2202,7 +2257,7 @@ pub fn match_signature_by_arg_types(
       }
     }
 
-    if all_matched {
+    if all_matched && (allow_excess_args || pos_ix == positional_types.len()) {
       return Some(SignatureTypeMatch {
         def_ix: sig_ix,
         arg_refs: arg_refs.clone(),
@@ -3223,6 +3278,13 @@ impl EvalCtx {
             MapLiteralEntry::KeyValue { key, value } => {
               let val = self.eval_expr_env(value, env)?;
               evaluated.insert(key.clone(), val);
+            }
+            MapLiteralEntry::Computed { key, value } => {
+              let key_val = self.eval_expr_env(key, env)?;
+              let key_str =
+                map_key_from_value(&key_val).map_err(|err| self.locate_err(err, key.loc()))?;
+              let val = self.eval_expr_env(value, env)?;
+              evaluated.insert(key_str, val);
             }
             MapLiteralEntry::Splat { expr: splat } => {
               let splat = self.eval_expr_env(splat, env)?;
@@ -5446,6 +5508,11 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("[*f(1), *(0..3)]", ParseOutcome::Ok(1)),
   ("[a * b]", ParseOutcome::Ok(1)),
   ("[**a]", ParseOutcome::Err("")),
+  // Computed map keys
+  ("m = { [k]: 1 }", ParseOutcome::Ok(1)),
+  ("{ [1 + 2]: 3, a: 4 }", ParseOutcome::Ok(1)),
+  ("{ [k]: 1, *rest }", ParseOutcome::Ok(1)),
+  ("{ []: 1 }", ParseOutcome::Err("")),
 ];
 
 #[cfg(test)]
@@ -5809,6 +5876,120 @@ fn test_nullish_short_circuits_rhs() {
   // nil lhs falls through and does evaluate rhs
   let full = parse_and_eval_program("x = nil ?? render(box(1))").unwrap();
   assert_eq!(full.rendered_meshes.into_inner().len(), 1);
+}
+
+#[test]
+fn test_no_excess_arg_overload_hijack() {
+  // a shorter overload must not swallow a longer, mistyped call
+  assert!(parse_and_eval_program(r#"x = vec3(0, "asdf", 1)"#).is_err());
+  assert!(parse_and_eval_program(r#"x = vec2(1, "a")"#).is_err());
+
+  // under-application still curries: the 1-arg splat sig must not grab `vec3(1, 2)`
+  let ctx = parse_and_eval_program("v = 3. | vec3(1, 2)").unwrap();
+  assert_eq!(
+    *ctx.get_global("v").unwrap().as_vec3().unwrap(),
+    Vec3::new(1., 2., 3.)
+  );
+
+  // combinators append an index arg that bare builtin callbacks are free to ignore —
+  // including kwarg-partial ones, where the kwarg shrinks the positional capacity
+  let src = r#"
+sines = (0..3 -> sin) | collect
+total = [1, 2, 3] | fold(0, add)
+subs = ([v3(3, 0, 0), v3(5, 0, 0)] -> sub(b=v3(1, 0, 0))) | collect
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("total").unwrap().as_int().unwrap(), 6);
+  let sines = ctx.get_global("sines").unwrap().as_sequence().unwrap();
+  assert_eq!(seq_as_eager(&*sines).unwrap().inner.len(), 3);
+  let subs = ctx.get_global("subs").unwrap().as_sequence().unwrap();
+  assert_eq!(
+    *seq_as_eager(&*subs).unwrap().inner[0].as_vec3().unwrap(),
+    Vec3::new(2., 0., 0.)
+  );
+}
+
+#[test]
+fn test_map_computed_keys_const() {
+  let src = r#"
+k = "dyn"
+m = { [k]: 1, ["lit"]: 2, [3]: 4, base: 5 }
+a = m.dyn
+b = m.lit
+c = m[3]
+d = m["3"]
+overridden = { *m, [k]: 10 }
+e = overridden.dyn
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 1);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 2);
+  assert_eq!(ctx.get_global("c").unwrap().as_int().unwrap(), 4);
+  assert_eq!(ctx.get_global("d").unwrap().as_int().unwrap(), 4);
+  assert_eq!(ctx.get_global("e").unwrap().as_int().unwrap(), 10);
+}
+
+#[test]
+fn test_map_computed_keys_runtime() {
+  // `render` is side-effectful so `k` can't const-fold, forcing the interpreter path for
+  // the computed-key map literal
+  let src = r#"
+k = render(box(1)) ?? "dyn"
+m = { [k]: 1, [2 + 3]: 2 }
+a = m.dyn
+b = m[5]
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_int().unwrap(), 1);
+  assert_eq!(ctx.get_global("b").unwrap().as_int().unwrap(), 2);
+}
+
+#[test]
+fn test_map_grouping_e2e() {
+  let src = r#"
+tris_around = |x: int, y: int| {
+  [
+    [[x, y], [x, y-1], [x-1, y]],
+    [[x, y], [x + 1, y], [x, y-1]],
+    [[x, y], [x-1, y], [x, y+1]],
+    [[x, y], [x, y+1], [x+1, y]],
+  ]
+}
+
+levels = tris_around(0, 0)
+  -> |[[x0, y0], [x1, y1], [x2, y2]]| {
+    p = build_path(path {
+      move(x0, y0)
+      line(x1, y1)
+      line(x2, y2)
+      close()
+    })
+    centroid = v2(x0 + x1 + x2, y0 + y1 + y2) / 3
+    { p: p, centroid: centroid }
+  }
+  | fold({}, |acc, { p, centroid }| {
+    noise = fbm(octaves=2, pos=centroid * 0.2)
+    level = int(floor(noise))
+    vals = acc[level] ?? []
+    { *acc, [level]: append(p, vals) }
+  })
+
+n_levels = len(levels)
+n_paths = (values(levels) -> |group| group | collect | len) | fold(0, |acc, n| acc + n)
+"#;
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert!(ctx.get_global("n_levels").unwrap().as_int().unwrap() >= 1);
+  assert_eq!(ctx.get_global("n_paths").unwrap().as_int().unwrap(), 4);
+}
+
+#[test]
+fn test_map_computed_key_invalid_type() {
+  assert!(parse_and_eval_program("m = { [1.5]: 1 }").is_err());
+  assert!(parse_and_eval_program(
+    r#"k = render(box(1)) ?? 1.5
+m = { [k]: 1 }"#
+  )
+  .is_err());
 }
 
 #[test]

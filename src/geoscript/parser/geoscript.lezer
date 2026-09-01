@@ -68,7 +68,7 @@ ClosureParamList {
 }
 
 ArraySplat { "*" Expr }
-arrayElem { Expr | ArraySplat }
+arrayElem { Expr ~computedkey | ArraySplat }
 ArrayExpr { "[" (arrayElem ~maybedestructure ("," arrayElem?)*)? "]" }
 MapExpr { "{" (MapEntry ~maybedestructure ("," MapEntry)*)? ","? "}" ~maybeblock }
 
@@ -139,7 +139,8 @@ escapedSingleQuote { "\\'" }
 commaSep<Expr> { commaSep1<Expr>? }
 commaSep1<Expr> { Expr ("," Expr?)* }
 
-MapKV { (Identifier | StringLiteral) ":" Expr }
+MapComputedKey { "[" Expr ~computedkey "]" }
+MapKV { (Identifier | StringLiteral | MapComputedKey) ":" Expr }
 MapSplat { "*" Expr }
 MapEntry { MapKV | MapSplat }
 

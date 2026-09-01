@@ -440,8 +440,8 @@ export const configureDefaultPostprocessingPipeline = ({
   addMiddlePasses?.(effectComposer, viz, quality);
 
   // A VolumetricPass exports fog coverage in the scene buffer's alpha channel;
-  // FinalPass uses it to keep the distance fog + emissive composite from repainting
-  // content hidden under opaque fog.
+  // FinalPass uses it to keep the distance fog (and, with a SkyStack, the emissive
+  // composite) from repainting content hidden under opaque fog.
   const fogCoverageInAlpha = (effectComposer as unknown as { passes: { enabled: boolean }[] }).passes.some(
     p => p.enabled && p instanceof VolumetricPass
   );
@@ -524,6 +524,10 @@ export const configureDefaultPostprocessingPipeline = ({
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
     fogShader,
     fogCoverageInAlpha,
+    // Only a SkyStack puts far-plane content (the sky) into the emissive buffer;
+    // without one the buffer holds near-field glowing meshes that should punch
+    // through fog behind them (e.g. nexus portals over the pit fog).
+    fogCoverageAttenuatesEmissive: fogCoverageInAlpha && !!skyStack,
   });
   effectComposer.addPass(finalPass);
 

@@ -551,6 +551,10 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
           MapLiteralEntry::KeyValue { value, .. } => {
             infer_expr(ctx, env, value);
           }
+          MapLiteralEntry::Computed { key, value } => {
+            infer_expr(ctx, env, key);
+            infer_expr(ctx, env, value);
+          }
           MapLiteralEntry::Splat { expr } => {
             infer_expr(ctx, env, expr);
           }

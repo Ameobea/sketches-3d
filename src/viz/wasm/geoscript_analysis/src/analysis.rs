@@ -654,6 +654,10 @@ impl<'a> AnalysisWalker<'a> {
             MapLiteralEntry::KeyValue { value, .. } => {
               self.walk_expr(value);
             }
+            MapLiteralEntry::Computed { key, value } => {
+              self.walk_expr(key);
+              self.walk_expr(value);
+            }
             MapLiteralEntry::Splat { expr } => {
               self.walk_expr(expr);
             }

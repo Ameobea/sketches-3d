@@ -9407,6 +9407,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Returns the length/magnitude of a Vec4",
         return_type: &[ArgType::Float],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "m",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the number of entries in a map",
+        return_type: &[ArgType::Int],
+      },
     ],
   },
   "chars" => FnDef {
@@ -15869,6 +15882,240 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Reflects a 2D path across the vertical line `x = offset`, returning a new path sampler with the transform composed.",
         return_type: &[ArgType::Callable],
+      },
+    ],
+  },
+  "keys" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a lazy sequence of the keys of the given map.  Iteration order is arbitrary but stable for a given map.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "values" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a lazy sequence of the values of the given map.  Iteration order is arbitrary but stable for a given map, and matches the order of `keys` and `entries`.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "entries" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a lazy sequence of `[key, value]` pairs for the given map.  Iteration order is arbitrary but stable for a given map, and matches the order of `keys` and `values`.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "from_entries" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "entries",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `[key, value]` pairs.  Keys must be strings or ints; ints are converted to string keys."
+          },
+        ],
+        description: "Builds a map from a sequence of `[key, value]` pairs; the inverse of `entries`.  Later entries overwrite earlier ones with the same key.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "has" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "key",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns `true` if the map contains the given key.  Unlike indexing (which yields `nil` for missing keys), this distinguishes a stored `nil` from an absent key.",
+        return_type: &[ArgType::Bool],
+      },
+    ],
+  },
+  "group_by" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cb",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Called with `(elem, index)` for each element; must return a string or int key for the element's group."
+          },
+          ArgDef {
+            name: "seq",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Groups the elements of a sequence into a map of `key -> [elements]`, keyed by the value returned by `cb` for each element.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "get_in" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of string or int keys to follow through nested maps."
+          },
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "default",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Returned when the path is missing, hits a non-map value, or resolves to `nil`."
+          },
+        ],
+        description: "Reads the value at a path of keys through nested maps, returning `default` if the path can't be fully resolved.",
+        return_type: &[ArgType::Any],
+      },
+    ],
+  },
+  "set_in" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of string or int keys to follow through nested maps."
+          },
+          ArgDef {
+            name: "val",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a copy of the map with `val` stored at the given path of keys.  Missing or `nil` intermediate entries are created as empty maps; a non-map intermediate value is an error.",
+        return_type: &[ArgType::Map],
+      },
+    ],
+  },
+  "update_in" => FnDef {
+    module: "map",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of string or int keys to follow through nested maps."
+          },
+          ArgDef {
+            name: "cb",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "Called with the current value at the path (or `default` if missing/`nil`); its return value is stored."
+          },
+          ArgDef {
+            name: "map",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Map),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "default",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Any),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Passed to `cb` in place of a missing or `nil` value at the path."
+          },
+        ],
+        description: "Returns a copy of the map with the value at the given path of keys replaced by `cb(current)`.  Missing or `nil` intermediate entries are created as empty maps; a non-map intermediate value is an error.",
+        return_type: &[ArgType::Map],
       },
     ],
   },

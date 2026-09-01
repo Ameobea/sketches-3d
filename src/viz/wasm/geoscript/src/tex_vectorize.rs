@@ -1116,7 +1116,9 @@ impl<'a> Compiler<'a> {
         })
       }),
       Expr::ArrayLiteral { elements, .. } => elements.iter().all(|e| self.expr_is_uniform(&e.expr)),
-      Expr::MapLiteral { entries, .. } => entries.iter().all(|e| self.expr_is_uniform(e.expr())),
+      Expr::MapLiteral { entries, .. } => entries
+        .iter()
+        .all(|e| e.exprs().all(|x| self.expr_is_uniform(x))),
       Expr::Conditional {
         cond,
         then,
@@ -3251,6 +3253,10 @@ impl Renamer<'_> {
                 key: key.clone(),
                 value: self.expr(value)?,
               },
+              MapLiteralEntry::Computed { key, value } => MapLiteralEntry::Computed {
+                key: self.expr(key)?,
+                value: self.expr(value)?,
+              },
               MapLiteralEntry::Splat { expr } => MapLiteralEntry::Splat {
                 expr: self.expr(expr)?,
               },
@@ -3416,8 +3422,8 @@ fn walk_expr_shallow(expr: &Expr, cb: &mut impl FnMut(&Expr)) {
       }
     }
     Expr::MapLiteral { entries, .. } => {
-      for e in entries {
-        walk_expr_shallow(e.expr(), cb);
+      for e in entries.iter().flat_map(|e| e.exprs()) {
+        walk_expr_shallow(e, cb);
       }
     }
     Expr::Conditional {

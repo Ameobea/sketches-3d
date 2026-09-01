@@ -21,7 +21,7 @@ use crate::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     resolve_builtin_impl, FUNCTION_ALIASES,
   },
-  match_binop_by_arg_types,
+  map_key_from_value, match_binop_by_arg_types,
   resolve::resolve_global,
   seq::ArrayLitBuilder,
   type_infer::infer_expr,
@@ -338,6 +338,10 @@ fn expr_contains_fold_unsafe_effects(expr: &Expr, allow_rng: bool) -> bool {
       MapLiteralEntry::KeyValue { value, .. } => {
         expr_contains_fold_unsafe_effects(value, allow_rng)
       }
+      MapLiteralEntry::Computed { key, value } => {
+        expr_contains_fold_unsafe_effects(key, allow_rng)
+          || expr_contains_fold_unsafe_effects(value, allow_rng)
+      }
       MapLiteralEntry::Splat { expr } => expr_contains_fold_unsafe_effects(expr, allow_rng),
     }),
     Expr::Conditional {
@@ -415,6 +419,7 @@ fn expr_reads_hit(expr: &Expr, bound: &fxhash::FxHashSet<Sym>, local_scope: &Sco
     Expr::ArrayLiteral { elements, .. } => elements.iter().any(|e| hit(&e.expr)),
     Expr::MapLiteral { entries, .. } => entries.iter().any(|entry| match entry {
       MapLiteralEntry::KeyValue { value, .. } => hit(value),
+      MapLiteralEntry::Computed { key, value } => hit(key) || hit(value),
       MapLiteralEntry::Splat { expr } => hit(expr),
     }),
     Expr::Conditional {
@@ -696,6 +701,10 @@ fn hash_expr(
         match entry {
           MapLiteralEntry::KeyValue { key, value } => {
             key.hash(hasher);
+            hash_expr(value, hasher, uses, config)?;
+          }
+          MapLiteralEntry::Computed { key, value } => {
+            hash_expr(key, hasher, uses, config)?;
             hash_expr(value, hasher, uses, config)?;
           }
           MapLiteralEntry::Splat { expr } => {
@@ -2344,13 +2353,37 @@ fn fold_constants<'a>(
       Ok(())
     }
     Expr::MapLiteral { entries, loc } => {
-      for value in entries.iter_mut() {
-        match value {
+      for entry in entries.iter_mut() {
+        match entry {
           MapLiteralEntry::KeyValue { key: _, value } => {
+            optimize_expr(ctx, local_scope, value, allow_rng_const_eval)?;
+          }
+          MapLiteralEntry::Computed { key, value } => {
+            optimize_expr(ctx, local_scope, key, allow_rng_const_eval)?;
             optimize_expr(ctx, local_scope, value, allow_rng_const_eval)?;
           }
           MapLiteralEntry::Splat { expr } => {
             optimize_expr(ctx, local_scope, expr, allow_rng_const_eval)?;
+          }
+        }
+
+        // computed keys that folded to literals collapse into plain kv entries
+        if let MapLiteralEntry::Computed { key, value } = entry {
+          if let Some(key_val) = key.as_literal() {
+            let key_str = map_key_from_value(key_val).map_err(|err| {
+              let (line, col) = ctx.resolve_loc(key.loc());
+              err.with_loc(line, col)
+            })?;
+            *entry = MapLiteralEntry::KeyValue {
+              key: key_str,
+              value: std::mem::replace(
+                value,
+                Expr::Literal {
+                  value: Value::Nil,
+                  loc: SourceLoc::default(),
+                },
+              ),
+            };
           }
         }
       }
@@ -2372,6 +2405,9 @@ fn fold_constants<'a>(
                   key.hash(hasher);
                   hash_expr(value, hasher, uses, ExprHashConfig::const_eval())?;
                 }
+                MapLiteralEntry::Computed { .. } => {
+                  unreachable!("literal-keyed computed entries are rewritten to kv")
+                }
                 MapLiteralEntry::Splat { expr: splat_expr } => {
                   hash_expr(splat_expr, hasher, uses, ExprHashConfig::const_eval())?;
                 }
@@ -2390,6 +2426,9 @@ fn fold_constants<'a>(
           match entry {
             MapLiteralEntry::KeyValue { key, value } => {
               map.insert(key.clone(), value.as_literal().cloned().unwrap());
+            }
+            MapLiteralEntry::Computed { .. } => {
+              unreachable!("literal-keyed computed entries are rewritten to kv")
             }
             MapLiteralEntry::Splat { expr } => {
               let literal = expr.as_literal().unwrap();

@@ -190,12 +190,6 @@ impl FillRule {
   }
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SegmentInterval {
-  pub end: f32,
-  pub has_detail: bool,
-}
-
 const GUIDE_EPSILON: f32 = 1e-6;
 
 pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
@@ -627,43 +621,6 @@ pub(crate) fn build_topology_samples(
   }
 
   samples
-}
-
-pub(crate) fn build_interval_weights(
-  guides: &[f32],
-  sampler_intervals: &[Vec<SegmentInterval>],
-) -> Option<Vec<f32>> {
-  if guides.len() < 2 || sampler_intervals.is_empty() {
-    return None;
-  }
-
-  let mut indices = vec![0usize; sampler_intervals.len()];
-  let mut weights = Vec::with_capacity(guides.len() - 1);
-  for &[start, end] in guides.array_windows::<2>() {
-    let mid = (start + end) * 0.5;
-    let mut all_detail = true;
-
-    for (sampler_ix, intervals) in sampler_intervals.iter().enumerate() {
-      if intervals.is_empty() {
-        all_detail = false;
-        continue;
-      }
-
-      let mut idx = indices[sampler_ix];
-      while idx + 1 < intervals.len() && mid > intervals[idx].end + GUIDE_EPSILON {
-        idx += 1;
-      }
-      indices[sampler_ix] = idx;
-
-      if !intervals[idx].has_detail {
-        all_detail = false;
-      }
-    }
-
-    weights.push(if all_detail { 1.0 } else { 0.0 });
-  }
-
-  Some(weights)
 }
 
 /// Discretizes a path callable into per-subpath polylines.
@@ -1621,42 +1578,8 @@ impl PathSubpath {
     seg.sample_by_length(local_len)
   }
 
-  pub(crate) fn critical_t_values(&self) -> Vec<f32> {
-    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
-      return Vec::new();
-    }
-
-    let mut out = Vec::with_capacity(self.cumulative_lengths.len() + 1);
-    out.push(0.0);
-    for len in &self.cumulative_lengths {
-      out.push((len / self.total_length).clamp(0.0, 1.0));
-    }
-    out
-  }
-
-  pub(crate) fn segment_intervals(&self) -> Vec<SegmentInterval> {
-    if self.segments.is_empty() || self.total_length <= LENGTH_EPSILON {
-      return Vec::new();
-    }
-
-    let mut intervals = Vec::with_capacity(self.segments.len());
-    for (seg, cum_len) in self.segments.iter().zip(self.cumulative_lengths.iter()) {
-      let end = (cum_len / self.total_length).clamp(0., 1.);
-      intervals.push(SegmentInterval {
-        end,
-        has_detail: seg.has_detail(),
-      });
-    }
-
-    intervals
-  }
-
   pub(crate) fn is_closed(&self) -> bool {
     self.closed
-  }
-
-  pub(crate) fn total_length(&self) -> f32 {
-    self.total_length
   }
 }
 
@@ -2540,32 +2463,25 @@ pub(crate) fn sample_subpath_points(
     return Vec::new();
   }
 
-  let mut extra = 0usize;
+  // Segment endpoints are emitted verbatim rather than re-derived through the arc-length
+  // parameterization: the t -> length -> lerp round-trip loses ~1 ULP at corners, which is
+  // enough to break edge coincidence between adjacent polygons in downstream boolean ops.
+  let mut points = Vec::with_capacity(subpath.segments.len() + 1);
   for seg in &subpath.segments {
-    extra = extra.saturating_add(segment_subdivisions(seg, angle_tolerance).saturating_sub(1));
+    let seg_len = seg.length();
+    if seg_len <= LENGTH_EPSILON {
+      continue;
+    }
+    points.push(seg.start_point());
+    let subdivs = segment_subdivisions(seg, angle_tolerance);
+    for j in 1..subdivs {
+      points.push(seg.sample_by_length(seg_len * (j as f32 / subdivs as f32)));
+    }
   }
-
-  let base_count = if include_end {
-    subpath.segments.len() + 1
-  } else {
-    subpath.segments.len()
-  };
-  let target_count = base_count.saturating_add(extra);
-
-  let guides = subpath.critical_t_values();
-  let intervals = subpath.segment_intervals();
-  let interval_weights = build_interval_weights(&guides, &[intervals]);
-  let t_samples = build_topology_samples(
-    target_count,
-    Some(&guides),
-    interval_weights.as_deref(),
-    include_end,
-  );
-
-  t_samples
-    .into_iter()
-    .map(|t| subpath.sample_by_length(t * subpath.total_length()))
-    .collect()
+  if include_end && !points.is_empty() {
+    points.push(subpath.segments.last().unwrap().end());
+  }
+  points
 }
 
 impl PathSampler for PathTracerCallable {
@@ -3680,6 +3596,30 @@ mod tests {
     assert_eq!(points.len(), 3);
     assert_vec2_close(points[0], Vec2::new(0.0, 0.0));
     assert_vec2_close(points[2], Vec2::new(2.0, 0.0));
+  }
+
+  /// Corners must be emitted bit-exactly, not re-derived through the arc-length
+  /// parameterization.  An irrational perimeter (here 2+sqrt(2)) makes that round-trip land
+  /// ~1 ULP off, which is enough to break edge coincidence between adjacent polygons in
+  /// boolean ops and yield non-manifold extrudes.
+  #[test]
+  fn test_sample_subpath_points_exact_corners() {
+    let cmds = vec![
+      DrawCommand::MoveTo(Vec2::new(0.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(1.0, 0.0)),
+      DrawCommand::LineTo(Vec2::new(0.0, 1.0)),
+      DrawCommand::Close,
+    ];
+    let tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
+    let points = sample_subpath_points(&tracer.subpaths[0], std::f32::consts::FRAC_PI_4, false);
+    assert_eq!(
+      points,
+      vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(1.0, 0.0),
+        Vec2::new(0.0, 1.0)
+      ]
+    );
   }
 
   #[test]

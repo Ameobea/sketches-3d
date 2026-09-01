@@ -1,5 +1,6 @@
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
+use fxhash::FxHashMap;
 use mesh::{linked_mesh::Vec3, LinkedMesh};
 use nalgebra::Matrix4;
 use point_distribute::MeshSurfaceSampler;
@@ -473,6 +474,70 @@ impl<const WORLD_SPACE: bool> Sequence for MeshVertsSeq<WORLD_SPACE> {
     Box::new(MeshVertsIter::<WORLD_SPACE>::new(
       self.mesh.clone(false, false, false),
     ))
+  }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, std::marker::ConstParamTy)]
+pub(crate) enum MapIterMode {
+  Keys,
+  Values,
+  Entries,
+}
+
+#[derive(Debug)]
+pub(crate) struct MapIterSeq<const MODE: MapIterMode> {
+  pub map: Rc<FxHashMap<String, Value>>,
+}
+
+pub(crate) struct MapIter<const MODE: MapIterMode> {
+  iter: std::collections::hash_map::Iter<'static, String, Value>,
+  #[allow(dead_code)]
+  map: Rc<FxHashMap<String, Value>>,
+}
+
+impl<const MODE: MapIterMode> MapIter<MODE> {
+  pub fn new(map: Rc<FxHashMap<String, Value>>) -> Self {
+    // safe because the held `Rc` keeps the map alive for the life of the iterator, the map
+    // is never mutated once shared, and its heap allocation is address-stable
+    let iter = unsafe {
+      std::mem::transmute::<
+        std::collections::hash_map::Iter<'_, String, Value>,
+        std::collections::hash_map::Iter<'static, String, Value>,
+      >(map.iter())
+    };
+    Self { iter, map }
+  }
+}
+
+impl<const MODE: MapIterMode> Iterator for MapIter<MODE> {
+  type Item = Result<Value, ErrorStack>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    let (key, val) = self.iter.next()?;
+    Some(Ok(match MODE {
+      MapIterMode::Keys => Value::String(key.clone()),
+      MapIterMode::Values => val.clone(),
+      MapIterMode::Entries => Value::Sequence(Rc::new(EagerSeq {
+        inner: Rc::new(vec![Value::String(key.clone()), val.clone()]),
+      })),
+    }))
+  }
+
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    self.iter.size_hint()
+  }
+}
+
+impl<const MODE: MapIterMode> Sequence for MapIterSeq<MODE> {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(Vec::new())
+  }
+
+  fn consume<'a>(
+    &self,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    Box::new(MapIter::<MODE>::new(Rc::clone(&self.map)))
   }
 }
 

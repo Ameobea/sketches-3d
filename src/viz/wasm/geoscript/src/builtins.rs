@@ -59,8 +59,8 @@ use crate::{
     build_torus_knot_path, cubic_bezier_3d_path, get_superellipse_point, superellipse_path,
   },
   seq::{
-    ApplyTransformsSeq, ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MeshVertsSeq,
-    PointDistributeSeq, ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
+    ApplyTransformsSeq, ChainSeq, EagerSeq, FilterSeq, FlattenSeq, IteratorSeq, MapIterMode,
+    MeshVertsSeq, PointDistributeSeq, ScanSeq, SkipSeq, SkipWhileSeq, TakeSeq, TakeWhileSeq,
   },
   seq_as_eager, ArgRef, Callable, Closure, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
   Vec4,
@@ -76,6 +76,7 @@ pub mod fn_defs;
 pub(crate) mod img_ops;
 pub(crate) mod lerp_path;
 pub(crate) mod load_image;
+pub(crate) mod map_ops;
 pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -1240,14 +1241,6 @@ fn mat4_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   if def_ix == 1 {
-    // Overload resolution ignores leftover positional args, so the zero-arg signature also matches
-    // any call that failed to fit the 16-element form.  Without this check `mat4(1, 2, 3)` would
-    // silently evaluate to the identity.
-    if !args.is_empty() {
-      return Err(ErrorStack::new(
-        "`mat4` takes either no args (identity) or exactly 16 numeric elements in row-major order",
-      ));
-    }
     return Ok(Value::Mat4(Rc::new(Matrix4::identity())));
   }
 
@@ -2773,12 +2766,16 @@ fn tessellate_path_impl(
             let sampler_fr = sampler.fill_rule();
             let sampler_lyon_fr = sampler_fr.and_then(|fr| fr.to_lyon_fill_rule().ok());
 
-            let is_non_default_sampler_fr = sampler_fr
-              .map(|fr| fr != trace_path::FillRule::NonZero)
-              .unwrap_or(false);
+            // A fill rule only forces lyon when CGAL's nesting-based fill can't honor it:
+            // winding-dependent rules over multiple subpaths (single-subpath fills collapse to
+            // the same region).  Unknown subpath count is treated as multiple.
+            let n_subpaths = sampler.subpath_topology().map(|t| t.len());
+            let fr_needs_lyon = |fr: trace_path::FillRule| {
+              fr != trace_path::FillRule::EvenOdd && n_subpaths.map(|n| n > 1).unwrap_or(true)
+            };
             let should_use_lyon = requested_engine == TessEngine::Lyon
-              || fill_rule_override.is_some()
-              || is_non_default_sampler_fr;
+              || fill_rule_override.map(fr_needs_lyon).unwrap_or(false)
+              || sampler_fr.map(fr_needs_lyon).unwrap_or(false);
 
             if should_use_lyon {
               if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
@@ -5806,6 +5803,10 @@ fn len_impl(
     6 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
       Ok(Value::Float(v.magnitude()))
+    }
+    7 => {
+      let m = arg_refs[0].resolve(args, kwargs).as_map().unwrap();
+      Ok(Value::Int(m.len() as i64))
     }
     _ => unimplemented!(),
   }
@@ -10927,6 +10928,33 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
       MeshBooleanOp::Intersection,
     )
   }),
+  "keys" => builtin_fn!(keys, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    map_ops::map_iter_impl::<{ MapIterMode::Keys }>(arg_refs, args, kwargs)
+  }),
+  "values" => builtin_fn!(values, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    map_ops::map_iter_impl::<{ MapIterMode::Values }>(arg_refs, args, kwargs)
+  }),
+  "entries" => builtin_fn!(entries, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    map_ops::map_iter_impl::<{ MapIterMode::Entries }>(arg_refs, args, kwargs)
+  }),
+  "from_entries" => builtin_fn!(from_entries, |_def_ix, arg_refs, args, kwargs, ctx| {
+    map_ops::from_entries_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "has" => builtin_fn!(has, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    map_ops::has_impl(arg_refs, args, kwargs)
+  }),
+  "group_by" => builtin_fn!(group_by, |_def_ix, arg_refs, args, kwargs, ctx| {
+    map_ops::group_by_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "get_in" => builtin_fn!(get_in, |_def_ix, arg_refs, args, kwargs, ctx| {
+    map_ops::get_in_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "set_in" => builtin_fn!(set_in, |_def_ix, arg_refs, args, kwargs, ctx| {
+    map_ops::set_in_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "update_in" => builtin_fn!(update_in, |_def_ix, arg_refs, args, kwargs, ctx| {
+    map_ops::update_in_impl(ctx, arg_refs, args, kwargs)
+  }),
   "fold" => builtin_fn!(fold, |_def_ix, arg_refs: &[ArgRef], args, kwargs, ctx: &EvalCtx| {
     let initial_val = arg_refs[0].resolve(args, kwargs).clone();
     let fn_value = arg_refs[1].resolve(args, kwargs).as_callable().unwrap();
@@ -12858,6 +12886,173 @@ mesh = embed_path(
 }
 
 #[cfg(test)]
+mod map_ops_tests {
+  use crate::{parse_and_eval_program, seq_as_eager, Value};
+
+  fn int_global(ctx: &crate::EvalCtx, name: &str) -> i64 {
+    ctx.get_global(name).unwrap().as_int().unwrap()
+  }
+
+  fn eager_global(ctx: &crate::EvalCtx, name: &str) -> Vec<Value> {
+    let seq = ctx.get_global(name).unwrap().as_sequence().unwrap();
+    (*seq_as_eager(&*seq).unwrap().inner).clone()
+  }
+
+  #[test]
+  fn keys_values_entries_len_has() {
+    let src = r#"
+m = { a: 1, b: 2, c: 3 }
+ks = keys(m) | collect
+vs = values(m) | collect
+es = (entries(m) -> |[k, v]| v * 10) | collect
+n = len(m)
+has_a = has("a", m)
+has_z = has("z", m)
+has_stored_nil = has("x", { x: nil })
+lazy_first = keys(m) | take(1) | collect | len
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+
+    let mut ks: Vec<String> = eager_global(&ctx, "ks")
+      .iter()
+      .map(|v| v.as_str().unwrap().to_owned())
+      .collect();
+    ks.sort();
+    assert_eq!(ks, ["a", "b", "c"]);
+
+    let mut vs: Vec<i64> = eager_global(&ctx, "vs")
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect();
+    vs.sort();
+    assert_eq!(vs, [1, 2, 3]);
+
+    let mut es: Vec<i64> = eager_global(&ctx, "es")
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect();
+    es.sort();
+    assert_eq!(es, [10, 20, 30]);
+
+    assert_eq!(int_global(&ctx, "n"), 3);
+    assert!(ctx.get_global("has_a").unwrap().as_bool().unwrap());
+    assert!(!ctx.get_global("has_z").unwrap().as_bool().unwrap());
+    assert!(ctx.get_global("has_stored_nil").unwrap().as_bool().unwrap());
+    assert_eq!(int_global(&ctx, "lazy_first"), 1);
+  }
+
+  #[test]
+  fn from_entries_roundtrip() {
+    let src = r#"
+m = from_entries([["a", 1], [2, 20], ["a", 3]])
+a = m.a
+b = m[2]
+rt = { x: 1, y: 2 } | entries | from_entries
+rx = rt.x
+ry = rt.y
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    assert_eq!(int_global(&ctx, "a"), 3);
+    assert_eq!(int_global(&ctx, "b"), 20);
+    assert_eq!(int_global(&ctx, "rx"), 1);
+    assert_eq!(int_global(&ctx, "ry"), 2);
+  }
+
+  #[test]
+  fn group_by_basic() {
+    let src = r#"
+g = 0..10 | group_by(|x| if x % 2 == 0 { "even" } else { "odd" })
+evens = g.even | collect
+odds = g.odd | collect
+n = len(g)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let evens: Vec<i64> = eager_global(&ctx, "evens")
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect();
+    let odds: Vec<i64> = eager_global(&ctx, "odds")
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect();
+    assert_eq!(evens, [0, 2, 4, 6, 8]);
+    assert_eq!(odds, [1, 3, 5, 7, 9]);
+    assert_eq!(int_global(&ctx, "n"), 2);
+  }
+
+  #[test]
+  fn group_by_int_keys() {
+    let src = r#"
+g = 0..6 | group_by(|x| int(x / 2))
+zeros = g[0] | collect
+n = len(g)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let zeros: Vec<i64> = eager_global(&ctx, "zeros")
+      .iter()
+      .map(|v| v.as_int().unwrap())
+      .collect();
+    assert_eq!(zeros, [0, 1]);
+    assert_eq!(int_global(&ctx, "n"), 3);
+  }
+
+  #[test]
+  fn get_set_update_in() {
+    let src = r#"
+state = { customers: { alice: { balance: 5 } } }
+
+bal = get_in(["customers", "alice", "balance"], state)
+missing = get_in(["customers", "bob", "balance"], state)
+defaulted = get_in(["customers", "bob", "balance"], state, 0)
+through_non_map = get_in(["customers", "alice", "balance", "deeper"], state, -1)
+
+updated = set_in(["customers", "alice", "balance"], 10, state)
+new_bal = get_in(["customers", "alice", "balance"], updated)
+old_bal = get_in(["customers", "alice", "balance"], state)
+
+created = set_in(["customers", "bob", "balance"], 7, state)
+bob_bal = get_in(["customers", "bob", "balance"], created)
+alice_intact = get_in(["customers", "alice", "balance"], created)
+
+incremented = state | update_in(["customers", "alice", "balance"], |b| b + 1)
+inc_bal = get_in(["customers", "alice", "balance"], incremented)
+
+with_default = state | update_in(["customers", "bob", "visits"], |v| v + 1, default=0)
+visits = get_in(["customers", "bob", "visits"], with_default)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    assert_eq!(int_global(&ctx, "bal"), 5);
+    assert!(ctx.get_global("missing").unwrap().is_nil());
+    assert_eq!(int_global(&ctx, "defaulted"), 0);
+    assert_eq!(int_global(&ctx, "through_non_map"), -1);
+    assert_eq!(int_global(&ctx, "new_bal"), 10);
+    assert_eq!(int_global(&ctx, "old_bal"), 5);
+    assert_eq!(int_global(&ctx, "bob_bal"), 7);
+    assert_eq!(int_global(&ctx, "alice_intact"), 5);
+    assert_eq!(int_global(&ctx, "inc_bal"), 6);
+    assert_eq!(int_global(&ctx, "visits"), 1);
+  }
+
+  #[test]
+  fn set_in_through_non_map_errors() {
+    assert!(parse_and_eval_program(r#"set_in(["a", "b"], 1, { a: 5 })"#).is_err());
+  }
+
+  #[test]
+  fn entry_api_accumulation_pattern() {
+    let src = r#"
+levels = [3, 1, 3, 2, 1, 3]
+  | fold({}, |acc, x| acc | update_in([x], |vals| append(x * 10, vals), default=[]))
+threes = levels[3] | collect | len
+ones = levels[1] | collect | len
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    assert_eq!(int_global(&ctx, "threes"), 3);
+    assert_eq!(int_global(&ctx, "ones"), 2);
+  }
+}
+
+#[cfg(test)]
 mod mat4_tests {
   use crate::{parse_and_eval_program, EvalCtx, Vec3};
 
@@ -13100,19 +13295,18 @@ s = sin(v2(0, pi/2))
 
   #[test]
   fn test_mat4_rejects_malformed_arg_counts() {
-    // Overload resolution ignores leftover positional args, so the zero-arg identity signature
-    // matches anything that failed the 16-element form.  These must error rather than silently
-    // returning the identity.
+    // The zero-arg identity signature must not swallow calls that under-fill the
+    // 16-element form; those curry into partial applications like any other builtin.
     for src in [
       "out = mat4(1, 2, 3)",
       "out = mat4(1)",
       "out = mat4(1, 0, 0, 7, 0, 1, 0, 8, 0, 0, 1, 9, 0, 0, 0)",
     ] {
-      let err = parse_and_eval_program(src).unwrap_err();
-      let msg = format!("{err}");
+      let ctx = parse_and_eval_program(src).unwrap();
+      let out = ctx.get_global("out").unwrap();
       assert!(
-        msg.contains("exactly 16"),
-        "`{src}` should have been rejected, got: {msg}"
+        matches!(out, crate::Value::Callable(_)),
+        "`{src}` should partially apply, got: {out:?}"
       );
     }
 

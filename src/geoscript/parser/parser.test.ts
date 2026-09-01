@@ -113,6 +113,11 @@ const CASES: Case[] = [
   { src: '[*f(1), *(0..3)]', expected: { ok: 1 } },
   { src: '[a * b]', expected: { ok: 1 } },
   { src: '[**a]', expected: { err: true } },
+  // Computed map keys
+  { src: 'm = { [k]: 1 }', expected: { ok: 1 } },
+  { src: '{ [1 + 2]: 3, a: 4 }', expected: { ok: 1 } },
+  { src: '{ [k]: 1, *rest }', expected: { ok: 1 } },
+  { src: '{ []: 1 }', expected: { err: true } },
 ];
 
 interface LezerResult {

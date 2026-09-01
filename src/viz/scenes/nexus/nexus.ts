@@ -221,10 +221,10 @@ export const processLoadedScene = async (
         noiseRotation: PortalNoiseRotationByName[portalKey],
       }
     );
-    // it would be good to eventually be able to handle these transparent portals correctly so that the
-    // volumetrics show up behind them, but that makes things very complicated with the depth pre-pass
-    // and other render passes so isn't worth it for now
-    // portal.material.depthWrite = false;
+    // Portals don't write depth, so the volumetric raymarch integrates fog behind them.
+    // FinalPass composites them over the fog anyway (no fogCoverageAttenuatesEmissive
+    // without a SkyStack) — the pit fog sits entirely below every portal, so punching
+    // through is the correct look.
     portal.userData.noLight = true;
 
     if (!portal.name.includes('_') || !unmappedColor) {

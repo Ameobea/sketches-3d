@@ -225,6 +225,10 @@ impl Resolver {
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { value, .. } => self.walk_expr(value, None),
+            MapLiteralEntry::Computed { key, value } => {
+              self.walk_expr(key, None);
+              self.walk_expr(value, None);
+            }
             MapLiteralEntry::Splat { expr } => self.walk_expr(expr, None),
           }
         }

@@ -532,9 +532,11 @@ pub fn path_boolean_impl(
         interned_t_kwarg,
         critical_points,
       );
-      // The output has been resolved by the chosen engine using this fill rule, so carry it
-      // forward.
-      tracer.fill_rule = Some(fill_rule_enum);
+      // The op's fill rule is already resolved into the output: rings are non-crossing and
+      // winding-consistent, so nesting-based evenodd describes the region exactly.  Carrying the
+      // winding-dependent input rule forward instead would push downstream tessellation onto the
+      // lyon path, which mishandles the collinear touch configurations boolean outputs contain.
+      tracer.fill_rule = Some(FillRule::EvenOdd);
       Ok(Value::Callable(Rc::new(Callable::Dynamic {
         name: fn_name.to_owned(),
         inner: Box::new(tracer),

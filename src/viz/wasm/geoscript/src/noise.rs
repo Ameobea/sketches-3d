@@ -149,7 +149,7 @@ fn perlin2(x: f32, y: f32) -> f32 {
   let (dx, dy) = (x - fx, y - fy);
   let (fdx, fdy) = (dx - 1., dy - 1.);
 
-  let [h00, h10, h01, h11] = corner_hashes2(nx, ny, nx + 1, ny + 1);
+  let [h00, h10, h01, h11] = corner_hashes2(nx, ny, nx.wrapping_add(1), ny.wrapping_add(1));
   let f00 = surflet2_at(h00, dx, dy);
   let f10 = surflet2_at(h10, fdx, dy);
   let f01 = surflet2_at(h01, dx, fdy);
@@ -165,9 +165,12 @@ fn perlin3(x: f32, y: f32, z: f32) -> f32 {
   let (dx, dy, dz) = (x - fx, y - fy, z - fz);
   let (fdx, fdy, fdz) = (dx - 1., dy - 1., dz - 1.);
 
-  let (p00, p10) = (perm2(nx, ny), perm2(nx + 1, ny));
-  let (p01, p11) = (perm2(nx, ny + 1), perm2(nx + 1, ny + 1));
-  let (q0, q1) = ((nz & 0xff) as usize, ((nz + 1) & 0xff) as usize);
+  let (p00, p10) = (perm2(nx, ny), perm2(nx.wrapping_add(1), ny));
+  let (p01, p11) = (
+    perm2(nx, ny.wrapping_add(1)),
+    perm2(nx.wrapping_add(1), ny.wrapping_add(1)),
+  );
+  let (q0, q1) = ((nz & 0xff) as usize, (nz.wrapping_add(1) & 0xff) as usize);
 
   let f000 = surflet3_at(p00 ^ q0, dx, dy, dz);
   let f100 = surflet3_at(p10 ^ q0, fdx, dy, dz);

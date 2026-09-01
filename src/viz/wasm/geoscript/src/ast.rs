@@ -338,19 +338,26 @@ pub struct ArrayLiteralElem {
 #[derive(Clone, Debug)]
 pub enum MapLiteralEntry {
   KeyValue { key: String, value: Expr },
+  Computed { key: Expr, value: Expr },
   Splat { expr: Expr },
 }
 
 impl MapLiteralEntry {
-  pub(crate) fn expr(&self) -> &Expr {
-    match self {
-      MapLiteralEntry::KeyValue { key: _, value } => value,
-      MapLiteralEntry::Splat { expr } => expr,
-    }
+  pub(crate) fn exprs(&self) -> impl Iterator<Item = &Expr> {
+    let (first, second) = match self {
+      MapLiteralEntry::KeyValue { key: _, value } => (value, None),
+      MapLiteralEntry::Computed { key, value } => (key, Some(value)),
+      MapLiteralEntry::Splat { expr } => (expr, None),
+    };
+    std::iter::once(first).chain(second)
   }
 
   pub fn is_literal(&self) -> bool {
-    self.expr().is_literal()
+    match self {
+      MapLiteralEntry::KeyValue { key: _, value } => value.is_literal(),
+      MapLiteralEntry::Computed { key, value } => key.is_literal() && value.is_literal(),
+      MapLiteralEntry::Splat { expr } => expr.is_literal(),
+    }
   }
 }
 
@@ -519,6 +526,10 @@ impl Expr {
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { key: _, value } => value.traverse(cb),
+            MapLiteralEntry::Computed { key, value } => {
+              key.traverse(cb);
+              value.traverse(cb);
+            }
             MapLiteralEntry::Splat { expr } => expr.traverse(cb),
           }
         }
@@ -642,6 +653,10 @@ impl Expr {
         for entry in entries {
           match entry {
             MapLiteralEntry::KeyValue { key: _, value } => value.traverse_mut(cb),
+            MapLiteralEntry::Computed { key, value } => {
+              key.traverse_mut(cb);
+              value.traverse_mut(cb);
+            }
             MapLiteralEntry::Splat { expr } => expr.traverse_mut(cb),
           }
         }
@@ -1383,6 +1398,15 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
           Rule::map_kv => {
             let mut inner = entry.into_inner();
             let key = inner.next().unwrap();
+            if key.as_rule() == Rule::map_computed_key {
+              let key_expr = parse_expr(ctx, key.into_inner().next().unwrap())?;
+              let value_expr = parse_expr(ctx, inner.next().unwrap())?;
+              out_entries.push(MapLiteralEntry::Computed {
+                key: key_expr,
+                value: value_expr,
+              });
+              continue;
+            }
             let key = match key.as_rule() {
               Rule::double_quote_string_literal => {
                 parse_double_quote_string_inner(key.into_inner().next().unwrap())?
@@ -2563,7 +2587,9 @@ pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
       acc | get_dyn_type(&elem.expr, local_scope)
     }),
     Expr::MapLiteral { entries, .. } => entries.iter().fold(DynType::Const, |acc, entry| {
-      acc | get_dyn_type(entry.expr(), local_scope)
+      entry
+        .exprs()
+        .fold(acc, |acc, e| acc | get_dyn_type(e, local_scope))
     }),
     Expr::Literal { .. } => DynType::Const,
     Expr::Conditional {
