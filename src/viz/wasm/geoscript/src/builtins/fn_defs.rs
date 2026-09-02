@@ -8968,7 +8968,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Single-parameter closure to differentiate.  Its parameter must carry an explicit type annotation (numeric, vec2, or vec3)."
+            description: "Closure to differentiate with respect to its FIRST parameter, which must carry an explicit type annotation (numeric, vec2, or vec3). Further parameters pass through unchanged (constant w.r.t. the derivative); the returned closure takes the same parameter list."
           },
           ArgDef {
             name: "dir",
@@ -8994,7 +8994,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Single-parameter, scalar-output closure to differentiate.  Its parameter must carry an explicit type annotation."
+            description: "Scalar-output closure to differentiate with respect to its FIRST parameter, which must carry an explicit type annotation (numeric, vec2, or vec3). Any further parameters pass through unchanged and are treated as constants, so values that change between calls can be arguments instead of captures; the returned closure takes the same parameter list. Prefer that over calling `grad` inside a loop: every `grad` call re-derives and re-optimizes the closure body, while a hoisted gradient is derived once."
           },
         ],
         description: "Returns a closure computing the gradient of a scalar-output function `f`.  For a vec2/vec3 input the result returns the vector of partial derivatives; for a scalar input it is just `f'`.",
@@ -9312,6 +9312,32 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns the axis-aligned bounding box of `mesh` as a 2-element sequence `[mins, maxs]` of Vec3 corners, in world space (after the mesh's transform is applied). Errors if the mesh is empty.",
         return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "fit_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A 2D path sampler callable of signature `|t: num|: vec2`."
+          },
+          ArgDef {
+            name: "pad",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Padding on every side as a fraction of the unit square, in [0, 0.5)."
+          },
+        ],
+        description: "Uniformly scales and translates a 2D path so its bounding box fits inside `[pad, 1-pad]²`, filling the longer axis and centering the shorter one.  Aspect ratio is preserved.  The usual first step before `rasterize_path` / `path_sdf` / `path_uv` for glyphs, traced SVGs, or anything authored in arbitrary units.\n\nUses the exact analytic bounding box when available (see `path_aabb`), falling back to the discretized outline for black-box samplers or arcs under non-uniform transforms.",
+        return_type: &[ArgType::Callable],
       },
     ],
   },
@@ -15532,6 +15558,182 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Synthesizes a new texture by evaluating `generator` at every pixel",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "rasterize_path" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output width in texels"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output height in texels"
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to the path's own fill rule, else `nonzero`."
+          },
+          ArgDef {
+            name: "tileable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "`true` tiles seamlessly with period 1 in path units (the texture's UV extent); a number tiles with that period. The path is replicated at every period offset before rasterizing, so shapes crossing the texture edge wrap around and distances/`t` are measured to the nearest copy."
+          },
+          ArgDef {
+            name: "wrap",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("repeat".to_owned())),
+            description: "Boundary behavior consulted by texture ops: \"repeat\" (seamless/toroidal, the default), \"clamp\", or \"mirror\""
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing curves.  When nil, curves are instead flattened to within 0.05 texels of the true curve (and at most 12° per segment), which is usually far fewer segments than the ambient 1° setting."
+          },
+        ],
+        description: "Rasterizes a 2D path into a 1-channel anti-aliased coverage texture: each texel holds the fraction of its area inside the fill under `fill_rule`, so edge texels get partial values.  Follows SVG fill semantics: open subpaths are implicitly closed.\n\nFor strokes, threshold `abs(path_sdf(p))` (round joins/caps) or fill `offset_path(w/2, p)` (exact joins/caps).  The result is an ordinary texture: blit it, scatter it, use it as a mask.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "path_sdf" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output width in texels"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output height in texels"
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for determining path interiors: evenodd, nonzero, positive, negative (or numeric enum 0-3).  Defaults to the path's own fill rule, else `nonzero`."
+          },
+          ArgDef {
+            name: "tileable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "`true` tiles seamlessly with period 1 in path units (the texture's UV extent); a number tiles with that period. The path is replicated at every period offset before rasterizing, so shapes crossing the texture edge wrap around and distances/`t` are measured to the nearest copy."
+          },
+          ArgDef {
+            name: "wrap",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("repeat".to_owned())),
+            description: "Boundary behavior consulted by texture ops: \"repeat\" (seamless/toroidal, the default), \"clamp\", or \"mirror\""
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing curves.  When nil, curves are instead flattened to within 0.05 texels of the true curve (and at most 12° per segment), which is usually far fewer segments than the ambient 1° setting."
+          },
+        ],
+        description: "Signed distance field of a 2D path as a 1-channel texture sampled at texel centers.  Distance is to the drawn curve in path units (the same units as `offset_path` deltas, so `path_sdf(p) < r` agrees with `rasterize_path(offset_path(r, p))`).  Negative inside closed subpaths under `fill_rule`; open subpaths contribute unsigned distance only.\n\nSelf-overlapping shapes keep interior seams in the field; run `path_union(p, p)` first for distance to the filled boundary.  Distance fields compose exactly with `min`/`max` and `blit(..., blend=\"min\")`; threshold once at the end (`smoothstep` with a texel-sized ramp for anti-aliasing).",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "path_uv" => FnDef {
+    module: "texture",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output width in texels"
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(256)),
+            description: "Output height in texels"
+          },
+          ArgDef {
+            name: "tileable",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "`true` tiles seamlessly with period 1 in path units (the texture's UV extent); a number tiles with that period. The path is replicated at every period offset before rasterizing, so shapes crossing the texture edge wrap around and distances/`t` are measured to the nearest copy."
+          },
+          ArgDef {
+            name: "wrap",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("repeat".to_owned())),
+            description: "Boundary behavior consulted by texture ops: \"repeat\" (seamless/toroidal, the default), \"clamp\", or \"mirror\""
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing curves.  When nil, curves are instead flattened to within 0.05 texels of the true curve (and at most 12° per segment), which is usually far fewer segments than the ambient 1° setting."
+          },
+        ],
+        description: "Along/across parameterization of a 2D path as a 2-channel `(t, n)` texture.  `t` is the global arc-length parameter (as used by `path_frame` / `trim_path`) of the nearest point on the path; `n` is the signed distance along the `path_frame` normal there: left of travel for open subpaths, inward for closed ones (so `n > 0` inside a closed shape while `path_sdf` is negative).  The 2D analog of `rail_sweep` UVs: stitches via `fract(t * count)` masked by `abs(n) < w`, gradients along a curve via a ramp on `t`.\n\n`t` jumps across the medial axis (texels equidistant from two parts of the path); that discontinuity is inherent to nearest-point parameterization.",
         return_type: &[ArgType::Texture],
       },
     ],

@@ -11,6 +11,7 @@ import type { MaterialOverrideMode } from 'src/geotoy/types';
 import { buildGeotoyKeymap } from 'src/geotoy/modules/keymapTable';
 import { WorkerManager } from 'src/geoscript/workerManager';
 import type { EvalRequest } from 'src/geotoy/modes/mesh/evalResult';
+import type { BenchRequest } from 'src/geotoy/renderHarness';
 
 const locations = {
   spawn: {
@@ -32,6 +33,8 @@ export interface GeoscriptPlaygroundUserData {
   failRenderOnError?: boolean;
   /** `geotoy eval`: serialize the run's outputs to JSON (`window.onEvalReady`) instead of rendering. */
   evalRequest?: EvalRequest;
+  /** Benchmark: re-run the composition N times in place and report timings (`window.onBenchReady`). */
+  benchRequest?: BenchRequest;
   me?: User | null | undefined;
 }
 

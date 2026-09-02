@@ -9,12 +9,14 @@
  *   bun scripts/sync-geo-compositions.ts [--no-pull] [--db <path>] [--out <dir>]
  */
 import { Database } from 'bun:sqlite';
-import { existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 import type { CompositionDoc, NodeDef, TreeDef } from '../src/geoscript/geotoyAPIClient';
 
-const REMOTE_DB = 'debian@ameo.dev:/opt/dream/db/geoscript_backend.sqlite3';
+const REMOTE_HOST = 'debian@ameo.dev';
+const REMOTE_DB = '/opt/dream/db/geoscript_backend.sqlite3';
+const REMOTE_SNAPSHOT = '/tmp/geoscript_backend.snapshot.sqlite3';
 const ROOT = join(import.meta.dir, '..');
 
 const args = process.argv.slice(2);
@@ -31,15 +33,25 @@ if (!existsSync(outDir)) {
   process.exit(1);
 }
 
-if (!args.includes('--no-pull')) {
-  console.log(`syncing ${REMOTE_DB} → ${dbPath}`);
-  const { exitCode } = Bun.spawnSync(['rsync', REMOTE_DB, dbPath], {
-    stdout: 'inherit',
-    stderr: 'inherit',
-  });
+const run = (cmd: string[]) => {
+  const { exitCode } = Bun.spawnSync(cmd, { stdout: 'inherit', stderr: 'inherit' });
   if (exitCode !== 0) {
-    console.error(`✗ rsync failed (exit ${exitCode})`);
+    console.error(`✗ ${cmd[0]} failed (exit ${exitCode})`);
     process.exit(1);
+  }
+};
+
+if (!args.includes('--no-pull')) {
+  console.log(`syncing ${REMOTE_HOST}:${REMOTE_DB} → ${dbPath}`);
+  // Prod DB is WAL-mode; VACUUM INTO folds pending WAL frames into a rollback-mode snapshot that opens read-only.
+  run([
+    'ssh',
+    REMOTE_HOST,
+    `rm -f ${REMOTE_SNAPSHOT} && sqlite3 ${REMOTE_DB} "VACUUM INTO '${REMOTE_SNAPSHOT}'"`,
+  ]);
+  run(['rsync', `${REMOTE_HOST}:${REMOTE_SNAPSHOT}`, dbPath]);
+  for (const suffix of ['-wal', '-shm']) {
+    rmSync(`${dbPath}${suffix}`, { force: true });
   }
 }
 

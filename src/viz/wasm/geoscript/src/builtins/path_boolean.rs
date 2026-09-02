@@ -70,6 +70,10 @@ mod bool_result_cache {
     static CACHE: RefCell<FlatMemoCache<BooleanResult>> = RefCell::new(FlatMemoCache::default());
   }
 
+  pub fn clear() {
+    CACHE.with(|c| c.borrow_mut().clear());
+  }
+
   pub fn build_key(
     op_discriminant: u32,
     fill_rule: u32,
@@ -994,4 +998,9 @@ pub fn path_union_seq(ctx: &EvalCtx, seq: Rc<dyn Sequence>) -> Result<Value, Err
     ArgRef::Default(Value::Nil),
   ];
   path_union_impl(ctx, 1, &arg_refs, &[Value::Sequence(seq)], EMPTY_KWARGS)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn clear_memo() {
+  bool_result_cache::clear();
 }

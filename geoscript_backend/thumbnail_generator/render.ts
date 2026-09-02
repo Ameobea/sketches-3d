@@ -3,6 +3,7 @@
 import express, { type Request, type Response } from 'express';
 import puppeteer, { type Page, type Browser } from 'puppeteer';
 import sharp from 'sharp';
+import { gzipSync } from 'node:zlib';
 
 const app = express();
 const port = 5812;
@@ -33,6 +34,31 @@ interface MaterialRender {
 const activeCompositionRenders = new Map<string, CompositionRender>();
 const activeMaterialRenders = new Map<string, MaterialRender>();
 
+// Keeps a benchmarked page from being throttled as a background renderer.
+const BENCH_ARGS = [
+  '--disable-background-timer-throttling',
+  '--disable-renderer-backgrounding',
+  '--disable-backgrounding-occluded-windows',
+];
+
+// What the DevTools Performance panel records, minus screenshots; `blink.user_timing` carries
+// the harness' per-run marks.
+const TRACE_CATEGORIES = [
+  '-*',
+  'devtools.timeline',
+  'disabled-by-default-devtools.timeline',
+  'disabled-by-default-devtools.timeline.frame',
+  'disabled-by-default-devtools.timeline.stack',
+  'disabled-by-default-v8.cpu_profiler',
+  'disabled-by-default-v8.cpu_profiler.hires',
+  'v8.execute',
+  'blink.user_timing',
+  'blink.console',
+  'toplevel',
+  'loading',
+  'latencyInfo',
+];
+
 const PROD_TRANSIENT_URL = 'https://3d.ameo.design/geotoy/render';
 const DEV_TRANSIENT_URL = 'http://localhost:4800/geotoy/render';
 
@@ -53,6 +79,10 @@ interface TransientRenderOptions {
   materialOverride?: 'normal' | 'wireframe' | 'wireframe-xray';
   /** `geotoy eval`: serialize the run's outputs to JSON instead of rendering an image. */
   eval?: unknown;
+  /** Benchmark request (dev only): re-run in place and report timings instead of rendering. */
+  bench?: unknown;
+  /** Bench only (dev only): capture a DevTools trace of the timed runs. */
+  trace?: boolean;
 }
 
 interface TransientRenderBody {
@@ -61,28 +91,39 @@ interface TransientRenderBody {
   options?: TransientRenderOptions;
 }
 
-/** How a render page signalled completion: a normal frame, or an eval-mode JSON payload. */
-type ReadySignal = { kind: 'render' } | { kind: 'eval'; json: string };
+/** How a render page signalled completion: a normal frame, or an eval/bench JSON payload. */
+type ReadySignal = { kind: 'render' } | { kind: 'eval'; json: string } | { kind: 'bench'; json: string };
 
 async function setupPage(
   page: Page,
   url: string,
   abortController: AbortController,
-  opts: { width?: number; height?: number; allowLocalhost?: boolean; timeoutMs?: number } = {}
-): Promise<{ promise: Promise<ReadySignal>; getDiagnostics: () => string[] }> {
+  opts: {
+    width?: number;
+    height?: number;
+    allowLocalhost?: boolean;
+    timeoutMs?: number;
+    trace?: boolean;
+  } = {}
+): Promise<{
+  promise: Promise<ReadySignal>;
+  getDiagnostics: () => string[];
+  isTracing: () => boolean;
+}> {
   await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
   const allowLocalhost = !!opts.allowLocalhost;
   const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
 
   // Capture in-page failures (console errors/warnings, uncaught exceptions, failed
   // requests) so a hung or broken render can report *why* instead of a bare timeout.
+  let tracing = false;
   const diagnostics: string[] = [];
   const pushDiag = (line: string) => {
     if (diagnostics.length < 100) diagnostics.push(line);
   };
   page.on('console', msg => {
     const type = msg.type();
-    if (type === 'error' || type === 'warning') {
+    if (type === 'error' || type === 'warning' || type === 'warn') {
       pushDiag(`[console.${type}] ${msg.text()}`);
     }
   });
@@ -100,6 +141,8 @@ async function setupPage(
     });
   });
 
+  let settleReady!: (signal: ReadySignal) => void;
+  let failReady!: (err: Error) => void;
   const renderReadyPromise = new Promise<ReadySignal>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Render timed out after ${timeoutMs}ms`)), timeoutMs);
 
@@ -119,23 +162,46 @@ async function setupPage(
       clearTimeout(timeout);
       abortController.signal.removeEventListener('abort', onAbort);
     };
-
-    page.exposeFunction('onRenderReady', () => {
+    settleReady = signal => {
       settle();
-      resolve({ kind: 'render' });
-    });
+      resolve(signal);
+    };
+    failReady = err => {
+      settle();
+      reject(err);
+    };
+  });
+
+  // Awaited: an un-awaited binding can miss the navigation, leaving the page's readiness
+  // call a silent no-op that only surfaces as a timeout.
+  await Promise.all([
+    page.exposeFunction('onRenderReady', () => settleReady({ kind: 'render' })),
     // A geoscript run error / wasm panic — fail the render with the message instead of
     // capturing a blank frame, so the CLI reports why.
-    page.exposeFunction('onRenderError', (msg: string) => {
-      settle();
-      reject(new Error(typeof msg === 'string' && msg.length ? msg : 'Geoscript run failed'));
-    });
+    page.exposeFunction('onRenderError', (msg: string) =>
+      failReady(new Error(typeof msg === 'string' && msg.length ? msg : 'Geoscript run failed'))
+    ),
     // Eval mode: the page serialized the run's outputs to JSON instead of rendering.
-    page.exposeFunction('onEvalReady', (json: string) => {
-      settle();
-      resolve({ kind: 'eval', json: typeof json === 'string' ? json : String(json) });
-    });
-  });
+    page.exposeFunction('onEvalReady', (json: string) =>
+      settleReady({ kind: 'eval', json: typeof json === 'string' ? json : String(json) })
+    ),
+    page.exposeFunction('onBenchReady', (json: string) =>
+      settleReady({ kind: 'bench', json: typeof json === 'string' ? json : String(json) })
+    ),
+    // The bench harness awaits this before its timed runs, so tracing excludes boot + warmup.
+    page.exposeFunction('onBenchPhase', async (phase: string) => {
+      if (phase === 'timed' && opts.trace && !tracing) {
+        tracing = true;
+        await page.tracing.start({ categories: TRACE_CATEGORIES });
+      }
+    }),
+  ]);
+
+  // Dev pages load from localhost anyway, and interception pauses module-worker imports
+  // that never resume under this puppeteer, so the request policy is prod-only.
+  if (allowLocalhost) {
+    return { promise: renderReadyPromise, getDiagnostics: () => diagnostics, isTracing: () => tracing };
+  }
 
   await page.setRequestInterception(true);
 
@@ -184,7 +250,7 @@ async function setupPage(
     request.continue();
   });
 
-  return { promise: renderReadyPromise, getDiagnostics: () => diagnostics };
+  return { promise: renderReadyPromise, getDiagnostics: () => diagnostics, isTracing: () => tracing };
 }
 
 interface RenderOpts {
@@ -199,23 +265,36 @@ interface RenderOpts {
   beforeNavigate?: (page: Page) => Promise<void>;
   /** Readiness timeout in ms before the render fails (with captured diagnostics). */
   timeoutMs?: number;
+  /** Bench request: launch with anti-throttling flags. */
+  bench?: boolean;
+  /** Bench: record a DevTools trace of the timed runs, returned gzipped. */
+  trace?: boolean;
 }
+
+type RenderOutput = Buffer | { evalJson: string } | { benchJson: string; traceGz: Buffer | null };
 
 async function render(
   url: string,
   abortController: AbortController,
   opts: RenderOpts = {}
-): Promise<Buffer | { evalJson: string }> {
+): Promise<RenderOutput> {
   console.log('Launching browser...');
-  const browser: Browser = await puppeteer.launch({ args: BROWSER_ARGS });
+  const browser: Browser = await puppeteer.launch({
+    args: opts.bench ? [...BROWSER_ARGS, ...BENCH_ARGS] : BROWSER_ARGS,
+  });
 
   try {
     const page = await browser.newPage();
-    const { promise: renderReadyPromise, getDiagnostics } = await setupPage(page, url, abortController, {
+    const {
+      promise: renderReadyPromise,
+      getDiagnostics,
+      isTracing,
+    } = await setupPage(page, url, abortController, {
       width: opts.width,
       height: opts.height,
       allowLocalhost: opts.allowLocalhost,
       timeoutMs: opts.timeoutMs,
+      trace: opts.trace,
     });
 
     if (opts.beforeNavigate) {
@@ -232,6 +311,12 @@ async function render(
       if (ready.kind === 'eval') {
         console.log('Received eval result.');
         return { evalJson: ready.json };
+      }
+      if (ready.kind === 'bench') {
+        const raw = isTracing() ? await page.tracing.stop() : null;
+        const traceGz = raw ? gzipSync(raw) : null;
+        console.log(`Received bench result${raw ? ` + trace (${raw.length} bytes raw)` : ''}.`);
+        return { benchJson: ready.json, traceGz };
       }
 
       console.log('Taking screenshot...');
@@ -367,9 +452,14 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
   const height = options.height ?? 800;
   const quality = options.quality;
   const dev = !!options.dev;
+  const bench = options.bench;
+  const trace = !!options.trace;
+  if ((bench || trace) && !dev) {
+    return res.status(400).send('bench/trace are only available in dev mode');
+  }
   const timeoutMs =
     typeof options.timeoutMs === 'number' && options.timeoutMs > 0
-      ? Math.min(options.timeoutMs, 10 * 60 * 1000)
+      ? Math.min(options.timeoutMs, (bench ? 60 : 10) * 60 * 1000)
       : undefined;
 
   if (width < 16 || width > 4096 || height < 16 || height > 4096) {
@@ -396,21 +486,44 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
     if (!res.writableEnded) abortController.abort();
   });
 
+  // A bench can run for many minutes; fetch clients (bun, undici) drop a silent connection after
+  // ~5 min, so the headers go out now and whitespace keeps the body alive until the JSON lands.
+  // Errors then travel in-band as `{ error }`.
+  let keepAlive: ReturnType<typeof setInterval> | null = null;
+  if (bench) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    keepAlive = setInterval(() => res.write(' '), 10_000);
+  }
+  const endBench = (payload: unknown) => {
+    clearInterval(keepAlive!);
+    res.end(JSON.stringify(payload));
+  };
+
   try {
-    const payload = { tree, metadata, materialOverride: options.materialOverride, eval: options.eval };
+    const payload = {
+      tree,
+      metadata,
+      materialOverride: options.materialOverride,
+      eval: options.eval,
+      bench,
+    };
     const out = await render(url, abortController, {
       encode,
       width,
       height,
       allowLocalhost: dev,
       timeoutMs,
+      bench: !!bench,
+      trace,
       beforeNavigate: async page => {
         await page.evaluateOnNewDocument((p: unknown) => {
           (window as any).__transientCompositionPayload = p;
         }, payload);
       },
     });
-    if (typeof out === 'object' && !Buffer.isBuffer(out)) {
+    if (typeof out === 'object' && !Buffer.isBuffer(out) && 'benchJson' in out) {
+      endBench({ bench: JSON.parse(out.benchJson), traceGz: out.traceGz?.toString('base64') ?? null });
+    } else if (typeof out === 'object' && !Buffer.isBuffer(out)) {
       res.set('Content-Type', 'application/json');
       res.send(out.evalJson);
     } else {
@@ -419,7 +532,12 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
     }
   } catch (error) {
     console.error('Transient render failed:', error);
-    res.status(500).type('text/plain').send(error instanceof Error ? error.message : 'Render failed');
+    const message = error instanceof Error ? error.message : 'Render failed';
+    if (bench) {
+      endBench({ error: message });
+    } else {
+      res.status(500).type('text/plain').send(message);
+    }
   }
 });
 

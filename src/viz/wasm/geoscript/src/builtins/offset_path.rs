@@ -59,6 +59,10 @@ mod offset_result_cache {
     static CACHE: RefCell<FlatMemoCache<Vec<Vec<Vec2>>>> = RefCell::new(FlatMemoCache::default());
   }
 
+  pub fn clear() {
+    CACHE.with(|c| c.borrow_mut().clear());
+  }
+
   pub fn build_key(
     coords: &[f32],
     path_lengths: &[u32],
@@ -472,4 +476,9 @@ pub fn offset_path_impl(
     )),
     _ => unimplemented!(),
   }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn clear_memo() {
+  offset_result_cache::clear();
 }

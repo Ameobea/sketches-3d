@@ -82,6 +82,7 @@ pub(crate) mod offset_path;
 pub(crate) mod path_boolean;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod path_critical_points;
+pub(crate) mod path_raster;
 pub(crate) mod polyline_frames;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
@@ -11322,6 +11323,18 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "spectral_noise" => builtin_fn!(spectral_noise, |_def_ix, arg_refs, args, kwargs, ctx| {
     spectral_noise::spectral_noise_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "rasterize_path" => builtin_fn!(rasterize_path, |_def_ix, arg_refs, args, kwargs, ctx| {
+    path_raster::rasterize_path_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "path_sdf" => builtin_fn!(path_sdf, |_def_ix, arg_refs, args, kwargs, ctx| {
+    path_raster::path_sdf_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "path_uv" => builtin_fn!(path_uv, |_def_ix, arg_refs, args, kwargs, ctx| {
+    path_raster::path_uv_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "fit_path" => builtin_fn!(fit_path, |_def_ix, arg_refs, args, kwargs, ctx| {
+    path_raster::fit_path_impl(ctx, arg_refs, args, kwargs)
   }),
   "load_image" => builtin_fn!(load_image, |_def_ix, arg_refs, args, kwargs, ctx| {
     load_image::load_image_impl(ctx, arg_refs, args, kwargs)

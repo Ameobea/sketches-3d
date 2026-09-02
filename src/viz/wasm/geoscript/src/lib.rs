@@ -73,6 +73,7 @@ pub mod noise_batch;
 pub mod optimizer;
 pub mod path_building;
 pub mod preprocess;
+pub(crate) mod raster2d;
 mod resolve;
 mod retained_size;
 mod seq;
@@ -2811,6 +2812,8 @@ pub struct EvalCtx {
   /// omitted.
   pub default_curve_angle_degrees: RefCell<f32>,
   pub const_eval_cache: RefCell<ConstEvalCache>,
+  /// `get_default_globals` as interned symbols, for type lookups that miss every scope.
+  pub(crate) default_global_types: std::cell::OnceCell<Vec<(Sym, ArgType)>>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
   scratch_kwargs: Box<RefCell<ArrayVec<FxHashMap<Sym, Value>, 64>>>,
   scratch_frames: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
@@ -2920,6 +2923,7 @@ impl Default for EvalCtx {
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
       default_curve_angle_degrees: RefCell::new(1.0),
       const_eval_cache: RefCell::new(ConstEvalCache::default()),
+      default_global_types: std::cell::OnceCell::new(),
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
       scratch_frames: Box::new(RefCell::new(ArrayVec::new())),
@@ -4178,6 +4182,18 @@ impl EvalCtx {
   pub fn invalidate_module_cache(&self) {
     self.module_exports.borrow_mut().clear();
     self.module_exports_lru.borrow_mut().clear();
+  }
+
+  /// Drops every cross-run memo (const-eval, module exports, Clipper2 results) so the next
+  /// run is fully cold.
+  pub fn clear_cross_run_caches(&self) {
+    self.const_eval_cache.borrow_mut().clear();
+    self.invalidate_module_cache();
+    #[cfg(target_arch = "wasm32")]
+    {
+      builtins::path_boolean::clear_memo();
+      builtins::offset_path::clear_memo();
+    }
   }
 
   pub fn compute_source_hash(src: &str) -> u64 {

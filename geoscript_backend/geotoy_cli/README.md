@@ -339,6 +339,19 @@ Plus the common `--dev` / `--backend` / `--token` / `--no-prelude` / `--timeout`
 (`main.geo`, `globals.geo`, `nodes/`, `tree.json`, …) work identically to
 `render`.
 
+## `geotoy bench` — time repeated runs
+
+`geotoy bench <path> --dev` boots the composition once in a headless page, then re-runs it in
+place (`--warmup` untimed + `--iterations` timed runs) and prints per-run phase timings as JSON.
+`--mode cold` (default) clears every cross-run cache before each run; `--trace` also captures a
+DevTools trace of the timed runs to `<out>.trace.json.gz`. Dev only: the render service refuses
+bench requests against prod. The corpus-scale version is `scripts/geotoy-bench.ts`; see
+`docs/geotoy-bench.md`.
+
+```sh
+geotoy bench my_scene/ --dev --iterations 10 --trace -o my_scene.bench.json
+```
+
 ## Errors & Wasm panics — no more silent blank output
 
 A geoscript error (bad argument, a NaN reaching a path sampler, …) or a Wasm

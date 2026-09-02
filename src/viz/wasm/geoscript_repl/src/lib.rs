@@ -341,10 +341,12 @@ pub fn geoscript_repl_get_const_eval_cache_stats(ctx: *const GeoscriptReplCtx) -
   ]
 }
 
+/// Clears every cross-run cache (const-eval, module exports, Clipper2 memos), not just the
+/// const-eval cache the name suggests.
 #[wasm_bindgen]
 pub fn geoscript_repl_clear_const_eval_cache(ctx: *mut GeoscriptReplCtx) {
   let ctx = unsafe { &mut *ctx };
-  ctx.geo_ctx.const_eval_cache.borrow_mut().clear();
+  ctx.geo_ctx.clear_cross_run_caches();
 }
 
 #[derive(SerJson)]

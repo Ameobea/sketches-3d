@@ -10,7 +10,7 @@ use fxhash::FxHashMap;
 use crate::{
   ast::{
     infer_dynamic_field_access_ty, infer_static_field_access_ty, BinOp, ClosureArg, ClosureBody,
-    Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, Statement,
+    Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, Statement, TrackedValue,
   },
   builtins::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, DefaultValue, FnSignature},
@@ -22,30 +22,32 @@ use crate::{
   ArgType, EvalCtx, Sym,
 };
 
-/// Scope stack for type inference.  Mirrors the shape of [`crate::ast::ScopeTracker`] but
-/// carries only type information.
-#[derive(Default, Debug)]
-pub struct TypeEnv {
+/// Scope stack for type inference.  Owned frames hold bindings made during inference; on a
+/// miss, lookup falls through to a borrowed optimizer [`ScopeTracker`] chain and then the
+/// language's default globals (`pi`, `tau`).  Borrowing instead of snapshotting keeps an env
+/// O(1) to build, which matters because the optimizer builds one per type query.
+#[derive(Debug)]
+pub struct TypeEnv<'a> {
   frames: Vec<FxHashMap<Sym, AbstractType>>,
+  base: Option<&'a ScopeTracker<'a>>,
+  ctx: &'a EvalCtx,
 }
 
-impl TypeEnv {
-  pub fn new() -> Self {
+impl<'a> TypeEnv<'a> {
+  pub fn new(ctx: &'a EvalCtx) -> Self {
     TypeEnv {
       frames: vec![FxHashMap::default()],
+      base: None,
+      ctx,
     }
   }
 
-  /// Build a TypeEnv pre-seeded with the language's default globals (`pi`, `tau`, etc.).
-  /// Derived from the same source of truth as [`crate::Scope::default_globals`] so the two
-  /// cannot drift apart.
-  pub fn with_default_globals(ctx: &EvalCtx) -> Self {
-    let mut env = Self::new();
-    for (name, val) in crate::get_default_globals() {
-      let sym = ctx.interned_symbols.intern(name);
-      env.define(sym, AbstractType::Concrete(val.get_type()));
+  pub(crate) fn with_base(ctx: &'a EvalCtx, base: &'a ScopeTracker<'a>) -> Self {
+    TypeEnv {
+      frames: vec![FxHashMap::default()],
+      base: Some(base),
+      ctx,
     }
-    env
   }
 
   pub fn push_scope(&mut self) {
@@ -62,17 +64,52 @@ impl TypeEnv {
     }
   }
 
-  pub fn lookup(&self, name: Sym) -> Option<&AbstractType> {
-    for frame in self.frames.iter().rev() {
-      if let Some(ty) = frame.get(&name) {
-        return Some(ty);
+  fn lookup_base(&self, name: Sym) -> Option<AbstractType> {
+    let mut cur = self.base;
+    while let Some(frame) = cur {
+      if let Some(val) = frame.vars.get(&name) {
+        return Some(match val {
+          TrackedValue::Const(v) => AbstractType::Concrete(v.get_type()),
+          TrackedValue::Arg | TrackedValue::Dyn => frame
+            .types
+            .get(&name)
+            .cloned()
+            .unwrap_or(AbstractType::Unknown),
+        });
       }
+      cur = frame.parent;
     }
     None
   }
 
+  fn lookup_default_global(&self, name: Sym) -> Option<AbstractType> {
+    let ctx = self.ctx;
+    ctx
+      .default_global_types
+      .get_or_init(|| {
+        crate::get_default_globals()
+          .iter()
+          .map(|(n, v)| (ctx.interned_symbols.intern(n), v.get_type()))
+          .collect()
+      })
+      .iter()
+      .find(|(sym, _)| *sym == name)
+      .map(|(_, ty)| AbstractType::Concrete(*ty))
+  }
+
+  pub fn lookup(&self, name: Sym) -> Option<AbstractType> {
+    for frame in self.frames.iter().rev() {
+      if let Some(ty) = frame.get(&name) {
+        return Some(ty.clone());
+      }
+    }
+    self
+      .lookup_base(name)
+      .or_else(|| self.lookup_default_global(name))
+  }
+
   pub fn contains(&self, name: Sym) -> bool {
-    self.frames.iter().any(|f| f.contains_key(&name))
+    self.frames.iter().any(|f| f.contains_key(&name)) || self.lookup(name).is_some()
   }
 }
 
@@ -462,7 +499,7 @@ pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType
     Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
 
     Expr::Ident { name, .. } => match env.lookup(*name) {
-      Some(ty) => ty.clone(),
+      Some(ty) => ty,
       None => ctx
         .interned_symbols
         .with_resolved(*name, |s| s.strip_prefix('@').and_then(resolve_global))
@@ -817,7 +854,7 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
         piped.push(lhs_ty);
 
         if env.contains(*name) {
-          match env.lookup(*name).cloned() {
+          match env.lookup(*name) {
             Some(AbstractType::PartiallyApplied(paf)) => {
               resolve_paf_call(&paf, &piped, &kwarg_types).into_abstract_type()
             }
@@ -836,7 +873,7 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
     }
     Expr::Ident { name, .. } => {
       if env.contains(*name) {
-        match env.lookup(*name).cloned() {
+        match env.lookup(*name) {
           Some(AbstractType::PartiallyApplied(paf)) => {
             resolve_paf_call(&paf, &[lhs_ty], &[]).into_abstract_type()
           }
@@ -873,7 +910,7 @@ fn infer_call_expr(ctx: &EvalCtx, env: &mut TypeEnv, call: &FunctionCall) -> Abs
   match &call.target {
     FunctionCallTarget::Name(name) => {
       if env.contains(*name) {
-        match env.lookup(*name).cloned() {
+        match env.lookup(*name) {
           Some(AbstractType::PartiallyApplied(paf)) => {
             resolve_paf_call(&paf, &arg_types, &kwarg_types).into_abstract_type()
           }
@@ -959,7 +996,7 @@ mod tests {
     else {
       panic!("expected assignment statement");
     };
-    let mut env = TypeEnv::with_default_globals(&ctx);
+    let mut env = TypeEnv::new(&ctx);
     infer_expr(&ctx, &mut env, expr)
   }
 

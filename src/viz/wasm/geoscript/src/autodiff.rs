@@ -50,7 +50,7 @@ struct DerivCtx<'a> {
   /// Emitted ANF statements (the tape).
   tape: Vec<Statement>,
   /// Types of params and taped primal temps, used to synthesize zero tangents.
-  type_env: TypeEnv,
+  type_env: TypeEnv<'a>,
   /// Scope used to resolve free identifiers (captured constants) during differentiation.
   captures: Rc<Scope>,
 }
@@ -167,11 +167,20 @@ impl<'a> DerivCtx<'a> {
 
   /// Bind a compound primal expression to a fresh temp, recording its type; atoms pass through.
   fn tape_primal(&mut self, expr: Expr, loc: SourceLoc) -> Expr {
+    self.tape_primal_typed(expr, None, loc)
+  }
+
+  /// `tape_primal` with a known type that inference can't recover (a conditional whose branches
+  /// include an element of a pass-through `seq`).
+  fn tape_primal_typed(&mut self, expr: Expr, known: Option<ArgType>, loc: SourceLoc) -> Expr {
     if is_atom(&expr) {
       return expr;
     }
     let ctx = self.ctx;
-    let ty = infer_expr(ctx, &mut self.type_env, &expr);
+    let ty = match known {
+      Some(ty) => AbstractType::Concrete(ty),
+      None => infer_expr(ctx, &mut self.type_env, &expr),
+    };
     let sym = self.fresh("t");
     self.type_env.define(sym, ty);
     self.tape.push(Statement::Assignment {
@@ -179,7 +188,7 @@ impl<'a> DerivCtx<'a> {
       name: sym,
       name_loc: loc,
       expr,
-      type_hint: None,
+      type_hint: known,
     });
     Expr::Ident {
       res: VarRes::Unresolved,
@@ -215,10 +224,22 @@ impl<'a> DerivCtx<'a> {
   /// Force a tangent to a concrete expression, synthesizing a typed zero from `primal`'s type when
   /// the tangent is symbolic-zero.
   fn reify(&mut self, t: Tangent, primal: &Expr, loc: SourceLoc) -> Result<Expr, ErrorStack> {
+    self.reify_or(t, primal, None, loc)
+  }
+
+  /// `reify` with a type to fall back on when `primal`'s own type can't be inferred (e.g. an
+  /// element of a pass-through `seq` param).
+  fn reify_or(
+    &mut self,
+    t: Tangent,
+    primal: &Expr,
+    fallback: Option<ArgType>,
+    loc: SourceLoc,
+  ) -> Result<Expr, ErrorStack> {
     match t {
       Tangent::Expr(e) => Ok(e),
       Tangent::Zero => {
-        let ty = self.primal_type(primal).ok_or_else(|| {
+        let ty = self.primal_type(primal).or(fallback).ok_or_else(|| {
           self.err(
             "autodiff: could not determine a type to synthesize a zero tangent",
             loc,
@@ -425,10 +446,38 @@ impl<'a> DerivCtx<'a> {
         "autodiff: ranges are not supported inside a differentiated closure",
         *loc,
       )),
-      Expr::FieldAccess { loc, .. } => Err(self.err(
-        "autodiff: dynamic field/index access is not differentiable",
-        *loc,
-      )),
+      // A projection of something constant w.r.t. the parameter (a pass-through seq/map param,
+      // say) is itself constant; only access into parameter-dependent values is unsupported.
+      Expr::FieldAccess {
+        lhs,
+        field,
+        field2,
+        loc,
+      } => {
+        let (lp, ld) = self.diff_expr(lhs)?;
+        let (fp, fd) = self.diff_expr(field)?;
+        let f2 = match field2 {
+          Some(f2) => Some(self.diff_expr(f2)?),
+          None => None,
+        };
+        let constant = matches!(ld, Tangent::Zero)
+          && matches!(fd, Tangent::Zero)
+          && f2.as_ref().is_none_or(|(_, d)| matches!(d, Tangent::Zero));
+        if !constant {
+          return Err(self.err(
+            "autodiff: dynamic field/index access into a parameter-dependent value is not \
+             differentiable",
+            *loc,
+          ));
+        }
+        let primal = Expr::FieldAccess {
+          lhs: Box::new(lp),
+          field: Box::new(fp),
+          field2: f2.map(|(p, _)| Box::new(p)),
+          loc: *loc,
+        };
+        Ok((self.tape_primal(primal, *loc), Tangent::Zero))
+      }
       Expr::ArrayLiteral { loc, .. } => Err(self.err(
         "autodiff: array literals are not supported inside a differentiated closure",
         *loc,
@@ -565,7 +614,15 @@ impl<'a> DerivCtx<'a> {
       else_expr: else_pt.as_ref().map(|(p, _)| Box::new(p.clone())),
       loc,
     };
-    let primal_atom = self.tape_primal(primal, loc);
+    // Branches share a type; the first one that infers types the temp and the zero tangents.
+    let mut branch_ty = self.primal_type(&then_p);
+    for (_, p, _) in &elif {
+      branch_ty = branch_ty.or_else(|| self.primal_type(p));
+    }
+    if let Some((p, _)) = &else_pt {
+      branch_ty = branch_ty.or_else(|| self.primal_type(p));
+    }
+    let primal_atom = self.tape_primal_typed(primal, branch_ty, loc);
 
     let all_zero = matches!(then_t, Tangent::Zero)
       && elif.iter().all(|(_, _, t)| matches!(t, Tangent::Zero))
@@ -576,19 +633,18 @@ impl<'a> DerivCtx<'a> {
       return Ok((primal_atom, Tangent::Zero));
     }
 
-    let then_te = self.reify(then_t, &then_p, loc)?;
+    let then_te = self.reify_or(then_t, &then_p, branch_ty, loc)?;
     let mut elif_te = Vec::with_capacity(elif.len());
     for (c, p, t) in elif {
-      let te = self.reify(t, &p, loc)?;
+      let te = self.reify_or(t, &p, branch_ty, loc)?;
       elif_te.push((c, te));
     }
     let else_te = match else_pt {
-      Some((p, t)) => self.reify(t, &p, loc)?,
+      Some((p, t)) => self.reify_or(t, &p, branch_ty, loc)?,
       // No `else`: the false branch has no defined tangent; a zero of the `then` branch's type is
       // the only sensible choice.
       None => {
-        let ty = self
-          .primal_type(&then_p)
+        let ty = branch_ty
           .ok_or_else(|| self.err("autodiff: could not determine conditional branch type", loc))?;
         let zero = zero_value(ty).ok_or_else(|| {
           self.err(
@@ -1545,16 +1601,15 @@ pub(crate) fn build_directional_derivative(
   input: &Closure,
   seed: &Value,
 ) -> Result<Closure, ErrorStack> {
-  if input.params.len() != 1 {
-    return Err(ErrorStack::new(format!(
-      "autodiff: `deriv` requires a single-parameter closure, found {} parameters",
-      input.params.len()
-    )));
-  }
-  let param = &input.params[0];
+  let Some(param) = input.params.first() else {
+    return Err(ErrorStack::new(
+      "autodiff: `deriv` requires a closure with at least one parameter",
+    ));
+  };
   let DestructurePattern::Ident(param_sym) = &param.ident else {
     return Err(ErrorStack::new(
-      "autodiff: `deriv` requires a closure with a single named (non-destructured) parameter",
+      "autodiff: `deriv` requires a closure whose first parameter is a named (non-destructured) \
+       parameter",
     ));
   };
   let Some(param_ty) = param.type_hint else {
@@ -1571,7 +1626,7 @@ pub(crate) fn build_directional_derivative(
   }
   let captured = input.captured_env_scope();
 
-  let mut type_env = TypeEnv::with_default_globals(ctx);
+  let mut type_env = TypeEnv::new(ctx);
   type_env.push_scope();
   type_env.define(*param_sym, AbstractType::Concrete(param_ty));
 
@@ -1583,6 +1638,30 @@ pub(crate) fn build_directional_derivative(
     type_env,
     captures: Rc::clone(&captured),
   };
+
+  // Trailing params pass through untouched: constant w.r.t. the differentiated parameter, but
+  // supplied per call rather than baked in, so a `grad` hoisted out of a loop stays valid.
+  for extra in &input.params[1..] {
+    let DestructurePattern::Ident(sym) = &extra.ident else {
+      return Err(ErrorStack::new(
+        "autodiff: pass-through parameters of a differentiated closure must be plain names",
+      ));
+    };
+    if let Some(ty) = extra.type_hint {
+      dcx.type_env.define(*sym, AbstractType::Concrete(ty));
+    }
+    dcx.env.insert(
+      *sym,
+      (
+        Expr::Ident {
+          res: VarRes::Unresolved,
+          name: *sym,
+          loc: SourceLoc::default(),
+        },
+        Tangent::Zero,
+      ),
+    );
+  }
 
   // Seed: `d_p = <dir literal>`, baked so it const-folds through the derivative body.
   let seed_sym = dcx.fresh("d");
@@ -1631,16 +1710,15 @@ pub(crate) fn build_directional_derivative(
 /// `vecN` of `f`'s partials; for a scalar-input `f`, just `f'`.  Sugar over
 /// [`build_directional_derivative`] with the standard basis seeds.
 pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, ErrorStack> {
-  if input.params.len() != 1 {
-    return Err(ErrorStack::new(format!(
-      "autodiff: `grad` requires a single-parameter closure, found {} parameters",
-      input.params.len()
-    )));
-  }
-  let param = &input.params[0];
-  let DestructurePattern::Ident(param_sym) = &param.ident else {
+  let Some(param) = input.params.first() else {
     return Err(ErrorStack::new(
-      "autodiff: `grad` requires a closure with a single named (non-destructured) parameter",
+      "autodiff: `grad` requires a closure with at least one parameter",
+    ));
+  };
+  let DestructurePattern::Ident(_) = &param.ident else {
+    return Err(ErrorStack::new(
+      "autodiff: `grad` requires a closure whose first parameter is a named (non-destructured) \
+       parameter",
     ));
   };
   let Some(param_ty) = param.type_hint else {
@@ -1678,6 +1756,23 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
 
   let vec_name = if partials.len() == 2 { "vec2" } else { "vec3" };
   let cap = Rc::new(Scope::default());
+  // Every param (differentiated + pass-through) is forwarded to each partial.
+  let forwarded_args = || -> Result<Vec<Expr>, ErrorStack> {
+    input
+      .params
+      .iter()
+      .map(|p| match &p.ident {
+        DestructurePattern::Ident(sym) => Ok(Expr::Ident {
+          res: VarRes::Unresolved,
+          name: *sym,
+          loc: SourceLoc::default(),
+        }),
+        _ => Err(ErrorStack::new(
+          "autodiff: pass-through parameters of a differentiated closure must be plain names",
+        )),
+      })
+      .collect()
+  };
   let mut comps = Vec::with_capacity(partials.len());
   for (i, partial) in partials.into_iter().enumerate() {
     let sym = ctx.interned_symbols.intern(&format!("__grad_partial_{i}"));
@@ -1686,11 +1781,7 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
       call: FunctionCall {
         target_res: VarRes::Unresolved,
         target: FunctionCallTarget::Name(sym),
-        args: vec![Expr::Ident {
-          res: VarRes::Unresolved,
-          name: *param_sym,
-          loc: SourceLoc::default(),
-        }],
+        args: forwarded_args()?,
         kwargs: FxHashMap::default(),
       },
       loc: SourceLoc::default(),
@@ -1747,6 +1838,59 @@ mod tests {
 
   /// Analytic directional derivative of a `vec2 -> vec3` embedding should match central
   /// differences.
+  #[test]
+  fn test_pass_through_params_match_captured_version() {
+    // Same loss with the changing inputs captured vs passed through; the hoisted gradient must
+    // agree with a fresh per-call gradient, including a dynamic `if` on a pass-through param.
+    let src = r#"
+loss = |c: vec3, ws: seq, k: int, x: float|: float {
+  a = if k == 0 { c } else { ws[0] }
+  b = if k == 1 { c } else { ws[1] }
+  d = sigmoid(a.x * x + a.y) * b.z - x
+  d * d
+}
+dloss = grad(loss)
+mk = |ws: seq, k: int, x: float| grad(|c: vec3|: float { loss(c, ws, k, x) })
+g_hoisted = |c: vec3, w: vec3, k: int, x: float| dloss(c, [w, w * 0.5], k, x)
+g_fresh = |c: vec3, w: vec3, k: int, x: float| { g = mk([w, w * 0.5], k, x); g(c) }
+dx = deriv(|x: float, s: float|: float { sin(x) * s }, 1.)
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let hoisted = ctx.get_global("g_hoisted").unwrap();
+    let fresh = ctx.get_global("g_fresh").unwrap();
+    let call = |f: &Value, k: i64| {
+      let Value::Callable(c) = f else { panic!() };
+      let out = ctx
+        .invoke_callable(
+          c,
+          &[
+            Value::Vec3(Vec3::new(0.3, -0.2, 0.9)),
+            Value::Vec3(Vec3::new(-0.7, 0.4, 1.3)),
+            Value::Int(k),
+            Value::Float(0.6),
+          ],
+          EMPTY_KWARGS,
+        )
+        .unwrap();
+      *out.as_vec3().unwrap()
+    };
+    for k in 0..3 {
+      assert_close_v3(
+        call(&hoisted, k),
+        call(&fresh, k),
+        1e-5,
+        "hoisted vs fresh grad",
+      );
+    }
+    let Value::Callable(dx) = ctx.get_global("dx").unwrap() else {
+      panic!()
+    };
+    let out = ctx
+      .invoke_callable(&dx, &[Value::Float(0.4), Value::Float(2.5)], EMPTY_KWARGS)
+      .unwrap();
+    assert!((out.as_float().unwrap() - 0.4f32.cos() * 2.5).abs() < 1e-5);
+  }
+
   #[test]
   fn test_embedding_partials_match_finite_diff() {
     let src = r#"
@@ -2114,9 +2258,10 @@ du = deriv(phi, vec2(1, 0))
   #[test]
   fn test_bailouts() {
     let cases: &[(&str, &str)] = &[
+      ("f = || 1.0\nd = deriv(f, 1.0)", "at least one parameter"),
       (
-        "f = |a: float, b: float| a + b\nd = deriv(f, 1.0)",
-        "single-parameter",
+        "f = |p: vec2| p[0] * 2.0\nd = deriv(f, vec2(1, 0))",
+        "parameter-dependent value",
       ),
       ("f = |p| p * 2\nd = deriv(f, 1.0)", "type annotation"),
       (

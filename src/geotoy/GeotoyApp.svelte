@@ -943,6 +943,7 @@
       execution,
       meshScene,
       getTree: () => treeState.state.tree,
+      getTabs: () => tabs.tabs.map(t => ({ id: t.id, kind: t.kind, name: t.name })),
     });
   }
 

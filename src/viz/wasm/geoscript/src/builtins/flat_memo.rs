@@ -29,6 +29,11 @@ impl<V: Clone> FlatMemoCache<V> {
     self.map.get(key).cloned()
   }
 
+  pub fn clear(&mut self) {
+    self.map.clear();
+    self.bytes = 0;
+  }
+
   pub fn insert(&mut self, key: Vec<u32>, val: &V, val_bytes: usize) {
     let entry_bytes = key.len() * 4 + val_bytes;
     if entry_bytes > MAX_BYTES {

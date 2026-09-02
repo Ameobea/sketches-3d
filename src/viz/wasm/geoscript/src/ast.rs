@@ -2331,38 +2331,10 @@ impl<'a> ScopeTracker<'a> {
     self.types.insert(name, ty);
   }
 
-  /// Snapshot this scope (walking the parent chain) into a [`TypeEnv`] suitable for use with
-  /// [`crate::type_infer::infer_expr`].  Each scope frame becomes a frame in the TypeEnv,
-  /// outermost-first.  The base TypeEnv is pre-seeded with the language's default globals
-  /// (`pi`, `tau`, etc.) via [`crate::type_infer::TypeEnv::with_default_globals`].
-  pub fn build_type_env(&self, ctx: &EvalCtx) -> crate::type_infer::TypeEnv {
-    use crate::ty::AbstractType;
-
-    let mut chain: Vec<&ScopeTracker> = Vec::new();
-    let mut cur = Some(self);
-    while let Some(s) = cur {
-      chain.push(s);
-      cur = s.parent;
-    }
-
-    let mut env = crate::type_infer::TypeEnv::with_default_globals(ctx);
-    // First entry in `chain` is this scope; last is the outermost.  Push outermost first so
-    // lookup resolves innermost shadowing correctly.
-    for frame in chain.iter().rev() {
-      env.push_scope();
-      for (&name, val) in &frame.vars {
-        let ty = match val {
-          TrackedValue::Const(v) => AbstractType::Concrete(v.get_type()),
-          TrackedValue::Arg | TrackedValue::Dyn => frame
-            .types
-            .get(&name)
-            .cloned()
-            .unwrap_or(AbstractType::Unknown),
-        };
-        env.define(name, ty);
-      }
-    }
-    env
+  /// A [`TypeEnv`] that resolves through this scope chain lazily; see
+  /// [`crate::type_infer::TypeEnv`].
+  pub fn build_type_env<'b>(&'b self, ctx: &'b EvalCtx) -> crate::type_infer::TypeEnv<'b> {
+    crate::type_infer::TypeEnv::with_base(ctx, self)
   }
 }
 

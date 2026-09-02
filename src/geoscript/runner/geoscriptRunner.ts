@@ -25,6 +25,8 @@ export type { NodeWorldInstance, WorldMatrixCache } from './worldMatrixCache';
 
 const buildEmptyRunStats = (): RunStats => ({
   runtimeMs: 0,
+  phases: { setup: 0, ambient: 0, eval: 0, evalWall: 0, extract: 0 },
+  asyncDepRetries: 0,
   renderedMeshCount: 0,
   renderedPathCount: 0,
   renderedLightCount: 0,
@@ -69,7 +71,10 @@ const tryInitAsyncDepFromErr = async (
   return true;
 };
 
-export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
+export const runGeoscript = async (
+  opts: RunGeoscriptOptions,
+  asyncDepRetries = 0
+): Promise<GeoscriptRunResult> => {
   const {
     code,
     ctxPtr,
@@ -88,6 +93,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     rootModuleName,
     vectorize = { disabled: false, verify: false, profile: false },
   } = opts;
+  const tStart = performance.now();
   await repl.reset(ctxPtr);
   await repl.setVectorizeFlags(ctxPtr, vectorize);
 
@@ -96,6 +102,8 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
   if (modules) {
     await repl.setModuleSources(ctxPtr, modules, modulePreludes);
   }
+
+  const tSetup = performance.now();
 
   if (tabAmbients !== undefined) {
     try {
@@ -108,7 +116,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     } catch (err) {
       const errStr = err instanceof Error ? err.message : String(err);
       if (await tryInitAsyncDepFromErr(errStr, repl)) {
-        return runGeoscript(opts);
+        return runGeoscript(opts, asyncDepRetries + 1);
       }
       return {
         objects: [],
@@ -125,7 +133,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     } catch (err) {
       const errStr = err instanceof Error ? err.message : String(err);
       if (await tryInitAsyncDepFromErr(errStr, repl)) {
-        return runGeoscript(opts);
+        return runGeoscript(opts, asyncDepRetries + 1);
       }
       return {
         objects: [],
@@ -142,6 +150,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
   await repl.setGizmoValues(ctxPtr, gizmoValues ?? {});
   await repl.setTextureParams(ctxPtr, textureParams ?? []);
 
+  const tAmbient = performance.now();
   let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
   try {
     evalResult = await repl.eval(ctxPtr, code, preludeKind, rootModuleName);
@@ -158,12 +167,13 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
     };
   }
 
+  const tEval = performance.now();
   const err = (await repl.getErr(ctxPtr)) || null;
   if (err) {
     // Safety net: if a dep wasn't pre-loaded, load it now and re-run.
     // text_to_path always goes through this path since its args are runtime values.
     if (await tryInitAsyncDepFromErr(err, repl)) {
-      return runGeoscript(opts);
+      return runGeoscript(opts, asyncDepRetries + 1);
     }
     return {
       objects: [],
@@ -178,6 +188,7 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
   const stats: RunStats = {
     ...buildEmptyRunStats(),
     runtimeMs: evalResult.durationMs,
+    asyncDepRetries,
     asyncDeps: bitmaskToAsyncDepNames(evalResult.usedDepsBitmask),
     constEvalCache: await repl.getConstEvalCacheStats(ctxPtr),
   };
@@ -352,6 +363,14 @@ export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<Geoscript
       hasOverride: c.has_override,
     });
   }
+
+  stats.phases = {
+    setup: tSetup - tStart,
+    ambient: tAmbient - tSetup,
+    eval: evalResult.durationMs,
+    evalWall: tEval - tAmbient,
+    extract: performance.now() - tEval,
+  };
 
   const result: GeoscriptRunResult = {
     objects: renderedObjects,

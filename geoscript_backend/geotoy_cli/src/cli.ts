@@ -4,6 +4,9 @@ import { randomUUID } from 'node:crypto';
 
 const PROD_BACKEND = 'https://3d.ameo.design/geotoy_api/render/transient';
 const DEV_BACKEND = 'http://localhost:5810/render/transient';
+// Bench talks to the render service directly: the backend proxy buffers the whole response and
+// caps it at 15 min, while the service streams keep-alives for long runs.
+const DEV_BENCH_SERVICE = 'http://localhost:5812/render_transient';
 
 const ROOT_NODE_NAME = '_root';
 
@@ -69,6 +72,13 @@ interface EvalRequest {
   meshes?: MeshOutputFormat;
 }
 
+interface BenchRequest {
+  iterations: number;
+  warmup: number;
+  mode: 'cold' | 'warm';
+  render: boolean;
+}
+
 interface RenderOptions {
   format?: 'png' | 'avif' | 'jpeg';
   width?: number;
@@ -80,6 +90,10 @@ interface RenderOptions {
   materialOverride?: MaterialOverride;
   /** Present for `geotoy eval`: serialize run outputs to JSON instead of rendering an image. */
   eval?: EvalRequest;
+  /** Present for `geotoy bench` (dev only): re-run in place and report timings. */
+  bench?: BenchRequest;
+  /** `geotoy bench --trace`: also capture a DevTools trace of the timed runs. */
+  trace?: boolean;
 }
 
 interface TransientPayload {
@@ -105,6 +119,7 @@ const identityInstance = (): Instance => ({
 const usage = `Usage:
   geotoy render <path> [options]   Render a composition to an image
   geotoy eval   <path> [options]   Run a composition and print its outputs as JSON
+  geotoy bench  <path> [options]   Time repeated runs of a composition (requires --dev)
 
   <path>  Either a directory containing a composition, or a single .geo file
           (treated as the _root source).
@@ -132,6 +147,15 @@ eval options:
   --samples <n>        Sample callable/path values at N points over t in [0,1] (default 0)
   --meshes <fmt>       Mesh detail: summary (default) | glb | gltf | obj | json
   --meshes-out <file>  Where to write full mesh geometry (default: beside --out, else embedded)
+
+bench options:
+  -o, --out <file>     Write the timings JSON to a file (default: stdout)
+  --iterations <n>     Timed runs after boot + warmup (default 5)
+  --warmup <n>         Untimed runs before timing (default 2)
+  --mode <cold|warm>   cold clears every cross-run cache before each run (default cold)
+  --render             Also wait for materials + render a frame per timed run
+  --trace              Capture a DevTools trace of the timed runs → <out>.trace.json.gz
+  --trace-out <file>   Where to write the trace (default: beside --out)
 `;
 
 const die = (msg: string, code = 1): never => {
@@ -270,7 +294,7 @@ const parseArgs = (argv: string[]) => {
     process.exit(0);
   }
   const cmd = argv[0];
-  if (cmd !== 'render' && cmd !== 'eval') {
+  if (cmd !== 'render' && cmd !== 'eval' && cmd !== 'bench') {
     die(`Unknown command '${cmd}'.\n${usage}`);
   }
 
@@ -342,6 +366,24 @@ const parseArgs = (argv: string[]) => {
       case '--meshes-out':
         i = val('meshes-out', i);
         break;
+      case '--iterations':
+        i = val('iterations', i);
+        break;
+      case '--warmup':
+        i = val('warmup', i);
+        break;
+      case '--mode':
+        i = val('mode', i);
+        break;
+      case '--render':
+        flag('render');
+        break;
+      case '--trace':
+        flag('trace');
+        break;
+      case '--trace-out':
+        i = val('trace-out', i);
+        break;
       default:
         if (a.startsWith('-')) die(`Unknown flag ${a}.\n${usage}`);
         positionals.push(a);
@@ -358,11 +400,12 @@ interface Common {
   dev: boolean;
 }
 
-const resolveCommon = (opts: Opts, defaultTimeoutSec: number): Common => {
+const resolveCommon = (opts: Opts, defaultTimeoutSec: number, bench = false): Common => {
   const dev = !!opts.dev;
-  const backend = (opts.backend as string | undefined) ?? (dev ? DEV_BACKEND : PROD_BACKEND);
+  const backend =
+    (opts.backend as string | undefined) ?? (dev ? (bench ? DEV_BENCH_SERVICE : DEV_BACKEND) : PROD_BACKEND);
   const token = (opts.token as string | undefined) ?? process.env.GEOTOY_CLI_TOKEN ?? '';
-  if (!token) die('Missing CLI token. Pass --token or set GEOTOY_CLI_TOKEN.');
+  if (!token && !bench) die('Missing CLI token. Pass --token or set GEOTOY_CLI_TOKEN.');
   const timeoutSec = opts.timeout ? parseFloat(opts.timeout as string) : defaultTimeoutSec;
   if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) die(`Invalid --timeout ${opts.timeout}`);
   return { backend, token, timeoutMs: Math.round(timeoutSec * 1000), dev };
@@ -494,10 +537,70 @@ const runEval = async (input: string, opts: Opts) => {
   }
 };
 
+const intOpt = (opts: Opts, key: string, dflt: number, min: number): number => {
+  const v = opts[key] === undefined ? dflt : parseInt(opts[key] as string, 10);
+  if (!Number.isInteger(v) || v < min) die(`Invalid --${key} ${opts[key]}`);
+  return v;
+};
+
+const runBench = async (input: string, opts: Opts) => {
+  const common = resolveCommon(opts, 600, true);
+  if (!common.dev) die('bench requires --dev (the render service only benchmarks local frontends)');
+  const mode = (opts.mode as string | undefined) ?? 'cold';
+  if (mode !== 'cold' && mode !== 'warm') die(`Invalid --mode ${mode}. Must be cold or warm.`);
+  const bench: BenchRequest = {
+    iterations: intOpt(opts, 'iterations', 5, 1),
+    warmup: intOpt(opts, 'warmup', 2, 0),
+    mode,
+    render: !!opts.render,
+  };
+
+  const payload = buildPayload(input);
+  if (opts['no-prelude']) payload.metadata.preludeEjected = true;
+  payload.options = { dev: true, timeoutMs: common.timeoutMs, bench, trace: !!opts.trace };
+
+  const outPath = opts.out as string | undefined;
+  process.stderr.write(
+    `Benchmarking via ${common.backend} (${mode}, ${bench.warmup} warmup + ${bench.iterations} timed)...\n`
+  );
+  const res = await post(common, payload);
+  const { bench: result, traceGz, error } = JSON.parse(await res.text()) as {
+    bench?: any;
+    traceGz: string | null;
+    error?: string;
+  };
+  if (!result) die(error ?? 'no bench payload in response');
+
+  if (traceGz) {
+    const traceOut =
+      (opts['trace-out'] as string | undefined) ??
+      (outPath ? outPath.replace(/\.json$/, '') : baseNameOf(input)) + '.trace.json.gz';
+    fs.writeFileSync(traceOut, Buffer.from(traceGz, 'base64'));
+    process.stderr.write(`Wrote ${traceOut}\n`);
+  }
+
+  const evals = (result.runs as { phases: { eval: number } }[]).map(r => r.phases.eval).sort((a, b) => a - b);
+  const median = evals[Math.floor(evals.length / 2)];
+  process.stderr.write(
+    `eval median ${median.toFixed(1)}ms (min ${evals[0].toFixed(1)}ms, n=${evals.length}); ` +
+      `tabs [${result.tabsRun.join(', ')}]\n`
+  );
+
+  const json = JSON.stringify(result, null, 2);
+  if (outPath) {
+    fs.writeFileSync(outPath, json);
+    process.stderr.write(`Wrote ${outPath}\n`);
+  } else {
+    process.stdout.write(json + '\n');
+  }
+};
+
 const main = async () => {
   const { cmd, input, opts } = parseArgs(process.argv.slice(2));
   if (cmd === 'eval') {
     await runEval(input, opts);
+  } else if (cmd === 'bench') {
+    await runBench(input, opts);
   } else {
     await runRender(input, opts);
   }

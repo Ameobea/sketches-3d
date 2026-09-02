@@ -135,3 +135,11 @@
 14_sample_roll_transpose helper_1ch[0] 48x48x1 hash=8a448d473f1a9ec4 mean=0.500000 min=0.020833 max=0.979167
 14_sample_roll_transpose helper_3ch[0] 48x48x3 hash=515652443d81e4ed mean=0.312775 min=-1.209630 max=1.185105
 14_sample_roll_transpose nearest_identity[0] 48x48x3 hash=e02628715111b053 mean=0.312775 min=-1.379252 max=1.304058
+15_path_raster fill[0] 64x64x1 hash=d078ac6c182ad2e5 mean=0.179799 min=0.000000 max=1.000000
+15_path_raster fill_evenodd[0] 64x64x1 hash=d078ac6c182ad2e5 mean=0.179799 min=0.000000 max=1.000000
+15_path_raster sdf[0] 64x64x1 hash=40d31476b004ddbf mean=0.108055 min=-0.082055 max=0.342505
+15_path_raster uv[0] 64x32x2 hash=d65158951a700f2c mean=0.250351 min=-0.541548 max=1.000000
+15_path_raster sdf_open[0] 64x32x1 hash=2cb326ec0a0e21d1 mean=0.230051 min=0.000137 max=0.541901
+15_path_raster tiled_fill[0] 32x32x1 hash=78b9958fb0241396 mean=0.155972 min=0.000000 max=1.000000
+15_path_raster tiled_sdf[0] 32x32x1 hash=47163ef33a60a823 mean=0.011271 min=-0.077385 max=0.132098
+15_path_raster fit[0] 32x32x1 hash=78541e2f11531165 mean=0.212500 min=0.000000 max=1.000000

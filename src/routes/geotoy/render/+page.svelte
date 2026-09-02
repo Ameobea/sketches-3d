@@ -24,6 +24,7 @@
   import { buildDefaultMaterialDefinitions } from 'src/geoscript/materials';
   import { DefaultView, type MaterialOverrideMode } from 'src/geotoy/types';
   import type { EvalRequest } from 'src/geotoy/modes/mesh/evalResult';
+  import type { BenchRequest } from 'src/geotoy/renderHarness';
 
   interface TransientPayload {
     tree?: CompositionDoc;
@@ -34,6 +35,7 @@
     metadata?: CompositionVersionMetadata | TransientRenderMetadata;
     materialOverride?: MaterialOverrideMode;
     eval?: EvalRequest;
+    bench?: BenchRequest;
   }
 
   LoadOrbitControls.getter = async () => OrbitControls;
@@ -124,6 +126,7 @@
         renderMaterialOverride: payload.materialOverride,
         failRenderOnError: true,
         evalRequest: payload.eval,
+        benchRequest: payload.bench,
         me: null,
         workerManager: browser ? new WorkerManager() : null,
       },

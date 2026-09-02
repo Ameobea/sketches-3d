@@ -13,8 +13,21 @@ export interface ConstEvalCacheStats {
   maxBytes: number;
 }
 
+/** Wall-clock ms per runner step. `eval` is measured inside the worker; the rest bracket
+ *  Comlink round-trips, so `evalWall - eval` is transfer overhead. */
+export interface RunPhases {
+  setup: number;
+  ambient: number;
+  eval: number;
+  evalWall: number;
+  extract: number;
+}
+
 export interface RunStats {
   runtimeMs: number;
+  phases: RunPhases;
+  /** Whole-program re-runs taken to load async deps on demand. */
+  asyncDepRetries: number;
   renderedMeshCount: number;
   renderedPathCount: number;
   renderedLightCount: number;

@@ -124,6 +124,15 @@ pub(crate) enum FillRule {
 }
 
 impl FillRule {
+  pub(crate) fn accepts(self, winding: i32) -> bool {
+    match self {
+      FillRule::NonZero => winding != 0,
+      FillRule::EvenOdd => winding & 1 == 1,
+      FillRule::Positive => winding > 0,
+      FillRule::Negative => winding < 0,
+    }
+  }
+
   pub(crate) fn parse(value: &Value, fn_name: &str) -> Result<Self, ErrorStack> {
     if let Some(s) = value.as_str() {
       let key = s.to_ascii_lowercase();
@@ -285,6 +294,15 @@ pub(crate) trait PathSampler: Any {
   /// Each entry is (points, is_closed).  Points are in world (transformed) space.
   fn sample_subpaths(&self, _angle_tolerance: f32) -> Option<Vec<(Vec<Vec2>, bool)>> {
     None
+  }
+
+  /// `sample_subpaths` with an additional chord-deviation cap in world units.
+  fn sample_subpaths_flat(
+    &self,
+    angle_tolerance: f32,
+    _max_sagitta: f32,
+  ) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    self.sample_subpaths(angle_tolerance)
   }
 
   /// Like `sample_subpaths`, but caps the total number of output points across all subpaths.
@@ -2443,7 +2461,9 @@ fn segment_turning_angle(seg: &PathSegment) -> f32 {
   }
 }
 
-fn segment_subdivisions(seg: &PathSegment, angle_tolerance: f32) -> usize {
+/// Chords turn at most `angle_tolerance` and, with arc-length-uniform subdivision, sag at most
+/// `max_sagitta` (~ L*phi/(8n^2)); `INFINITY` disables the sagitta term.
+fn segment_subdivisions(seg: &PathSegment, angle_tolerance: f32, max_sagitta: f32) -> usize {
   if angle_tolerance <= 0.0 || !seg.has_detail() {
     return 1;
   }
@@ -2451,13 +2471,15 @@ fn segment_subdivisions(seg: &PathSegment, angle_tolerance: f32) -> usize {
   if angle <= 0.0 {
     return 1;
   }
-  let count = (angle / angle_tolerance).ceil() as usize;
-  count.max(1)
+  let by_angle = (angle / angle_tolerance).ceil() as usize;
+  let by_sagitta = (seg.length() * angle / (8. * max_sagitta)).sqrt().ceil() as usize;
+  by_angle.max(by_sagitta).max(1)
 }
 
 pub(crate) fn sample_subpath_points(
   subpath: &PathSubpath,
   angle_tolerance: f32,
+  max_sagitta: f32,
   include_end: bool,
 ) -> Vec<Vec2> {
   if subpath.segments.is_empty() || subpath.total_length <= LENGTH_EPSILON {
@@ -2474,7 +2496,7 @@ pub(crate) fn sample_subpath_points(
       continue;
     }
     points.push(seg.start_point());
-    let subdivs = segment_subdivisions(seg, angle_tolerance);
+    let subdivs = segment_subdivisions(seg, angle_tolerance, max_sagitta);
     for j in 1..subdivs {
       points.push(seg.sample_by_length(seg_len * (j as f32 / subdivs as f32)));
     }
@@ -2623,12 +2645,26 @@ impl PathSampler for PathTracerCallable {
   }
 
   fn sample_subpaths(&self, angle_tolerance: f32) -> Option<Vec<(Vec<Vec2>, bool)>> {
+    self.sample_subpaths_flat(angle_tolerance, f32::INFINITY)
+  }
+
+  fn sample_subpaths_flat(
+    &self,
+    angle_tolerance: f32,
+    max_sagitta: f32,
+  ) -> Option<Vec<(Vec<Vec2>, bool)>> {
     let transform = &self.transform;
+    // Segments are stored pre-transform; the sagitta cap is in world units, so shrink it by
+    // the transform's largest singular value.
+    let (a, b, c, d) = (transform.m11, transform.m12, transform.m21, transform.m22);
+    let (sum_sq, det) = (a * a + b * b + c * c + d * d, a * d - b * c);
+    let sigma_max = (0.5 * (sum_sq + (sum_sq * sum_sq - 4. * det * det).max(0.).sqrt())).sqrt();
+    let max_sagitta = max_sagitta / sigma_max.max(1e-12);
     let mut result = Vec::with_capacity(self.subpaths.len());
     for subpath in self.subpaths.iter() {
       let is_closed = subpath.is_closed();
       let include_end = !is_closed;
-      let mut points = sample_subpath_points(subpath, angle_tolerance, include_end);
+      let mut points = sample_subpath_points(subpath, angle_tolerance, max_sagitta, include_end);
       if self.reverse {
         points.reverse();
       }
@@ -3029,8 +3065,9 @@ fn build_arc_segment(
   let ry_sq = ry * ry;
   let x1p_sq = x1p * x1p;
   let y1p_sq = y1p * y1p;
+  // Fourth-power quantity: an absolute epsilon here silently flattened every small arc.
   let denom = rx_sq * y1p_sq + ry_sq * x1p_sq;
-  if denom.abs() <= LENGTH_EPSILON {
+  if denom <= 0.0 {
     let length = (end - start).norm();
     return Some(PathSegment::Line { start, end, length });
   }
@@ -3591,7 +3628,7 @@ mod tests {
     let tracer = PathTracerCallable::new(false, false, false, cmds, Sym(0));
     let subpath = &tracer.subpaths[0];
 
-    let points = sample_subpath_points(subpath, std::f32::consts::FRAC_PI_4, true);
+    let points = sample_subpath_points(subpath, std::f32::consts::FRAC_PI_4, f32::INFINITY, true);
     assert_eq!(points.len(), 3);
     assert_vec2_close(points[0], Vec2::new(0.0, 0.0));
     assert_vec2_close(points[2], Vec2::new(2.0, 0.0));
@@ -3610,7 +3647,12 @@ mod tests {
       DrawCommand::Close,
     ];
     let tracer = PathTracerCallable::new(true, false, false, cmds, Sym(0));
-    let points = sample_subpath_points(&tracer.subpaths[0], std::f32::consts::FRAC_PI_4, false);
+    let points = sample_subpath_points(
+      &tracer.subpaths[0],
+      std::f32::consts::FRAC_PI_4,
+      f32::INFINITY,
+      false,
+    );
     assert_eq!(
       points,
       vec![
