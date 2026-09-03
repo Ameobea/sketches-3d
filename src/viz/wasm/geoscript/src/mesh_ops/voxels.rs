@@ -145,7 +145,7 @@ pub fn sample_voxels(
           did_verify_cgal_loaded = true;
         }
 
-        super::mesh_ops::cgal_remesh_planar_patches(&verts, &indices, 1., 0.1);
+        super::mesh_ops::cgal_remesh_planar_patches(&verts, &indices, 1., 0.1, false);
 
         let mat = materials.get(i).cloned();
         let out_mesh = super::mesh_ops::read_cgal_output_mesh(Mat4::identity(), mat)?;

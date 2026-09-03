@@ -17,6 +17,7 @@
  *   --eval --only 128 --meshes obj
  */
 import { Database } from 'bun:sqlite';
+import { createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
@@ -43,7 +44,7 @@ const evalMeshes = optVal('--meshes') ?? 'summary';
  * producing a raster to diff. The other expected failures are syntax errors that fail
  * instantly, so they stay in and keep their `_failures.json` entries as regression signal.
  */
-const KNOWN_TIMEOUT_IDS = new Set([64, 123]);
+const KNOWN_TIMEOUT_IDS = new Set([64]);
 const includeTimeouts = args.includes('--include-timeouts');
 const concurrencyRaw = Number(optVal('--concurrency') ?? 6);
 // A NaN here silently renders nothing (`Array.from({length: NaN})` is empty) and still
@@ -80,6 +81,31 @@ const token =
   die('no CLI token (config.yml cli_token or $GEOTOY_CLI_TOKEN)');
 
 mkdirSync(outDir, { recursive: true });
+
+// What this capture was taken against, so a baseline stays interpretable later.
+const git = (args: string[]) =>
+  Bun.spawnSync(['git', ...args], { cwd: ROOT })
+    .stdout.toString()
+    .trim();
+const wasmPath = join(ROOT, 'src', 'viz', 'wasmComp', 'geoscript_repl_bg.wasm');
+writeFileSync(
+  join(outDir, '_capture.json'),
+  JSON.stringify(
+    {
+      createdAt: new Date().toISOString(),
+      git: {
+        head: git(['rev-parse', '--short', 'HEAD']),
+        dirty: git(['status', '--porcelain']).split('\n').filter(Boolean).length,
+      },
+      wasmSha256: createHash('sha256').update(readFileSync(wasmPath)).digest('hex').slice(0, 16),
+      db: dbPath,
+      mode: evalMode ? { eval: true, expr: evalExpr ?? null, meshes: evalMeshes } : { size },
+      args,
+    },
+    null,
+    2
+  )
+);
 
 const outPathFor = (id: number) => join(outDir, evalMode ? `${id}.eval.json` : `${id}.png`);
 

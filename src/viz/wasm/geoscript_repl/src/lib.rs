@@ -190,6 +190,8 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
       {
         deps.model_data = true;
       } else if name == "alpha_wrap"
+        || name == "alpha_wrap_3d"
+        || name == "alpha_wrap_2d"
         || name == "smooth"
         || name == "remesh_planar_patches"
         || name == "isotropic_remesh"

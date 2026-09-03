@@ -10708,7 +10708,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
       },
     ],
   },
-  "alpha_wrap" => FnDef {
+  "alpha_wrap_3d" => FnDef {
     module: "mesh",
     examples: &[FnExample { composition_id: 57 }],
     signatures: &[
@@ -10735,8 +10735,22 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Float(0.03)),
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input mesh.  Values should be in the range (0, 1)."
           },
+          ArgDef {
+            name: "manifold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Post-processes the wrap so it is geometrically 2-manifold as well as combinatorially (no separate sheets touching at a vertex or edge).  Disable for a slightly faster wrap that may contain such pinches."
+          },
+          ArgDef {
+            name: "seeds",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional sequence of Vec3 points from which the wrap starts instead of from the outside.  Each seed must sit inside a cavity of the input with room for a sphere of radius `alpha` around it; the result is then the wrap of that enclosed space (e.g. the inside of a room) rather than of the outside."
+          },
         ],
-        description: "Computes an alpha-wrap of a mesh.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
+        description: "Computes an alpha-wrap of a mesh.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.  `alpha_wrap` is an alias.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -10762,10 +10776,133 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Float(0.03)),
             description: "Controls the offset distance between the the input and the wrapped output mesh surfaces.  Larger values will result in simpler outputs with better triangle quality, potentially at the cost of sharp edges and fine details.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
           },
+          ArgDef {
+            name: "manifold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Post-processes the wrap so it is geometrically 2-manifold as well as combinatorially (no separate sheets touching at a vertex or edge).  Disable for a slightly faster wrap that may contain such pinches."
+          },
+          ArgDef {
+            name: "seeds",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional sequence of Vec3 points from which the wrap starts instead of from the outside.  Each seed must sit inside a cavity of the input with room for a sphere of radius `alpha` around it; the result is then the wrap of that enclosed space (e.g. the inside of a room) rather than of the outside."
+          },
         ],
         description: "Computes an alpha-wrap of a sequence of points.  This is kind of like a concave version of a convex hull.  This function is guaranteed to produce watertight/2-manifold outputs.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_3/index.html",
         return_type: &[ArgType::Mesh],
       }
+    ],
+  },
+  "alpha_wrap_2d" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A path sampler callable of signature `|t: num|: vec2`.  Every subpath is discretized into line segments; closed subpaths are sealed, open ones are treated as strokes."
+          },
+          ArgDef {
+            name: "alpha",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
+            description: "Controls the feature size of the computed wrapping: the wrap can only enter gaps and concavities wider than about `alpha`.  Smaller values follow the input more closely and produce more vertices.\n\nThis value is relative to the bounding box of the input.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.03)),
+            description: "Distance between the input and the output boundary.  Larger values give simpler, rounder outlines at the cost of sharp corners and fine detail.\n\nThis value is relative to the bounding box of the input.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "manifold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Post-processes the wrap so its boundary is geometrically 1-manifold as well as combinatorially (no separate loops touching at a vertex).  Disable for a slightly faster wrap that may contain such pinches."
+          },
+          ArgDef {
+            name: "seeds",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional sequence of Vec2 points from which the wrap starts instead of from the outside.  Each seed must sit inside an enclosed region of the input with room for a disk of radius `alpha` around it; the result is then the wrap of that enclosed space (an inset of the region's boundary) rather than of the outside."
+          },
+          ArgDef {
+            name: "curve_angle_degrees",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Max turning angle (degrees) per segment when discretizing curves."
+          },
+          ArgDef {
+            name: "sample_count",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(128)),
+            description: "Uniform sample count for non-trace_path callables."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional override for treating the input as closed/open."
+          },
+        ],
+        description: "Computes a 2D alpha-wrap of a path: a simple, hole-aware outline that strictly encloses every segment of the input, roughly `offset` away from it, with concavities narrower than `alpha` filled in.  Think of it as a concave hull of the strokes and filled regions of the path.  Overlapping or self-intersecting subpaths and open strokes are all fine as input.  The output is a polyline path (no continuous curve detail) with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
+        return_type: &[ArgType::Callable],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "A sequence of Vec2 points"
+          },
+          ArgDef {
+            name: "alpha",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1. / 30.)),
+            description: "Controls the feature size of the computed wrapping: the wrap can only enter gaps between points wider than about `alpha`, so larger values merge nearby points into one blob.  Smaller values produce tighter outlines around each cluster.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.03)),
+            description: "Distance between the input points and the output boundary.  Larger values give simpler, rounder outlines.\n\nThis value is relative to the bounding box of the input points.  Values should be in the range (0, 1)."
+          },
+          ArgDef {
+            name: "manifold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Post-processes the wrap so its boundary is geometrically 1-manifold as well as combinatorially (no separate loops touching at a vertex).  Disable for a slightly faster wrap that may contain such pinches."
+          },
+          ArgDef {
+            name: "seeds",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Optional sequence of Vec2 points from which the wrap starts instead of from the outside.  Each seed must sit inside an enclosed region of the input with room for a disk of radius `alpha` around it; the result is then the wrap of that enclosed space rather than of the outside."
+          },
+        ],
+        description: "Computes a 2D alpha-wrap of a set of points: a simple, hole-aware outline enclosing all of them, roughly `offset` away from the outermost points, with gaps narrower than `alpha` closed over.  Useful for blob-like silhouettes around scattered points.  The output is a polyline path with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
+        return_type: &[ArgType::Callable],
+      },
     ],
   },
   "compute_uvs" => FnDef {
@@ -10977,8 +11114,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Maximum distance from the plane for faces to be considered coplanar.  This is an absolute distance in the mesh's local space.  If not provided or set to `nil`, it will default to 1% of the diagonal length of the mesh's bounding box."
           },
+          ArgDef {
+            name: "least_squares",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When false (default), each planar region is measured against the plane of its seed face (largest faces first), so every face in a region is within `max_angle_deg`/`max_offset` of one real input face.  When true, the region's plane is refit by least squares as it grows, which merges gently curved areas into fewer, larger facets that cut through the surface rather than lying on it."
+          },
         ],
-        description: "Remeshes a mesh by identifying planar regions and simplifying them into a simpler set of triangles.  This is useful for optimizing meshes produced by a variety of other built-in methods that tend to produce a lot of small triangles in flat areas.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/5.6.3/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        description: "Remeshes a mesh by identifying planar regions and simplifying them into a simpler set of triangles.  This is useful for optimizing meshes produced by a variety of other built-in methods that tend to produce a lot of small triangles in flat areas.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/latest/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -11032,7 +11176,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Angle threshold in degrees for edges to be considered sharp.  Only used if `protect_sharp_edges` is true."
           },
         ],
-        description: "Remeshes a mesh to have more uniform edge lengths, targeting the specified edge length.  \n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/5.6.3/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        description: "Remeshes a mesh to have more uniform edge lengths, targeting the specified edge length.  \n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/latest/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
         return_type: &[ArgType::Mesh],
       },
     ],

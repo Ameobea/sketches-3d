@@ -2488,12 +2488,12 @@ var wasmImports = {
   /** @export */ v: __abort_js,
   /** @export */ k: __embind_register_bigint,
   /** @export */ u: __embind_register_bool,
-  /** @export */ e: __embind_register_class,
-  /** @export */ d: __embind_register_class_constructor,
+  /** @export */ f: __embind_register_class,
+  /** @export */ e: __embind_register_class_constructor,
   /** @export */ a: __embind_register_class_function,
   /** @export */ t: __embind_register_emval,
   /** @export */ j: __embind_register_float,
-  /** @export */ g: __embind_register_function,
+  /** @export */ d: __embind_register_function,
   /** @export */ c: __embind_register_integer,
   /** @export */ b: __embind_register_memory_view,
   /** @export */ s: __embind_register_std_string,
@@ -2506,7 +2506,7 @@ var wasmImports = {
   /** @export */ n: _emscripten_resize_heap,
   /** @export */ B: _environ_get,
   /** @export */ A: _environ_sizes_get,
-  /** @export */ f: _exit,
+  /** @export */ g: _exit,
   /** @export */ l: _fd_close,
   /** @export */ z: _fd_read,
   /** @export */ y: _fd_seek,
@@ -2520,11 +2520,11 @@ var ___wasm_call_ctors = wasmExports["F"];
 
 var ___getTypeName = wasmExports["G"];
 
-var _free = wasmExports["I"];
+var _malloc = wasmExports["I"];
 
-var _malloc = wasmExports["J"];
+var __emscripten_timeout = wasmExports["J"];
 
-var __emscripten_timeout = wasmExports["K"];
+var _free = wasmExports["K"];
 
 var ___trap = wasmExports["L"];
 

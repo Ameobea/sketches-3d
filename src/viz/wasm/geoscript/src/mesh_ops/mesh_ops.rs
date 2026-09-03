@@ -129,8 +129,16 @@ extern "C" {
     mesh_indices: &[u32],
     relative_alpha: f32,
     relative_offset: f32,
+    manifold: bool,
+    seeds: &[f32],
   );
-  pub fn cgal_alpha_wrap_points(points: &[f32], relative_alpha: f32, relative_offset: f32);
+  pub fn cgal_alpha_wrap_points(
+    points: &[f32],
+    relative_alpha: f32,
+    relative_offset: f32,
+    manifold: bool,
+    seeds: &[f32],
+  );
   pub fn cgal_get_output_mesh_verts() -> Vec<f32>;
   pub fn cgal_get_output_mesh_indices() -> Vec<u32>;
   pub fn cgal_clear_output_mesh();
@@ -143,6 +151,7 @@ extern "C" {
     mesh_indices: &[u32],
     max_angle_deg: f32,
     max_offset: f32,
+    least_squares: bool,
   );
   pub fn cgal_remesh_isotropic(
     mesh_verts: &[f32],
@@ -321,10 +330,17 @@ pub fn split_mesh_by_plane(
 }
 
 #[cfg(target_arch = "wasm32")]
+fn vec3s_as_f32s(points: &[Vec3]) -> &[f32] {
+  unsafe { std::slice::from_raw_parts(points.as_ptr() as *const f32, points.len() * 3) }
+}
+
+#[cfg(target_arch = "wasm32")]
 pub fn alpha_wrap_mesh(
   mesh: &MeshHandle,
   relative_alpha: f32,
   relative_offset: f32,
+  manifold: bool,
+  seeds: &[Vec3],
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
 
@@ -343,6 +359,8 @@ pub fn alpha_wrap_mesh(
     in_indices,
     relative_alpha,
     relative_offset,
+    manifold,
+    vec3s_as_f32s(seeds),
   );
 
   read_cgal_output_mesh(mesh.transform, mesh.material.clone())
@@ -353,6 +371,8 @@ pub fn alpha_wrap_mesh(
   _mesh: &MeshHandle,
   _relative_alpha: f32,
   _relative_offset: f32,
+  _manifold: bool,
+  _seeds: &[Vec3],
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Alpha wrapping is not supported outside of wasm",
@@ -436,12 +456,18 @@ pub fn alpha_wrap_points(
   points: &[Vec3],
   relative_alpha: f32,
   relative_offset: f32,
+  manifold: bool,
+  seeds: &[Vec3],
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
 
-  let points =
-    unsafe { std::slice::from_raw_parts(points.as_ptr() as *const f32, points.len() * 3) };
-  cgal_alpha_wrap_points(points, relative_alpha, relative_offset);
+  cgal_alpha_wrap_points(
+    vec3s_as_f32s(points),
+    relative_alpha,
+    relative_offset,
+    manifold,
+    vec3s_as_f32s(seeds),
+  );
 
   read_cgal_output_mesh(Mat4::identity(), None)
 }
@@ -451,6 +477,8 @@ pub fn alpha_wrap_points(
   _points: &[Vec3],
   _relative_alpha: f32,
   _relative_offset: f32,
+  _manifold: bool,
+  _seeds: &[Vec3],
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Alpha wrapping is not supported outside of wasm",
@@ -462,6 +490,7 @@ pub fn remesh_planar_patches(
   mesh: &MeshHandle,
   max_angle_deg: f32,
   max_offset: f32,
+  least_squares: bool,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
 
@@ -475,7 +504,13 @@ pub fn remesh_planar_patches(
     )
   };
 
-  cgal_remesh_planar_patches(&raw_mesh.vertices, in_indices, max_angle_deg, max_offset);
+  cgal_remesh_planar_patches(
+    &raw_mesh.vertices,
+    in_indices,
+    max_angle_deg,
+    max_offset,
+    least_squares,
+  );
 
   read_cgal_output_mesh(mesh.transform, mesh.material.clone())
 }
@@ -485,6 +520,7 @@ pub fn remesh_planar_patches(
   _mesh: &MeshHandle,
   _max_angle_deg: f32,
   _max_offset: f32,
+  _least_squares: bool,
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Planar patch remeshing is not supported outside of wasm",

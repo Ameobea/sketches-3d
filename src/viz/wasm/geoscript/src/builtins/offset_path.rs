@@ -268,7 +268,7 @@ fn run_clipper_offset(
 /// t in each path's own `[0, 1]`; for path `k` with closed-perimeter length `L_k` starting at
 /// cumulative offset `offset_k`, the global value is `(offset_k + t_local * L_k) / total`.
 #[cfg(target_arch = "wasm32")]
-fn global_critical_points(paths: &[Vec<Vec2>]) -> Option<Vec<f32>> {
+pub(crate) fn global_critical_points(paths: &[Vec<Vec2>]) -> Option<Vec<f32>> {
   let closed_len = |p: &[Vec2]| -> f32 {
     let n = p.len();
     (0..n).map(|i| (p[(i + 1) % n] - p[i]).norm()).sum()

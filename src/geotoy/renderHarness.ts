@@ -218,6 +218,7 @@ export const startRenderHarness = ({
     }
 
     await meshScene.materialRuntime.untilAllLoaded();
+    await meshScene.settleView();
 
     if (userData.transientAutoFrame) {
       meshScene.focus(null);

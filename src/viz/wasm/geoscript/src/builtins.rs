@@ -68,6 +68,7 @@ use crate::{
 };
 use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
+pub(crate) mod alpha_wrap_2d;
 pub(crate) mod blit;
 pub(crate) mod catmull_rom;
 pub(crate) mod fillet_path;
@@ -94,6 +95,7 @@ pub(crate) mod trace_path;
 
 pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
+  "alpha_wrap" => "alpha_wrap_3d",
   "trans_global" => "translate_global",
   "rot_local" => "rot_around_center",
   "v2" => "vec2",
@@ -4950,6 +4952,21 @@ fn render_path_impl(
   }
 }
 
+fn consume_vec3s(ctx: &EvalCtx, seq: &Value, what: &str) -> Result<Vec<Vec3>, ErrorStack> {
+  seq
+    .as_sequence()
+    .unwrap()
+    .consume(ctx)
+    .map(|res| match res {
+      Ok(Value::Vec3(v)) => Ok(v),
+      Ok(val) => Err(ErrorStack::new(format!(
+        "Expected Vec3 in {what} passed to `alpha_wrap_3d`, found: {val:?}"
+      ))),
+      Err(err) => Err(err),
+    })
+    .collect()
+}
+
 fn alpha_wrap_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -4957,40 +4974,27 @@ fn alpha_wrap_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  match def_ix {
+  let alpha = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
+  let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
+  let manifold = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+  let seeds = match arg_refs[4].resolve(args, kwargs) {
+    Value::Nil => Vec::new(),
+    seq => consume_vec3s(ctx, seq, "`seeds`")?,
+  };
+
+  let out = match def_ix {
     0 => {
       let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
-      let alpha = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-
-      let out = alpha_wrap_mesh(mesh, alpha, offset)
-        .map_err(|err| err.wrap("Error in `alpha_wrap` function"))?;
-      Ok(Value::Mesh(Rc::new(out)))
+      alpha_wrap_mesh(mesh, alpha, offset, manifold, &seeds)
     }
     1 => {
-      // TODO: would be good to create a helper function for this
-      let points = arg_refs[0]
-        .resolve(args, kwargs)
-        .as_sequence()
-        .unwrap()
-        .consume(ctx)
-        .map(|res| match res {
-          Ok(Value::Vec3(v)) => Ok(v),
-          Ok(val) => Err(ErrorStack::new(format!(
-            "Expected Vec3 in sequence passed to `alpha_wrap`, found: {val:?}"
-          ))),
-          Err(err) => Err(err),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-      let alpha = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let offset = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-
-      let out = alpha_wrap_points(&points, alpha, offset)
-        .map_err(|err| err.wrap("Error in `alpha_wrap` function"))?;
-      Ok(Value::Mesh(Rc::new(out)))
+      let points = consume_vec3s(ctx, arg_refs[0].resolve(args, kwargs), "sequence")?;
+      alpha_wrap_points(&points, alpha, offset, manifold, &seeds)
     }
     _ => unimplemented!(),
   }
+  .map_err(|err| err.wrap("Error in `alpha_wrap_3d` function"))?;
+  Ok(Value::Mesh(Rc::new(out)))
 }
 
 fn smooth_impl(
@@ -5193,7 +5197,8 @@ fn remesh_planar_patches_impl(
         }
       };
 
-      let out = remesh_planar_patches(mesh, max_angle_deg, max_offset)
+      let least_squares = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
+      let out = remesh_planar_patches(mesh, max_angle_deg, max_offset, least_squares)
         .map_err(|err| err.wrap("Error in `remesh_planar_patches` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
@@ -11618,8 +11623,11 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "render_path" => builtin_fn!(render_path, |def_ix, arg_refs, args, kwargs, ctx| {
     render_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "alpha_wrap" => builtin_fn!(alpha_wrap, |def_ix, arg_refs, args, kwargs, ctx| {
+  "alpha_wrap_3d" => builtin_fn!(alpha_wrap_3d, |def_ix, arg_refs, args, kwargs, ctx| {
     alpha_wrap_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "alpha_wrap_2d" => builtin_fn!(alpha_wrap_2d, |def_ix, arg_refs, args, kwargs, ctx| {
+    alpha_wrap_2d::alpha_wrap_2d_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "smooth" => builtin_fn!(smooth, |def_ix, arg_refs, args, kwargs, _ctx| {
     smooth_impl(def_ix, arg_refs, args, kwargs)

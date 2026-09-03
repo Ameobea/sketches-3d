@@ -89,9 +89,27 @@ const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
   }
 };
 
+const newVecF32 = (vals: number[] | Float32Array) => {
+  const CGAL = CGALWasm.getSync();
+  const vec = new CGAL.vector$float$();
+  vec.resize(vals.length, 0);
+  const ptr = vec.data();
+  (CGAL.HEAPF32 as Float32Array).subarray(ptr / 4, ptr / 4 + vals.length).set(vals);
+  return vec;
+};
+
+const readVecF32 = (vec: any): Float32Array => {
+  const ptr = vec.data();
+  return (CGALWasm.getSync().HEAPF32 as Float32Array).subarray(ptr / 4, ptr / 4 + vec.size()).slice();
+};
+const readVecU32 = (vec: any): Uint32Array => {
+  const ptr = vec.data();
+  return (CGALWasm.getSync().HEAPU32 as Uint32Array).subarray(ptr / 4, ptr / 4 + vec.size()).slice();
+};
+
 let OutputMesh: { verts: Float32Array; indices: Uint32Array } | null = null;
 
-const setOutputMeshFromCGALMesh = (mesh: any): void => {
+const setOutputMeshFromCGALMesh = (mesh: any, opName: string): void => {
   const CGAL = CGALWasm.getSync();
 
   const HEAPF32 = () => CGAL.HEAPF32 as Float32Array;
@@ -119,6 +137,9 @@ const setOutputMeshFromCGALMesh = (mesh: any): void => {
   indices.delete();
   verts.delete();
 
+  if (out.verts.length === 0) {
+    LastBuildPolymeshError = `${opName} produced an empty mesh`;
+  }
   OutputMesh = out;
 };
 
@@ -126,7 +147,9 @@ export const cgal_alpha_wrap_mesh = (
   verts: Float32Array,
   indices: Uint32Array,
   relativeAlpha: number,
-  relativeOffset: number
+  relativeOffset: number,
+  manifold = true,
+  seeds: Float32Array = new Float32Array(0)
 ) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
@@ -137,52 +160,43 @@ export const cgal_alpha_wrap_mesh = (
     return;
   }
 
+  const seedsVec = newVecF32(seeds);
   let wrapped;
   try {
-    wrapped = mesh.alphaWrap(relativeAlpha, relativeOffset);
+    wrapped = mesh.alphaWrap(relativeAlpha, relativeOffset, manifold, seedsVec);
   } catch (err) {
     console.error('Error during CGAL alpha wrap:', err);
     throw err;
+  } finally {
+    seedsVec.delete();
+    mesh.delete();
   }
 
-  mesh.delete();
-
-  setOutputMeshFromCGALMesh(wrapped);
+  setOutputMeshFromCGALMesh(wrapped, 'alpha wrap');
   wrapped.delete();
 };
 
 export const cgal_alpha_wrap_points = (
   points: Float32Array,
   relativeAlpha: number,
-  relativeOffset: number
+  relativeOffset: number,
+  manifold = true,
+  seeds: Float32Array = new Float32Array(0)
 ) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
   }
 
   const CGAL = CGALWasm.getSync();
+  LastBuildPolymeshError = null;
 
-  // TODO: de-dupe all these helpers
-  const HEAPF32 = () => CGAL.HEAPF32 as Float32Array;
-
-  const vec_generic = (vecCtor: new () => any, mem: () => Float32Array, vals: number[] | Float32Array) => {
-    const vec = new vecCtor();
-    vec.resize(vals.length, 0);
-    const ptr = vec.data();
-    const buf = mem().subarray(ptr / 4, ptr / 4 + vals.length);
-    buf.set(vals);
-    return vec;
-  };
-
-  const vec_f32 = (vals: number[] | Float32Array) => vec_generic(CGAL.vector$float$, HEAPF32, vals);
-
-  const vec_points = vec_f32(points);
-
-  const wrapped = CGAL.alphaWrapPointCloud(vec_points, relativeAlpha, relativeOffset);
-
+  const vec_points = newVecF32(points);
+  const vec_seeds = newVecF32(seeds);
+  const wrapped = CGAL.alphaWrapPointCloud(vec_points, relativeAlpha, relativeOffset, manifold, vec_seeds);
   vec_points.delete();
+  vec_seeds.delete();
 
-  setOutputMeshFromCGALMesh(wrapped);
+  setOutputMeshFromCGALMesh(wrapped, 'alpha wrap');
   wrapped.delete();
 };
 
@@ -215,7 +229,7 @@ export const cgal_catmull_smooth_mesh = (verts: Float32Array, indices: Uint32Arr
   }
   mesh.catmull_smooth(iterations);
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'catmull-clark smoothing');
   mesh.delete();
 };
 
@@ -230,7 +244,7 @@ export const cgal_loop_smooth_mesh = (verts: Float32Array, indices: Uint32Array,
   }
   mesh.loop_smooth(iterations);
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'loop smoothing');
   mesh.delete();
 };
 
@@ -245,7 +259,7 @@ export const cgal_doosabin_smooth_mesh = (verts: Float32Array, indices: Uint32Ar
   }
   mesh.dooSabin_smooth(iterations);
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'doo-sabin smoothing');
   mesh.delete();
 };
 
@@ -260,7 +274,7 @@ export const cgal_sqrt_smooth_mesh = (verts: Float32Array, indices: Uint32Array,
   }
   mesh.sqrt_smooth(iterations);
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'sqrt3 smoothing');
   mesh.delete();
 };
 
@@ -268,7 +282,8 @@ export const cgal_remesh_planar_patches = (
   verts: Float32Array,
   indices: Uint32Array,
   maxAngleDegrees: number,
-  maxOffset: number
+  maxOffset: number,
+  leastSquares: boolean
 ) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
@@ -278,9 +293,13 @@ export const cgal_remesh_planar_patches = (
   if (!mesh) {
     return;
   }
-  mesh.remesh_planar_patches(maxAngleDegrees, maxOffset);
+  if (!mesh.remesh_planar_patches(maxAngleDegrees, maxOffset, leastSquares)) {
+    LastBuildPolymeshError = mesh.getLastError();
+    mesh.delete();
+    return;
+  }
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'remesh_planar_patches');
   mesh.delete();
 };
 
@@ -309,7 +328,7 @@ export const cgal_remesh_isotropic = (
     sharpAngleThresholdDegrees
   );
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'isotropic remeshing');
   mesh.delete();
 };
 
@@ -331,7 +350,7 @@ export const cgal_remesh_delaunay = (
   }
   mesh.delaunay_remesh(targetEdgeLength, facetDistance, autoSharpEdges, sharpAngleThresholdDegrees);
 
-  setOutputMeshFromCGALMesh(mesh);
+  setOutputMeshFromCGALMesh(mesh, 'delaunay remeshing');
   mesh.delete();
 };
 
@@ -686,6 +705,69 @@ export const cgal_path_boolean_2d = (
 
   return true;
 };
+
+const runAlphaWrap2D = (run: (CGAL: any) => any): boolean => {
+  if (!CGALWasm.isSome()) {
+    throw new Error('CGALWasm not initialized');
+  }
+  let result: any;
+  try {
+    result = run(CGALWasm.getSync());
+  } catch (err) {
+    LastBuildPolymeshError = `alphaWrap2D exception: ${err}`;
+    return false;
+  }
+  if (!result.success()) {
+    LastBuildPolymeshError = result.getError();
+    result.delete();
+    return false;
+  }
+  LastBuildPolymeshError = null;
+  const outCoords = result.getCoords();
+  const outLens = result.getPathLengths();
+  PathBoolean2DOutput = { coords: readVecF32(outCoords), pathLengths: readVecU32(outLens) };
+  outCoords.delete();
+  outLens.delete();
+  result.delete();
+  return true;
+};
+
+/** `segments` is flat [x0, y0, x1, y1, ...] per segment; output via `cgal_get_path_boolean_2d_*`. */
+export const cgal_alpha_wrap_2d = (
+  segments: Float32Array,
+  relativeAlpha: number,
+  relativeOffset: number,
+  manifold: boolean,
+  seeds: Float32Array
+): boolean =>
+  runAlphaWrap2D(CGAL => {
+    const segVec = newVecF32(segments);
+    const seedVec = newVecF32(seeds);
+    try {
+      return CGAL.alphaWrap2D(segVec, relativeAlpha, relativeOffset, manifold, seedVec);
+    } finally {
+      segVec.delete();
+      seedVec.delete();
+    }
+  });
+
+export const cgal_alpha_wrap_2d_points = (
+  points: Float32Array,
+  relativeAlpha: number,
+  relativeOffset: number,
+  manifold: boolean,
+  seeds: Float32Array
+): boolean =>
+  runAlphaWrap2D(CGAL => {
+    const ptsVec = newVecF32(points);
+    const seedVec = newVecF32(seeds);
+    try {
+      return CGAL.alphaWrap2DPoints(ptsVec, relativeAlpha, relativeOffset, manifold, seedVec);
+    } finally {
+      ptsVec.delete();
+      seedVec.delete();
+    }
+  });
 
 export const cgal_get_path_boolean_2d_coords = (): Float32Array => {
   if (!PathBoolean2DOutput) {

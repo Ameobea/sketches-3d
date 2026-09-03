@@ -508,15 +508,32 @@ export class MeshScene implements Mode {
    *  resolve) would otherwise let the first one to finish reopen the window. */
   private restoresInFlight = 0;
 
-  setView = async (view: MeshTabView) => {
+  setView = (view: MeshTabView): Promise<void> => {
+    this.lastView = view;
     this.restoresInFlight += 1;
-    try {
-      if (await applyCameraView(this.deps.viz, view, this.deps.bootSignal)) {
-        this.cameraProjection = view.projection;
+    this.lastRestore = (async () => {
+      try {
+        if (await applyCameraView(this.deps.viz, view, this.deps.bootSignal)) {
+          this.cameraProjection = view.projection;
+        }
+      } finally {
+        this.restoresInFlight -= 1;
       }
-    } finally {
-      this.restoresInFlight -= 1;
+    })();
+    return this.lastRestore;
+  };
+
+  private lastRestore: Promise<void> = Promise.resolve();
+  private lastView: MeshTabView | null = null;
+
+  /** Headless capture: waits for the boot restore to have started and landed, then re-applies
+   *  the view so the frame rendered next can't precede or lose it. */
+  settleView = async (): Promise<void> => {
+    while (!this.lastView) {
+      await new Promise(resolve => setTimeout(resolve, 16));
     }
+    await this.lastRestore;
+    await this.setView(this.lastView);
   };
 
   toggleProjection = () => {
