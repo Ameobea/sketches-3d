@@ -1,12 +1,10 @@
 use fxhash::FxHashSet;
-use geoscript::{
-  ast::PATH_BLOCK_REWRITE_MAP, builtins::fn_defs::fn_sigs,
-  parse_program_maybe_with_prelude_and_ambient,
-};
+use geoscript::{ast::PATH_BLOCK_REWRITE_MAP, builtins::fn_defs::fn_sigs};
 
 use crate::{
-  analysis::Analysis, format::format_signature_oneliner, resolve_draw_command, source_scan,
-  AnalysisCtx, CompletionItem, SymbolKind,
+  analysis::Analysis,
+  format::{format_arg_type, format_signature_oneliner},
+  parse_lenient, resolve_draw_command, source_scan, AnalysisCtx, CompletionItem, SymbolKind,
 };
 
 pub(crate) fn completions(
@@ -17,17 +15,10 @@ pub(crate) fn completions(
   include_prelude: bool,
   ambient_src: &str,
 ) -> Vec<CompletionItem> {
-  let parse_result = parse_program_maybe_with_prelude_and_ambient(
-    &ctx.eval_ctx,
-    src.to_owned(),
-    include_prelude,
-    ambient_src,
-  );
-
   let mut items = Vec::new();
 
   // Even if parsing fails, we can still offer builtin completions
-  if let Ok(program) = parse_result {
+  if let Some(program) = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src) {
     let analysis = Analysis::build(&ctx.eval_ctx, &program);
 
     // Add in-scope user-defined variables
@@ -89,7 +80,7 @@ pub(crate) fn completions(
   }
 
   // If we're inside a function call, also suggest kwarg names for that function
-  add_kwarg_completions(ctx, src, target_line, target_col, in_path_block, &mut items);
+  add_kwarg_completions(ctx, src, target_line, target_col, &mut items);
 
   items
 }
@@ -124,18 +115,18 @@ fn add_kwarg_completions(
   src: &str,
   target_line: u32,
   target_col: u32,
-  in_path_block: bool,
   items: &mut Vec<CompletionItem>,
 ) {
   let Some(offset) = source_scan::line_col_to_offset(src, target_line, target_col) else {
     return;
   };
-  let Some(call_info) = source_scan::find_enclosing_call(src, offset) else {
+  let Some(call_info) = source_scan::enclosing_call(src, offset) else {
     return;
   };
-  let Some((_canonical, fn_def)) =
-    ctx.lookup_builtin(resolve_draw_command(&call_info.fn_name, in_path_block))
-  else {
+  let Some((_canonical, fn_def)) = ctx.lookup_builtin(resolve_draw_command(
+    &call_info.fn_name,
+    call_info.in_path_block,
+  )) else {
     return;
   };
 
@@ -146,17 +137,10 @@ fn add_kwarg_completions(
       if arg.name.is_empty() || !seen.insert(arg.name) {
         continue;
       }
-      let types = geoscript::ArgType::list_from_bitflags(arg.valid_types);
-      let type_str = types
-        .iter()
-        .map(|t| format!("{t:?}"))
-        .collect::<Vec<_>>()
-        .join("|");
-
       items.push(CompletionItem {
         label: format!("{}=", arg.name),
         kind: "property".to_owned(),
-        detail: type_str,
+        detail: format_arg_type(arg),
         info: arg.description.to_owned(),
       });
     }

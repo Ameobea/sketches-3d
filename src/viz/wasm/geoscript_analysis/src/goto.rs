@@ -1,6 +1,4 @@
-use geoscript::parse_program_maybe_with_prelude_and_ambient;
-
-use crate::{analysis::Analysis, source_scan, AnalysisCtx, DefinitionLocation};
+use crate::{analysis::Analysis, parse_lenient, source_scan, AnalysisCtx, DefinitionLocation};
 
 pub(crate) fn goto_definition(
   ctx: &AnalysisCtx,
@@ -10,13 +8,7 @@ pub(crate) fn goto_definition(
   include_prelude: bool,
   ambient_src: &str,
 ) -> Option<DefinitionLocation> {
-  let program = parse_program_maybe_with_prelude_and_ambient(
-    &ctx.eval_ctx,
-    src.to_owned(),
-    include_prelude,
-    ambient_src,
-  )
-  .ok()?;
+  let program = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src)?;
 
   let analysis = Analysis::build(&ctx.eval_ctx, &program);
 

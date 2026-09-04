@@ -17,11 +17,14 @@ mod goto;
 mod hover;
 mod rewrite_inputs;
 mod scope;
+mod signature_help;
 mod source_scan;
 
 pub use analysis::Analysis;
+pub use format::{BuiltinDocs, ParamDocs, SignatureDocs};
 pub use rewrite_inputs::{rewrite_input_defaults, InputDefaultRequest, RewriteResult, SourceEdit};
 pub use scope::{SymbolDef, SymbolKind, SymbolRef};
+pub use signature_help::SignatureHelp;
 
 /// Severity of a diagnostic message.
 #[derive(Clone, Debug, PartialEq, Eq, SerJson)]
@@ -44,10 +47,14 @@ pub struct AnalysisDiagnostic {
   pub message: String,
 }
 
-/// Information returned for a hover request.
+/// Information returned for a hover request.  Builtins carry structured `builtin` docs (with
+/// `content` empty); everything else is pre-formatted text.
 #[derive(Clone, Debug, SerJson)]
 pub struct HoverInfo {
   pub content: String,
+  pub builtin: Option<BuiltinDocs>,
+  /// Overload matched at a call site, when known.
+  pub active_signature: Option<usize>,
   pub start_line: u32,
   pub start_col: u32,
   pub end_line: u32,
@@ -79,6 +86,67 @@ pub struct DefinitionLocation {
 #[derive(Clone, Debug, SerJson)]
 pub struct AnalysisResult {
   pub diagnostics: Vec<AnalysisDiagnostic>,
+}
+
+fn blank_lines(src: &str, lines: &[u32]) -> String {
+  let mut out = src.to_owned();
+  for &line in lines {
+    if let Some(span) = source_scan::line_span(src, line) {
+      out.replace_range(span.clone(), &" ".repeat(span.len()));
+    }
+  }
+  out
+}
+
+/// Parse for editor features.  On a syntax error, blank the broken line and retry, so a half-typed
+/// line doesn't take hover/goto/completions down with it.  Pest reports unclosed brackets and
+/// dangling operators on a later line or at EOF, so an error there blames the innermost unclosed
+/// bracket's line, else widens the blanked block upward one line at a time.
+pub(crate) fn parse_lenient(
+  ctx: &EvalCtx,
+  src: &str,
+  include_prelude: bool,
+  ambient_src: &str,
+) -> Option<geoscript::ast::Program> {
+  let parse = |src: &str| {
+    parse_program_maybe_with_prelude_and_ambient(ctx, src.to_owned(), include_prelude, ambient_src)
+  };
+  let line_count = src.matches('\n').count() as u32 + 1;
+  let mut blanked: Vec<u32> = Vec::new();
+  let mut program = None;
+  for _ in 0..5 {
+    let cur = blank_lines(src, &blanked);
+    let err = match parse(&cur) {
+      Ok(p) => {
+        program = Some(p);
+        break;
+      }
+      Err(err) => err,
+    };
+    let (line, _) = err.loc?;
+    let line = if line == line_count || blanked.contains(&line) {
+      match source_scan::unclosed_opener_line(&cur) {
+        Some(open) if !blanked.contains(&open) => open,
+        _ if blanked.is_empty() => line,
+        _ => blanked.iter().min().unwrap() - 1,
+      }
+    } else {
+      line
+    };
+    let nonblank =
+      |l: &u32| source_scan::line_span(&cur, *l).is_some_and(|s| !cur[s].trim().is_empty());
+    blanked.push((1..=line).rev().find(nonblank)?);
+  }
+  let program = program?;
+  if blanked.len() > 1 {
+    // earlier blanked lines are often just spill-over from the last (real) break
+    for keep in [&blanked[blanked.len() - 1..], &blanked[1..]] {
+      if let Ok(p) = parse(&blank_lines(src, keep)) {
+        return Some(p);
+      }
+    }
+  }
+  Some(program)
 }
 
 /// Maps a draw-command name to the builtin it expands to when the cursor is inside a
@@ -210,6 +278,25 @@ impl AnalysisCtx {
     ambient_src: &str,
   ) -> Vec<CompletionItem> {
     completions::completions(
+      self,
+      src,
+      target_line,
+      target_col,
+      include_prelude,
+      ambient_src,
+    )
+  }
+
+  /// Docs for the call the cursor is inside of, if any.
+  pub fn signature_help(
+    &self,
+    src: &str,
+    target_line: u32,
+    target_col: u32,
+    include_prelude: bool,
+    ambient_src: &str,
+  ) -> Option<SignatureHelp> {
+    signature_help::signature_help(
       self,
       src,
       target_line,
@@ -505,11 +592,58 @@ y = x
     let hover = ctx.hover(src, 1, 5, false, "");
     assert!(hover.is_some(), "Expected hover info for `box`");
     let hover = hover.unwrap();
-    assert!(
-      hover.content.contains("builtin"),
-      "Expected builtin hover, got: {}",
-      hover.content
+    let docs = hover.builtin.expect("expected builtin docs");
+    assert_eq!(docs.name, "box");
+    assert!(docs.signatures.len() > 1, "got: {docs:?}");
+  }
+
+  #[test]
+  fn test_features_survive_broken_line() {
+    let ctx = AnalysisCtx::new();
+    let src = "x = 10\npath_difference(a, b, curve_angle_degrees=)\ny = x + 1";
+    let def = ctx
+      .goto_definition(src, 3, 5, false, "")
+      .expect("goto across broken line");
+    assert_eq!((def.start_line, def.start_col), (1, 1));
+    let hover = ctx
+      .hover(src, 3, 5, false, "")
+      .expect("hover across broken line");
+    assert!(hover.content.contains("int"), "got: {}", hover.content);
+    let names: Vec<String> = ctx
+      .completions(src, 3, 9, false, "")
+      .into_iter()
+      .map(|c| c.label)
+      .collect();
+    assert!(names.contains(&"x".to_owned()));
+
+    let diag = &ctx.analyze(src, false, "").diagnostics[0];
+    assert_eq!(
+      diag.start_line, 2,
+      "parse error should be located: {diag:?}"
     );
+    assert!(diag.start_col > 1);
+
+    // Pest blames a later line (or EOF) for unclosed brackets and dangling operators
+    for (src, line, col) in [
+      ("m = box(1)\nz = m\ntranslate(m, \n", 2, 5),
+      ("m = box(1)\nx = \nz = m\n", 3, 5),
+      ("m = box(1)\nf(\n  m,\n  m\nz = m\n", 5, 5),
+      ("m = box(1)\nfoo = m |\nbar = m\nz = m\n", 4, 5),
+      ("m = box(1)\nfoo = m |\nbar = m\nz = m\n", 3, 7),
+    ] {
+      let got = ctx.goto_definition(src, line, col, false, "");
+      assert_eq!(
+        got.map(|d| (d.start_line, d.start_col)),
+        Some((1, 1)),
+        "goto in {src:?}"
+      );
+    }
+    assert!(ctx
+      .completions("my_mesh = box(1)\ntranslate(my_\n", 2, 14, false, "")
+      .iter()
+      .any(|c| c.label == "my_mesh"));
+
+    assert!(ctx.hover("x = (\n\n", 1, 1, false, "").is_none());
   }
 
   #[test]
@@ -1157,40 +1291,24 @@ base = spectral_noise(
   }
 
   #[test]
-  fn test_hover_call_focused_overload_shows_arg_docs() {
+  fn test_hover_call_reports_matched_overload() {
     let ctx = AnalysisCtx::new();
-    // Hover on `box` in `box(1, 1, 1)` — args fully specified, exactly one signature matches.
-    // Output should include the per-argument descriptions ("Width along the X axis" etc.) and
-    // should NOT include an "Overload N:" header since only the matched sig is rendered.
     let hover = ctx
       .hover("m = box(1, 1, 1)", 1, 5, false, "")
       .expect("hover for `box` call");
+    let docs = hover.builtin.as_ref().expect("builtin docs");
+    let sig = &docs.signatures[hover.active_signature.expect("matched overload")];
     assert!(
-      hover.content.contains("Width along the X axis"),
-      "expected per-arg description for `width`, got: {}",
-      hover.content
+      sig.params[0].description.contains("Width along the X axis"),
+      "got: {sig:?}"
     );
-    assert!(
-      hover.content.contains("Arguments:"),
-      "expected `Arguments:` header in focused hover, got: {}",
-      hover.content
-    );
-  }
 
-  #[test]
-  fn test_hover_call_unknown_args_shows_all_overloads() {
-    let ctx = AnalysisCtx::new();
-    // No matched sig (undefined ident → Unknown arg type) — fall back to the all-overloads view.
+    // No matched sig (undefined ident → Unknown arg type): docs still carry every overload.
     let hover = ctx
       .hover("m = box(unknown_var)", 1, 5, false, "")
       .expect("hover for `box` call");
-    // The fallback all-overloads view does NOT include the "Arguments:" header that the
-    // focused renderer produces.
-    assert!(
-      !hover.content.contains("Arguments:"),
-      "expected fallback (all-overloads) hover when sig unknown, got: {}",
-      hover.content
-    );
+    assert_eq!(hover.active_signature, None);
+    assert!(hover.builtin.unwrap().signatures.len() > 1);
   }
 
   #[test]
@@ -1398,10 +1516,10 @@ my_fn = |x: int|: int {
     let hover = ctx
       .hover(PATH_BLOCK_SRC, 3, 3, false, "")
       .expect("hover for `bezier`");
-    assert!(
-      hover.content.contains("path_cubic_bezier"),
-      "got: {}",
-      hover.content
+    assert_eq!(
+      hover.builtin.as_ref().map(|d| d.name.as_str()),
+      Some("path_cubic_bezier"),
+      "got: {hover:?}"
     );
     assert_eq!((hover.start_col, hover.end_col), (3, 9), "got: {hover:?}");
     assert!(

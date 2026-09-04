@@ -4987,8 +4987,15 @@ pub fn parse_program_src<'a>(ctx: &EvalCtx, src: &'a str) -> Result<Program, Err
   })?;
   ctx.source_map.borrow_mut().edits = preprocessed.edits.clone();
 
-  let pairs = GSParser::parse(Rule::program, &preprocessed.rewritten)
-    .map_err(|err| ErrorStack::new(format!("{err}")).wrap("Syntax error"))?;
+  let pairs = GSParser::parse(Rule::program, &preprocessed.rewritten).map_err(|err| {
+    let (line, col) = match err.line_col {
+      pest::error::LineColLocation::Pos(pos) | pest::error::LineColLocation::Span(pos, _) => pos,
+    };
+    let (line, col) = translate_through_edits(&preprocessed.edits, line as u32, col as u32);
+    ErrorStack::new(format!("{err}"))
+      .wrap("Syntax error")
+      .with_loc(line, col)
+  })?;
 
   let program = pairs
     .into_iter()
@@ -5156,7 +5163,14 @@ pub fn parse_program_with_prefix_and_ambient(
     prefix.push_str(&src);
     prefix
   };
-  parse_program_src(ctx, &full)
+  parse_program_src(ctx, &full).map_err(|mut err| {
+    // syntax error locs are in full-source coords; report them in the user's, dropping any
+    // that fall inside the prefix
+    err.loc = err
+      .loc
+      .and_then(|(line, col)| (line > offset).then(|| (line - offset, col)));
+    err
+  })
 }
 
 pub fn eval_program_with_ctx(ctx: &EvalCtx, ast: &Program) -> Result<(), ErrorStack> {

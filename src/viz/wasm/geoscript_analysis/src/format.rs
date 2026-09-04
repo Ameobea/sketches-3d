@@ -1,10 +1,34 @@
 use geoscript::{
   builtins::fn_defs::{fn_sigs, ArgDef, DefaultValue, FnDef, FnSignature},
   ty::PartialApplication,
-  ArgType, EvalCtx, Sym,
+  ArgType, EvalCtx, Sym, Value,
 };
+use nanoserde::SerJson;
 
-fn format_arg_type(arg: &ArgDef) -> String {
+/// Presentation form of a builtin's signatures, shared by hover and signature help.
+#[derive(Clone, Debug, SerJson)]
+pub struct BuiltinDocs {
+  pub name: String,
+  pub module: String,
+  pub signatures: Vec<SignatureDocs>,
+}
+
+#[derive(Clone, Debug, SerJson)]
+pub struct SignatureDocs {
+  pub params: Vec<ParamDocs>,
+  pub description: String,
+  pub return_type: String,
+}
+
+#[derive(Clone, Debug, SerJson)]
+pub struct ParamDocs {
+  pub name: String,
+  pub ty: String,
+  pub default: Option<String>,
+  pub description: String,
+}
+
+pub(crate) fn format_arg_type(arg: &ArgDef) -> String {
   let types = ArgType::list_from_bitflags(arg.valid_types);
   types
     .iter()
@@ -20,95 +44,74 @@ fn format_return_type(rt: &[ArgType]) -> String {
     .join(" | ")
 }
 
+fn format_float(f: f32) -> String {
+  if f.is_finite() && f.fract() == 0. {
+    format!("{f:.1}")
+  } else {
+    f.to_string()
+  }
+}
+
+fn format_default_value(v: &Value) -> String {
+  match v {
+    Value::Nil => "nil".to_owned(),
+    Value::Int(i) => i.to_string(),
+    Value::Float(f) => format_float(*f),
+    Value::Bool(b) => b.to_string(),
+    Value::String(s) => format!("{s:?}"),
+    Value::Vec2(v) => format!("vec2({}, {})", format_float(v.x), format_float(v.y)),
+    Value::Vec3(v) => format!(
+      "vec3({}, {}, {})",
+      format_float(v.x),
+      format_float(v.y),
+      format_float(v.z)
+    ),
+    Value::Map(map) => {
+      let entries: Vec<String> = map
+        .iter()
+        .map(|(k, v)| format!("{k}: {}", format_default_value(v)))
+        .collect();
+      format!("{{{}}}", entries.join(", "))
+    }
+    other => format!("{other:?}"),
+  }
+}
+
+fn format_default(arg: &ArgDef) -> Option<String> {
+  match &arg.default_value {
+    DefaultValue::Required => None,
+    DefaultValue::Optional(get_default) => Some(format_default_value(&get_default())),
+  }
+}
+
 pub fn format_signature_oneliner(name: &str, sig: &FnSignature) -> String {
-  let args: Vec<String> = sig
-    .arg_defs
-    .iter()
-    .map(|arg| {
-      let type_str = format_arg_type(arg);
-      match &arg.default_value {
-        DefaultValue::Required => {
-          format!("{}: {type_str}", arg.name)
-        }
-        DefaultValue::Optional(get_default) => {
-          format!("{}: {type_str} = {:?}", arg.name, get_default())
-        }
-      }
-    })
-    .collect();
+  let args: Vec<String> = sig.arg_defs.iter().map(format_arg_oneliner).collect();
   format!("{}({})", name, args.join(", "))
 }
 
-pub fn format_builtin_hover(name: &str, fn_def: &FnDef) -> String {
-  let mut parts = Vec::new();
-  parts.push(format!("(builtin) **{}**", name));
-  if !fn_def.module.is_empty() {
-    parts.push(format!("Module: {}", fn_def.module));
+pub fn builtin_docs(name: &str, fn_def: &FnDef) -> BuiltinDocs {
+  BuiltinDocs {
+    name: name.to_owned(),
+    module: fn_def.module.to_owned(),
+    signatures: fn_def
+      .signatures
+      .iter()
+      .map(|sig| SignatureDocs {
+        params: sig
+          .arg_defs
+          .iter()
+          .map(|arg| ParamDocs {
+            name: arg.name.to_owned(),
+            ty: format_arg_type(arg),
+            default: format_default(arg),
+            description: arg.description.to_owned(),
+          })
+          .collect(),
+        description: sig.description.to_owned(),
+        return_type: format_return_type(sig.return_type),
+      })
+      .collect(),
   }
-
-  for (i, sig) in fn_def.signatures.iter().enumerate() {
-    if fn_def.signatures.len() > 1 {
-      parts.push(format!("\nOverload {}:", i + 1));
-    }
-    parts.push(format!("`{}`", format_signature_oneliner(name, sig)));
-    if !sig.description.is_empty() {
-      parts.push(sig.description.to_string());
-    }
-  }
-
-  parts.join("\n")
-}
-
-/// Format hover content for a builtin call when the active overload is known.  Shows just the
-/// matched signature with detailed per-argument documentation, plus an overload-N-of-M hint
-/// when the function has more than one overload.
-pub fn format_builtin_hover_with_sig(name: &str, fn_def: &FnDef, sig_ix: usize) -> String {
-  let Some(sig) = fn_def.signatures.get(sig_ix) else {
-    return format_builtin_hover(name, fn_def);
-  };
-
-  let mut parts = Vec::new();
-  parts.push(format!("(builtin) **{}**", name));
-  if !fn_def.module.is_empty() {
-    parts.push(format!("Module: {}", fn_def.module));
-  }
-  let total = fn_def.signatures.len();
-  if total > 1 {
-    parts.push(format!("Overload {} of {}:", sig_ix + 1, total));
-  }
-
-  let return_str = format_return_type(sig.return_type);
-  if return_str.is_empty() {
-    parts.push(format!("`{}`", format_signature_oneliner(name, sig)));
-  } else {
-    parts.push(format!(
-      "`{} → {return_str}`",
-      format_signature_oneliner(name, sig)
-    ));
-  }
-
-  if !sig.description.is_empty() {
-    parts.push(sig.description.to_string());
-  }
-
-  if !sig.arg_defs.is_empty() {
-    parts.push("\n**Arguments:**".to_string());
-    for arg in sig.arg_defs {
-      let type_str = format_arg_type(arg);
-      let default_str = match &arg.default_value {
-        DefaultValue::Required => String::new(),
-        DefaultValue::Optional(get_default) => format!(" = `{:?}`", get_default()),
-      };
-      let mut line = format!("- **{}**: `{type_str}`{default_str}", arg.name);
-      if !arg.description.is_empty() {
-        line.push_str(" — ");
-        line.push_str(arg.description);
-      }
-      parts.push(line);
-    }
-  }
-
-  parts.join("\n")
 }
 
 /// Walk a signature's arg defs and split them into (bound, remaining) by replaying the PAF's
@@ -154,11 +157,9 @@ fn classify_sig_for_paf<'a>(
 
 fn format_arg_oneliner(arg: &ArgDef) -> String {
   let type_str = format_arg_type(arg);
-  match &arg.default_value {
-    DefaultValue::Required => format!("{}: {type_str}", arg.name),
-    DefaultValue::Optional(get_default) => {
-      format!("{}: {type_str} = {:?}", arg.name, get_default())
-    }
+  match format_default(arg) {
+    None => format!("{}: {type_str}", arg.name),
+    Some(default) => format!("{}: {type_str} = {default}", arg.name),
   }
 }
 

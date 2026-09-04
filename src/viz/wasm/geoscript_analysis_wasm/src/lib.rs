@@ -111,6 +111,24 @@ pub fn analysis_rewrite_input_defaults(src: &str, requests_json: &str) -> String
   rewrite_input_defaults(src, &requests).serialize_json()
 }
 
+/// Signature help for the call enclosing (line, col).  Returns JSON-serialized `SignatureHelp`
+/// or empty string if the cursor isn't inside a known call.
+#[wasm_bindgen]
+pub fn analysis_signature_help(
+  ctx: *const AnalysisCtx,
+  src: &str,
+  line: u32,
+  col: u32,
+  include_prelude: bool,
+  ambient_src: &str,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  match ctx.signature_help(src, line, col, include_prelude, ambient_src) {
+    Some(help) => nanoserde::SerJson::serialize_json(&help),
+    None => String::new(),
+  }
+}
+
 /// Get go-to-definition location at (line, col).  Returns JSON-serialized `DefinitionLocation`
 /// or empty string if nothing.
 #[wasm_bindgen]

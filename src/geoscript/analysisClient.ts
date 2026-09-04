@@ -15,8 +15,31 @@ export interface AnalysisResult {
   diagnostics: AnalysisDiagnostic[];
 }
 
+export interface ParamDocs {
+  name: string;
+  ty: string;
+  /** Absent for required params. */
+  default?: string;
+  description: string;
+}
+
+export interface SignatureDocs {
+  params: ParamDocs[];
+  description: string;
+  return_type: string;
+}
+
+export interface BuiltinDocs {
+  name: string;
+  module: string;
+  signatures: SignatureDocs[];
+}
+
 export interface HoverInfo {
+  /** Pre-formatted text; empty when `builtin` is set (nanoserde omits `None` fields). */
   content: string;
+  builtin?: BuiltinDocs;
+  active_signature?: number;
   start_line: number;
   start_col: number;
   end_line: number;
@@ -28,6 +51,16 @@ export interface CompletionItem {
   kind: string;
   detail: string;
   info: string;
+}
+
+export interface SignatureHelp {
+  docs: BuiltinDocs;
+  active_signature: number;
+  /** Per signature: index of the param the cursor's argument binds to. */
+  active_params: (number | null)[];
+  compatible: boolean[];
+  call_line: number;
+  call_col: number;
 }
 
 export interface DefinitionLocation {
@@ -107,6 +140,18 @@ export class AnalysisClient {
     await this.initPromise;
     const json = await this.proxy.completions(src, line, col, includePrelude, ambientSrc);
     return JSON.parse(json);
+  }
+
+  async signatureHelp(
+    src: string,
+    line: number,
+    col: number,
+    includePrelude: boolean,
+    ambientSrc: string
+  ): Promise<SignatureHelp | null> {
+    await this.initPromise;
+    const json = await this.proxy.signatureHelp(src, line, col, includePrelude, ambientSrc);
+    return json ? JSON.parse(json) : null;
   }
 
   async gotoDefinition(
