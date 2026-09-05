@@ -269,6 +269,31 @@ impl RampCallable {
     vals[idx - 1].lerp(&vals[idx], apply_ease_pure(&self.spec.eases[idx - 1], t))
   }
 
+  /// Whole-plane apply into `outs` (1 or 3 planes, overwritten). `false` when a custom ease
+  /// needs the interpreter; `outs` are left untouched.
+  pub(crate) fn fill_planes(&self, xs: &[f32], outs: &mut [Vec<f32>]) -> bool {
+    if self.has_custom_ease() {
+      return false;
+    }
+    for o in outs.iter_mut() {
+      o.clear();
+      o.reserve(xs.len());
+    }
+    match outs {
+      [p] => p.extend(xs.iter().map(|&x| self.sample_pure(x).x)),
+      [p0, p1, p2] => {
+        for &x in xs {
+          let v = self.sample_pure(x);
+          p0.push(v.x);
+          p1.push(v.y);
+          p2.push(v.z);
+        }
+      }
+      _ => unreachable!("ramp output is 1 or 3 planes"),
+    }
+    true
+  }
+
   fn sample(&self, x: f32, ctx: &EvalCtx) -> Result<Vec3, ErrorStack> {
     let (lo, hi) = (self.spec.positions[0], *self.spec.positions.last().unwrap());
     let u = map_extend(x, lo, hi, self.spec.extend);
@@ -323,27 +348,16 @@ impl DynamicCallable for RampCallable {
       let out_ch = if self.spec.scalar { 1 } else { 3 };
       let src = &tex.as_planes()[0];
       let n = src.len();
-      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| vec![0f32; n]).collect();
-      if self.has_custom_ease() {
+      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| Vec::with_capacity(n)).collect();
+      if !self.fill_planes(src, &mut planes) {
+        for p in &mut planes {
+          p.resize(n, 0.);
+        }
         for (i, &v) in src.iter().enumerate() {
           let c = self.sample(v, ctx)?;
           for (p, o) in planes.iter_mut().zip([c.x, c.y, c.z]) {
             p[i] = o;
           }
-        }
-      } else if let [p0] = &mut planes[..] {
-        for (o, &v) in p0.iter_mut().zip(src.iter()) {
-          *o = self.sample_pure(v).x;
-        }
-      } else if let [p0, p1, p2] = &mut planes[..] {
-        for (((a, b), c), &v) in p0
-          .iter_mut()
-          .zip(p1.iter_mut())
-          .zip(p2.iter_mut())
-          .zip(src.iter())
-        {
-          let px = self.sample_pure(v);
-          (*a, *b, *c) = (px.x, px.y, px.z);
         }
       }
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {

@@ -1273,7 +1273,11 @@ pub fn rail_sweep(
   if closed {
     let r_last = &ring_infos[ring_infos.len() - 1].loops[0];
     let r_first = &ring_infos[0].loops[0];
-    if r_last.count > 1 && r_first.count > 1 {
+    if r_last.count > 1
+      && r_first.count > 1
+      // keeps this path inside MAX_DP_STITCH_RESOLUTION like every other stitch site
+      && should_use_fku(true, r_last.count, r_first.count)
+    {
       // Use DP stitching to find the optimal rotational alignment between the last and
       // first rings.  Without this, any RMF phase accumulated over the closed loop causes
       // twisted / backwards-facing triangles at the seam.

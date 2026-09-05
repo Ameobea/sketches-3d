@@ -27,3 +27,7 @@ async-trait = "0.1"
 reqwest = "0.13"
 bytes = "1.10.1"
 url = { version = "2", features = ["serde"] }
+
+[[bin]]
+name = "geoscript-backend"
+path = "src/main.rs"

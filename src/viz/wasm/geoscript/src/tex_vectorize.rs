@@ -22,7 +22,7 @@ use crate::{
     ArrayLiteralElem, BinOp, CaptureFrom, DestructurePattern, Expr, FunctionCall,
     FunctionCallTarget, MapLiteralEntry, PrefixOp, ResolvedBody, Statement, VarRes,
   },
-  builtins::{fn_defs::fn_sigs, resolve_tile_period, tex_kernels as kern},
+  builtins::{fn_defs::fn_sigs, ramp::RampCallable, resolve_tile_period, tex_kernels as kern},
   get_args, noise_batch,
   seq::EagerSeq,
   seq_as_eager, ArgRef, ArgType, Callable, Closure, ErrorStack, EvalCtx, FrameEnv, GetArgsOutput,
@@ -323,8 +323,9 @@ enum DynCallee {
   Uni(u16),
 }
 
-/// Per-texel invocation of a pure `Callable::Dynamic` (ramps): ~20 ns/texel for this op
-/// while the rest of the body stays vectorized.
+/// A pure `Callable::Dynamic` over varying args. Ramps without a custom ease run as one
+/// whole-plane sweep; anything else is invoked per texel (~20 ns/texel) while the rest of
+/// the body stays vectorized.
 struct DynStep {
   callee: DynCallee,
   args: Vec<ArrayVec<Src, 4>>,
@@ -4120,45 +4121,64 @@ fn exec(
             b
           })
           .collect();
-        let mut argv: Vec<Value> = Vec::with_capacity(d.args.len());
-        for i in 0..n {
-          argv.clear();
-          for srcs in &d.args {
-            let mut ch = [0f32; 4];
-            for (k, s) in srcs.iter().enumerate() {
-              ch[k] = match *s {
-                Src::Reg(r) => ex.regs[r as usize].as_ref().unwrap()[i],
-                Src::In(c) => ex.input[c as usize][i],
-                Src::Uv(c) => ex.uv.unwrap()[c as usize][i],
-                Src::Uni(uix, c) => ex.uni.chans[uix as usize][c as usize],
-                Src::Const(k) => k,
-              };
+        let ramp = inner.as_any().downcast_ref::<RampCallable>();
+        let filled = match (ramp, &d.args[..]) {
+          (Some(ramp), [arg]) if arg.len() == 1 => match ex.resolve(arg[0]) {
+            RSrc::S(xs) => ramp.fill_planes(xs, &mut outs),
+            RSrc::K(k) => {
+              let ok = ramp.fill_planes(&[k], &mut outs);
+              if ok {
+                for o in &mut outs {
+                  let v = o[0];
+                  o.resize(n, v);
+                }
+              }
+              ok
             }
-            argv.push(match srcs.len() {
-              1 => Value::Float(ch[0]),
-              2 => Value::Vec2(Vec2::new(ch[0], ch[1])),
-              3 => Value::Vec3(Vec3::new(ch[0], ch[1], ch[2])),
-              _ => Value::Vec4(Rc::new(Vec4::new(ch[0], ch[1], ch[2], ch[3]))),
-            });
-          }
-          let res = inner.invoke(&argv, EMPTY_KWARGS, ctx).map_err(|e| {
-            e.wrap(format!(
-              "Error invoking dynamic callable `{name}` per texel"
-            ))
-          })?;
-          let Some((ch, ar)) = value_chans(&res) else {
-            return Err(ErrorStack::new(format!(
-              "dynamic callable `{name}` returned a non-numeric value in a vectorized texel \
-               closure: {res:?}"
-            )));
-          };
-          if ar as usize != out_ar {
-            return Err(ErrorStack::new(format!(
-              "dynamic callable `{name}` returned arity {ar}, expected {out_ar}"
-            )));
-          }
-          for (k, out) in outs.iter_mut().enumerate() {
-            out.push(ch[k]);
+          },
+          _ => false,
+        };
+        if !filled {
+          let mut argv: Vec<Value> = Vec::with_capacity(d.args.len());
+          for i in 0..n {
+            argv.clear();
+            for srcs in &d.args {
+              let mut ch = [0f32; 4];
+              for (k, s) in srcs.iter().enumerate() {
+                ch[k] = match *s {
+                  Src::Reg(r) => ex.regs[r as usize].as_ref().unwrap()[i],
+                  Src::In(c) => ex.input[c as usize][i],
+                  Src::Uv(c) => ex.uv.unwrap()[c as usize][i],
+                  Src::Uni(uix, c) => ex.uni.chans[uix as usize][c as usize],
+                  Src::Const(k) => k,
+                };
+              }
+              argv.push(match srcs.len() {
+                1 => Value::Float(ch[0]),
+                2 => Value::Vec2(Vec2::new(ch[0], ch[1])),
+                3 => Value::Vec3(Vec3::new(ch[0], ch[1], ch[2])),
+                _ => Value::Vec4(Rc::new(Vec4::new(ch[0], ch[1], ch[2], ch[3]))),
+              });
+            }
+            let res = inner.invoke(&argv, EMPTY_KWARGS, ctx).map_err(|e| {
+              e.wrap(format!(
+                "Error invoking dynamic callable `{name}` per texel"
+              ))
+            })?;
+            let Some((ch, ar)) = value_chans(&res) else {
+              return Err(ErrorStack::new(format!(
+                "dynamic callable `{name}` returned a non-numeric value in a vectorized texel \
+                 closure: {res:?}"
+              )));
+            };
+            if ar as usize != out_ar {
+              return Err(ErrorStack::new(format!(
+                "dynamic callable `{name}` returned arity {ar}, expected {out_ar}"
+              )));
+            }
+            for (k, out) in outs.iter_mut().enumerate() {
+              out.push(ch[k]);
+            }
           }
         }
         for (k, out) in outs.into_iter().enumerate() {
@@ -5360,7 +5380,7 @@ fn render_plan(
         let dst: Vec<String> = d.dst.iter().map(|r| format!("r{r}")).collect();
         (
           dst.join(","),
-          format!("dyn     {name}({}) per-texel", args.join(", ")),
+          format!("dyn     {name}({})", args.join(", ")),
         )
       }
     };
@@ -5852,8 +5872,8 @@ f = |v| rec(v)
     );
   }
 
-  /// Ramps are `Callable::Dynamic`: invoked per texel while the rest of the body stays
-  /// vectorized. Covers both the direct-call and the pipeline (`| shade`) shapes.
+  /// Ramps are `Callable::Dynamic`: a `Dyn` step (plane sweep) while the rest of the body
+  /// stays vectorized; they must not bail.
   #[test]
   fn dynamic_ramp_per_texel_kernel() {
     let src = r#"
@@ -5871,6 +5891,28 @@ h = texture(16, 16, |uv| fbm(pos=uv * 3.) * 0.5 + 0.5)
       3,
       "ramp calls must use the per-texel dynamic kernel, not bail (2 maps + generator): {reps:?}"
     );
+  }
+
+  /// Ramps in texel bodies take the whole-plane sweep (`RampCallable::fill_planes`), which
+  /// must match scalar `sample` bit-for-bit for LUT and exact ramps, feed downstream ops, and
+  /// leave custom-ease ramps on the per-texel loop.
+  #[test]
+  fn ramp_plane_fast_path_matches_scalar() {
+    let src = r#"
+lin = color_ramp([srgb(0xff0000), srgb(0x00ff00), srgb(0x0000ff)], space="linear")
+lch = color_ramp([srgb(0x102030), srgb(0xf0e0d0)], space="oklch")
+lvl = ramp(stops=[[0., 0.], [0.4, 0.9], [1., 1.]], ease="smooth")
+custom = ramp(stops=[[0., 0.], [1., 1.]], ease=|t| t * t)
+h = texture(24, 20, |uv| fbm(pos=uv * 3.) * 0.6 + 0.2)
+(h -> |v| lin(v)) | render_texture(name="a")
+(h -> |v| lch(v * 1.5 - 0.2).g * lvl(v) + custom(v)) | render_texture(name="b")
+([h, h] | texture_zip(|a, b| lin(a * b).zyx * (0.5 + lvl(a)))) | render_texture(name="c")
+(h -> |v| lin(v2(v, 0.35).y).r + v) | render_texture(name="d")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    let reps = reports(&vec_ctx);
+    assert_eq!(reps.iter().filter(|r| r.vectorized).count(), 5, "{reps:?}");
   }
 
   /// clamp() must never panic, whatever the bounds (std's clamp asserts min <= max).

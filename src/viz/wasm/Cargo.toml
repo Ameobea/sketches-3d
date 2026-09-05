@@ -42,3 +42,10 @@ codegen-units = 256
 lto = "off"
 incremental = true
 debug = 0
+
+# `dev-opt` inherits `release`, so debug assertions are off there -- right for the wasm builds it
+# was made for, wrong for tests. `just test` uses this instead so `debug_assert!` actually runs.
+[profile.test-opt]
+inherits = "dev-opt"
+debug-assertions = true
+overflow-checks = true

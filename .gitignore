@@ -38,6 +38,7 @@ design
 src/viz/wasm/normals_bench
 docs
 src/viz/wasm/interp_bench
+src/viz/wasm/fku_bench
 /geoscript_backend.sqlite3
 geo_compositions/*.geo
 geo_compositions/_index.tsv

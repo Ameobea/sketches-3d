@@ -19,11 +19,13 @@ use std::cmp::Ordering;
 
 use bitvec::prelude::*;
 use mesh::linked_mesh::Vec3;
+use wide::f32x4;
 
 /// Maximum ring/row resolution for DP-based stitching.  Beyond this, we fall back to uniform
-/// stitching.  This limit exists because the DP algorithm has O(N*M) time and space complexity.
-/// At 5000 vertices per ring, the DP table is 25M cells (~200MB) which should be fine.
-pub const MAX_DP_STITCH_RESOLUTION: usize = 5000;
+/// stitching.  The binding constraint is the backtracking bitmap, the one structure that stays
+/// O(N*M) rather than O(N * band); at one bit per cell it reaches 50MB here, and the scratch
+/// keeps a session's high-water mark.
+pub const MAX_DP_STITCH_RESOLUTION: usize = 20_000;
 
 const AREA_WEIGHT: f32 = 0.85;
 const EDGE_LEN_WEIGHT: f32 = 1.;
@@ -115,87 +117,168 @@ pub enum DpMove {
   AdvanceB,
 }
 
-/// DP table storing data in SoA format.
-struct DpTable {
-  costs: Vec<f32>,
-  came_from: BitVec,
-  cols: usize,
+/// Backtracking moves, one bit per DP cell (0 = `AdvanceA`, 1 = `AdvanceB`), rows padded to
+/// whole `u64` words so the scan can accumulate a row's bits in a register.
+#[derive(Default)]
+struct MoveBits {
+  words: Vec<u64>,
+  row_words: usize,
 }
 
-impl DpTable {
-  /// Creates a new DP table with the given dimensions.
-  ///
-  /// Costs are initialized to INFINITY, came_from to AdvanceA (0).
-  fn new(rows: usize, cols: usize) -> Self {
-    let size = rows * cols;
-    Self {
-      costs: vec![f32::INFINITY; size],
-      came_from: bitvec![0; size],
-      cols,
+impl MoveBits {
+  /// Only cells inside the scanned band are ever read back, so the buffer needs sizing but
+  /// not clearing.
+  fn reset(&mut self, rows: usize, cols: usize) {
+    self.row_words = cols.div_ceil(64);
+    let len = rows * self.row_words;
+    if self.words.len() < len {
+      self.words = Vec::new();
+      self.words.resize(len, 0);
     }
   }
 
   #[inline]
-  fn ix(&self, row: usize, col: usize) -> usize {
-    row * self.cols + col
-  }
-
-  #[inline]
-  pub fn get_cost(&self, row: usize, col: usize) -> f32 {
-    self.costs[self.ix(row, col)]
-  }
-
-  #[inline]
-  pub fn set_cost(&mut self, row: usize, col: usize, cost: f32) {
-    let idx = self.ix(row, col);
-    self.costs[idx] = cost;
-  }
-
-  #[inline]
-  pub fn get_came_from(&self, row: usize, col: usize) -> DpMove {
-    let idx = self.ix(row, col);
-    if self.came_from[idx] {
-      DpMove::AdvanceB
-    } else {
+  fn get(&self, row: usize, col: usize) -> DpMove {
+    let w = self.words[row * self.row_words + (col >> 6)];
+    if (w >> (col & 63)) & 1 == 0 {
       DpMove::AdvanceA
+    } else {
+      DpMove::AdvanceB
     }
   }
+}
 
-  #[inline]
-  pub fn set(&mut self, row: usize, col: usize, cost: f32, came_from: DpMove) {
-    let idx = self.ix(row, col);
-    self.costs[idx] = cost;
-    self.came_from.set(idx, came_from == DpMove::AdvanceB);
-  }
+/// Ring B in SoA form, padded so the cost kernel can run whole 4-lane chunks past the end.
+#[derive(Default)]
+struct SoaRing {
+  x: Vec<f32>,
+  y: Vec<f32>,
+  z: Vec<f32>,
+  t: Vec<f32>,
+  /// `CRITICAL_PAIR_MULTIPLIER` at critical vertices, `1.` elsewhere.
+  crit_mul: Vec<f32>,
+}
 
-  /// Efficiently populates the first row using a generator/iterator for edge costs.
-  /// This optimizes by avoiding index multiplication and reading back from the table.
-  pub fn init_row_0(&mut self, count: usize, mut get_edge_cost: impl FnMut(usize) -> f32) {
-    let mut current_cost = self.costs[0];
-    for j in 1..=count {
-      let edge_cost = get_edge_cost(j);
-      current_cost += edge_cost;
-      self.costs[j] = current_cost;
-      self.came_from.set(j, true); // AdvanceB
+impl SoaRing {
+  fn fill(&mut self, pts: &[Vec3], ts: Option<&[f32]>, crit: Option<&BitSlice>, wrap: bool) {
+    let n = pts.len() + wrap as usize;
+    let cap = n.next_multiple_of(4) + 4;
+    for v in [
+      &mut self.x,
+      &mut self.y,
+      &mut self.z,
+      &mut self.t,
+      &mut self.crit_mul,
+    ] {
+      v.clear();
+      v.reserve(cap);
     }
-  }
 
-  /// Efficiently populates the first column using a generator/iterator for edge costs.
-  /// This optimizes by using stride addition instead of multiplication and skips
-  /// setting came_from since the default (false/AdvanceA) is correct.
-  pub fn init_col_0(&mut self, count: usize, mut get_edge_cost: impl FnMut(usize) -> f32) {
-    let mut current_cost = self.costs[0];
-    let stride = self.cols;
-    let mut idx = 0;
-
-    for i in 1..=count {
-      idx += stride;
-      let edge_cost = get_edge_cost(i);
-      current_cost += edge_cost;
-      self.costs[idx] = current_cost;
-      // No need to set `came_from``, defaults to 0 (AdvanceA)
+    for i in 0..n {
+      let src = if i == pts.len() { 0 } else { i };
+      let p = pts[src];
+      self.x.push(p.x);
+      self.y.push(p.y);
+      self.z.push(p.z);
+      self.t.push(ts.map_or(0., |ts| ts[src]));
+      self.crit_mul.push(if crit.is_some_and(|c| c[src]) {
+        CRITICAL_PAIR_MULTIPLIER
+      } else {
+        1.
+      });
     }
+
+    for v in [&mut self.x, &mut self.y, &mut self.z, &mut self.t] {
+      v.resize(cap, 0.);
+    }
+    self.crit_mul.resize(cap, 1.);
   }
+}
+
+#[inline]
+fn load4(s: &[f32], i: usize) -> f32x4 {
+  f32x4::from(<[f32; 4]>::try_from(&s[i..i + 4]).unwrap())
+}
+
+type V3x4 = (f32x4, f32x4, f32x4);
+
+#[inline]
+fn cross_norm4(a: V3x4, b: V3x4) -> f32x4 {
+  let cx = a.1 * b.2 - a.2 * b.1;
+  let cy = a.2 * b.0 - a.0 * b.2;
+  let cz = a.0 * b.1 - a.1 * b.0;
+  (cx * cx + cy * cy + cz * cz).sqrt()
+}
+
+/// Fills one DP row's two cost arrays, four columns at a time.  Both candidates at a cell close
+/// the same connecting edge, so its length, the t penalty and the critical multiplier are shared
+/// and only the areas differ.  Column `j` lands at `ca[l]`/`cb[l]` for `j = base + 2 + l`.
+#[allow(clippy::too_many_arguments)]
+fn fill_row_costs<const CRIT: bool>(
+  b: &SoaRing,
+  base: usize,
+  ap: Vec3,
+  ac: Vec3,
+  ta: f32,
+  ka: f32,
+  ke: f32,
+  ca: &mut [f32],
+  cb: &mut [f32],
+) {
+  debug_assert_eq!(ca.len(), cb.len());
+  debug_assert_eq!(ca.len() % 4, 0, "ragged tail would be dropped silently");
+
+  let ea = ac - ap;
+  let eav = (f32x4::splat(ea.x), f32x4::splat(ea.y), f32x4::splat(ea.z));
+  let apv = (f32x4::splat(ap.x), f32x4::splat(ap.y), f32x4::splat(ap.z));
+  let acv = (f32x4::splat(ac.x), f32x4::splat(ac.y), f32x4::splat(ac.z));
+  let (tav, kav, kev) = (f32x4::splat(ta), f32x4::splat(ka), f32x4::splat(ke));
+  let (one, dtw) = (f32x4::splat(1.), f32x4::splat(DT_WEIGHT));
+
+  let iter = ca.chunks_exact_mut(4).zip(cb.chunks_exact_mut(4));
+  for (l, (oa, ob)) in iter.enumerate() {
+    let i = base + l * 4;
+    let prev = (load4(&b.x, i), load4(&b.y, i), load4(&b.z, i));
+    let cur = (load4(&b.x, i + 1), load4(&b.y, i + 1), load4(&b.z, i + 1));
+
+    let d = (cur.0 - acv.0, cur.1 - acv.1, cur.2 - acv.2);
+    let edge = kev * (d.0 * d.0 + d.1 * d.1 + d.2 * d.2).sqrt();
+    let dt = (tav - load4(&b.t, i + 1)).abs();
+    let dt = dtw * dt.min(one - dt);
+
+    let area_a = cross_norm4(eav, (cur.0 - apv.0, cur.1 - apv.1, cur.2 - apv.2));
+    let eb = (cur.0 - prev.0, cur.1 - prev.1, cur.2 - prev.2);
+    let area_b = cross_norm4(eb, (acv.0 - prev.0, acv.1 - prev.1, acv.2 - prev.2));
+
+    let mul = if CRIT {
+      load4(&b.crit_mul, i + 1)
+    } else {
+      f32x4::splat(1.)
+    };
+    oa.copy_from_slice(&(((kav * area_a + edge) + dt) * mul).to_array());
+    ob.copy_from_slice(&(((kav * area_b + edge) + dt) * mul).to_array());
+  }
+}
+
+/// The `j == 1` column, which the vectorized window can't cover: its `B[j-2]` is out of range.
+fn cost_advance_a_at_b0(b: &SoaRing, ap: Vec3, ac: Vec3, ta: f32, ka: f32, ke: f32) -> f32 {
+  let b0 = Vec3::new(b.x[0], b.y[0], b.z[0]);
+  let dt = (ta - b.t[0]).abs();
+  ka * (ac - ap).cross(&(b0 - ap)).norm() + ke * (b0 - ac).norm() + DT_WEIGHT * dt.min(1. - dt)
+}
+
+#[derive(Default)]
+struct DpScratch {
+  b: SoaRing,
+  ca: Vec<f32>,
+  cb: Vec<f32>,
+  prev: Vec<f32>,
+  cur: Vec<f32>,
+  moves: MoveBits,
+}
+
+thread_local! {
+  static SCRATCH: std::cell::RefCell<DpScratch> = std::cell::RefCell::new(DpScratch::default());
 }
 
 /// Number of evenly-spaced arc-length samples used during ring alignment cross-correlation.
@@ -317,6 +400,144 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
   best_real_idx
 }
 
+/// Above this many DP cells the exact solve is replaced by a coarse guide pass on subsampled
+/// rings plus a banded refinement around the upscaled coarse path.
+const MULTISCALE_CELL_LIMIT: usize = 16_384;
+/// Ring subsampling factor for the coarse guide pass.
+const COARSE_FACTOR: usize = 4;
+/// Fine-grid half-width first tried around the upscaled coarse path: three coarse steps of
+/// slack, enough for the guide's own resolution error.
+const BAND_RADIUS: usize = 3 * COARSE_FACTOR;
+/// Multiplier applied to the band radius each time the solved path proves the band was binding.
+const BAND_WIDEN_FACTOR: u32 = 4;
+
+/// Per-row inclusive column bounds of a banded DP.  `lo` and `hi` are both non-decreasing and
+/// satisfy `lo[r] <= hi[r - 1]`, which is what guarantees a monotone staircase path from
+/// `(0, 0)` to `(table_n, table_m)` exists inside the band.
+type Band = [(u32, u32)];
+
+/// `count` is clamped to the source length: sampling past it would emit duplicate points, and
+/// the zero-length edges that follow make the guide meaningless.
+fn subsample<T: Copy>(src: &[T], count: usize) -> Vec<T> {
+  let count = count.min(src.len());
+  (0..count).map(|i| src[i * src.len() / count]).collect()
+}
+
+/// The ring pair and its per-vertex metadata: every stage of the solve needs all of it, and
+/// `inv_scale`/`inv_scale_sq` non-dimensionalize the cost function by the pair's average radius.
+#[derive(Clone, Copy)]
+pub struct Rings<'a> {
+  pub a: &'a [Vec3],
+  pub b: &'a [Vec3],
+  pub ta: Option<&'a [f32]>,
+  pub tb: Option<&'a [f32]>,
+  pub crit_a: Option<&'a BitSlice>,
+  pub crit_b: Option<&'a BitSlice>,
+  pub inv_scale: f32,
+  pub inv_scale_sq: f32,
+}
+
+/// Per-fine-row column span of the coarse guide path, `u32::MAX` in `lo` marking rows the
+/// upscaled path doesn't land on.
+struct Anchors {
+  lo: Vec<u32>,
+  hi: Vec<u32>,
+}
+
+/// Solves the stitch on subsampled rings and maps the resulting path onto the full grid.
+fn coarse_anchors<const CLOSED: bool>(r: Rings, table_n: usize, table_m: usize) -> Anchors {
+  let (pts_a, pts_b) = (r.a, r.b);
+  let ka = (pts_a.len() / COARSE_FACTOR).max(4).min(pts_a.len());
+  let kb = (pts_b.len() / COARSE_FACTOR).max(4).min(pts_b.len());
+  let (mut ca_pts, mut cb_pts) = (subsample(pts_a, ka), subsample(pts_b, kb));
+  let cta = r.ta.map(|t| subsample(t, ka));
+  let ctb = r.tb.map(|t| subsample(t, kb));
+  // Flags are OR-ed over each bucket rather than point-sampled, or the seam vertices
+  // `CRITICAL_PAIR_MULTIPLIER` exists to capture would mostly be dropped.  The sampled position
+  // moves to the flagged vertex too, so a coarse point's flag and position describe one vertex.
+  let sub_crit = |pts: &mut [Vec3], src: &[Vec3], c: Option<&BitSlice>| {
+    c.map(|c| {
+      let k = pts.len();
+      let mut out = bitvec![0; k];
+      for i in 0..k {
+        let lo = i * c.len() / k;
+        let hi = ((i + 1) * c.len() / k).max(lo + 1).min(c.len());
+        if let Some(ix) = (lo..hi).find(|&j| c[j]) {
+          out.set(i, true);
+          pts[i] = src[ix];
+        }
+      }
+      out
+    })
+  };
+  let cca = sub_crit(&mut ca_pts, pts_a, r.crit_a);
+  let ccb = sub_crit(&mut cb_pts, pts_b, r.crit_b);
+
+  let coarse = dp_stitch_solve::<CLOSED>(Rings {
+    a: &ca_pts,
+    b: &cb_pts,
+    ta: cta.as_deref(),
+    tb: ctb.as_deref(),
+    crit_a: cca.as_deref(),
+    crit_b: ccb.as_deref(),
+    ..r
+  });
+
+  let (ka, kb) = (ca_pts.len(), cb_pts.len());
+  let (ctn, ctm) = if CLOSED { (ka + 1, kb + 1) } else { (ka, kb) };
+  let map_row = |k: usize| (k * table_n + ctn / 2) / ctn;
+  let map_col = |l: usize| (l * table_m + ctm / 2) / ctm;
+
+  let mut anchors = Anchors {
+    lo: vec![u32::MAX; table_n + 1],
+    hi: vec![0u32; table_n + 1],
+  };
+  for (k, l) in coarse
+    .map(|(k, l, _)| (k, l))
+    .chain(std::iter::once((0, 0)))
+  {
+    let (r, c) = (map_row(k), map_col(l) as u32);
+    anchors.lo[r] = anchors.lo[r].min(c);
+    anchors.hi[r] = anchors.hi[r].max(c);
+  }
+  anchors
+}
+
+/// Widens the guide path into a band `radius` columns to either side.  `hi[r]` comes from the
+/// nearest anchor at or after `r` and `lo[r]` from the nearest at or before it, so between two
+/// anchors the band spans the columns they bracket.
+fn band_from_anchors(a: &Anchors, radius: u32, table_n: usize, table_m: usize) -> Vec<(u32, u32)> {
+  let mut band = vec![(0u32, 0u32); table_n + 1];
+  let mut next_hi = 0u32;
+  for r in (0..=table_n).rev() {
+    if a.lo[r] != u32::MAX {
+      next_hi = a.hi[r];
+    }
+    band[r].1 = next_hi.saturating_add(radius).min(table_m as u32);
+  }
+  let mut last_lo = 0u32;
+  for r in 0..=table_n {
+    if a.lo[r] != u32::MAX {
+      last_lo = a.lo[r];
+    }
+    band[r].0 = last_lo.saturating_sub(radius);
+    if r > 0 {
+      band[r].0 = band[r].0.min(band[r - 1].1);
+    }
+  }
+  band
+}
+
+/// Whether the path pressed on a band edge that was actually restricting it (edges clamped to
+/// the grid restrict nothing).  A heuristic, not a proof: a better path lying wholly outside the
+/// band leaves the banded one strictly interior and goes undetected.
+fn path_hit_band_edge(moves: &[(usize, usize, DpMove)], band: &Band, table_m: usize) -> bool {
+  moves.iter().any(|&(i, j, _)| {
+    let (lo, hi) = band[i];
+    (j as u32 == lo && lo > 0) || (j as u32 == hi && (hi as usize) < table_m)
+  })
+}
+
 /// Performs FKU DP stitching between two rings/strips of 3D points.
 ///
 /// For closed rings (`CLOSED=true`), the algorithm naturally handles wrap-around
@@ -329,189 +550,228 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
 /// Note: For closed rings, pts_b should be pre-rotated using `rotate_ring` and
 /// `find_best_ring_alignment` before calling this function.
 pub fn dp_stitch_solve<const CLOSED: bool>(
-  pts_a: &[Vec3],
-  pts_b: &[Vec3],
-  ts_a: Option<&[f32]>,
-  ts_b: Option<&[f32]>,
-  crit_a: Option<&BitSlice>,
-  crit_b: Option<&BitSlice>,
-  inv_scale: f32,
-  inv_scale_sq: f32,
+  r: Rings,
 ) -> std::iter::Rev<<Vec<(usize, usize, DpMove)> as IntoIterator>::IntoIter> {
-  let n = pts_a.len();
-  let m = pts_b.len();
-
+  let (n, m) = (r.a.len(), r.b.len());
   if n == 0 || m == 0 {
     return Vec::new().into_iter().rev();
   }
 
-  // For closed rings, we extend the table by 1 to handle wrap-around.
-  // State (n, m) for closed rings means we've completed the loop.
-  // Vertex access uses modulo to wrap: index n -> 0, index m -> 0.
+  // For closed rings we extend the table by 1 to handle wrap-around: state (n, m) means the
+  // loop has been completed, with vertex index n/m wrapping back to 0.
   let table_n = if CLOSED { n + 1 } else { n };
   let table_m = if CLOSED { m + 1 } else { m };
 
-  // Vertex accessors with wrap-around for closed rings
+  // Below the limit the exact solve is already cheap; a band as wide as the grid would have
+  // nothing to constrain.  Either way the guide would be wasted work.
+  let cells = (table_n as u64 + 1) * (table_m as u64 + 1);
+  if cells <= MULTISCALE_CELL_LIMIT as u64 || BAND_RADIUS >= table_m {
+    return solve_banded::<CLOSED>(r, None).into_iter().rev();
+  }
+
+  // The guide recurses back through here, so it has to finish before `solve_banded` takes the
+  // shared scratch buffers; nesting the two would double-borrow it.
+  let anchors = coarse_anchors::<CLOSED>(r, table_n, table_m);
+
+  // A row advances `table_m / table_n` columns on average, so a guide error of a few coarse rows
+  // is that many times as wide in columns; a fixed column radius collapses on lopsided pairs.
+  // Start there and widen only when the solved path proves the band was binding.
+  let slope = (table_m / table_n).max(1);
+  let mut radius = (BAND_RADIUS * slope).min(table_m) as u32;
+  loop {
+    let full = radius as usize >= table_m;
+    let band = band_from_anchors(&anchors, radius, table_n, table_m);
+    let moves = solve_banded::<CLOSED>(r, Some(&band));
+    if full || !path_hit_band_edge(&moves, &band, table_m) {
+      return moves.into_iter().rev();
+    }
+    radius = radius.saturating_mul(BAND_WIDEN_FACTOR);
+  }
+}
+
+fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize, usize, DpMove)> {
+  let (pts_a, ts_a, crit_a) = (r.a, r.ta, r.crit_a);
+  let (n, m) = (r.a.len(), r.b.len());
+  let table_n = if CLOSED { n + 1 } else { n };
+  let table_m = if CLOSED { m + 1 } else { m };
+
   let get_a = |i: usize| -> Vec3 { pts_a[if CLOSED && i == n { 0 } else { i }] };
-  let get_b = |j: usize| -> Vec3 { pts_b[if CLOSED && j == m { 0 } else { j }] };
-
-  // T-value accessors with wrap-around for closed rings.
-  // When no t-values are provided, returns 0.0 (dt penalty becomes zero).
-  let get_ta = |i: usize| -> f32 {
-    ts_a
-      .map(|ts| ts[if CLOSED && i == n { 0 } else { i }])
-      .unwrap_or(0.)
+  let get_ta = |i: usize| -> f32 { ts_a.map_or(0., |ts| ts[if CLOSED && i == n { 0 } else { i }]) };
+  let is_crit_a =
+    |i: usize| -> bool { crit_a.is_some_and(|c| c[if CLOSED && i == n { 0 } else { i }]) };
+  let bounds = |i: usize| -> (usize, usize) {
+    band.map_or((0, table_m), |b| (b[i].0 as usize, b[i].1 as usize))
   };
-  let get_tb = |j: usize| -> f32 {
-    ts_b
-      .map(|ts| ts[if CLOSED && j == m { 0 } else { j }])
-      .unwrap_or(0.)
-  };
+  // A monotone staircase from (0,0) to (table_n, table_m) has to exist inside the band, and the
+  // row scan relies on never revisiting a column the previous row didn't reach.
+  debug_assert!(band.is_none_or(|b| {
+    b.len() == table_n + 1
+      && b[0].0 == 0
+      && b[table_n].1 as usize == table_m
+      && b
+        .windows(2)
+        .all(|w| w[0].0 <= w[1].0 && w[0].1 <= w[1].1 && w[1].0 <= w[0].1)
+  }));
 
-  // Critical-point accessors with wrap-around for closed rings.
-  // When no critical mask is provided, returns false.
-  let is_crit_a = |i: usize| -> bool {
-    crit_a
-      .map(|c| c[if CLOSED && i == n { 0 } else { i }])
-      .unwrap_or(false)
-  };
-  let is_crit_b = |j: usize| -> bool {
-    crit_b
-      .map(|c| c[if CLOSED && j == m { 0 } else { j }])
-      .unwrap_or(false)
-  };
+  // Fold the cost function's constant factors into two multipliers.  `ka` absorbs the 0.5 that
+  // turns the cross-product norm into a triangle area.
+  let ka = AREA_WEIGHT * 0.5 * r.inv_scale_sq;
+  let ke = EDGE_LEN_WEIGHT * r.inv_scale;
 
-  // Allocate DP table as (table_n+1) x (table_m+1) grid using SoA layout
-  // State (i, j) means we've processed vertices 0..i from A and 0..j from B
-  let mut table = DpTable::new(table_n + 1, table_m + 1);
+  SCRATCH.with(|scratch| {
+    let scratch = &mut *scratch.borrow_mut();
+    scratch.b.fill(r.b, r.tb, r.crit_b, CLOSED);
+    let b = &scratch.b;
 
-  table.set_cost(0, 0, 0.);
+    let pad = table_m.next_multiple_of(4);
+    scratch.ca.clear();
+    scratch.ca.resize(pad + 2, 0.);
+    scratch.cb.clear();
+    scratch.cb.resize(pad + 2, 0.);
+    scratch.prev.clear();
+    scratch.prev.resize(table_m + 1, f32::INFINITY);
+    scratch.cur.clear();
+    scratch.cur.resize(table_m + 1, f32::INFINITY);
+    scratch.moves.reset(table_n + 1, table_m + 1);
 
-  // Fill first row (only advancing on B)
-  table.init_row_0(table_m, |j| {
-    if j == 1 {
-      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm() * inv_scale
+    let ca = &mut scratch.ca;
+    let cb = &mut scratch.cb;
+    let row_words = scratch.moves.row_words;
+    let words = &mut scratch.moves.words;
+
+    let a0 = get_a(0);
+    let b0 = Vec3::new(b.x[0], b.y[0], b.z[0]);
+    let e0 = ke * (a0 - b0).norm();
+    let (_, hi0) = bounds(0);
+
+    // Row 0 doubles as the i=1 row's B-advance costs: both are the triangle (B[j-2], B[j-1], A[0]).
+    // The A-advance half is discarded here; row 1 has no A-advance cost at all.
+    let row0 = if is_crit_a(0) {
+      fill_row_costs::<true>
     } else {
-      // Triangle: (A[0], B[j-2], B[j-1])
-      // Connecting edge: B[j-1] -> A[0]
-      dp_stitch_cost(
-        get_b(j - 2),
-        get_b(j - 1),
-        get_a(0),
-        inv_scale,
-        inv_scale_sq,
-        get_tb(j - 1),
-        get_ta(0),
-        is_crit_b(j - 1) && is_crit_a(0),
-      )
+      fill_row_costs::<false>
+    };
+    row0(
+      b,
+      0,
+      a0,
+      a0,
+      get_ta(0),
+      ka,
+      ke,
+      &mut ca[2..pad + 2],
+      &mut cb[2..pad + 2],
+    );
+
+    let prev = &mut scratch.prev;
+    prev[0] = 0.;
+    let mut acc = e0;
+    for j in 1..=hi0 {
+      if j > 1 {
+        acc += cb[j];
+      }
+      prev[j] = acc;
     }
-  });
+    // Backtracking through row 0 can only advance on B.
+    words[..row_words].fill(u64::MAX);
+    words[0] &= !1;
 
-  // Fill first column (only advancing on A)
-  table.init_col_0(table_n, |i| {
-    if i == 1 {
-      EDGE_LEN_WEIGHT * (get_a(0) - get_b(0)).norm() * inv_scale
-    } else {
-      // Triangle: (B[0], A[i-2], A[i-1])
-      // Connecting edge: A[i-1] -> B[0]
-      dp_stitch_cost(
-        get_a(i - 2),
-        get_a(i - 1),
-        get_b(0),
-        inv_scale,
-        inv_scale_sq,
-        get_ta(i - 1),
-        get_tb(0),
-        is_crit_a(i - 1) && is_crit_b(0),
-      )
-    }
-  });
+    let cur = &mut scratch.cur;
+    let mut col0 = e0;
+    let mut prev_hi = hi0;
 
-  // Fill rest of the table
-  for i in 1..=table_n {
-    for j in 1..=table_m {
-      // Option 1: Advance on A (horizontal move)
-      // Triangle formed: (A[i-2], A[i-1], B[j-1])
-      // Connecting edge: A[i-1] -> B[j-1]
-      let cost_advance_a = {
-        let prev_cost = table.get_cost(i - 1, j);
-        if i == 1 {
-          prev_cost
-        } else {
-          let edge_cost = dp_stitch_cost(
-            get_a(i - 2),
-            get_a(i - 1),
-            get_b(j - 1),
-            inv_scale,
-            inv_scale_sq,
-            get_ta(i - 1),
-            get_tb(j - 1),
-            is_crit_a(i - 1) && is_crit_b(j - 1),
-          );
-          prev_cost + edge_cost
-        }
-      };
+    for i in 1..=table_n {
+      let ac = get_a(i - 1);
+      let ta = get_ta(i - 1);
+      let (lo, hi) = bounds(i);
+      let jstart = lo.max(1);
 
-      // Option 2: Advance on B (vertical move)
-      // Triangle formed: (A[i-1], B[j-2], B[j-1])
-      // Connecting edge: B[j-1] -> A[i-1]
-      let cost_advance_b = {
-        let prev_cost = table.get_cost(i, j - 1);
-        if j == 1 {
-          prev_cost
-        } else {
-          let edge_cost = dp_stitch_cost(
-            get_b(j - 2),
-            get_b(j - 1),
-            get_a(i - 1),
-            inv_scale,
-            inv_scale_sq,
-            get_tb(j - 1),
-            get_ta(i - 1),
-            is_crit_b(j - 1) && is_crit_a(i - 1),
-          );
-          prev_cost + edge_cost
-        }
-      };
+      // Columns the previous row never reached are unreachable from it.
+      for slot in &mut prev[(prev_hi + 1)..=hi] {
+        *slot = f32::INFINITY;
+      }
+      prev_hi = hi;
 
-      // Pick the cheaper option
-      if cost_advance_a <= cost_advance_b {
-        table.set(i, j, cost_advance_a, DpMove::AdvanceA);
+      // The vectorized window covers columns `k0 + 2 ..= k1 + 1`; `j == 1` needs `B[-1]` and is
+      // filled by hand below.
+      let k0 = (jstart.max(2) - 2) & !3;
+      let k1 = (hi.max(1) - 1).next_multiple_of(4).min(pad);
+      if i == 1 {
+        ca[jstart..=hi].fill(0.);
       } else {
-        table.set(i, j, cost_advance_b, DpMove::AdvanceB);
-      }
-    }
-  }
-
-  // Backtrack to build the triangle list
-  let mut moves = Vec::with_capacity(table_n + table_m);
-  let mut i = table_n;
-  let mut j = table_m;
-
-  while i > 0 || j > 0 {
-    let came_from = table.get_came_from(i, j);
-    moves.push((i, j, came_from));
-
-    match came_from {
-      DpMove::AdvanceA => {
-        if i > 0 {
-          i -= 1;
+        let ap = get_a(i - 2);
+        let crit = is_crit_a(i - 1);
+        let fill = if crit {
+          fill_row_costs::<true>
+        } else {
+          fill_row_costs::<false>
+        };
+        fill(
+          b,
+          k0,
+          ap,
+          ac,
+          ta,
+          ka,
+          ke,
+          &mut ca[k0 + 2..k1 + 2],
+          &mut cb[k0 + 2..k1 + 2],
+        );
+        if jstart == 1 {
+          let c = cost_advance_a_at_b0(b, ap, ac, ta, ka, ke);
+          ca[1] = if crit { c * b.crit_mul[0] } else { c };
+        }
+        // Column 0's step closes the same triangle as column 1's A-advance, so it reuses that
+        // value rather than re-deriving it and rounding differently.
+        if lo == 0 {
+          col0 += ca[1];
         }
       }
-      DpMove::AdvanceB => {
-        if j > 0 {
-          j -= 1;
+
+      // Min-plus scan along the row.  The A-advance term reads the previous row, the B-advance
+      // term the cell just written, so only this cheap step is serially dependent.
+      let base = i * row_words;
+      let mut running = if lo == 0 { col0 } else { f32::INFINITY };
+      let mut word = 0u64;
+      for j in jstart..=hi {
+        let va = prev[j] + ca[j];
+        let vb = running + cb[j];
+        let take_b = vb < va;
+        running = if take_b { vb } else { va };
+        cur[j] = running;
+        word |= (take_b as u64) << (j & 63);
+        if j & 63 == 63 {
+          words[base + (j >> 6)] = word;
+          word = 0;
+        }
+      }
+      if hi & 63 != 63 {
+        words[base + (hi >> 6)] = word;
+      }
+
+      std::mem::swap(prev, cur);
+    }
+
+    let mut moves = Vec::with_capacity(table_n + table_m);
+    let (mut i, mut j) = (table_n, table_m);
+    while i > 0 || j > 0 {
+      let came_from = scratch.moves.get(i, j);
+      moves.push((i, j, came_from));
+      // Row 0 records `AdvanceB` everywhere and column 0 `AdvanceA`, so a well-formed table
+      // never steps off either edge.  The bitmap is reused without clearing, though, so clamp
+      // rather than wrap: a stale bit should degrade the stitch, not trap.
+      match came_from {
+        DpMove::AdvanceA if i > 0 => i -= 1,
+        DpMove::AdvanceB if j > 0 => j -= 1,
+        _ => {
+          debug_assert!(false, "backtrack stepped off the table at ({i}, {j})");
+          break;
         }
       }
     }
 
-    // Safety check to prevent infinite loops
-    if i == 0 && j == 0 {
-      break;
-    }
-  }
-
-  moves.into_iter().rev()
+    moves
+  })
 }
 
 /// Merges base samples with critical points, snapping nearby values together and ensuring
@@ -686,16 +946,16 @@ pub fn dp_stitch_presampled(
   } else {
     dp_stitch_solve::<false>
   };
-  let moves = solve_impl(
-    pts_a,
-    &rotated_pts_b,
-    ts_a,
-    rotated_ts_b.as_deref(),
+  let moves = solve_impl(Rings {
+    a: pts_a,
+    b: &rotated_pts_b,
+    ta: ts_a,
+    tb: rotated_ts_b.as_deref(),
     crit_a,
-    rotated_crit_b.as_deref(),
+    crit_b: rotated_crit_b.as_deref(),
     inv_scale,
     inv_scale_sq,
-  );
+  });
 
   // Map DP indices to actual vertex buffer indices.
   // Ring A: DP index i maps directly to vertex buffer (with wrap for closed rings)
@@ -829,6 +1089,79 @@ pub fn should_use_fku(enable_fku: bool, count_a: usize, count_b: usize) -> bool 
 mod tests {
   use super::*;
 
+  /// Re-evaluates the DP objective for a produced move sequence, independent of how the solver
+  /// found it.
+  #[allow(clippy::too_many_arguments)]
+  fn score_moves(
+    moves: &[(usize, usize, DpMove)],
+    pts_a: &[Vec3],
+    pts_b: &[Vec3],
+    ts_a: Option<&[f32]>,
+    ts_b: Option<&[f32]>,
+    crit_a: Option<&BitSlice>,
+    crit_b: Option<&BitSlice>,
+    closed: bool,
+    inv_scale: f32,
+    inv_scale_sq: f32,
+  ) -> f64 {
+    let (n, m) = (pts_a.len(), pts_b.len());
+    let wrap_a = |i: usize| if closed && i == n { 0 } else { i };
+    let wrap_b = |j: usize| if closed && j == m { 0 } else { j };
+    let ta = |i: usize| ts_a.map_or(0., |t| t[wrap_a(i)]);
+    let tb = |j: usize| ts_b.map_or(0., |t| t[wrap_b(j)]);
+    let ca = |i: usize| crit_a.is_some_and(|c| c[wrap_a(i)]);
+    let cb = |j: usize| crit_b.is_some_and(|c| c[wrap_b(j)]);
+    let e0 = EDGE_LEN_WEIGHT * (pts_a[0] - pts_b[0]).norm() * inv_scale;
+
+    let mut total = 0f64;
+    for &(i, j, mv) in moves {
+      let c = match mv {
+        DpMove::AdvanceA if i == 1 => {
+          if j == 0 {
+            e0
+          } else {
+            0.
+          }
+        }
+        DpMove::AdvanceA => {
+          let bj = if j == 0 { 0 } else { j - 1 };
+          dp_stitch_cost(
+            pts_a[wrap_a(i - 2)],
+            pts_a[wrap_a(i - 1)],
+            pts_b[wrap_b(bj)],
+            inv_scale,
+            inv_scale_sq,
+            ta(i - 1),
+            tb(bj),
+            ca(i - 1) && cb(bj),
+          )
+        }
+        DpMove::AdvanceB if j == 1 => {
+          if i == 0 {
+            e0
+          } else {
+            0.
+          }
+        }
+        DpMove::AdvanceB => {
+          let ai = if i == 0 { 0 } else { i - 1 };
+          dp_stitch_cost(
+            pts_b[wrap_b(j - 2)],
+            pts_b[wrap_b(j - 1)],
+            pts_a[wrap_a(ai)],
+            inv_scale,
+            inv_scale_sq,
+            tb(j - 1),
+            ta(ai),
+            cb(j - 1) && ca(ai),
+          )
+        }
+      };
+      total += c as f64;
+    }
+    total
+  }
+
   #[test]
   fn test_dp_stitch_solve_basic_open() {
     // Two identical strips (open) should produce a simple 1:1 stitching
@@ -840,7 +1173,7 @@ mod tests {
     ];
     let pts_b = pts_a.clone();
 
-    let moves = dp_stitch_solve::<false>(&pts_a, &pts_b, None, None, None, None, 1.0, 1.0);
+    let moves = dp_stitch_solve::<false>(plain_rings(&pts_a, &pts_b));
     // For open strips: should have n + m moves total
     assert_eq!(moves.len(), 8);
   }
@@ -860,7 +1193,7 @@ mod tests {
     assert_eq!(offset, 0); // Should be aligned already
 
     let rotated_b = rotate_ring(&pts_b, offset);
-    let moves = dp_stitch_solve::<true>(&pts_a, &rotated_b, None, None, None, None, 1.0, 1.0);
+    let moves = dp_stitch_solve::<true>(plain_rings(&pts_a, &rotated_b));
     // For closed rings: should have (n+1) + (m+1) moves total (includes wrap-around)
     assert_eq!(moves.len(), 10);
   }
@@ -919,6 +1252,265 @@ mod tests {
     assert_eq!(indices.len(), 24);
   }
 
+  /// Deterministic lobed rings with per-vertex jitter, non-uniform spacing, and a relative
+  /// twist -- the shapes `rail_sweep` actually feeds the solver, at sizes that trigger banding.
+  fn gen_ring(seed: u32, count: usize, lobes: f32, radius: f32, z: f32, phase: f32) -> Vec<Vec3> {
+    let mut rng = seed.wrapping_mul(0x9E37_79B9) | 1;
+    let mut next = || {
+      rng ^= rng << 13;
+      rng ^= rng >> 17;
+      rng ^= rng << 5;
+      (rng >> 8) as f32 / (1 << 24) as f32
+    };
+    (0..count)
+      .map(|i| {
+        // squared parameter spacing makes vertex density vary around the ring
+        let u = i as f32 / count as f32;
+        let a = (u + 0.35 * u * (1. - u)) * std::f32::consts::TAU + phase;
+        let r = radius * (1. + 0.35 * (a * lobes).sin() + 0.08 * (next() - 0.5));
+        Vec3::new(r * a.cos(), r * a.sin(), z + 0.15 * (next() - 0.5))
+      })
+      .collect()
+  }
+
+  fn plain_rings<'a>(a: &'a [Vec3], b: &'a [Vec3]) -> Rings<'a> {
+    Rings {
+      a,
+      b,
+      ta: None,
+      tb: None,
+      crit_a: None,
+      crit_b: None,
+      inv_scale: 1.,
+      inv_scale_sq: 1.,
+    }
+  }
+
+  /// Marks every `stride`-th vertex critical, the shape `snap_critical_points` produces.
+  fn crit_mask(n: usize, stride: usize) -> BitVec {
+    let mut m = bitvec![0; n];
+    for i in (0..n).step_by(stride) {
+      m.set(i, true);
+    }
+    m
+  }
+
+  /// Runs one ring pair through both the production (banded) path and a full-width band that
+  /// forces the exact DP through the same code, and returns `banded_cost / exact_cost`.
+  fn banded_vs_exact<const CLOSED: bool>(
+    pts_a: &[Vec3],
+    pts_b: &[Vec3],
+    crit_a: Option<&BitSlice>,
+    crit_b_unrotated: Option<&BitSlice>,
+  ) -> f64 {
+    let scale = ((ring_average_radius(pts_a) + ring_average_radius(pts_b)) * 0.5).max(1e-6);
+    let (inv, inv_sq) = (1. / scale, 1. / (scale * scale));
+    let offset = if CLOSED {
+      find_best_ring_alignment(pts_a, pts_b)
+    } else {
+      0
+    };
+    let rot_b = rotate_ring(pts_b, offset);
+    let m = rot_b.len();
+    let ts_a: Vec<f32> = (0..pts_a.len())
+      .map(|i| i as f32 / pts_a.len() as f32)
+      .collect();
+    // Rotating ring B re-origins its t-values too, exactly as `dp_stitch_presampled` does; the
+    // shift is read out of the source array rather than recomputed, so a non-uniform t
+    // distribution stays faithful.
+    let raw_tb: Vec<f32> = (0..m).map(|i| i as f32 / m as f32).collect();
+    let t_shift = raw_tb[offset % m];
+    let ts_b: Vec<f32> = (0..m)
+      .map(|i| {
+        let t = raw_tb[(i + offset) % m] - t_shift;
+        if t < 0. {
+          t + 1.
+        } else {
+          t
+        }
+      })
+      .collect();
+    let crit_b = crit_b_unrotated.map(|c| {
+      let mut r = bitvec![0; m];
+      for i in 0..m {
+        r.set(i, c[(i + offset) % m]);
+      }
+      r
+    });
+
+    let rings = Rings {
+      a: pts_a,
+      b: &rot_b,
+      ta: Some(&ts_a),
+      tb: Some(&ts_b),
+      crit_a,
+      crit_b: crit_b.as_deref(),
+      inv_scale: inv,
+      inv_scale_sq: inv_sq,
+    };
+    let (table_n, table_m) = if CLOSED {
+      (pts_a.len() + 1, m + 1)
+    } else {
+      (pts_a.len(), m)
+    };
+    let full = vec![(0, table_m as u32); table_n + 1];
+    let score = |mv: &[(usize, usize, DpMove)]| {
+      score_moves(
+        mv,
+        pts_a,
+        &rot_b,
+        Some(&ts_a),
+        Some(&ts_b),
+        crit_a,
+        crit_b.as_deref(),
+        CLOSED,
+        inv,
+        inv_sq,
+      )
+    };
+
+    let banded: Vec<_> = dp_stitch_solve::<CLOSED>(rings).collect();
+    let exact = solve_banded::<CLOSED>(rings, Some(&full));
+    assert_monotone_path(&banded, table_n, table_m);
+    score(&banded) / score(&exact)
+  }
+
+  /// The move list must be a contiguous monotone staircase from the origin to
+  /// (table_n, table_m) -- one step per entry, never revisiting or skipping a state.
+  fn assert_monotone_path(moves: &[(usize, usize, DpMove)], table_n: usize, table_m: usize) {
+    assert_eq!(moves.len(), table_n + table_m, "path length");
+    let (mut i, mut j) = (0usize, 0usize);
+    for &(mi, mj, mv) in moves {
+      match mv {
+        DpMove::AdvanceA => i += 1,
+        DpMove::AdvanceB => j += 1,
+      }
+      assert_eq!((mi, mj), (i, j), "path is not contiguous");
+    }
+    assert_eq!(
+      (i, j),
+      (table_n, table_m),
+      "path does not reach the far corner"
+    );
+  }
+
+  /// The banded multiscale solve is compared against the exact DP over the shapes that stress
+  /// the guide: mismatched vertex counts, extreme aspect ratios (where a row advances thousands
+  /// of columns), open strips, and rings whose lobe count approaches the coarse sampling rate.
+  ///
+  /// The bound is what the scheme achieves, not a claim of optimality: a subsampled guide cannot
+  /// see structure finer than its own sample rate, so a ring whose lobe count nears that rate is
+  /// where any residual slack shows up.
+  #[test]
+  fn test_banded_solve_matches_exact() {
+    // rings whose lobe count nears the coarse sample rate keep a little slack; everything else
+    // is expected to come out exactly optimal
+    const PERIODIC_TOL: f64 = 1.002;
+    // (ring A, ring B, lobes, closed, tolerated cost ratio)
+    let cases: &[(usize, usize, f32, bool, f64)] = &[
+      (150, 150, 3., true, 1.001),
+      (400, 400, 3., true, 1.001),
+      (400, 137, 3., true, 1.001),
+      (850, 850, 3., true, 1.001),
+      (850, 811, 3., true, 1.001),
+      (601, 900, 3., true, 1.001),
+      // lopsided pairs: the band is measured in columns, the error scales with columns-per-row
+      (44, 812, 3., true, 1.001),
+      (12, 16000, 3., true, 1.001),
+      (2, 5000, 3., true, 1.001),
+      (5000, 3, 3., true, 1.001),
+      (200, 1600, 7., true, 1.001),
+      // open strips take the CLOSED=false index mapping through the same machinery
+      (3, 5000, 3., false, 1.001),
+      (400, 400, 3., false, 1.001),
+      (137, 900, 5., false, 1.001),
+      (1024, 997, 97., true, 1.001),
+      (1024, 997, 41., true, 1.001),
+      (300, 900, 31., true, 1.001),
+      (2048, 2048, 151., true, PERIODIC_TOL),
+    ];
+    for (case, &(na, nb, lobes, closed, tol)) in cases.iter().enumerate() {
+      let seed = case as u32 + 1;
+      let a = gen_ring(seed, na, lobes, 1., 0., 0.);
+      let b = gen_ring(seed + 100, nb, lobes, 1.25, 0.6, 0.9);
+      let ratio = if closed {
+        banded_vs_exact::<true>(&a, &b, None, None)
+      } else {
+        banded_vs_exact::<false>(&a, &b, None, None)
+      };
+      assert!(
+        ratio >= 1.0 - 1e-6,
+        "case {case}: banded scored {ratio} below the exact optimum; solver and scorer disagree"
+      );
+      assert!(
+        ratio < tol,
+        "case {case} ({na}x{nb}, {lobes} lobes, closed={closed}): {:.2}% worse than exact \
+         (tolerance {:.1}%)",
+        (ratio - 1.) * 100.,
+        (tol - 1.) * 100.
+      );
+    }
+  }
+
+  /// Same differential check with critical masks populated, which `rail_sweep` always supplies
+  /// in production: the mask drives `CRITICAL_PAIR_MULTIPLIER` through the SIMD kernel, the
+  /// column-0 accumulator, and the OR-over-buckets subsampling in the coarse guide.
+  #[test]
+  fn test_banded_solve_matches_exact_with_critical_points() {
+    for (case, &(na, nb, sa, sb, closed)) in [
+      (400usize, 400usize, 37usize, 37usize, true),
+      (850, 850, 11, 13, true),
+      (850, 811, 64, 61, true),
+      (601, 900, 7, 9, true),
+      (1024, 997, 3, 5, true),
+      (400, 900, 17, 23, false),
+    ]
+    .iter()
+    .enumerate()
+    {
+      let seed = case as u32 + 41;
+      let a = gen_ring(seed, na, 3., 1., 0., 0.);
+      let b = gen_ring(seed + 100, nb, 3., 1.25, 0.6, 0.9);
+      let (ca, cb) = (crit_mask(na, sa), crit_mask(nb, sb));
+      let ratio = if closed {
+        banded_vs_exact::<true>(&a, &b, Some(&ca), Some(&cb))
+      } else {
+        banded_vs_exact::<false>(&a, &b, Some(&ca), Some(&cb))
+      };
+      // Dense critical points bias the cost landscape enough that the guide can settle a
+      // fraction of a percent off the optimum without ever pressing on the band edge.
+      assert!(
+        (1.0 - 1e-6..1.005).contains(&ratio),
+        "case {case} ({na}x{nb}, crit stride {sa}/{sb}, closed={closed}): ratio {ratio:.5}"
+      );
+    }
+  }
+
+  /// Every ring edge must appear in exactly one stitch triangle.  4096 is past the point where
+  /// the coarse guide recurses three levels deep, without tying the test's allocation to
+  /// `MAX_DP_STITCH_RESOLUTION`.
+  #[test]
+  fn test_banded_stitch_is_manifold() {
+    for (na, nb) in [(700, 640), (4096, 4096)] {
+      let a = gen_ring(7, na, 4., 1., 0., 0.);
+      let b = gen_ring(9, nb, 2., 1.3, 0.5, 1.7);
+      let mut indices = Vec::new();
+      dp_stitch_presampled(
+        &a,
+        &b,
+        None,
+        None,
+        None,
+        None,
+        0,
+        a.len(),
+        true,
+        &mut indices,
+      );
+      assert_missing_edges_empty(&a, &b, &indices);
+    }
+  }
+
   #[test]
   fn test_fku_stitch_repro_3() {
     // These were extracted using debug logs from an actual failure case.  I don't want to pollute
@@ -946,10 +1538,12 @@ mod tests {
       &mut indices,
     );
 
-    // a proper stitch will:
-    // - use every edge in ring0 exactly once in a triangle with its tip in ring1
-    // - use every edge in ring1 exactly once in a triangle with its tip in ring0
+    assert_missing_edges_empty(&ring0_pts, &ring1_pts, &indices);
+  }
 
+  /// A proper stitch uses every edge of each ring exactly once, in a triangle whose tip is on
+  /// the opposite ring.
+  fn assert_missing_edges_empty(ring0_pts: &[Vec3], ring1_pts: &[Vec3], indices: &[u32]) {
     let n = ring0_pts.len();
     let m = ring1_pts.len();
 
