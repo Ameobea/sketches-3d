@@ -1556,16 +1556,18 @@ impl CSG {
   /// Return a new CSG solid representing space in either this solid or in the
   /// solid `csg`. Neither this solid nor the solid `csg` are modified.
   ///
-  ///     A.union(B)
+  /// ```text
+  /// A.union(B)
   ///
-  ///     +-------+            +-------+
-  ///     |       |            |       |
-  ///     |   A   |            |       |
-  ///     |    +--+----+   =   |       +----+
-  ///     +----+--+    |       +----+       |
-  ///          |   B   |            |       |
-  ///          |       |            |       |
-  ///          +-------+            +-------+
+  /// +-------+            +-------+
+  /// |       |            |       |
+  /// |   A   |            |       |
+  /// |    +--+----+   =   |       +----+
+  /// +----+--+    |       +----+       |
+  ///      |   B   |            |       |
+  ///      |       |            |       |
+  ///      +-------+            +-------+
+  /// ```
   pub fn union(self, other: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
@@ -1598,16 +1600,18 @@ impl CSG {
   /// Returns a new CSG solid representing space in this solid but not in the
   /// solid `csg`. Neither this solid nor the solid `csg` are modified.
   ///
-  ///     A.subtract(B)
+  /// ```text
+  /// A.subtract(B)
   ///
-  ///     +-------+            +-------+
-  ///     |       |            |       |
-  ///     |   A   |            |       |
-  ///     |    +--+----+   =   |    +--+
-  ///     +----+--+    |       +----+
-  ///          |   B   |
-  ///          |       |
-  ///          +-------+
+  /// +-------+            +-------+
+  /// |       |            |       |
+  /// |   A   |            |       |
+  /// |    +--+----+   =   |    +--+
+  /// +----+--+    |       +----+
+  ///      |   B   |
+  ///      |       |
+  ///      +-------+
+  /// ```
   pub fn subtract(self, other: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(other);
 
@@ -1629,16 +1633,18 @@ impl CSG {
   /// Return a new CSG solid representing space both this solid and in the
   /// solid `csg`. Neither this solid nor the solid `csg` are modified.
   ///
-  ///     A.intersect(B)
+  /// ```text
+  /// A.intersect(B)
   ///
-  ///     +-------+
-  ///     |       |
-  ///     |   A   |
-  ///     |    +--+----+   =   +--+
-  ///     +----+--+    |       +--+
-  ///          |   B   |
-  ///          |       |
-  ///          +-------+
+  /// +-------+
+  /// |       |
+  /// |   A   |
+  /// |    +--+----+   =   +--+
+  /// +----+--+    |       +--+
+  ///      |   B   |
+  ///      |       |
+  ///      +-------+
+  /// ```
   pub fn intersect(self, csg: LinkedMesh<FaceData>) -> LinkedMesh<FaceData> {
     let (mut mesh, mut nodes, a_key, b_key) = self.init(csg);
 
