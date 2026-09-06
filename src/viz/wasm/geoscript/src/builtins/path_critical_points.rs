@@ -66,9 +66,35 @@ pub(crate) fn detect_critical_points(
   pre_op_vertices: Option<&VertexSet>,
 ) -> Vec<f32> {
   let mut t_values: Vec<f32> = Vec::new();
+  for path in paths {
+    let flags = detect_critical_vertices(path, config, pre_op_vertices);
+    let n = path.len();
+    let mut cumulative = Vec::with_capacity(n + 1);
+    cumulative.push(0.0f32);
+    for i in 0..n {
+      cumulative.push(cumulative[i] + (path[(i + 1) % n] - path[i]).norm());
+    }
+    let total = cumulative[n];
+    if total < 1e-10 {
+      continue;
+    }
+    t_values.extend((0..n).filter(|&i| flags[i]).map(|i| cumulative[i] / total));
+  }
+  t_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+  t_values.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+  t_values
+}
 
-  if paths.is_empty() {
-    return t_values;
+/// Per-vertex critical flags for one closed polyline (see `detect_critical_points`).
+pub(crate) fn detect_critical_vertices(
+  path: &[Vec2],
+  config: &CriticalPointConfig,
+  pre_op_vertices: Option<&VertexSet>,
+) -> Vec<bool> {
+  let n = path.len();
+  let mut t_values: Vec<f32> = Vec::new();
+  if n < 3 {
+    return vec![false; n];
   }
 
   let angle_threshold = config.angle_threshold.max(0.0);
@@ -84,12 +110,8 @@ pub(crate) fn detect_critical_points(
   /// distance of an already-flagged point are suppressed to avoid near-duplicates.
   const MIN_T_GAP_FOR_ANGLE_CRITICAL: f32 = 0.005;
 
-  for path in paths {
-    let n = path.len();
-    if n < 3 {
-      continue;
-    }
-
+  let mut is_critical = vec![false; n];
+  {
     let mut segment_lengths = Vec::with_capacity(n);
     let mut total_length = 0.0f32;
     for i in 0..n {
@@ -100,7 +122,7 @@ pub(crate) fn detect_critical_points(
     }
 
     if total_length < 1e-10 {
-      continue;
+      return vec![false; n];
     }
 
     let mut cumulative = Vec::with_capacity(n);
@@ -112,7 +134,6 @@ pub(crate) fn detect_critical_points(
     let long_threshold = seg_fraction * total_length;
 
     // Track which vertices are already flagged as critical (by index).
-    let mut is_critical = vec![false; n];
 
     // ── Pass 1: segment-length critical points ──────────────────────────
     // Greedily merge consecutive collinear segments (angle between them
@@ -283,10 +304,8 @@ pub(crate) fn detect_critical_points(
       }
     }
   }
-
-  t_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-  t_values.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-  t_values
+  let _ = &t_values;
+  is_critical
 }
 
 #[cfg(test)]

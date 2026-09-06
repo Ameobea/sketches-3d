@@ -1710,13 +1710,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable to center."
           },
         ],
         description: "Moves a 2D path so that its origin is at the centroid of its segment endpoints, returning a new path sampler. Preserves any existing transforms.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -1742,13 +1742,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable whose transform will be baked into its geometry."
           },
         ],
         description: "Bakes the 2D affine transform into the path's segment control points, resetting the transform to identity. Only works with trace_path/trace_svg_path paths.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -6356,7 +6356,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A `PathSampler` callable (e.g. from `trace_svg_path`, `trace_path`, `lerp_path`) to render as a closed path in the XZ plane",
           },
@@ -6572,7 +6572,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler (from `trace_path`, `trace_svg_path`, `text_to_path`, etc.) or any `|t: num|: vec2` callable.",
           },
@@ -9324,7 +9324,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A 2D path sampler callable of signature `|t: num|: vec2`."
           },
@@ -9337,7 +9337,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Uniformly scales and translates a 2D path so its bounding box fits inside `[pad, 1-pad]²`, filling the longer axis and centering the shorter one.  Aspect ratio is preserved.  The usual first step before `rasterize_path` / `path_sdf` / `path_uv` for glyphs, traced SVGs, or anything authored in arbitrary units.\n\nUses the exact analytic bounding box when available (see `path_aabb`), falling back to the discretized outline for black-box samplers or arcs under non-uniform transforms.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -9350,7 +9350,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler with analytic segment topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`)."
           },
@@ -10048,7 +10048,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "profile",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Path, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Callable with signature `|u: float, v: float, u_ix: int, v_ix: int, spine_center: vec3|: vec2` that returns the local (x, y) offset for each point in the ring. Optional when `dynamic_profile` is provided."
           },
@@ -10083,7 +10083,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "profile_samplers",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence, ArgType::Nil),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Path, ArgType::Sequence, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Optional path sampler or sequence of path samplers (from `trace_path`)`.  Used to align profile `v` sampling with critical points."
           },
@@ -10365,7 +10365,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence),
+            valid_types: argtype_flags!(ArgType::Path, ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Either:\n - A path callable: a `PathSampler` (e.g. from `trace_path`, `trace_svg_path`, `catmull_rom`, `lerp_paths`) sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count`; or a black-box `|t: float|: vec2`, sampled uniformly at `sample_count` points (default 64).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
           },
@@ -10704,7 +10704,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Fetches SVG path data for the given text and returns a path sampler callable of signature `|t: num|: vec2`. Suitable for use with `tessellate_path`, `render_path`, `subpaths`, etc.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -10805,7 +10805,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable of signature `|t: num|: vec2`.  Every subpath is discretized into line segments; closed subpaths are sealed, open ones are treated as strokes."
           },
@@ -10860,7 +10860,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes a 2D alpha-wrap of a path: a simple, hole-aware outline that strictly encloses every segment of the input, roughly `offset` away from it, with concavities narrower than `alpha` filled in.  Think of it as a concave hull of the strokes and filled regions of the path.  Overlapping or self-intersecting subpaths and open strokes are all fine as input.  The output is a polyline path (no continuous curve detail) with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -10901,7 +10901,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes a 2D alpha-wrap of a set of points: a simple, hole-aware outline enclosing all of them, roughly `offset` away from the outermost points, with gaps narrower than `alpha` closed over.  Useful for blob-like silhouettes around scattered points.  The output is a polyline path with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -11318,7 +11318,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A `PathSampler` callable (e.g. from `trace_path`, `trace_svg_path`, `lerp_path`, `catmull_rom`) or any `|t: num|: vec2` callable.  Sampled in the XZ plane (`vec2(x, y)` -> `vec3(x, 0, y)`).  Multi-subpath inputs are fanned independently and combined into one mesh."
           },
@@ -11372,7 +11372,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A sequence of Vec2 points, a sequence of Vec2 sequences, or a callable `|t: num|: vec2` (preferably from `trace_path`)."
           },
@@ -11454,7 +11454,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A filled 2D region to embed and thicken.  A sequence of Vec2 points, a sequence of Vec2 sequences (outer + holes via subpath nesting), or a path callable `|t: num|: vec2` (e.g. from `trace_path`).  Holes drilled through the plate come straight from subpath nesting, exactly like `tessellate_path`."
           },
@@ -13102,7 +13102,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           }
         ],
         description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
-        return_type: &[ArgType::Callable]
+        return_type: &[ArgType::Path]
       }
     ]
   },
@@ -13115,7 +13115,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler created by `trace_path` or similar functions"
           }
@@ -13134,7 +13134,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable of signature `|t: num|: vec2`. Use `trace_path` for topology-aware sampling."
           },
@@ -13270,7 +13270,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Offsets a 2D path using Clipper2 and returns a new path sampler.  Note: continuous curve detail is lost; the output is a polyline representation.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13283,14 +13283,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path_a",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "First path sampler callable of signature `|t: float|: vec2`."
           },
           ArgDef {
             name: "path_b",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Second path sampler callable of signature `|t: float|: vec2`."
           },
@@ -13310,7 +13310,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Interpolates between two path samplers, returning a new path callable. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13343,7 +13343,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Returns a path sampler callable `|t: float|: vec2` that evaluates a Catmull-Rom spline through the given 2D control points. The spline passes through every control point. All interior joints are C1 smooth; only the endpoints of an open spline are non-smooth. `tension` generalises to the full cardinal spline family (`0.5` = standard Catmull-Rom).",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -13483,7 +13483,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable (e.g. from trace_path, offset_path, lerp_paths)."
           },
@@ -13502,14 +13502,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The first path sampler callable of signature `|t: num|: vec2`."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The second path sampler callable of signature `|t: num|: vec2`."
           },
@@ -13550,7 +13550,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers; they will treat nested subpaths as holes under their own fill rule.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -13598,7 +13598,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the union of every path in a sequence in a single boolean pass.  Much faster than chaining pairwise unions (`reduce(path_union)` and `fold(init, path_union)` route here automatically), since each pairwise step would re-sample and re-analyze the growing result.  Options and engines behave as for the two-path form; with `engine=\"cgal\"` the inputs are combined pairwise internally.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13611,14 +13611,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The first path sampler callable of signature `|t: num|: vec2`."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The second path sampler callable of signature `|t: num|: vec2`."
           },
@@ -13659,7 +13659,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the intersection of two 2D paths. The intersection contains only areas inside both paths.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13672,14 +13672,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "a",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The first path sampler. Must be a callable with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); black-box `|t|: vec2` callables are rejected."
           },
           ArgDef {
             name: "b",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The second path sampler. Same restriction as `a`."
           },
@@ -13726,14 +13726,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The first path sampler callable of signature `|t: num|: vec2`."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The second path sampler callable of signature `|t: num|: vec2`."
           },
@@ -13774,7 +13774,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the difference of two 2D paths (subject minus clip). The result contains areas inside subject but not inside clip.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13787,14 +13787,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The first path sampler callable of signature `|t: num|: vec2`."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "The second path sampler callable of signature `|t: num|: vec2`."
           },
@@ -13835,7 +13835,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the exclusive-or (XOR) of two 2D paths. The result contains areas inside either path but not both.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13882,7 +13882,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.\n\nThe resulting tracer preserves subpath identity; each `rect`, `circle`, or explicit `move`-delimited run becomes its own subpath.  Multi-subpath paths are consumed correctly by boolean ops, tessellation, and the various sampling builtins.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -13895,7 +13895,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable. Topology-aware paths use adaptive curvature sampling; black-box `|t: num|: vec2` callables fall back to uniform sampling."
           },
@@ -13923,7 +13923,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
 
         description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path sampler.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive curvature-based sampling driven by `curve_angle_degrees` for paths backed by a path tracer. For black-box callables, falls back to uniform sampling at `sample_count` points.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -13936,20 +13936,20 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path1",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "First path sampler (from `build_path`, `trace_svg_path`, etc.)."
           },
           ArgDef {
             name: "path2",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Second path sampler (from `build_path`, `trace_svg_path`, etc.)."
           },
         ],
         description: "Joins two paths by structurally concatenating their subpath arrays.  Avoids the Clipper2 round-trip used by `path_union`/`path_difference` etc.; appropriate when the inputs are known not to overlap.\n\nBoth inputs must be path samplers with identity transforms.  Apply `apply_transforms` first to bake non-identity transforms into geometry before joining.\n\nThe returned path inherits the `fill_rule` of the first input that has one; conflicting fill rules raise an error.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14588,13 +14588,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Map, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Map, ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Either a `rect`/`circle` draw command tagged dict (built by `rect` / `circle` inside a `path { ... }` block) or a path tracer callable (from `build_path`, `trace_svg_path`, `text_to_path`, etc.)."
           },
         ],
         description: "Reverses the winding of a path.  For a `rect` or `circle` draw command, toggles its `reversed` flag so the shape is traced in the opposite direction (same start point, opposite orientation).  For a path tracer callable, returns a new tracer with the whole-path `reverse` flag toggled.\n\nUseful for building paths-with-holes: the standard convention is that an outer shape and its enclosed holes have opposite winding.  Under the CGAL tessellation engine, winding doesn't matter (holes are identified by nesting), but reversing is still required when feeding the path through fill rules that depend on winding (`nonzero`, `positive`, `negative`).\n\nDoes not accept bare point sequences.  To reverse a `Sequence<Vec2>`, use a sequence operation directly.\n\nAliased to `reverse` inside `path { ... }` blocks.",
-        return_type: &[ArgType::Map, ArgType::Callable],
+        return_type: &[ArgType::Map, ArgType::Path],
       },
     ],
   },
@@ -14607,7 +14607,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler from `build_path` / `trace_svg_path` / `text_to_path` / `offset_path` / boolean ops."
           },
@@ -14626,7 +14626,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable. Tracer-backed paths (from `build_path` / `trace_svg_path` / `text_to_path` / offset/boolean ops) get the exact analytic arc length; any other `|t: num|: vec2` callable falls back to a sampling estimate."
           },
@@ -14659,7 +14659,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A path sampler callable. Tracer-backed paths are sliced geometrically (curves and sharp corners preserved exactly); other callables are wrapped and resampled over the trimmed range."
           },
@@ -14686,7 +14686,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Returns a new path sampler covering the portion of `path` between `start` and `end`.\n\nTrimming is done in the global arc-length parameterization that spans all subpaths, so `start`/`end` cut across the concatenated subpaths; iterate `path_subpaths` first to trim an individual subpath. Negative bounds count back from the end (e.g. `trim_path(p, start=4, end=-4, unit='distance')` drops 4 units from each end).\n\nFor tracer-backed paths the result is a real sliced path: lines, beziers and arcs keep their exact geometry and every sharp corner inside the range is preserved. Black-box callables are wrapped and resampled, with `distance` bounds resolved against a sampling-based length estimate.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14706,7 +14706,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
@@ -14841,13 +14841,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Translates a 2D path by the given offset, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -14868,13 +14868,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Translates a 2D path by (x, y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14894,13 +14894,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Rotates a 2D path around the origin by the given angle (radians), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14920,13 +14920,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Scales a 2D path, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -14947,13 +14947,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Scales a 2D path by (x, y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14973,13 +14973,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the line running through the origin in the `axis` direction, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -15000,13 +15000,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the line running in the `axis` direction, shifted perpendicular from the origin by `offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -15019,13 +15019,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the x-axis (negating y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -15039,13 +15039,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the horizontal line `y = offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -15715,7 +15715,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
@@ -15776,7 +15776,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
@@ -15837,7 +15837,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
@@ -16330,13 +16330,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the y-axis (negating x), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -16350,13 +16350,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
             description: "Path sampler callable of signature `|t: num|: vec2`."
           },
         ],
         description: "Reflects a 2D path across the vertical line `x = offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },

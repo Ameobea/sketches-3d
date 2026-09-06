@@ -23,10 +23,7 @@ use parry3d::query::Ray;
 use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
-use crate::builtins::trace_path::{
-  as_path_sampler, build_segment_dicts, build_topology_samples, sample_path_subpaths, trim_tracer,
-  PathSubpath, PathTracerCallable, SubpathsSeq, TrimmedPathSampler,
-};
+use crate::builtins::trace_path::{build_segment_dicts, expect_path, sample_path_subpaths};
 use crate::materials::Material;
 use crate::mesh_ops::compute_uvs::{compute_uvs, UvParams, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -41,6 +38,7 @@ use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, fbm_2d_tileable, ridged_2d, ridged_3d,
   worley_noise_2d, worley_noise_3d, RangeFunction, WorleyReturnType,
 };
+use crate::path::Path;
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight, ShadowCamera},
@@ -2540,7 +2538,7 @@ fn fan_fill_impl(
       })))
     }
     1 => {
-      let path_callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
       let closed_override: Option<bool> = match arg_refs[1].resolve(args, kwargs) {
         Value::Bool(b) => Some(*b),
         _ => None,
@@ -2568,19 +2566,7 @@ fn fan_fill_impl(
         }
       };
 
-      let raw = match as_path_sampler(path_callable)
-        .and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count))
-      {
-        Some(v) => v,
-        None => sample_path_subpaths(
-          ctx,
-          path_callable,
-          curve_angle_radians,
-          sample_count.unwrap_or(64),
-          closed_override,
-          "fan_fill",
-        )?,
-      };
+      let raw = path.sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?;
 
       let subpaths: Vec<(Vec<Vec3>, bool)> = raw
         .into_iter()
@@ -2767,9 +2753,9 @@ fn tessellate_path_impl(
         && max_edge_len.is_none()
         && min_angle_squared_sine.is_none()
       {
-        if let Some(cb) = path_val.as_callable() {
-          if let Some(sampler) = as_path_sampler(cb) {
-            let sampler_fr = sampler.fill_rule();
+        if let Some(sampler) = path_val.as_path() {
+          {
+            let sampler_fr = sampler.fill_rule;
             let sampler_lyon_fr = sampler_fr.and_then(|fr| fr.to_lyon_fill_rule().ok());
 
             // A fill rule only forces lyon when CGAL's nesting-based fill can't honor it:
@@ -2784,7 +2770,7 @@ fn tessellate_path_impl(
               || sampler_fr.map(fr_needs_lyon).unwrap_or(false);
 
             if should_use_lyon {
-              if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
+              if let Some(lyon_path) = sampler.to_lyon_path() {
                 let fill_rule = fill_rule_override
                   .and_then(|fr| fr.to_lyon_fill_rule().ok())
                   .or(sampler_lyon_fr)
@@ -2899,47 +2885,16 @@ fn tessellate_path_impl(
         if saw_points {
           push_clean_path(flat_points, "path sequence")?;
         }
-      } else if let Some(cb) = path_val.as_callable() {
-        let sampler = as_path_sampler(cb);
-
+      } else if let Some(path) = path_val.as_path() {
         if fill_rule_override.is_none() {
-          if let Some(s) = sampler {
-            sampler_fill_rule = s.fill_rule();
-          }
+          sampler_fill_rule = path.fill_rule;
         }
-
-        let subpath_data =
-          sampler.and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count));
-
-        if let Some(subpath_data) = subpath_data {
-          for (ix, (points, _closed)) in subpath_data.into_iter().enumerate() {
-            push_clean_path(points, &format!("subpath {ix}"))?;
-          }
-        } else {
-          let sample_point = |t: f32| -> Result<Vec2, ErrorStack> {
-            let out = ctx
-              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
-              .map_err(|err| err.wrap("Error sampling callable passed to `tessellate_path`"))?;
-            let point = out.as_vec2().ok_or_else(|| {
-              ErrorStack::new(format!(
-                "Expected Vec2 from callable passed to `tessellate_path`, found: {out:?}"
-              ))
-            })?;
-            Ok(*point)
-          };
-
-          let p0 = sample_point(0.0)?;
-          let p1 = sample_point(1.0)?;
-          let actual_closed = (p0 - p1).norm() <= 1e-4;
-          let include_end = !actual_closed;
-          let effective_sample_count = sample_count.unwrap_or(64);
-          let t_samples = build_topology_samples(effective_sample_count, None, None, include_end);
-          let mut points = Vec::with_capacity(t_samples.len());
-          for t in t_samples {
-            points.push(sample_point(t)?);
-          }
-
-          push_clean_path(points, "callable path")?;
+        for (ix, (points, _closed)) in path
+          .sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?
+          .into_iter()
+          .enumerate()
+        {
+          push_clean_path(points, &format!("subpath {ix}"))?;
         }
       } else {
         return Err(ErrorStack::new(format!(
@@ -3104,15 +3059,8 @@ fn discretize_fillable_paths(
     if saw_points {
       push_clean(flat_points, "path sequence")?;
     }
-  } else if let Some(cb) = path_val.as_callable() {
-    let subpaths = sample_path_subpaths(
-      ctx,
-      cb,
-      curve_angle_radians,
-      sample_count,
-      Some(true),
-      fn_name,
-    )?;
+  } else if let Some(path) = path_val.as_path() {
+    let subpaths = sample_path_subpaths(ctx, path, curve_angle_radians, sample_count, Some(true))?;
     for (ix, (points, _closed)) in subpaths.into_iter().enumerate() {
       push_clean(points, &format!("subpath {ix}"))?;
     }
@@ -4522,20 +4470,11 @@ fn extrude_path_impl(
           )));
         }
         vec![(points, false)]
-      } else if let Some(path_callable) = path_val.as_callable() {
-        let raw = if let Some(s) = as_path_sampler(path_callable) {
-          s.sample_subpaths_with_limit(curve_angle_radians, sample_count)
-            .unwrap_or_default()
-        } else {
-          sample_path_subpaths(
-            ctx,
-            path_callable,
-            curve_angle_radians,
-            sample_count.unwrap_or(64),
-            Some(false),
-            "extrude_path",
-          )?
-        };
+      } else if let Some(path) = path_val.as_path() {
+        let mut raw = path.sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?;
+        if !path.is_concrete() {
+          raw.iter_mut().for_each(|(_, closed)| *closed = false);
+        }
         raw
           .into_iter()
           .map(|(pts, closed)| {
@@ -4895,58 +4834,22 @@ fn render_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
       let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
-
-      // PathSampler path: topology-aware, handles subpaths + closed/open + critical t
-      if let Some(sampler) = as_path_sampler(callable) {
-        if let Some(subpath_data) = sampler.sample_subpaths(1.0_f32.to_radians()) {
-          for (points, is_closed) in subpath_data {
-            if points.is_empty() {
-              continue;
-            }
-            let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
-            if is_closed {
-              path3d.push(path3d[0]);
-            }
-            ctx.rendered_paths.push(crate::RenderedPath {
-              points: path3d,
-              source_module: ctx.current_module.borrow().clone(),
-              path_id: ctx.next_render_id(),
-            });
-          }
-          return Ok(Value::Nil);
+      for (points, is_closed) in path.sample_subpaths(1.0_f32.to_radians(), resolution, ctx)? {
+        if points.is_empty() {
+          continue;
         }
+        let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
+        if is_closed {
+          path3d.push(path3d[0]);
+        }
+        ctx.rendered_paths.push(crate::RenderedPath {
+          points: path3d,
+          source_module: ctx.current_module.borrow().clone(),
+          path_id: ctx.next_render_id(),
+        });
       }
-
-      // Fallback: uniform sampling for black-box callables
-      let sample = |t: f32| -> Result<Vec2, ErrorStack> {
-        let v = ctx
-          .invoke_callable(callable, &[Value::Float(t)], EMPTY_KWARGS)
-          .map_err(|e| e.wrap("Error sampling callable in `render_path`"))?;
-        v.as_vec2()
-          .map(|p| *p)
-          .ok_or_else(|| ErrorStack::new(format!("render_path: expected vec2, got {v:?}")))
-      };
-
-      let p0 = sample(0.)?;
-      let p1 = sample(1.)?;
-      let is_closed = (p0 - p1).norm() < 1e-4;
-
-      let mut path3d = Vec::with_capacity(resolution + 1);
-      for i in 0..resolution {
-        let p = sample(i as f32 / resolution as f32)?;
-        path3d.push(Vec3::new(p.x, 0., p.y));
-      }
-      if is_closed {
-        path3d.push(path3d[0]);
-      }
-
-      ctx.rendered_paths.push(crate::RenderedPath {
-        points: path3d,
-        source_module: ctx.current_module.borrow().clone(),
-        path_id: ctx.next_render_id(),
-      });
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -5997,6 +5900,7 @@ fn aabb_impl(
 }
 
 fn path_aabb_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -6004,26 +5908,10 @@ fn path_aabb_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let path_val = arg_refs[0].resolve(args, kwargs);
-      let callable = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Invalid `path` argument for `path_aabb`; expected Callable, found: {path_val:?}"
-        ))
-      })?;
-
-      let tracer = trace_path::as_path_tracer(callable).ok_or_else(|| {
-        ErrorStack::new(
-          "`path_aabb` requires a path sampler with analytic segment topology (e.g. from `path { \
-           ... }`, `trace_path`, `trace_svg_path`, `text_to_path`). Black-box callables and \
-           samplers like `lerp_path` or `catmull_rom` that don't expose explicit segments are not \
-           supported.",
-        )
-      })?;
-
-      let (mins, maxs) = tracer
-        .analytic_aabb()?
+      let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_aabb")?;
+      let (mins, maxs) = path
+        .aabb(ctx)?
         .ok_or_else(|| ErrorStack::new("`path_aabb`: path contains no contributing segments"))?;
-
       Ok(Value::Sequence(Rc::new(EagerSeq {
         inner: Rc::new(vec![Value::Vec2(mins), Value::Vec2(maxs)]),
       })))
@@ -7078,13 +6966,7 @@ fn render_impl(
       Ok(Value::Nil)
     }
     3 => {
-      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
-      let Some(sampler) = as_path_sampler(callable) else {
-        return Err(ErrorStack::new(
-          "Callable passed to `render` does not implement `PathSampler`; only path samplers (e.g. \
-           from `trace_svg_path`, `trace_path`, `lerp_path`) can be rendered directly",
-        ));
-      };
+      let sampler = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
 
       const SAMPLE_COUNT: usize = 10_000;
       let mut path = Vec::with_capacity(SAMPLE_COUNT + 1);
@@ -8432,6 +8314,7 @@ fn align_impl(
 }
 
 fn origin_to_geometry_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -8452,67 +8335,8 @@ fn origin_to_geometry_impl(
       })))
     }
     1 => {
-      // origin_to_geometry for paths
-      let path_val = arg_refs[0].resolve(args, kwargs);
-      let cb = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "origin_to_geometry: expected a path callable, got {path_val:?}"
-        ))
-      })?;
-      let tracer = match &**cb {
-        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-        _ => None,
-      };
-      let Some(tracer) = tracer else {
-        return Err(ErrorStack::new(
-          "origin_to_geometry for paths requires a trace_path/trace_svg_path path sampler.",
-        ));
-      };
-
-      // Compute centroid from all segment endpoints
-      let mut sum = Vec2::new(0.0, 0.0);
-      let mut count = 0usize;
-      for subpath in tracer.subpaths.iter() {
-        for seg in &subpath.segments {
-          sum += seg.end();
-          count += 1;
-        }
-      }
-      if count == 0 {
-        return Ok(path_val.clone());
-      }
-      let centroid = sum / count as f32;
-      let offset = -centroid;
-
-      // Build a fresh Vec; we're about to mutate, which would defeat Rc-sharing.
-      let mut new_subpaths: Vec<trace_path::PathSubpath> = (*tracer.subpaths).clone();
-      for subpath in &mut new_subpaths {
-        for seg in &mut subpath.segments {
-          seg.translate(offset);
-        }
-      }
-
-      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
-      let mut total_length = 0.0;
-      for subpath in &new_subpaths {
-        total_length += subpath.total_length;
-        subpath_cumulative_lengths.push(total_length);
-      }
-
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(PathTracerCallable {
-          interned_t_kwarg: tracer.interned_t_kwarg,
-          subpaths: Rc::new(new_subpaths),
-          subpath_cumulative_lengths: Rc::new(subpath_cumulative_lengths),
-          total_length,
-          reverse: tracer.reverse,
-          override_critical_points: tracer.override_critical_points.clone(),
-          fill_rule: tracer.fill_rule,
-          transform: tracer.transform, // preserve existing transform
-          inward_flip_cache: std::cell::RefCell::new(None),
-        }),
-      })))
+      let path = expect_path(arg_refs[0].resolve(args, kwargs), "origin_to_geometry")?;
+      Ok(Value::Path(Rc::new(path.origin_to_geometry(ctx)?)))
     }
     _ => unimplemented!(),
   }
@@ -8545,62 +8369,15 @@ fn apply_transforms_impl(
       })))
     }
     1 => {
-      // apply_transforms for paths
       let path_val = arg_refs[0].resolve(args, kwargs);
-      let cb = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "apply_transforms: expected a path callable, got {path_val:?}"
-        ))
-      })?;
-      let tracer = match &**cb {
-        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-        _ => None,
-      };
-      let Some(tracer) = tracer else {
-        return Err(ErrorStack::new(
-          "apply_transforms for paths requires a trace_path/trace_svg_path path sampler. Generic \
-           callables do not have geometry to bake transforms into.",
-        ));
-      };
-
-      if tracer.transform == nalgebra::Matrix3::identity() {
-        return Ok(path_val.clone());
+      let path = expect_path(path_val, "apply_transforms")?;
+      if let Some(lazy) = path.first_lazy_name() {
+        return Err(ErrorStack::new(format!(
+          "apply_transforms: cannot bake transforms into a lazy path (contains `{lazy}`); use \
+           `discretize_path` first"
+        )));
       }
-
-      let m = &tracer.transform;
-
-      let mut new_subpaths = Vec::with_capacity(tracer.subpaths.len());
-      for subpath in tracer.subpaths.iter() {
-        let mut new_segments = Vec::with_capacity(subpath.segments.len());
-        for seg in &subpath.segments {
-          new_segments.push(trace_path::transform_segment(seg, m)?);
-        }
-        if let Some(new_subpath) = trace_path::PathSubpath::new(new_segments, subpath.closed) {
-          new_subpaths.push(new_subpath);
-        }
-      }
-
-      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
-      let mut total_length = 0.0;
-      for subpath in &new_subpaths {
-        total_length += subpath.total_length;
-        subpath_cumulative_lengths.push(total_length);
-      }
-
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(PathTracerCallable {
-          interned_t_kwarg: tracer.interned_t_kwarg,
-          subpaths: Rc::new(new_subpaths),
-          subpath_cumulative_lengths: Rc::new(subpath_cumulative_lengths),
-          total_length,
-          reverse: tracer.reverse,
-          override_critical_points: tracer.override_critical_points.clone(),
-          fill_rule: tracer.fill_rule,
-          transform: nalgebra::Matrix3::identity(),
-          inward_flip_cache: std::cell::RefCell::new(None),
-        }),
-      })))
+      Ok(path_val.clone())
     }
     2 => {
       let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
@@ -8612,29 +8389,8 @@ fn apply_transforms_impl(
   }
 }
 
-/// Applies a 2D transform matrix to a path sampler, returning a new callable with the
-/// transform composed onto the path.
-fn apply_path_transform(
-  cb: &Rc<Callable>,
-  transform_matrix: nalgebra::Matrix3<f32>,
-) -> Result<Value, ErrorStack> {
-  if let Some(sampler) = as_path_sampler(cb) {
-    let transformed = sampler.with_transform(transform_matrix);
-    Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: transformed,
-    })))
-  } else {
-    // Black-box callable: wrap in TransformedCallableSampler
-    Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: Box::new(trace_path::TransformedCallableSampler {
-        inner: Rc::clone(cb),
-        transform: transform_matrix,
-        cached_critical_points: Vec::new(),
-      }),
-    })))
-  }
+pub(crate) fn apply_path_transform(path: &Path, m: nalgebra::Matrix3<f32>) -> Value {
+  Value::Path(Rc::new(path.transformed(&m)))
 }
 
 fn path_trans_impl(
@@ -8656,13 +8412,9 @@ fn path_trans_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_trans: expected a callable path sampler"))?;
-
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
   let t = nalgebra::Matrix3::new(1.0, 0.0, offset.x, 0.0, 1.0, offset.y, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, t)
+  Ok(apply_path_transform(path, t))
 }
 
 fn path_rot_impl(
@@ -8671,15 +8423,11 @@ fn path_rot_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-  let cb = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_rot: expected a callable path sampler"))?;
-
+  let path = arg_refs[1].resolve(args, kwargs).as_path().unwrap();
   let cos = angle.cos();
   let sin = angle.sin();
   let r = nalgebra::Matrix3::new(cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, r)
+  Ok(apply_path_transform(path, r))
 }
 
 fn path_scale_impl(
@@ -8710,13 +8458,9 @@ fn path_scale_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_scale: expected a callable path sampler"))?;
-
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
   let s = nalgebra::Matrix3::new(sx, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, s)
+  Ok(apply_path_transform(path, s))
 }
 
 /// Reflection across the line `n·p = c`, where `n` is a unit normal.
@@ -8764,12 +8508,8 @@ fn path_reflect_impl(
   let d = axis / len;
   let n = Vec2::new(-d.y, d.x);
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_reflect: expected a callable path sampler"))?;
-
-  apply_path_transform(&cb, reflect_matrix(n, offset))
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
+  Ok(apply_path_transform(path, reflect_matrix(n, offset)))
 }
 
 fn path_reflect_axis_impl(
@@ -8789,12 +8529,9 @@ fn path_reflect_axis_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new(format!("{name}: expected a callable path sampler")))?;
-
-  apply_path_transform(&cb, reflect_matrix(n, offset))
+  let _ = name;
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
+  Ok(apply_path_transform(path, reflect_matrix(n, offset)))
 }
 
 pub(crate) fn make_tagged_map(entries: &[(&str, Value)]) -> Value {
@@ -9106,64 +8843,12 @@ fn path_reverse_impl(
         ))),
       }
     }
-    Value::Callable(cb) => {
-      let tracer = extract_path_tracer(cb).ok_or_else(|| {
-        ErrorStack::new(
-          "path_reverse: callable is not a path tracer (must come from `build_path`, \
-           `trace_svg_path`, `text_to_path`, etc.)",
-        )
-      })?;
-      let toggled = PathTracerCallable {
-        interned_t_kwarg: tracer.interned_t_kwarg,
-        subpaths: tracer.subpaths.clone(),
-        subpath_cumulative_lengths: tracer.subpath_cumulative_lengths.clone(),
-        total_length: tracer.total_length,
-        reverse: !tracer.reverse,
-        override_critical_points: tracer.override_critical_points.clone(),
-        fill_rule: tracer.fill_rule,
-        transform: tracer.transform,
-        inward_flip_cache: RefCell::new(None),
-      };
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(toggled),
-      })))
-    }
+    Value::Path(p) => Ok(Value::Path(Rc::new(p.reversed()))),
     other => Err(ErrorStack::new(format!(
       "path_reverse: expected a draw command map (e.g. from `rect`/`circle`) or a path tracer \
        callable; found: {other:?}.  To reverse a bare sequence of points, use sequence operations."
     ))),
   }
-}
-
-fn extract_path_tracer<'a>(callable: &'a Callable) -> Option<&'a PathTracerCallable> {
-  match callable {
-    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-    _ => None,
-  }
-}
-
-/// Appends each of `tracer`'s subpaths to `out`, baking any non-identity transform into the
-/// segments. Identity transforms hit the cheap `PathSubpath::clone` path.
-fn bake_tracer_subpaths_into(
-  tracer: &PathTracerCallable,
-  out: &mut Vec<PathSubpath>,
-) -> Result<(), ErrorStack> {
-  if tracer.transform == nalgebra::Matrix3::identity() {
-    out.extend(tracer.subpaths.iter().cloned());
-    return Ok(());
-  }
-  let m = &tracer.transform;
-  for subpath in tracer.subpaths.iter() {
-    let mut new_segments = Vec::with_capacity(subpath.segments.len());
-    for seg in &subpath.segments {
-      new_segments.push(trace_path::transform_segment(seg, m)?);
-    }
-    if let Some(new_subpath) = trace_path::PathSubpath::new(new_segments, subpath.closed) {
-      out.push(new_subpath);
-    }
-  }
-  Ok(())
 }
 
 fn path_segments_impl(
@@ -9172,21 +8857,8 @@ fn path_segments_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let callable = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_segments: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
-  let tracer = extract_path_tracer(callable).ok_or_else(|| {
-    ErrorStack::new(
-      "path_segments: only paths created by `build_path` / `trace_svg_path` / `text_to_path` / \
-       offset/boolean operations expose segment topology. Paths from `catmull_rom` / `lerp_paths` \
-       are not supported.",
-    )
-  })?;
-
-  let dicts = build_segment_dicts(tracer)?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_segments")?;
+  let dicts = build_segment_dicts(path, "path_segments")?;
   Ok(Value::Sequence(Rc::new(EagerSeq {
     inner: Rc::new(dicts),
   })))
@@ -9201,51 +8873,30 @@ const FRAME_TANGENT_MIN_NORM: f32 = 1e-12;
 /// Tolerance used by the polyline-based fallback for non-tracer samplers.
 const INWARD_FLIP_FALLBACK_TOLERANCE_DEG: f32 = 5.0;
 
-/// Determines whether the subpath that contains parameter `t` is a closed CW polygon (in which
-/// case the left-perpendicular of the tangent points outward, and we should flip it to get a
-/// normal that consistently points inward).
-///
-/// `Ok(None)` means the topology says no flip is needed (open subpath, degenerate path).
-/// For `PathTracerCallable` the orientation is cached on the tracer; for other `PathSampler`
-/// implementations (lerp, catmull-rom, transformed) the orientation is computed by sampling.
-/// For callables without any topology the function errors so the caller doesn't get silent
-/// wrong output.
-fn closed_subpath_inward_flip(callable: &Callable, t: f32) -> Result<Option<bool>, ErrorStack> {
-  if let Some(tracer) = extract_path_tracer(callable) {
-    if tracer.total_length <= 0.0 || tracer.subpaths.is_empty() {
+/// Whether the subpath containing `t` is a closed CW polygon (so the tangent's
+/// left-perpendicular points outward and must be flipped inward). `None` for degenerate paths.
+fn closed_subpath_inward_flip(
+  path: &Path,
+  t: f32,
+  ctx: &EvalCtx,
+) -> Result<Option<bool>, ErrorStack> {
+  if path.is_concrete() {
+    let Some(ix) = path.leaf_index_at(t) else {
       return Ok(None);
-    }
-    let target = t.clamp(0.0, 1.0) * tracer.total_length;
-    let subpath_ix = tracer
-      .subpath_cumulative_lengths
-      .iter()
-      .position(|&len| target <= len)
-      .unwrap_or(tracer.subpaths.len() - 1);
-    if !tracer.subpaths[subpath_ix].closed {
-      return Ok(Some(false));
-    }
-    return Ok(Some(tracer.subpath_inward_flip(subpath_ix)));
+    };
+    return Ok(Some(path.leaves()[ix].inward_flip()));
   }
-
-  if let Some(sampler) = as_path_sampler(callable) {
-    return Ok(inward_flip_from_polylines(sampler, t));
-  }
-
-  Err(ErrorStack::new(
-    "path_frame: cannot determine inward normal for a callable without path topology. Pass \
-     `inward_normal=false`, or use `build_path` / `trace_svg_path` / `text_to_path` to obtain a \
-     topology-aware path.",
-  ))
+  let polylines = path.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians(), 64, ctx)?;
+  Ok(inward_flip_from_polylines(&polylines, t))
 }
 
-fn inward_flip_from_polylines(sampler: &dyn trace_path::PathSampler, t: f32) -> Option<bool> {
-  let polylines = sampler.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians())?;
+fn inward_flip_from_polylines(polylines: &[(Vec<Vec2>, bool)], t: f32) -> Option<bool> {
   if polylines.is_empty() {
     return None;
   }
   let mut subpath_lengths = Vec::with_capacity(polylines.len());
   let mut total_length = 0.0f32;
-  for (points, _) in &polylines {
+  for (points, _) in polylines {
     let len: f32 = points.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
     subpath_lengths.push(len);
     total_length += len;
@@ -9289,12 +8940,7 @@ fn path_frame_impl(
     .as_float()
     .unwrap()
     .clamp(0.0, 1.0);
-  let path_val = arg_refs[1].resolve(args, kwargs);
-  let callable = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_frame: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[1].resolve(args, kwargs), "path_frame")?;
   let inward_normal = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
   let dt = FRAME_FINITE_DIFF_DT;
@@ -9307,14 +8953,9 @@ fn path_frame_impl(
   };
 
   let sample = |t: f32| -> Result<Vec2, ErrorStack> {
-    let out = ctx
-      .invoke_callable(callable, &[Value::Float(t)], EMPTY_KWARGS)
-      .map_err(|e| e.wrap("path_frame: error sampling path"))?;
-    out.as_vec2().copied().ok_or_else(|| {
-      ErrorStack::new(format!(
-        "path_frame: callable returned a non-Vec2 value: {out:?}"
-      ))
-    })
+    path
+      .eval_at(t, ctx)
+      .map_err(|e| e.wrap("path_frame: error sampling path"))
   };
 
   let pos = sample(t_in)?;
@@ -9330,7 +8971,7 @@ fn path_frame_impl(
   let mut normal = Vec2::new(-tangent.y, tangent.x);
 
   if inward_normal {
-    if let Some(true) = closed_subpath_inward_flip(callable, t_in)? {
+    if let Some(true) = closed_subpath_inward_flip(path, t_in, ctx)? {
       normal = -normal;
     }
   }
@@ -9342,35 +8983,6 @@ fn path_frame_impl(
   Ok(Value::Map(Rc::new(map)))
 }
 
-fn invoke_path_point(ctx: &EvalCtx, cb: &Rc<Callable>, t: f32) -> Result<Vec2, ErrorStack> {
-  let out = ctx
-    .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
-    .map_err(|e| e.wrap("path_len: error sampling path"))?;
-  out.as_vec2().copied().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_len: callable returned a non-Vec2 value: {out:?}"
-    ))
-  })
-}
-
-/// Sums chord lengths of `samples` uniform samples — the sampling fallback used by `path_len` and
-/// `trim_path` (distance unit) for black-box callables that don't expose segment topology.
-fn estimate_path_length(
-  ctx: &EvalCtx,
-  cb: &Rc<Callable>,
-  samples: usize,
-) -> Result<f32, ErrorStack> {
-  let n = samples.max(2);
-  let mut prev = invoke_path_point(ctx, cb, 0.0)?;
-  let mut total = 0.0;
-  for i in 1..=n {
-    let p = invoke_path_point(ctx, cb, i as f32 / n as f32)?;
-    total += (p - prev).norm();
-    prev = p;
-  }
-  Ok(total)
-}
-
 fn path_len_impl(
   ctx: &EvalCtx,
   _def_ix: usize,
@@ -9378,29 +8990,8 @@ fn path_len_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_len: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
-  let apply_transform = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
-
-  if let Some(tracer) = extract_path_tracer(cb) {
-    let len = if apply_transform {
-      tracer.transformed_total_length()?
-    } else {
-      tracer.total_length
-    };
-    return Ok(Value::Float(len));
-  }
-
-  let samples = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_int()
-    .unwrap_or(512)
-    .max(2) as usize;
-  Ok(Value::Float(estimate_path_length(ctx, cb, samples)?))
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_len")?;
+  Ok(Value::Float(path.length(ctx)?))
 }
 
 #[derive(Clone, Copy)]
@@ -9434,12 +9025,7 @@ fn trim_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "trim_path: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "trim_path")?;
 
   let start = arg_refs[1].resolve(args, kwargs).as_float();
   let end = arg_refs[2].resolve(args, kwargs).as_float();
@@ -9461,16 +9047,9 @@ fn trim_path_impl(
     }
   };
 
-  let tracer = extract_path_tracer(cb);
-
-  // Resolve start/end into a normalized sampling-`t` range. For the distance unit we divide by the
-  // total arc length, which yields the correct fraction under identity and uniform transforms.
   let total = match unit {
     TrimUnit::T => 1.0,
-    TrimUnit::Distance => match tracer {
-      Some(t) => t.transformed_total_length()?,
-      None => estimate_path_length(ctx, cb, 512)?,
-    },
+    TrimUnit::Distance => path.length(ctx)?,
   };
   if total <= 1e-5 {
     return Err(ErrorStack::new("trim_path: path has zero length"));
@@ -9484,36 +9063,7 @@ fn trim_path_impl(
     )));
   }
 
-  if let Some(tracer) = tracer {
-    let trimmed = trim_tracer(tracer, start_t, end_t);
-    return Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: Box::new(trimmed),
-    })));
-  }
-
-  // Non-tracer fallback: remap the inner sampler's critical points into the trimmed `[0, 1]` range.
-  let span = end_t - start_t;
-  let cached_critical_points = as_path_sampler(cb)
-    .map(|s| {
-      s.critical_t_values()
-        .into_iter()
-        .filter(|&t| t >= start_t - 1e-6 && t <= end_t + 1e-6)
-        .map(|t| ((t - start_t) / span).clamp(0.0, 1.0))
-        .collect()
-    })
-    .unwrap_or_default();
-
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "trace_path".to_owned(),
-    inner: Box::new(TrimmedPathSampler {
-      inner: Rc::clone(cb),
-      start_t,
-      span,
-      transform: nalgebra::Matrix3::identity(),
-      cached_critical_points,
-    }),
-  })))
+  Ok(Value::Path(Rc::new(path.trimmed(start_t, end_t))))
 }
 
 fn path_join_impl(
@@ -9522,56 +9072,13 @@ fn path_join_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let cb_a = arg_refs[0]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_join: expected a callable path sampler for `path1`"))?;
-  let cb_b = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_join: expected a callable path sampler for `path2`"))?;
-
-  let tracer_a = extract_path_tracer(cb_a).ok_or_else(|| {
-    ErrorStack::new(
-      "path_join: `path1` must be a path sampler from \
-       `build_path`/`trace_svg_path`/`text_to_path`.",
-    )
-  })?;
-  let tracer_b = extract_path_tracer(cb_b).ok_or_else(|| {
-    ErrorStack::new(
-      "path_join: `path2` must be a path sampler from \
-       `build_path`/`trace_svg_path`/`text_to_path`.",
-    )
-  })?;
-
-  let fill_rule = match (tracer_a.fill_rule, tracer_b.fill_rule) {
-    (Some(a), Some(b)) if a != b => {
-      return Err(ErrorStack::new(format!(
-        "path_join: conflicting fill rules between paths ({a:?} vs {b:?}). Apply matching \
-         `fill_rule` settings or join paths that don't have explicit fill rules."
-      )));
-    }
-    (Some(a), _) => Some(a),
-    (None, Some(b)) => Some(b),
-    (None, None) => None,
-  };
-
-  // Each input may carry its own transform; bake them into world coordinates before
-  // concatenation, otherwise the joined tracer's identity transform would silently shift
-  // either side's geometry.
-  let mut subpaths: Vec<PathSubpath> =
-    Vec::with_capacity(tracer_a.subpaths.len() + tracer_b.subpaths.len());
-  bake_tracer_subpaths_into(tracer_a, &mut subpaths)?;
-  bake_tracer_subpaths_into(tracer_b, &mut subpaths)?;
-
-  let interned_t_kwarg = ctx.interned_symbols.intern("t");
-  let mut tracer = PathTracerCallable::from_subpaths(subpaths, interned_t_kwarg);
-  tracer.fill_rule = fill_rule;
-
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "trace_path".to_string(),
-    inner: Box::new(tracer),
-  })))
+  let a = expect_path(arg_refs[0].resolve(args, kwargs), "path_join")?;
+  let b = expect_path(arg_refs[1].resolve(args, kwargs), "path_join")?;
+  Ok(Value::Path(Rc::new(Path::group_items(
+    vec![Rc::clone(a), Rc::clone(b)],
+    None,
+    ctx,
+  )?)))
 }
 
 fn flip_normals_impl(
@@ -10752,25 +10259,10 @@ fn str_impl(
 }
 
 fn subpaths_impl(args: &[Value]) -> Result<Value, ErrorStack> {
-  let path_val = &args[0];
-  let Some(cb) = path_val.as_callable() else {
-    return Err(ErrorStack::new(format!(
-      "subpaths: expected a path callable, got {path_val:?}"
-    )));
-  };
-
-  let tracer = match &**cb {
-    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-    _ => None,
-  };
-
-  let Some(_) = tracer else {
-    return Err(ErrorStack::new(
-      "subpaths: expected a path sampler created by trace_path or similar functions",
-    ));
-  };
-
-  Ok(Value::Sequence(Rc::new(SubpathsSeq::new(Rc::clone(cb)))))
+  let path = expect_path(&args[0], "subpaths")?;
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(path.subpaths().into_iter().map(Value::Path).collect()),
+  })))
 }
 
 macro_rules! builtin_fn {
@@ -10864,8 +10356,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "align" => builtin_fn!(align, |_def_ix, arg_refs, args, kwargs, _ctx| {
     align_impl(arg_refs, args, kwargs)
   }),
-  "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, _ctx| {
-    origin_to_geometry_impl(def_ix, arg_refs, args, kwargs)
+  "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, ctx| {
+    origin_to_geometry_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, ctx| {
     apply_transforms_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -11478,8 +10970,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "aabb" => builtin_fn!(aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
     aabb_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "path_aabb" => builtin_fn!(path_aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_aabb_impl(def_ix, arg_refs, args, kwargs)
+  "path_aabb" => builtin_fn!(path_aabb, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_aabb_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "is_self_intersecting" => builtin_fn!(is_self_intersecting, |def_ix, arg_refs, args, kwargs, _ctx| {
     is_self_intersecting_impl(def_ix, arg_refs, args, kwargs)

@@ -4,12 +4,14 @@ use fxhash::FxHashMap;
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::path_critical_points::{detect_critical_points, CriticalPointConfig};
+use crate::builtins::path_critical_points::{detect_critical_vertices, CriticalPointConfig};
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::trace_path::{polylines_to_draw_commands, FillRule, PathTracerCallable};
+use crate::builtins::trace_path::{expect_path, FillRule};
+#[cfg(target_arch = "wasm32")]
+use crate::path::Path;
+#[cfg(target_arch = "wasm32")]
+use crate::Vec2;
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
-#[cfg(target_arch = "wasm32")]
-use crate::{Callable, Vec2};
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -268,29 +270,13 @@ fn run_clipper_offset(
 /// t in each path's own `[0, 1]`; for path `k` with closed-perimeter length `L_k` starting at
 /// cumulative offset `offset_k`, the global value is `(offset_k + t_local * L_k) / total`.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn global_critical_points(paths: &[Vec<Vec2>]) -> Option<Vec<f32>> {
-  let closed_len = |p: &[Vec2]| -> f32 {
-    let n = p.len();
-    (0..n).map(|i| (p[(i + 1) % n] - p[i]).norm()).sum()
-  };
-  let lengths: Vec<f32> = paths.iter().map(|p| closed_len(p)).collect();
-  let total: f32 = lengths.iter().sum();
-  if total <= 1e-10 {
-    return None;
-  }
-
+/// Per-vertex anchors for closed polyline outputs: detected corners only.
+pub(crate) fn polyline_anchors(paths: &[Vec<Vec2>]) -> Vec<Vec<bool>> {
   let config = CriticalPointConfig::default();
-  let mut out: Vec<f32> = Vec::new();
-  let mut offset = 0.0f32;
-  for (path, &len) in paths.iter().zip(&lengths) {
-    for t_local in detect_critical_points(std::slice::from_ref(path), &config, None) {
-      out.push(((offset + t_local * len) / total).clamp(0.0, 1.0));
-    }
-    offset += len;
-  }
-  out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-  out.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-  Some(out)
+  paths
+    .iter()
+    .map(|p| detect_critical_vertices(p, &config, None))
+    .collect()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -310,11 +296,7 @@ pub fn offset_path_impl(
       }
 
       let path_val = arg_refs[0].resolve(args, kwargs);
-      let path_callable = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Invalid path argument for `offset_path`; expected Callable, found: {path_val:?}"
-        ))
-      })?;
+      let path = expect_path(path_val, "offset_path")?;
 
       let delta_val = arg_refs[1].resolve(args, kwargs);
       let delta = delta_val.as_float().ok_or_else(|| {
@@ -392,11 +374,10 @@ pub fn offset_path_impl(
 
       let subpaths = crate::builtins::trace_path::sample_path_subpaths(
         ctx,
-        path_callable,
+        path,
         curve_angle_radians,
         sample_count,
         closed_override,
-        "offset_path",
       )?;
       for (points, is_closed) in subpaths {
         if is_closed {
@@ -438,25 +419,11 @@ pub fn offset_path_impl(
       // Clipper2's forked offset now emits deterministic, winding-normalized (outer-CCW/hole-CW)
       // subpaths, so critical points survive multi-subpath output and no geoscript-side re-sort is
       // needed. `Positive` fill matches that convention.
-      let critical_points = global_critical_points(&output_paths);
-      let draw_cmds = polylines_to_draw_commands(output_paths.into_iter().map(|p| (p, true)));
-
-      // TODO: should have a `PathTracerCallable::new()` to avoid leaking this internal detail and
-      // to simplify things
-      let interned_t_kwarg = ctx.interned_symbols.intern("t");
-      let tracer = PathTracerCallable::new_with_critical_points(
-        false,
-        false,
-        false,
-        draw_cmds,
-        interned_t_kwarg,
-        critical_points,
-      )
-      .with_fill_rule(FillRule::Positive);
-      return Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "offset_path".to_owned(),
-        inner: Box::new(tracer),
-      })));
+      let anchors = polyline_anchors(&output_paths);
+      let polylines = output_paths.into_iter().map(|p| (p, true)).collect();
+      return Ok(Value::Path(Rc::new(
+        Path::from_polylines(polylines, Some(anchors)).with_fill_rule(Some(FillRule::Positive)),
+      )));
     }
     _ => unimplemented!(),
   }

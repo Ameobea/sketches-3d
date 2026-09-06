@@ -6,15 +6,13 @@ use fxhash::FxHashMap;
 use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::offset_path::global_critical_points;
+use crate::builtins::offset_path::polyline_anchors;
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::trace_path::{
-  polylines_to_draw_commands, sample_path_subpaths, FillRule, PathTracerCallable,
-};
+use crate::builtins::trace_path::{expect_path, sample_path_subpaths, FillRule};
 #[cfg(target_arch = "wasm32")]
 use crate::mesh_ops::mesh_ops::verify_cgal_loaded;
 #[cfg(target_arch = "wasm32")]
-use crate::Callable;
+use crate::path::Path;
 #[cfg(target_arch = "wasm32")]
 use crate::Vec2;
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
@@ -79,7 +77,7 @@ fn subpaths_to_segments(subpaths: Vec<(Vec<Vec2>, bool)>) -> Vec<f32> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn wrap_output_to_path(ctx: &EvalCtx) -> Result<Value, ErrorStack> {
+fn wrap_output_to_path() -> Result<Value, ErrorStack> {
   let coords = cgal_get_path_boolean_2d_coords();
   let lengths = cgal_get_path_boolean_2d_path_lengths();
   cgal_clear_path_boolean_2d_output();
@@ -104,23 +102,13 @@ fn wrap_output_to_path(ctx: &EvalCtx) -> Result<Value, ErrorStack> {
     ));
   }
 
-  let critical_points = global_critical_points(&paths);
-  let draw_cmds = polylines_to_draw_commands(paths.into_iter().map(|p| (p, true)));
+  let anchors = polyline_anchors(&paths);
+  let polylines = paths.into_iter().map(|p| (p, true)).collect();
   // Rings are simple and non-crossing (outer CCW, holes CW), so nesting under even-odd
   // describes the wrapped region exactly.
-  let tracer = PathTracerCallable::new_with_critical_points(
-    false,
-    false,
-    false,
-    draw_cmds,
-    ctx.interned_symbols.intern("t"),
-    critical_points,
-  )
-  .with_fill_rule(FillRule::EvenOdd);
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "alpha_wrap_2d".to_owned(),
-    inner: Box::new(tracer),
-  })))
+  Ok(Value::Path(Rc::new(
+    Path::from_polylines(polylines, Some(anchors)).with_fill_rule(Some(FillRule::EvenOdd)),
+  )))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -144,11 +132,7 @@ pub fn alpha_wrap_2d_impl(
   let ok = match def_ix {
     0 => {
       let path_val = arg_refs[0].resolve(args, kwargs);
-      let path_callable = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Invalid path argument for `alpha_wrap_2d`; expected Callable, found: {path_val:?}"
-        ))
-      })?;
+      let path = expect_path(path_val, "alpha_wrap_2d")?;
       let curve_angle_degrees = ctx.resolve_curve_angle_degrees(arg_refs[5].resolve(args, kwargs));
       if curve_angle_degrees <= 0.0 {
         return Err(ErrorStack::new(format!(
@@ -168,11 +152,10 @@ pub fn alpha_wrap_2d_impl(
       };
       let subpaths = sample_path_subpaths(
         ctx,
-        path_callable,
+        path,
         curve_angle_degrees.to_radians(),
         sample_count,
         closed_override,
-        "alpha_wrap_2d",
       )?;
       let segments = subpaths_to_segments(subpaths);
       if segments.is_empty() {
@@ -198,7 +181,7 @@ pub fn alpha_wrap_2d_impl(
       "Error in `alpha_wrap_2d` function: {err}"
     )));
   }
-  wrap_output_to_path(ctx)
+  wrap_output_to_path()
 }
 
 #[cfg(not(target_arch = "wasm32"))]

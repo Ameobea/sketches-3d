@@ -14,10 +14,10 @@ use std::{cell::OnceCell, cmp::Ordering, fmt, hash::Hasher, rc::Rc};
 
 use nalgebra::Matrix3;
 
-pub(crate) use builder::{DrawCommand, PathBuilder};
+pub(crate) use builder::DrawCommand;
 pub(crate) use lazy::AbstractPath;
 pub(crate) use segment::*;
-pub(crate) use subpath::{LastCtrl, Subpath};
+pub(crate) use subpath::Subpath;
 
 use crate::{builtins::trace_path::build_topology_samples, ErrorStack, EvalCtx, Value, Vec2};
 
@@ -759,23 +759,34 @@ impl Path {
     Some(builder.build())
   }
 
-  pub(crate) fn aabb(&self, ctx: &EvalCtx) -> Result<Option<(Vec2, Vec2)>, ErrorStack> {
+  /// Exact bounds of a concrete tree; `None` when lazy or empty.
+  pub(crate) fn concrete_aabb(&self) -> Option<(Vec2, Vec2)> {
+    if !self.is_concrete() {
+      return None;
+    }
     let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
     let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
     let mut any = false;
+    for (smin, smax) in self.leaves().into_iter().filter_map(Subpath::aabb) {
+      min = min.inf(&smin);
+      max = max.sup(&smax);
+      any = true;
+    }
+    any.then_some((min, max))
+  }
+
+  pub(crate) fn aabb(&self, ctx: &EvalCtx) -> Result<Option<(Vec2, Vec2)>, ErrorStack> {
     if self.is_concrete() {
-      for (smin, smax) in self.leaves().into_iter().filter_map(Subpath::aabb) {
-        min = min.inf(&smin);
-        max = max.sup(&smax);
+      return Ok(self.concrete_aabb());
+    }
+    let mut min = Vec2::new(f32::INFINITY, f32::INFINITY);
+    let mut max = Vec2::new(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    let mut any = false;
+    for (points, _) in self.sample_subpaths(5f32.to_radians(), LAZY_LENGTH_SAMPLES, ctx)? {
+      for p in points {
+        min = min.inf(&p);
+        max = max.sup(&p);
         any = true;
-      }
-    } else {
-      for (points, _) in self.sample_subpaths(5f32.to_radians(), LAZY_LENGTH_SAMPLES, ctx)? {
-        for p in points {
-          min = min.inf(&p);
-          max = max.sup(&p);
-          any = true;
-        }
       }
     }
     Ok(any.then_some((min, max)))

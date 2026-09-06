@@ -3075,7 +3075,7 @@ impl EvalCtx {
   }
 
   #[cold]
-  fn call_path(
+  pub(crate) fn call_path(
     &self,
     path: &crate::path::Path,
     args: &[Value],
@@ -8614,10 +8614,10 @@ render(m)
 }
 
 #[test]
-fn test_extrude_path_blackbox_callable() {
-  // Black-box `|t|: vec2` callable — straight line along X from 0 to 1.
+fn test_extrude_path_lazy_path() {
+  // Lazy path — straight line along X from 0 to 1, sampled uniformly.
   let src = r#"
-f = |t| vec2(t, 0)
+f = catmull_rom([vec2(0, 0), vec2(1, 0)])
 m = extrude_path(f, up=vec3(0, 1, 0), sample_count=5)
 render(m)
 "#;
@@ -8678,10 +8678,10 @@ render(m)
 }
 
 #[test]
-fn test_fan_fill_blackbox_callable() {
-  // Black-box `|t|: vec2` callable approximating a unit circle, sampled uniformly.
+fn test_fan_fill_lazy_path() {
+  // Lazy closed path approximating a unit circle, sampled uniformly.
   let src = r#"
-f = |t| vec2(cos(t * 2 * pi), sin(t * 2 * pi))
+f = catmull_rom([vec2(1, 0), vec2(0, 1), vec2(-1, 0), vec2(0, -1)], closed=true)
 m = fan_fill(f, sample_count=16, center=vec2(0, 0))
 render(m)
 "#;

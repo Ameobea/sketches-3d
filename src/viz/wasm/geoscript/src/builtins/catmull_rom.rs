@@ -2,57 +2,14 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::linked_mesh::Vec3;
-use nalgebra::Matrix3;
 
 use crate::{
-  builtins::trace_path::{PathSampler, SubpathTopology},
+  path::{lazy::CatmullRom2D, Path},
   path_building::eval_cardinal_spline,
   ArgRef, Callable, DynamicCallable, ErrorStack, EvalCtx, Sym, Value, Vec2,
 };
 
 // ── 2D ──────────────────────────────────────────────────────────────────────
-
-pub(crate) struct CatmullRomCallable2D {
-  points: Vec<Vec2>,
-  tension: f32,
-  closed: bool,
-  transform: Matrix3<f32>,
-}
-
-impl PathSampler for CatmullRomCallable2D {
-  fn critical_t_values(&self) -> Vec<f32> {
-    // Catmull-Rom knot joints are C1 smooth — only the range endpoints are notable.
-    vec![0.0, 1.0]
-  }
-
-  fn subpath_topology(&self) -> Option<Vec<SubpathTopology>> {
-    Some(vec![SubpathTopology {
-      closed: self.closed,
-    }])
-  }
-
-  fn transform(&self) -> &Matrix3<f32> {
-    &self.transform
-  }
-
-  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn DynamicCallable> {
-    Box::new(CatmullRomCallable2D {
-      points: self.points.clone(),
-      tension: self.tension,
-      closed: self.closed,
-      transform: t * self.transform,
-    })
-  }
-
-  fn eval_at_raw(&self, t: f32, _ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
-    Ok(eval_cardinal_spline(
-      &self.points,
-      t,
-      self.tension,
-      self.closed,
-    ))
-  }
-}
 
 // ── 3D ──────────────────────────────────────────────────────────────────────
 
@@ -148,15 +105,11 @@ pub fn catmull_rom_impl(
     ));
   }
 
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "catmull_rom".to_owned(),
-    inner: Box::new(CatmullRomCallable2D {
-      points,
-      tension,
-      closed,
-      transform: Matrix3::identity(),
-    }),
-  })))
+  Ok(Value::Path(Rc::new(Path::lazy(Rc::new(CatmullRom2D {
+    points,
+    tension,
+    closed,
+  })))))
 }
 
 pub fn catmull_rom_3d_impl(

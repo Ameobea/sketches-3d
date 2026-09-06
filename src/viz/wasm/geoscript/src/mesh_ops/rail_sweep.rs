@@ -15,7 +15,8 @@ use nalgebra::Matrix4;
 
 use crate::{
   builtins::trace_path::{
-    as_path_sampler, build_topology_samples, normalize_guides, normalize_path_sampler_guides,
+    build_topology_samples, callable_path, normalize_guides, normalize_path_sampler_guides,
+    path_or_callable,
   },
   ArgRef, Callable, DynamicCallable, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value,
   Vec2, EMPTY_KWARGS,
@@ -349,7 +350,7 @@ fn collect_path_sampler_guides(
   label: &str,
 ) -> Result<Option<Vec<f32>>, ErrorStack> {
   fn sampler_guides(callable: &Callable) -> Option<Vec<f32>> {
-    as_path_sampler(callable).map(|s| s.critical_t_values())
+    callable_path(callable).map(|p| p.critical_t_values())
   }
 
   let err_expected = || {
@@ -361,6 +362,13 @@ fn collect_path_sampler_guides(
   let mut all_guides = Vec::new();
   match value {
     Value::Nil => return Ok(None),
+    Value::Path(path) => {
+      let guides = path.critical_t_values();
+      if guides.is_empty() {
+        return Ok(None);
+      }
+      all_guides.extend(guides);
+    }
     Value::Callable(callable) => {
       let guides = sampler_guides(callable).ok_or_else(err_expected)?;
       if guides.is_empty() {
@@ -371,12 +379,15 @@ fn collect_path_sampler_guides(
     Value::Sequence(seq) => {
       for (ix, res) in seq.consume(ctx).enumerate() {
         let val = res?;
-        let cb = val.as_callable().ok_or_else(|| {
-          ErrorStack::new(format!(
-            "Expected trace_path sampler in {label} sequence at index {ix}, found: {val:?}"
-          ))
-        })?;
-        let guides = sampler_guides(cb).ok_or_else(err_expected)?;
+        let guides = match &val {
+          Value::Path(p) => p.critical_t_values(),
+          Value::Callable(cb) => sampler_guides(cb).ok_or_else(err_expected)?,
+          _ => {
+            return Err(ErrorStack::new(format!(
+              "Expected path in {label} sequence at index {ix}, found: {val:?}"
+            )))
+          }
+        };
         if guides.is_empty() {
           return Ok(None);
         }
@@ -401,7 +412,7 @@ fn collect_path_sampler_guides(
 /// subpath contributes its own `closed` flag; `None` when topology is unavailable (black-box
 /// callable) or there are multiple subpaths (resolved by the multi-subpath machinery).
 fn infer_profile_closed(sampler: &Callable) -> Option<bool> {
-  match as_path_sampler(sampler)?.subpath_topology()?.as_slice() {
+  match callable_path(sampler)?.subpath_topology()?.as_slice() {
     [single] => Some(single.closed),
     _ => None,
   }
@@ -417,14 +428,14 @@ fn build_loop_specs(sampler: &Callable) -> Result<Vec<LoopSpec>, ErrorStack> {
       closed,
     }]
   };
-  let Some(topo) = as_path_sampler(sampler).and_then(|s| s.subpath_topology()) else {
+  let Some(topo) = callable_path(sampler).and_then(|p| p.subpath_topology()) else {
     return Ok(single_closed(true));
   };
   match topo.len() {
     0 => Ok(single_closed(true)),
     1 => Ok(single_closed(topo[0].closed)),
     n => {
-      let Some(spans) = as_path_sampler(sampler).and_then(|s| s.subpath_t_spans()) else {
+      let Some(spans) = callable_path(sampler).and_then(|p| p.subpath_t_spans()) else {
         return Err(ErrorStack::new(
           "multi-subpath rail_sweep profile requires a real path (trace_path / offset_path / \
            path_join / text_to_path); this sampler can't expose per-subpath spans",
@@ -466,9 +477,13 @@ fn extract_dynamic_profile_data(
   ctx: &EvalCtx,
   value: Value,
 ) -> Result<DynamicProfileData, ErrorStack> {
+  let value = match value {
+    Value::Path(_) => Value::Callable(path_or_callable(&value, "dynamic_profile result")?),
+    v => v,
+  };
   if let Some(callable) = value.as_callable() {
-    if let Some(sampler) = as_path_sampler(callable) {
-      let (critical_points, rotation_offset) = normalize_path_sampler_guides(sampler);
+    if let Some(path) = callable_path(callable) {
+      let (critical_points, rotation_offset) = normalize_path_sampler_guides(path);
       return Ok(DynamicProfileData {
         sampler: Rc::clone(callable),
         critical_points,
@@ -505,9 +520,7 @@ fn extract_dynamic_profile_data(
     let sampler_val = map.get("sampler").ok_or_else(|| {
       ErrorStack::new("dynamic_profile map requires 'sampler' key with callable value")
     })?;
-    let sampler = sampler_val.as_callable().ok_or_else(|| {
-      ErrorStack::new("dynamic_profile map requires 'sampler' key with callable value")
-    })?;
+    let sampler = &path_or_callable(sampler_val, "dynamic_profile map `sampler` value")?;
 
     let (critical_points, rotation_offset) = match map.get("path_samplers") {
       Some(val) => (
@@ -517,8 +530,8 @@ fn extract_dynamic_profile_data(
       ),
       None => {
         // check if the sampler itself is a path sampler with guides
-        if let Some(path_samp) = as_path_sampler(sampler) {
-          normalize_path_sampler_guides(path_samp)
+        if let Some(path) = callable_path(sampler) {
+          normalize_path_sampler_guides(path)
         } else {
           (vec![0., 1.], 0.0)
         }
@@ -2134,7 +2147,7 @@ impl DynamicCallable for StaticProfileOuter {
     };
     // If profile is itself a path sampler (|v| -> vec2), use it directly as both sampler and
     // path_samplers so critical t values flow through to the dynamic profile machinery.
-    if as_path_sampler(&self.profile).is_some() {
+    if callable_path(&self.profile).is_some() {
       let mut map = ValueMap::default();
       map.insert(
         "sampler".to_owned(),
@@ -2619,16 +2632,18 @@ pub(crate) fn rail_sweep_impl(
           ))
         })?)
       } else {
-        let profile_cb = profile_val.as_callable().ok_or_else(|| {
-          ErrorStack::new(format!(
-            "Invalid profile argument for `rail_sweep`; expected Callable, found: {profile_val:?}"
-          ))
-        })?;
+        let profile_cb = path_or_callable(profile_val, "profile argument for `rail_sweep`")?;
+        let profile_samplers = match profile_samplers_val {
+          Value::Callable(_) | Value::Path(_) => {
+            Some(path_or_callable(profile_samplers_val, "profile_samplers")?)
+          }
+          _ => None,
+        };
         Rc::new(Callable::Dynamic {
           name: "static_profile_adapter".to_owned(),
           inner: Box::new(StaticProfileOuter {
-            profile: Rc::clone(profile_cb),
-            profile_samplers: profile_samplers_val.as_callable().map(Rc::clone),
+            profile: profile_cb,
+            profile_samplers,
           }),
         })
       };

@@ -1979,6 +1979,7 @@ fn fold_constants<'a>(
               Value::Callable(callable) => {
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
+              Value::Path(_) => (),
               other => {
                 let (line, col) = ctx.resolve_loc(*loc);
                 return ctx.with_resolved_sym(*name, |name| {
@@ -2130,6 +2131,12 @@ fn fold_constants<'a>(
                   let (line, col) = ctx.resolve_loc(*loc);
                   err.with_loc(line, col)
                 })?,
+                Value::Path(path) => {
+                  Some(ctx.call_path(path, &arg_vals, &kwarg_vals).map_err(|err| {
+                    let (line, col) = ctx.resolve_loc(*loc);
+                    err.with_loc(line, col)
+                  })?)
+                }
                 other => {
                   let (line, col) = ctx.resolve_loc(*loc);
                   return ctx
@@ -4061,56 +4068,35 @@ path_sampler = build_path(path {
 "#;
 
   let ctx = EvalCtx::default();
-  let mut ast1 = crate::parse_program_src(&ctx, code).unwrap();
-  optimize_ast(&ctx, &mut ast1).unwrap();
-
-  let sampler1 = match &ast1.statements[1] {
+  let literal_path = |ast: &crate::ast::Program| match &ast.statements[1] {
     TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
-        value: Value::Callable(callable),
+        value: Value::Path(path),
         ..
-      } => Rc::clone(callable),
+      } => Rc::clone(path),
       _ => unreachable!(),
     },
     _ => unreachable!(),
   };
+  let mut ast1 = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast1).unwrap();
+  let path1 = literal_path(&ast1);
 
   let mut ast2 = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&ctx, &mut ast2).unwrap();
+  let path2 = literal_path(&ast2);
 
-  let sampler2 = match &ast2.statements[1] {
-    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
-      Expr::Literal {
-        value: Value::Callable(callable),
-        ..
-      } => Rc::clone(callable),
-      _ => unreachable!(),
-    },
-    _ => unreachable!(),
-  };
-
-  assert!(Rc::ptr_eq(&sampler1, &sampler2));
+  assert!(Rc::ptr_eq(&path1, &path2));
 
   // should be functional
   let ctx = crate::parse_and_eval_program(code).unwrap();
   let sampler = ctx.get_global("path_sampler").unwrap();
-  let sampler = sampler.as_callable().unwrap();
-  let p0 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p1 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.25)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p2 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.5)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p3 = ctx
-    .invoke_callable(sampler, &[Value::Float(1.)], crate::EMPTY_KWARGS)
-    .unwrap();
-  assert_eq!(*p0.as_vec2().unwrap(), crate::Vec2::new(0., 0.));
-  assert_eq!(*p1.as_vec2().unwrap(), crate::Vec2::new(0.5, 0.));
-  assert_eq!(*p2.as_vec2().unwrap(), crate::Vec2::new(1., 0.));
-  assert_eq!(*p3.as_vec2().unwrap(), crate::Vec2::new(1., 1.));
+  let sampler = sampler.as_path().unwrap();
+  let at = |t: f32| sampler.eval_at(t, &ctx).unwrap();
+  assert_eq!(at(0.), crate::Vec2::new(0., 0.));
+  assert_eq!(at(0.25), crate::Vec2::new(0.5, 0.));
+  assert_eq!(at(0.5), crate::Vec2::new(1., 0.));
+  assert_eq!(at(1.), crate::Vec2::new(1., 1.));
 }
 
 /// Helper closures defined inside a `path { ... }` block can still call rewritten draw

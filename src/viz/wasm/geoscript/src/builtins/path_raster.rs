@@ -6,7 +6,7 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use super::texture::MAX_TEXTURE_DIM;
-use super::trace_path::{as_path_sampler, as_path_tracer, sample_path_subpaths, FillRule};
+use super::trace_path::{expect_path, sample_path_subpaths, FillRule};
 use crate::builtins::resolve_tile_period;
 use crate::raster2d::{replicate_tiled, EdgeList, Segment, SegmentField, MAX_TILED_POINTS};
 use crate::{
@@ -69,12 +69,7 @@ impl RasterInput {
     ix: ArgIx,
     fn_name: &str,
   ) -> Result<Self, ErrorStack> {
-    let path_val = arg_refs[0].resolve(args, kwargs);
-    let cb = path_val.as_callable().ok_or_else(|| {
-      ErrorStack::new(format!(
-        "Invalid `path` argument for `{fn_name}`; expected Callable, found: {path_val:?}"
-      ))
-    })?;
+    let path = expect_path(arg_refs[0].resolve(args, kwargs), fn_name)?;
     let w = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
     let h = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
     if w < 1 || h < 1 || w > MAX_TEXTURE_DIM || h > MAX_TEXTURE_DIM {
@@ -99,45 +94,21 @@ impl RasterInput {
     } else {
       (angle.to_radians(), f32::INFINITY)
     };
-    let sampler = as_path_sampler(cb);
     let fill_rule = match ix.fill_rule.map(|i| arg_refs[i].resolve(args, kwargs)) {
       Some(v) if !matches!(v, Value::Nil) => FillRule::parse(v, fn_name)?,
-      _ => sampler
-        .and_then(|s| s.fill_rule())
-        .unwrap_or(FillRule::NonZero),
+      _ => path.fill_rule.unwrap_or(FillRule::NonZero),
     };
 
-    let (subpaths, t_spans): (Vec<_>, Vec<_>) =
-      match sampler.and_then(|s| s.sample_subpaths_flat(flat_angle, max_sagitta)) {
-        Some(raw) => {
-          let mut spans = sampler
-            .unwrap()
-            .subpath_t_spans()
-            .filter(|s| s.len() == raw.len())
-            .unwrap_or_else(|| length_spans(&raw));
-          // `sample_subpaths` keeps subpath order under `reverse`; `subpath_t_spans` flips it.
-          if as_path_tracer(cb).is_some_and(|t| t.reverse) {
-            spans.reverse();
-          }
-          raw
-            .into_iter()
-            .zip(spans)
-            .filter(|((pts, _), _)| pts.len() >= 2)
-            .unzip()
-        }
-        None => {
-          let polys = sample_path_subpaths(
-            ctx,
-            cb,
-            angle.to_radians(),
-            BLACK_BOX_SAMPLES,
-            None,
-            fn_name,
-          )?;
-          let spans = length_spans(&polys);
-          (polys, spans)
-        }
-      };
+    let raw = path.sample_subpaths_flat(flat_angle, max_sagitta, BLACK_BOX_SAMPLES, ctx)?;
+    let spans = path
+      .subpath_t_spans()
+      .filter(|s| s.len() == raw.len())
+      .unwrap_or_else(|| length_spans(&raw));
+    let (subpaths, t_spans): (Vec<_>, Vec<_>) = raw
+      .into_iter()
+      .zip(spans)
+      .filter(|((pts, _), _)| pts.len() >= 2)
+      .unzip();
     if subpaths.is_empty() {
       return Err(ErrorStack::new(format!(
         "`{fn_name}`: path contains no drawable segments"
@@ -324,24 +295,18 @@ pub(crate) fn fit_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "Invalid `path` argument for `fit_path`; expected Callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "fit_path")?;
   let pad = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
   if !(0. ..0.5).contains(&pad) {
     return Err(ErrorStack::new(format!(
       "`fit_path` pad must be in [0, 0.5); found {pad}"
     )));
   }
-  let analytic = as_path_tracer(cb).and_then(|t| t.analytic_aabb().ok().flatten());
-  let (mins, maxs) = match analytic {
+  let (mins, maxs) = match path.concrete_aabb() {
     Some(b) => b,
     None => {
       let angle = ctx.resolve_curve_angle_degrees(&Value::Nil).to_radians();
-      let polys = sample_path_subpaths(ctx, cb, angle, BLACK_BOX_SAMPLES, None, "fit_path")?;
+      let polys = sample_path_subpaths(ctx, path, angle, BLACK_BOX_SAMPLES, None)?;
       let pts = polys.iter().flat_map(|(pts, _)| pts.iter());
       let mut lo = Vec2::repeat(f32::INFINITY);
       let mut hi = Vec2::repeat(f32::NEG_INFINITY);
@@ -362,7 +327,7 @@ pub(crate) fn fit_path_impl(
   let s = (1. - 2. * pad) / extent;
   let off = (Vec2::repeat(1. - 2. * pad) - size * s) * 0.5 + Vec2::repeat(pad) - mins * s;
   let m = nalgebra::Matrix3::new(s, 0., off.x, 0., s, off.y, 0., 0., 1.);
-  super::apply_path_transform(cb, m)
+  Ok(super::apply_path_transform(path, m))
 }
 
 #[cfg(test)]
