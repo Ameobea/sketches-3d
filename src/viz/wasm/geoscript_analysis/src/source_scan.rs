@@ -133,7 +133,6 @@ struct Frame {
   open: usize,
   /// `(` frames: start offset of the tight callee identifier (`@` included), if any.
   callee: Option<usize>,
-  is_path_block: bool,
   segment_start: usize,
   /// Completed comma-separated segments before the current one, split by kind.
   positional_before: usize,
@@ -146,7 +145,6 @@ impl Frame {
       kind,
       open,
       callee: None,
-      is_path_block: false,
       segment_start: open + 1,
       positional_before: 0,
       kwargs_before: Vec::new(),
@@ -223,14 +221,8 @@ fn scan_to(src: &str, offset: usize) -> Scan {
           _ => FrameKind::Brace,
         };
         let mut frame = Frame::new(kind, i);
-        match kind {
-          FrameKind::Paren => frame.callee = ident_ending_at(src, i),
-          FrameKind::Brace => {
-            let before = src[..i].trim_end();
-            frame.is_path_block = before.ends_with("path")
-              && ident_ending_at(src, before.len()) == Some(before.len() - 4);
-          }
-          _ => {}
+        if kind == FrameKind::Paren {
+          frame.callee = ident_ending_at(src, i);
         }
         frames.push(frame);
         prev = Prev::ExprStart;
@@ -308,7 +300,6 @@ pub struct CallContext {
   pub kwargs_before: Vec<String>,
   /// The cursor's segment is a `name = ...` kwarg.
   pub current_kwarg: Option<String>,
-  pub in_path_block: bool,
 }
 
 /// Find the call whose arg list the cursor is in.  Non-call brackets (array/map literals,
@@ -319,7 +310,6 @@ pub fn enclosing_call(src: &str, offset: usize) -> Option<CallContext> {
   if scan.in_string_or_comment {
     return None;
   }
-  let in_path_block = scan.frames.iter().any(|f| f.is_path_block);
   let frame = scan.frames.iter().rev().find(|f| f.callee.is_some())?;
   let callee_offset = frame.callee.unwrap();
   let name_start = callee_offset + usize::from(src.as_bytes()[callee_offset] == b'@');
@@ -336,7 +326,6 @@ pub fn enclosing_call(src: &str, offset: usize) -> Option<CallContext> {
       .map(|&(s, e)| src[s..e].to_owned())
       .collect(),
     current_kwarg: kwarg_prefix(&src[frame.segment_start..]).map(str::to_owned),
-    in_path_block,
   })
 }
 
@@ -348,12 +337,6 @@ pub fn kwarg_at(src: &str, offset: usize) -> Option<(CallContext, String)> {
   let name = &src[start..end];
   let leads_segment = src[call.segment_start..start].trim().is_empty();
   (leads_segment && call.current_kwarg.as_deref() == Some(name)).then(|| (call, name.to_owned()))
-}
-
-/// Whether `offset` sits inside a `path { ... }` block.  Draw-command rewriting applies to
-/// nested blocks and closure bodies too, so any enclosing `path {` counts.
-pub fn in_path_block(src: &str, offset: usize) -> bool {
-  scan_to(src, offset).frames.iter().any(|f| f.is_path_block)
 }
 
 /// Line of the innermost bracket still open at the end of the source, if any.
@@ -480,18 +463,11 @@ mod tests {
   }
 
   #[test]
-  fn global_sigil_and_path_block() {
+  fn global_sigil() {
     let c = call_at("@foo(‸)").unwrap();
     assert_eq!(c.fn_name, "foo");
     assert!(c.uses_global_sigil);
     assert_eq!(c.callee_offset, 0);
-
-    let c = call_at("p = path {\n  move(v2(0, 0))\n  bezier(‸\n}").unwrap();
-    assert_eq!(c.fn_name, "bezier");
-    assert!(c.in_path_block);
-    assert!(!call_at("foo(‸)").unwrap().in_path_block);
-    assert!(in_path_block("path { x = [1] |", 16));
-    assert!(!in_path_block("path { x } |", 11));
   }
 
   #[test]

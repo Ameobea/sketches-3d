@@ -55,6 +55,4 @@ export const
   ElseIfExpr = 78,
   ElseIf = 79,
   ElseExpr = 80,
-  Else = 81,
-  PathBlock = 83,
-  Path = 84
+  Else = 81

@@ -351,19 +351,19 @@ mod tests {
   fn coverage_area_fill_rules_and_implicit_close() {
     let ctx = parse_and_eval_program(
       r#"
-sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) })
+sq = rect(vec2(0.5, 0.5), 0.5)
 sq_cov = rasterize_path(sq, width=16, height=16)
-circ = build_path(path { circle(vec2(0.5, 0.5), 0.25) })
+circ = circle(vec2(0.5, 0.5), 0.25)
 circ_cov = rasterize_path(circ, width=128, height=128)
-ring = build_path(path { rect(vec2(0.5, 0.5), 0.5) circle(vec2(0.5, 0.5), 0.125) })
+ring = path([rect(vec2(0.5, 0.5), 0.5), circle(vec2(0.5, 0.5), 0.125)])
 ring_nz = rasterize_path(ring, width=16, height=16)
 ring_eo = rasterize_path(ring, width=16, height=16, fill_rule="evenodd")
-ring_hole = build_path(path { rect(vec2(0.5, 0.5), 0.5) circle(vec2(0.5, 0.5), 0.125) | reverse })
+ring_hole = path([rect(vec2(0.5, 0.5), 0.5), circle(vec2(0.5, 0.5), 0.125) | reverse])
 ring_hole_nz = rasterize_path(ring_hole, width=16, height=16)
-tri = build_path(path { move(0, 0) line(1, 0) line(0, 1) })
+tri = path() | move(0, 0) | line(1, 0) | line(0, 1)
 tri_cov = rasterize_path(tri, width=16, height=16)
 tri_sd = path_sdf(tri, width=16, height=16)
-tiny = build_path(path { circle(vec2(0.5, 0.5), 0.03) })
+tiny = circle(vec2(0.5, 0.5), 0.03)
 tiny_cov = rasterize_path(tiny, width=256, height=256)
 "#,
     )
@@ -412,7 +412,7 @@ tiny_cov = rasterize_path(tiny, width=256, height=256)
   fn sdf_matches_analytic_circle_and_offset_path_threshold() {
     let ctx = parse_and_eval_program(
       r#"
-circ = build_path(path { circle(vec2(0.5, 0.5), 0.25) })
+circ = circle(vec2(0.5, 0.5), 0.25)
 sd = path_sdf(circ, width=64, height=32)
 "#,
     )
@@ -435,12 +435,12 @@ sd = path_sdf(circ, width=64, height=32)
   fn uv_along_and_across_with_reverse_and_inward_flip() {
     let ctx = parse_and_eval_program(
       r#"
-line = build_path(path { move(0, 0.5) line(1, 0.5) })
-uv = path_uv(line, width=32, height=16)
-uv_rev = path_uv(build_path(path { move(0, 0.5) line(1, 0.5) }, reverse=true), width=32, height=16)
-cw_sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) | reverse })
+seg = path() | move(0, 0.5) | line(1, 0.5)
+uv = path_uv(seg, width=32, height=16)
+uv_rev = path_uv(path() | move(0, 0.5) | line(1, 0.5) | reverse, width=32, height=16)
+cw_sq = rect(vec2(0.5, 0.5), 0.5) | reverse
 uv_cw = path_uv(cw_sq, width=16, height=16)
-ccw_sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) })
+ccw_sq = rect(vec2(0.5, 0.5), 0.5)
 uv_ccw = path_uv(ccw_sq, width=16, height=16)
 "#,
     )
@@ -469,7 +469,7 @@ uv_ccw = path_uv(ccw_sq, width=16, height=16)
   fn tiling_wraps_coverage_and_distance() {
     let ctx = parse_and_eval_program(
       r#"
-dot = build_path(path { circle(vec2(0, 0), 0.25) })
+dot = circle(vec2(0, 0), 0.25)
 cov = rasterize_path(dot, width=64, height=64, tileable=true)
 cov_half = rasterize_path(dot, width=64, height=64, tileable=0.5)
 sd = path_sdf(dot, width=64, height=64, tileable=true)
@@ -512,7 +512,7 @@ uv = path_uv(dot, width=64, height=64, tileable=true)
   fn fit_path_scales_aabb_into_padded_unit_square() {
     let ctx = parse_and_eval_program(
       r#"
-wide = build_path(path { rect(vec2(3, 7), vec2(6, 2)) })
+wide = rect(vec2(3, 7), vec2(6, 2))
 fitted = fit_path(wide, pad=0.1)
 bb = path_aabb(fitted)
 lo = bb[0]

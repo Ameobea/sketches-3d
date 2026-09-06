@@ -2566,7 +2566,7 @@ pub struct SymbolInterner {
   pub symbols: RefCell<FxHashMap<String, Sym>>,
   pub reverse_symbols: RefCell<FxHashMap<Sym, String>>,
   pub next_sym: Cell<usize>,
-  /// Symbols minted by desugaring rather than written by the user (`path { ... }` temporaries).
+  /// Symbols minted by desugaring rather than written by the user.
   /// Editor tooling keys off this to keep them out of completions, hovers, and goto-definition.
   synthetic_syms: RefCell<FxHashSet<Sym>>,
 }
@@ -5445,7 +5445,7 @@ b = [1, 2]"#;
 #[test]
 fn test_render_path_survives_rerun() {
   let ctx = EvalCtx::default();
-  let src = "build_path(path { rect(v2(10), v2(10)) }) | path_render";
+  let src = "rect(v2(10), v2(10)) | path_render";
   let mut ast = parse_program_src(&ctx, src).unwrap();
 
   for run in 1..=2 {
@@ -6127,12 +6127,7 @@ tris_around = |x: int, y: int| {
 
 levels = tris_around(0, 0)
   -> |[[x0, y0], [x1, y1], [x2, y2]]| {
-    p = build_path(path {
-      move(x0, y0)
-      line(x1, y1)
-      line(x2, y2)
-      close()
-    })
+    p = path() | move(x0, y0) | line(x1, y1) | line(x2, y2) | close
     centroid = v2(x0 + x1 + x2, y0 + y1 + y2) / 3
     { p: p, centroid: centroid }
   }
@@ -8559,12 +8554,7 @@ x = len(m)"#;
 fn test_render_path_sampler() {
   // A path renders as one polyline per subpath at the ambient curve tolerance.
   let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-  line(0, 1)
-})
+p = path() | move(0, 0) | line(1, 0) | line(1, 1) | line(0, 1)
 p | render
 "#;
 
@@ -8584,11 +8574,7 @@ p | render
 fn test_extrude_path_sampler() {
   // Open L-shaped path swept along +Y → 2 quads = 4 triangles, 8 verts.
   let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-})
+p = path() | move(0, 0) | line(1, 0) | line(1, 1)
 m = extrude_path(p, up=vec3(0, 2, 0))
 render(m)
 "#;
@@ -8631,12 +8617,7 @@ render(m)
 #[test]
 fn test_extrude_path_closed_errors() {
   let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-  line(0, 1)
-}, closed=true)
+p = path() | move(0, 0) | line(1, 0) | line(1, 1) | line(0, 1) | close_all
 m = extrude_path(p, up=vec3(0, 1, 0))
 render(m)
 "#;
@@ -8652,12 +8633,7 @@ render(m)
 fn test_fan_fill_path_sampler() {
   // Closed square path sampler -> fan of 4 triangles around centroid in XZ plane.
   let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-  line(0, 1)
-}, closed=true)
+p = path() | move(0, 0) | line(1, 0) | line(1, 1) | line(0, 1) | close_all
 m = fan_fill(p)
 render(m)
 "#;

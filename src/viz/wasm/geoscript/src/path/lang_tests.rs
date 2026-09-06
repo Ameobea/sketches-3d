@@ -251,15 +251,11 @@ c = perim(circle(v2(0), 1))
 }
 
 #[test]
-fn group_matches_path_block_hash() {
+fn grouping_flattens_to_the_same_hash() {
   let ctx = parse_and_eval_program(
     r#"
 a = path([circle(v2(0), 1), rect(v2(0), v2(2, 1)) | reverse, path() | move(0, 5) | line(1, 1) | close])
-b = build_path(path {
-  circle(v2(0), 1)
-  rect(v2(0), v2(2, 1)) | reverse
-  move(0, 5); line(1, 1); close()
-})
+b = path([circle(v2(0), 1), path([rect(v2(0), v2(2, 1)) | reverse, path() | move(0, 5) | line(1, 1) | close])])
 "#,
   )
   .unwrap();

@@ -419,150 +419,11 @@ fn segment_to_dict(seg: &PathSegment, meta: SegmentMeta) -> Value {
     ("t_end_global", Value::Float(meta.t_end_global)),
   ]);
 
-  crate::builtins::make_tagged_map(&entries)
-}
-
-/// A lazy sequence that yields new `PathTracerCallable`` instances for each subpath
-
-pub(crate) fn map_to_draw_command(map: &ValueMap) -> Result<DrawCommand, ErrorStack> {
-  let kind = map
-    .get("type")
-    .and_then(|v| v.as_str())
-    .ok_or_else(|| ErrorStack::new("draw command map missing string `type` field"))?;
-
-  fn get_vec2(map: &ValueMap, key: &str) -> Result<Vec2, ErrorStack> {
-    map
-      .get(key)
-      .and_then(|v| v.as_vec2().copied())
-      .ok_or_else(|| ErrorStack::new(format!("draw command map missing vec2 field `{key}`")))
+  let mut map = ValueMap::default();
+  for (k, v) in entries {
+    map.insert(k.to_string(), v);
   }
-  fn get_float(map: &ValueMap, key: &str) -> Result<f32, ErrorStack> {
-    map
-      .get(key)
-      .and_then(|v| v.as_float())
-      .ok_or_else(|| ErrorStack::new(format!("draw command map missing numeric field `{key}`")))
-  }
-  fn get_bool(map: &ValueMap, key: &str) -> Result<bool, ErrorStack> {
-    map
-      .get(key)
-      .and_then(|v| v.as_bool())
-      .ok_or_else(|| ErrorStack::new(format!("draw command map missing bool field `{key}`")))
-  }
-
-  match kind {
-    "move" => Ok(DrawCommand::MoveTo(get_vec2(map, "to")?)),
-    "line" => Ok(DrawCommand::LineTo(get_vec2(map, "to")?)),
-    "quad" => Ok(DrawCommand::QuadraticBezier {
-      ctrl: get_vec2(map, "ctrl")?,
-      to: get_vec2(map, "to")?,
-    }),
-    "smooth_quad" => Ok(DrawCommand::SmoothQuadraticBezier {
-      to: get_vec2(map, "to")?,
-    }),
-    "cubic" => Ok(DrawCommand::CubicBezier {
-      ctrl1: get_vec2(map, "ctrl1")?,
-      ctrl2: get_vec2(map, "ctrl2")?,
-      to: get_vec2(map, "to")?,
-    }),
-    "smooth_cubic" => Ok(DrawCommand::SmoothCubicBezier {
-      ctrl2: get_vec2(map, "ctrl2")?,
-      to: get_vec2(map, "to")?,
-    }),
-    "arc" => Ok(DrawCommand::Arc {
-      rx: get_float(map, "rx")?,
-      ry: get_float(map, "ry")?,
-      x_axis_rotation: get_float(map, "x_axis_rotation")?,
-      large_arc: get_bool(map, "large_arc")?,
-      sweep: get_bool(map, "sweep")?,
-      to: get_vec2(map, "to")?,
-    }),
-    "circle" => Ok(DrawCommand::Circle {
-      center: get_vec2(map, "center")?,
-      radius: get_float(map, "radius")?,
-      reversed: map
-        .get("reversed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false),
-    }),
-    "rect" => Ok(DrawCommand::Rect {
-      center: get_vec2(map, "center")?,
-      width: get_float(map, "width")?,
-      height: get_float(map, "height")?,
-      reversed: map
-        .get("reversed")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false),
-    }),
-    "close" => Ok(DrawCommand::Close),
-    other => Err(ErrorStack::new(format!(
-      "unknown draw command `type`: \"{other}\".  Expected one of: move, line, quad, smooth_quad, \
-       cubic, smooth_cubic, arc, circle, rect, close"
-    ))),
-  }
-}
-
-/// Applies `build_path`-style options to a freshly built path: `center` translates by the
-/// negated AABB center, `reverse` reverses.
-pub(crate) fn finish_built_path(
-  path: Path,
-  center: bool,
-  reverse: bool,
-  fill_rule: Option<FillRule>,
-) -> Path {
-  let mut path = path;
-  if center {
-    if let Some((min, max)) = path.concrete_aabb() {
-      path = path.translated(-(min + max) * 0.5);
-    }
-  }
-  if reverse {
-    path = path.reversed();
-  }
-  path.with_fill_rule(fill_rule)
-}
-
-pub fn build_path_impl(
-  ctx: &EvalCtx,
-  _def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  let cmds_seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
-  let closed = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
-  let center = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
-  let reverse = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
-  let fill_rule_val = arg_refs[4].resolve(args, kwargs);
-  let fill_rule = match fill_rule_val {
-    Value::Nil => None,
-    val => Some(FillRule::parse(val, "build_path")?),
-  };
-
-  let mut draw_cmds: Vec<DrawCommand> = Vec::new();
-  for item in cmds_seq.consume(ctx) {
-    let val = item?;
-    match val {
-      Value::Map(map) => {
-        let cmd = map_to_draw_command(&map).map_err(|err| {
-          err.wrap("Error converting sequence item to draw command in `build_path`")
-        })?;
-        draw_cmds.push(cmd);
-      }
-      other => {
-        return Err(ErrorStack::new(format!(
-          "build_path: expected a sequence of draw command maps (built via `path_move`, \
-           `path_line`, etc., or via the `path {{ ... }}` macro). Found a non-map item: {other:?}"
-        )));
-      }
-    }
-  }
-
-  Ok(Value::Path(Rc::new(finish_built_path(
-    Path::from_draw_commands(draw_cmds, closed),
-    center,
-    reverse,
-    fill_rule,
-  ))))
+  Value::Map(Rc::new(map))
 }
 
 /// Polyline copy of `path`. Original joints stay anchors; vertices generated inside curves are
@@ -916,7 +777,10 @@ pub fn text_to_path_impl(
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::parse_and_eval_program;
+  use crate::{
+    parse_and_eval_program,
+    path::builder::{circle_subpath, rect_subpath},
+  };
   use nalgebra::{Matrix3, Vector3};
 
   fn assert_vec2_close(actual: Vec2, expected: Vec2) {
@@ -928,12 +792,15 @@ mod tests {
   }
 
   fn build(cmds: Vec<DrawCommand>, closed: bool, center: bool, reverse: bool) -> Path {
-    finish_built_path(
-      Path::from_draw_commands(cmds, closed),
-      center,
-      reverse,
-      None,
-    )
+    let mut path = Path::from_draw_commands(cmds, closed);
+    if center {
+      let (min, max) = path.concrete_aabb().unwrap();
+      path = path.translated(-(min + max) * 0.5);
+    }
+    if reverse {
+      path = path.reversed();
+    }
+    path
   }
 
   fn sample(path: &Path, t: f32) -> Vec2 {
@@ -1004,12 +871,7 @@ mod tests {
 
   #[test]
   fn test_path_tracer_analytic_aabb_circle() {
-    let cmds = vec![DrawCommand::Circle {
-      center: Vec2::new(3.0, -2.0),
-      radius: 4.0,
-      reversed: false,
-    }];
-    let tracer = build(cmds, true, false, false);
+    let tracer = Path::leaf(circle_subpath(Vec2::new(3.0, -2.0), 4.0, false));
     let (min, max) = tracer.concrete_aabb().unwrap();
     assert_aabb_close((min, max), Vec2::new(-1.0, -6.0), Vec2::new(7.0, 2.0));
   }
@@ -1382,25 +1244,6 @@ mod tests {
   }
 
   #[test]
-  fn test_path_block_alias_draw_commands() {
-    let src = r#"
-path = build_path(path {
-  move(0, 0)
-  quad_bezier(vec2(1, 0), vec2(2, 0))
-  smooth_quadratic_bezier(3, 0)
-  cubic_bezier(vec2(4, 0), vec2(5, 0), vec2(6, 0))
-  smooth_bezier(vec2(7, 0), vec2(8, 0))
-})
-p0 = path(0)
-p1 = path(1)
-"#;
-
-    let ctx = parse_and_eval_program(src).unwrap();
-    assert_vec2_close(global_vec2(&ctx, "p0"), Vec2::new(0.0, 0.0));
-    assert_vec2_close(global_vec2(&ctx, "p1"), Vec2::new(8.0, 0.0));
-  }
-
-  #[test]
   fn test_tessellate_path_from_sequence() {
     let src = r#"
 path = [vec2(0, 0), vec2(1, 0), vec2(0, 1)]
@@ -1416,13 +1259,7 @@ mesh = tessellate_path(path)
   #[test]
   fn test_tessellate_path_from_path_block() {
     let src = r#"
-path = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-  line(0, 1)
-  close()
-})
+path = path() | move(0, 0) | line(1, 0) | line(1, 1) | line(0, 1) | close
 mesh = tessellate_path(path)
 "#;
 
@@ -1489,13 +1326,7 @@ mesh = tessellate_path(path)
   #[test]
   fn test_subpaths_builtin() {
     let src = r#"
-path = build_path(path {
-  move(0, 0)
-  line(10, 0)
-
-  move(100, 0)
-  line(100, 20)
-})
+path = path() | move(0, 0) | line(10, 0) | move(100, 0) | line(100, 20)
 subs = subpaths(path)
 sub_array = collect(subs)
 count = len(sub_array)
@@ -1518,14 +1349,8 @@ second_end = second(1)
   #[test]
   fn test_lerp_paths_midpoint() {
     let src = r#"
-path_a = build_path(path {
-  move(0, 0)
-  line(2, 0)
-})
-path_b = build_path(path {
-  move(0, 2)
-  line(2, 2)
-})
+path_a = path() | move(0, 0) | line(2, 0)
+path_b = path() | move(0, 2) | line(2, 2)
 lerped = lerp_paths(path_a, path_b, 0.5)
 result = lerped(0.5)
 "#;
@@ -1536,14 +1361,8 @@ result = lerped(0.5)
   #[test]
   fn test_lerp_paths_mix_extremes() {
     let src = r#"
-path_a = build_path(path {
-  move(0, 0)
-  line(4, 0)
-})
-path_b = build_path(path {
-  move(0, 10)
-  line(4, 10)
-})
+path_a = path() | move(0, 0) | line(4, 0)
+path_b = path() | move(0, 10) | line(4, 10)
 lerped_a = lerp_paths(path_a, path_b, 0.0)
 at_a = lerped_a(0.5)
 lerped_b = lerp_paths(path_a, path_b, 1.0)
@@ -1557,17 +1376,8 @@ at_b = lerped_b(0.5)
   #[test]
   fn test_lerp_paths_critical_point_merging() {
     let src = r#"
-path_a = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(2, 0)
-})
-path_b = build_path(path {
-  move(0, 0)
-  line(0.5, 0)
-  line(1, 0)
-  line(2, 0)
-})
+path_a = path() | move(0, 0) | line(1, 0) | line(2, 0)
+path_b = path() | move(0, 0) | line(0.5, 0) | line(1, 0) | line(2, 0)
 lerped = lerp_paths(path_a, path_b, 0.5)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1587,11 +1397,7 @@ lerped = lerp_paths(path_a, path_b, 0.5)
   #[test]
   fn test_critical_points_builtin() {
     let src = r#"
-path = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(2, 1)
-})
+path = path() | move(0, 0) | line(1, 0) | line(2, 1)
 cps = critical_points(path)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1643,7 +1449,7 @@ cps = critical_points(f)
   fn test_path_trans_rot_scale_e2e() {
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
-moved = path_trans(vec2(5, 3), path)
+moved = translate(vec2(5, 3), path)
 p0 = moved(0)
 p_mid = moved(0.25)
 "#;
@@ -1653,7 +1459,7 @@ p_mid = moved(0.25)
 
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0")
-moved = path_trans(100, 200, path)
+moved = translate(100, 200, path)
 p0 = moved(0)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1661,7 +1467,7 @@ p0 = moved(0)
 
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0")
-scaled = path_scale(2, path)
+scaled = scale(2, path)
 p0 = scaled(0)
 p1 = scaled(1)
 "#;
@@ -1671,7 +1477,7 @@ p1 = scaled(1)
 
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0")
-rotated = path_rot(pi / 2, path)
+rotated = rot(pi / 2, path)
 p_end = rotated(1)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1679,7 +1485,7 @@ p_end = rotated(1)
 
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0")
-result = path_rot(pi / 2, path_trans(vec2(5, 0), path))
+result = rot(pi / 2, translate(vec2(5, 0), path))
 p0 = result(0)
 p1 = result(1)
 "#;
@@ -1692,12 +1498,12 @@ p1 = result(1)
   fn test_path_reflect_e2e() {
     let src = r#"
 path = trace_svg_path("M 2 3 L 8 3")
-rx = path_reflect_x(path)
-rx_off = path_reflect_x(10, path)
-ry = path_reflect_y(path)
-ry_off = path | path_reflect_y(10)
-diag = path_reflect(vec2(1, 1), path)
-diag_off = path_reflect(vec2(1, 0), 4, path)
+rx = reflect_x(path)
+rx_off = reflect_x(10, path)
+ry = reflect_y(path)
+ry_off = path | reflect_y(10)
+diag = reflect(vec2(1, 1), path)
+diag_off = reflect(vec2(1, 0), 4, path)
 rx0 = rx(0)
 rx1 = rx(1)
 rx_off0 = rx_off(0)
@@ -1726,11 +1532,11 @@ diag_off0 = diag_off(0)
   fn test_apply_transforms_and_origin_to_geometry_for_paths() {
     let src = r#"
 path = trace_svg_path("M 0 0 L 10 0 L 10 10 L 0 10 Z")
-moved = path_trans(vec2(100, 200), path)
+moved = translate(vec2(100, 200), path)
 baked = apply_transforms(moved)
 p0 = baked(0)
 p1 = baked(0.25)
-moved_again = path_trans(vec2(1, 1), baked)
+moved_again = translate(vec2(1, 1), baked)
 q0 = moved_again(0)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1816,13 +1622,7 @@ p0 = centered(0)
   #[test]
   fn test_rect_subpath_corners() {
     // 4x2 rect centered at origin, perimeter 12, traced CCW from the top-right corner.
-    let cmds = vec![DrawCommand::Rect {
-      center: Vec2::new(0.0, 0.0),
-      width: 4.0,
-      height: 2.0,
-      reversed: false,
-    }];
-    let tracer = build(cmds, false, false, false);
+    let tracer = Path::leaf(rect_subpath(Vec2::new(0.0, 0.0), 4.0, 2.0, false));
 
     assert_vec2_close(sample(&tracer, 0.0), Vec2::new(2.0, 1.0));
     assert_vec2_close(sample(&tracer, 1.0 / 3.0), Vec2::new(-2.0, 1.0));
@@ -1834,9 +1634,7 @@ p0 = centered(0)
   #[test]
   fn test_rect_via_path_block_scalar_size() {
     let src = r#"
-path = build_path(path {
-  rect(center=v2(0, 0), size=2)
-})
+path = rect(center=v2(0, 0), size=2)
 mesh = tessellate_path(path)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1849,9 +1647,7 @@ mesh = tessellate_path(path)
   #[test]
   fn test_rect_via_path_block_vec2_size() {
     let src = r#"
-path = build_path(path {
-  rect(center=v2(1, 2), size=v2(4, 6))
-})
+path = rect(center=v2(1, 2), size=v2(4, 6))
 tr = path(0)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1861,9 +1657,7 @@ tr = path(0)
   #[test]
   fn test_rect_via_path_block_numeric_form() {
     let src = r#"
-path = build_path(path {
-  rect(0, 0, 4, 2)
-})
+path = rect(0, 0, 4, 2)
 tr = path(0)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -1871,69 +1665,11 @@ tr = path(0)
   }
 
   #[test]
-  fn test_path_block_macro_basic() {
-    let src = r#"
-cmds = path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-}
-p = build_path(cmds)
-p0 = p(0)
-p1 = p(0.25)
-p2 = p(1)
-"#;
-    let ctx = parse_and_eval_program(src).unwrap();
-    assert_vec2_close(global_vec2(&ctx, "p0"), Vec2::new(0.0, 0.0));
-    assert_vec2_close(global_vec2(&ctx, "p1"), Vec2::new(0.5, 0.0));
-    assert_vec2_close(global_vec2(&ctx, "p2"), Vec2::new(1.0, 1.0));
-  }
-
-  #[test]
-  fn test_path_block_macro_with_loop_and_flatten() {
-    let src = r#"
-cmds = path {
-  move(0, 0)
-  0..10 -> |i| line(i+1, 0)
-  close()
-}
-p = build_path(cmds)
-p0 = p(0)
-p_end = p(1)
-"#;
-    let ctx = parse_and_eval_program(src).unwrap();
-    assert_vec2_close(global_vec2(&ctx, "p0"), Vec2::new(0.0, 0.0));
-    assert_vec2_close(global_vec2(&ctx, "p_end"), Vec2::new(0.0, 0.0));
-  }
-
-  #[test]
-  fn test_path_block_macro_pipeline() {
-    let src = r#"
-p = path {
-  move(-0.2, -100)
-  line(0.2, -100)
-  line(0.2, 100)
-  line(-0.2, 100)
-  close()
-} | build_path(center=true)
-p0 = p(0)
-"#;
-    let ctx = parse_and_eval_program(src).unwrap();
-    assert_vec2_close(global_vec2(&ctx, "p0"), Vec2::new(-0.2, -100.0));
-  }
-
-  #[test]
   fn test_path_join_concatenates_subpaths() {
     let src = r#"
-a = build_path(path {
-  move(0, 0)
-  line(1, 0)
-})
-b = build_path(path {
-  move(10, 0)
-  line(11, 0)
-})
-joined = path_join(a, b)
+a = path() | move(0, 0) | line(1, 0)
+b = path() | move(10, 0) | line(11, 0)
+joined = path([a, b])
 p_a = joined(0.25)
 p_b = joined(0.75)
 "#;
@@ -1945,46 +1681,15 @@ p_b = joined(0.75)
   #[test]
   fn test_path_join_bakes_non_identity_transforms() {
     let src = r#"
-a = build_path(path {
-  move(0, 0)
-  line(1, 0)
-}) | path_trans(v2(5, 0))
-b = build_path(path {
-  move(0, 0)
-  line(1, 0)
-}) | path_trans(v2(20, 0))
-joined = path_join(a, b)
+a = path() | move(0, 0) | line(1, 0) | translate(v2(5, 0))
+b = path() | move(0, 0) | line(1, 0) | translate(v2(20, 0))
+joined = path([a, b])
 p_a = joined(0.25)
 p_b = joined(0.75)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
     assert_vec2_close(global_vec2(&ctx, "p_a"), Vec2::new(5.5, 0.0));
     assert_vec2_close(global_vec2(&ctx, "p_b"), Vec2::new(20.5, 0.0));
-  }
-
-  #[test]
-  fn test_path_block_return_disallowed() {
-    let src = r#"
-cmds = path {
-  return move(0, 0)
-}
-"#;
-    let err = parse_and_eval_program(src).unwrap_err();
-    let msg = format!("{err}");
-    assert!(
-      msg.contains("`return` is not allowed"),
-      "expected return-not-allowed error, got: {msg}"
-    );
-  }
-
-  #[test]
-  fn test_path_block_empty_is_empty_path() {
-    let src = r#"
-cmds = path {}
-p = build_path(cmds)
-"#;
-    let ctx = parse_and_eval_program(src).unwrap();
-    let _ = ctx.get_global("p").unwrap();
   }
 
   #[test]
@@ -2031,11 +1736,7 @@ p = build_path(cmds)
   #[test]
   fn test_path_segments_end_to_end() {
     let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(1, 0)
-  line(1, 1)
-})
+p = path() | move(0, 0) | line(1, 0) | line(1, 1)
 segs = path_segments(p)
 types = segs -> |s, _i| s.type
 "#;
@@ -2053,21 +1754,17 @@ types = segs -> |s, _i| s.type
   #[test]
   fn test_path_len_analytic_fold_and_lazy() {
     let src = r#"
-poly = build_path(path {
-  move(0, 0)
-  line(3, 0)
-  line(3, 4)
-})
-poly_len = path_len(poly)
+poly = path() | move(0, 0) | line(3, 0) | line(3, 4)
+poly_len = len(poly)
 
-scaled = poly | path_scale(2)
-scaled_len = path_len(scaled)
+scaled = poly | scale(2)
+scaled_len = len(scaled)
 
-circle = build_path(path { circle(v2(0), 3) })
-fast = path_len(circle)
+circle = circle(v2(0), 3)
+fast = len(circle)
 slow = path_segments(circle) | fold(0, |acc, s| acc + s.length)
 
-lazy = path_len(lerp_paths(poly, poly, 0.5))
+lazy = len(lerp_paths(poly, poly, 0.5))
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
     let g = |name: &str| ctx.get_global(name).unwrap().as_float().unwrap();
@@ -2101,16 +1798,12 @@ lazy = path_len(lerp_paths(poly, poly, 0.5))
     // Two perpendicular segments meeting at (4,0), total length 8. Trimming [2, 6] by distance
     // keeps (2,0)->(4,0)->(4,2) with the corner intact.
     let src = r#"
-p = build_path(path {
-  move(0, 0)
-  line(4, 0)
-  line(4, 4)
-})
+p = path() | move(0, 0) | line(4, 0) | line(4, 4)
 t = trim_path(p, start=2, end=6, unit='distance')
 a = t(0)
 mid = t(0.5)
 b = t(1)
-tlen = path_len(t)
+tlen = len(t)
 types = path_segments(t) -> |s, _i| s.type
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -2135,7 +1828,7 @@ types = path_segments(t) -> |s, _i| s.type
   #[test]
   fn test_path_frame_unit_circle_inward_normal() {
     let src = r#"
-p = build_path(path { circle(v2(0), 1) })
+p = circle(v2(0), 1)
 f = path_frame(0.25, p)
 "#;
     let ctx = parse_and_eval_program(src).unwrap();
@@ -2188,7 +1881,7 @@ g = path_frame(0.25, p, inward_normal=false)
   #[test]
   fn test_discretize_path_replaces_curves_with_lines() {
     let src = r#"
-p = build_path(path { circle(v2(0), 5) })
+p = circle(v2(0), 5)
 disc = discretize_path(p, curve_angle_degrees=2)
 segs = path_segments(disc)
 types = segs -> |s, _i| s.type
@@ -2234,12 +1927,7 @@ closed_flags = segs -> |s, _i| s.closed
 
   #[test]
   fn test_build_segment_dicts_arc_fields() {
-    let cmds = vec![DrawCommand::Circle {
-      center: Vec2::new(0.0, 0.0),
-      radius: 5.0,
-      reversed: false,
-    }];
-    let tracer = build(cmds, false, false, false);
+    let tracer = Path::leaf(circle_subpath(Vec2::new(0.0, 0.0), 5.0, false));
     let dicts = build_segment_dicts(&tracer, "test").unwrap();
     assert_eq!(dicts.len(), 2);
 

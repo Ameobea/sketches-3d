@@ -141,21 +141,12 @@ pub fn alpha_wrap_2d_impl(
         )));
       }
       let sample_count = arg_refs[6].resolve(args, kwargs).as_int().unwrap().max(2) as usize;
-      let closed_override = match arg_refs[7].resolve(args, kwargs) {
-        Value::Bool(b) => Some(*b),
-        Value::Nil => None,
-        val => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `alpha_wrap_2d`; expected bool or nil, found: {val:?}"
-          )))
-        }
-      };
       let subpaths = sample_path_subpaths(
         ctx,
         path,
         curve_angle_degrees.to_radians(),
         sample_count,
-        closed_override,
+        None,
       )?;
       let segments = subpaths_to_segments(subpaths);
       if segments.is_empty() {

@@ -3824,11 +3824,7 @@ mesh = rail_sweep(
   spine=[v3(3,0,0), v3(1.5,2.6,0), v3(-1.5,2.6,0), v3(-3,0,0), v3(-1.5,-2.6,0), v3(1.5,-2.6,0)],
   frame_mode=v3(0,0,1),
   closed=true,
-  profile=build_path(path {
-    move(0, 0)
-    line(0.2, 0.3)
-    line(0, 0.6)
-  }),
+  profile=path() | move(0, 0) | line(0.2, 0.3) | line(0, 0.6),
 )
 "#;
     let ctx = crate::parse_and_eval_program(src).unwrap();
@@ -3858,10 +3854,7 @@ mesh = rail_sweep(
   /// counts.
   #[test]
   fn rail_sweep_two_disjoint_squares() {
-    const TWO_SQUARES: &str = r#"build_path(path {
-        move(-2,-1) line(-1,-1) line(-1,1) line(-2,1) close()
-        move(1,-1) line(2,-1) line(2,1) line(1,1) close()
-      })"#;
+    const TWO_SQUARES: &str = r#"path() | move(-2,-1) | line(-1,-1) | line(-1,1) | line(-2,1) | close | move(1,-1) | line(2,-1) | line(2,1) | line(1,1) | close"#;
     let build = |profile: &str, ring_resolution: &str| {
       let src = format!(
         r#"
@@ -3880,11 +3873,11 @@ mesh = rail_sweep(
     };
 
     let one_12 = build(
-      r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#,
+      r#"path() | move(1,-1) | line(2,-1) | line(2,1) | line(1,1) | close"#,
       "12",
     );
     let one_6 = build(
-      r#"build_path(path { move(1,-1) line(2,-1) line(2,1) line(1,1) close() })"#,
+      r#"path() | move(1,-1) | line(2,-1) | line(2,1) | line(1,1) | close"#,
       "6",
     );
     let two = build(TWO_SQUARES, "12");
@@ -3924,10 +3917,7 @@ mesh = rail_sweep(
   ring_resolution=16,
   spine=[v3(0,0,0), v3(0,0,2)],
   capped=true,
-  profile=build_path(path {
-    move(-2,-1) line(-1,-1) line(-1,1) line(-2,1) close()
-    move(1,-1) line(2,-1) line(2,1) line(1,1) close()
-  }),
+  profile=path() | move(-2,-1) | line(-1,-1) | line(-1,1) | line(-2,1) | close | move(1,-1) | line(2,-1) | line(2,1) | line(1,1) | close,
 )
 "#,
     )
@@ -3953,10 +3943,7 @@ mesh = rail_sweep(
   ring_resolution=32,
   spine=[v3(0,0,0), v3(0,0,1), v3(0,0,2)],
   capped=false,
-  profile=build_path(path {
-    move(-1,-1) line(1,-1) line(1,1) line(-1,1) close()
-    move(-0.5,-0.5) line(-0.5,0.5) line(0.5,0.5) line(0.5,-0.5) close()
-  }),
+  profile=path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close | move(-0.5,-0.5) | line(-0.5,0.5) | line(0.5,0.5) | line(0.5,-0.5) | close,
 )
 "#,
     )
@@ -3989,10 +3976,7 @@ mesh = rail_sweep(
   spine=[v3(0,0,0), v3(0,0,1), v3(0,0,2)],
   capped=false,
   split_seams=true,
-  profile=build_path(path {
-    move(-1,-1) line(1,-1) line(1,1) line(-1,1) close()
-    move(-0.5,-0.5) line(-0.5,0.5) line(0.5,0.5) line(0.5,-0.5) close()
-  }),
+  profile=path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close | move(-0.5,-0.5) | line(-0.5,0.5) | line(0.5,0.5) | line(0.5,-0.5) | close,
 )
 "#,
     )
@@ -4021,12 +4005,9 @@ rail_sweep(
   capped=false,
   dynamic_profile=|u: float, u_ix: int| {
     if u_ix < 2 {
-      build_path(path { move(-1,-1) line(1,-1) line(1,1) line(-1,1) close() })
+      path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close
     } else {
-      build_path(path {
-        move(-1,-1) line(1,-1) line(1,1) line(-1,1) close()
-        move(-0.5,-0.5) line(-0.5,0.5) line(0.5,0.5) line(0.5,-0.5) close()
-      })
+      path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close | move(-0.5,-0.5) | line(-0.5,0.5) | line(0.5,0.5) | line(0.5,-0.5) | close
     }
   },
 ) | render
@@ -4050,10 +4031,7 @@ rail_sweep(
   ring_resolution=24,
   spine=[v3(0,0,0), v3(0,0,1)],
   capped=false,
-  profile=build_path(path {
-    move(-1,-1) line(1,-1) line(1,1) line(-1,1) close()
-    move(-0.5,-0.5) line(0.5,-0.5) line(0.5,0.5) line(-0.5,0.5) close()
-  }),
+  profile=path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close | move(-0.5,-0.5) | line(0.5,-0.5) | line(0.5,0.5) | line(-0.5,0.5) | close,
 ) | render
 "#,
     )
@@ -4129,10 +4107,7 @@ mesh = rail_sweep(
   ring_resolution=32,
   spine=[v3(0,0,0), v3(0,0,1), v3(0,0,2)],
   capped=true,
-  profile=build_path(path {
-    move(-1,-1) line(1,-1) line(1,1) line(-1,1) close()
-    move(-0.5,-0.5) line(-0.5,0.5) line(0.5,0.5) line(0.5,-0.5) close()
-  }),
+  profile=path() | move(-1,-1) | line(1,-1) | line(1,1) | line(-1,1) | close | move(-0.5,-0.5) | line(-0.5,0.5) | line(0.5,0.5) | line(0.5,-0.5) | close,
 )
 "#,
     )

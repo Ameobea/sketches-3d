@@ -35,17 +35,6 @@ pub enum DrawCommand {
     sweep: bool,
     to: Vec2,
   },
-  Circle {
-    center: Vec2,
-    radius: f32,
-    reversed: bool,
-  },
-  Rect {
-    center: Vec2,
-    width: f32,
-    height: f32,
-    reversed: bool,
-  },
   Close,
 }
 
@@ -234,17 +223,6 @@ impl PathBuilder {
         let seg = build_arc_segment(o.current, to, rx, ry, x_axis_rotation, large_arc, sweep);
         o.push(seg, to, None);
       }
-      DrawCommand::Circle {
-        center,
-        radius,
-        reversed,
-      } => self.push_leaf(circle_subpath(center, radius, reversed)),
-      DrawCommand::Rect {
-        center,
-        width,
-        height,
-        reversed,
-      } => self.push_leaf(rect_subpath(center, width, height, reversed)),
       DrawCommand::Close => self.close_open(),
     }
   }

@@ -4060,11 +4060,7 @@ a = 0..4 -> |x| x + offset
 fn test_const_eval_cache_persists_across_runs_with_path_block() {
   let code = r#"
 distance = 1
-path_sampler = build_path(path {
-  move(0, 0)
-  line(distance, 0)
-  line(distance, distance)
-})
+path_sampler = path() | move(0, 0) | line(distance, 0) | line(distance, distance)
 "#;
 
   let ctx = EvalCtx::default();
@@ -4099,100 +4095,10 @@ path_sampler = build_path(path {
   assert_eq!(at(1.), crate::Vec2::new(1., 1.));
 }
 
-/// Helper closures defined inside a `path { ... }` block can still call rewritten draw
-/// commands (`move`, `line`, etc.) — the rewriting pass recurses into nested closure bodies.
-#[test]
-fn test_path_block_nested_closure_rewrite() {
-  let code = r#"
-path_sampler = build_path(path {
-  l = |x, y| line(x, y)
-
-  move(0, 0)
-  l(10, 0)
-})
-out = path_sampler(0.5)
-"#;
-
-  let ctx = crate::parse_and_eval_program(code).unwrap();
-  let out = ctx.get_global("out").unwrap();
-  let out = out.as_vec2().unwrap();
-  assert_eq!(*out, crate::Vec2::new(5., 0.));
-}
-
 #[cfg(test)]
 fn path_block_sample(code: &str) -> crate::Vec2 {
   let ctx = crate::parse_and_eval_program(code).unwrap();
   *ctx.get_global("out").unwrap().as_vec2().unwrap()
-}
-
-/// The `path { ... }` expansion is hygienic: bindings inside the block neither break it nor get
-/// hijacked by draw-command rewriting.
-#[test]
-fn test_path_block_hygiene() {
-  // the expansion calls `flatten`/`filter` internally; locals of those names must not shadow them
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  flatten = 5
-  filter = 6
-  move(0, 0)
-  line(10, 0)
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-
-  // a local that collides with a draw-command name wins over the rewrite
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  rect = |a| a * 2
-  move(0, 0)
-  line(rect(5), 0)
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-}
-
-/// A draw command guarded by a condition that didn't fire evaluates to nil; those drop out of the
-/// command list rather than reaching `build_path`.
-#[test]
-fn test_path_block_drops_undrawn_commands() {
-  assert_eq!(
-    path_block_sample(
-      r#"
-closed = false
-s = build_path(path {
-  move(0, 0)
-  line(10, 0)
-  if closed { close() }
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-
-  // ...including nils nested inside a mapped subsequence, which `flatten` hoists to the top level
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  move(0, 0)
-  0..3 -> |i| if i == 1 { line(10, 0) }
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
 }
 
 #[cfg(test)]
