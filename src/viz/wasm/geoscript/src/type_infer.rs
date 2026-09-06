@@ -361,7 +361,7 @@ pub enum PipeRhsKind {
 /// True if an abstract arg type is compatible with a parameter's `valid_types` bitflags.  A non-
 /// concrete type (Union / partial application / Unknown) fits any param when `require_concrete` is
 /// false (wildcard), but fits none when true (we can't prove a match).
-fn arg_ty_fits(valid_types: u16, ty: &AbstractType, require_concrete: bool) -> bool {
+fn arg_ty_fits(valid_types: u32, ty: &AbstractType, require_concrete: bool) -> bool {
   match ty.as_single_arg_type() {
     Some(c) => valid_types & c.as_bitflags() != 0,
     None => !require_concrete,
@@ -859,6 +859,7 @@ fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> A
               resolve_paf_call(&paf, &piped, &kwarg_types).into_abstract_type()
             }
             Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
+            Some(AbstractType::Concrete(ArgType::Path)) => AbstractType::Concrete(ArgType::Vec2),
             _ => AbstractType::Unknown,
           }
         } else {
@@ -915,6 +916,7 @@ fn infer_call_expr(ctx: &EvalCtx, env: &mut TypeEnv, call: &FunctionCall) -> Abs
             resolve_paf_call(&paf, &arg_types, &kwarg_types).into_abstract_type()
           }
           Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
+          Some(AbstractType::Concrete(ArgType::Path)) => AbstractType::Concrete(ArgType::Vec2),
           _ => AbstractType::Unknown,
         }
       } else {

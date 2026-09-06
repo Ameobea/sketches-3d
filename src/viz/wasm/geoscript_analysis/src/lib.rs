@@ -1,6 +1,5 @@
 use fxhash::FxHashSet;
 use geoscript::{
-  ast::PATH_BLOCK_REWRITE_MAP,
   builtins::{
     fn_defs::{fn_sigs, FnDef},
     FUNCTION_ALIASES,
@@ -150,19 +149,6 @@ pub(crate) fn parse_lenient(
     }
   }
   Some(program)
-}
-
-/// Maps a draw-command name to the builtin it expands to when the cursor is inside a
-/// `path { ... }` block; otherwise passes the name through.
-pub(crate) fn resolve_draw_command(name: &str, in_path_block: bool) -> &str {
-  if !in_path_block {
-    return name;
-  }
-  PATH_BLOCK_REWRITE_MAP
-    .iter()
-    .find(|(from, _)| *from == name)
-    .map(|(_, builtin)| *builtin)
-    .unwrap_or(name)
 }
 
 /// The main analysis context.  Created once per editor session and reused across analysis
@@ -482,12 +468,12 @@ mod tests {
 
   #[test]
   fn test_pipe_into_partial_overload_with_unknown_args_no_error() {
-    // `path_trans` has a 2-arg `(vec2, path)` overload and a 3-arg `(x, y, path)` overload.  With
+    // `translate` has a 2-arg `(vec2, path)` overload and a 3-arg `(x, y, path)` overload.  With
     // untyped (Unknown) coords the shorter overload would wildcard-bind and wrongly classify the
     // rhs as fully applied; but the pipe appends the path, so it resolves to the 3-arg overload as
     // a partial application — no false `bit_or` error.
-    let src = "f = |spine| {\n  p = spine(0)\n  build_path(path { move(0, 0) line(1, 1) }) | \
-               path_trans(p.x, p.y)\n}";
+    let src =
+      "f = |spine| {\n  p = spine(0)\n  path() | move(0, 0) | line(1, 1) | translate(p.x, p.y)\n}";
     let result = analyze(src);
     assert!(
       result.diagnostics.is_empty(),
@@ -1480,95 +1466,44 @@ my_fn = |x: int|: int {
     );
   }
 
-  const PATH_BLOCK_SRC: &str = "p = path {\n  move(0, 0)\n  bezier(1, 1, 2, 2, 3, 3)\n}\n";
+  const PEN_SRC: &str = "p = path() | move(0, 0) | line(1, 1)\nq = 1\n";
 
   #[test]
-  fn test_path_block_internals_are_not_user_visible() {
+  fn test_pen_ops_are_ordinary_builtins() {
     let ctx = AnalysisCtx::new();
-
-    let leaked: Vec<String> = ctx
-      .completions(PATH_BLOCK_SRC, 4, 1, false, "")
+    let labels: Vec<String> = ctx
+      .completions(PEN_SRC, 2, 1, false, "")
       .into_iter()
       .map(|c| c.label)
-      .filter(|l| l.contains("__geoscript_internal__"))
       .collect();
-    assert!(
-      leaked.is_empty(),
-      "internal names in completions: {leaked:?}"
-    );
+    for name in ["path", "move", "line", "circle", "rect", "close", "reverse"] {
+      assert!(labels.contains(&name.to_string()), "`{name}` missing");
+    }
+    assert_eq!(labels.iter().filter(|l| *l == "reverse").count(), 1);
 
-    // the `path` keyword carries the expansion's loc; nothing should hover there
-    assert!(
-      ctx.hover(PATH_BLOCK_SRC, 1, 5, false, "").is_none(),
-      "expected no hover on the `path` keyword"
-    );
-
-    // the block still infers as a sequence
     let hover = ctx
-      .hover(PATH_BLOCK_SRC, 1, 1, false, "")
-      .expect("hover for `p`");
-    assert!(hover.content.contains("seq"), "got: {}", hover.content);
-  }
-
-  #[test]
-  fn test_hover_range_inside_path_block_matches_written_name() {
-    let ctx = AnalysisCtx::new();
-
-    // `bezier` is rewritten to `path_cubic_bezier`; the range must still cover only what
-    // was written, and the args must not resolve to the draw command.
-    let hover = ctx
-      .hover(PATH_BLOCK_SRC, 3, 3, false, "")
-      .expect("hover for `bezier`");
+      .hover(PEN_SRC, 1, 14, false, "")
+      .expect("hover for `move`");
     assert_eq!(
       hover.builtin.as_ref().map(|d| d.name.as_str()),
-      Some("path_cubic_bezier"),
+      Some("move"),
       "got: {hover:?}"
     );
-    assert_eq!((hover.start_col, hover.end_col), (3, 9), "got: {hover:?}");
-    assert!(
-      ctx.hover(PATH_BLOCK_SRC, 3, 10, false, "").is_none(),
-      "expected no hover inside the arg list"
-    );
+    assert_eq!((hover.start_col, hover.end_col), (14, 18), "got: {hover:?}");
+    let hover = ctx.hover(PEN_SRC, 1, 1, false, "").expect("hover for `p`");
+    assert!(hover.content.contains("path"), "got: {}", hover.content);
   }
 
   #[test]
-  fn test_draw_commands_complete_only_inside_path_blocks() {
+  fn test_kwarg_help_for_pen_ops() {
     let ctx = AnalysisCtx::new();
-    let src = "p = path {\n  move(0, 0)\n}\nq = 1\n";
-    let labels = |line, col| -> Vec<String> {
-      ctx
-        .completions(src, line, col, false, "")
-        .into_iter()
-        .map(|c| c.label)
-        .collect()
-    };
-
-    let inside = labels(2, 3);
-    for name in ["move", "line", "bezier", "arc", "close", "rect"] {
-      assert!(
-        inside.contains(&name.to_string()),
-        "`{name}` missing inside a path block"
-      );
-    }
-    // `reverse` means `path_reverse` here, so the seq builtin mustn't also be offered
-    assert_eq!(inside.iter().filter(|l| *l == "reverse").count(), 1);
-
-    let outside = labels(4, 1);
-    assert!(!outside.contains(&"move".to_string()));
-    assert!(outside.contains(&"reverse".to_string()));
-  }
-
-  #[test]
-  fn test_kwarg_help_resolves_draw_commands() {
-    let ctx = AnalysisCtx::new();
-    // `rx` is a kwarg of `path_arc`, reachable only by resolving `arc` through the rewrite
-    let src = "p = path {\n  arc(rx=1, ry=2, to=vec2(1, 1))\n}\n";
-    let hover = ctx.hover(src, 2, 7, false, "").expect("hover for `rx`");
+    let src = "p = path() | arc(rx=1, ry=2, to=vec2(1, 1))\n";
+    let hover = ctx.hover(src, 1, 18, false, "").expect("hover for `rx`");
     assert!(hover.content.contains("rx"), "got: {}", hover.content);
     assert!(ctx
-      .completions(src, 2, 7, false, "")
+      .completions(src, 1, 18, false, "")
       .iter()
-      .any(|c| c.label == "sweep_flag="));
+      .any(|c| c.label == "sweep="));
   }
 
   #[test]
@@ -1615,25 +1550,15 @@ my_fn = |x: int|: int {
   }
 
   #[test]
-  fn test_path_block_detection_ignores_comments_and_strings() {
+  fn test_call_detection_ignores_comments_and_strings() {
     let ctx = AnalysisCtx::new();
 
-    // a `}` inside a comment must not close the block early
-    let commented = "p = path {\n  // close it }\n  arc(rx=1, ry=2, to=vec2(1,1))\n}\n";
+    // a `}` inside a comment must not close the enclosing block early
+    let commented = "p = {\n  // close it }\n  arc(rx=1, ry=2, to=vec2(1,1), path())\n}\n";
     let hover = ctx
       .hover(commented, 3, 7, false, "")
-      .expect("kwarg hover inside a path block containing a commented brace");
+      .expect("kwarg hover inside a block containing a commented brace");
     assert!(hover.content.contains("rx"), "got: {}", hover.content);
-
-    // ...and a `path {` inside a string must not open one
-    let in_string = "msg = \"path {\"\nq = 1\n";
-    let labels: Vec<String> = ctx
-      .completions(in_string, 2, 5, false, "")
-      .into_iter()
-      .map(|c| c.label)
-      .collect();
-    assert!(!labels.contains(&"move".to_string()));
-    assert!(labels.contains(&"reverse".to_string()));
   }
 
   #[test]

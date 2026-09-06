@@ -3,7 +3,7 @@ use geoscript::{builtins::fn_defs::FnDef, ty::AbstractType};
 use crate::{
   analysis::Analysis,
   format::{builtin_docs, format_arg_type, format_partial_application},
-  parse_lenient, resolve_draw_command, source_scan, AnalysisCtx, HoverInfo, SymbolKind,
+  parse_lenient, source_scan, AnalysisCtx, HoverInfo, SymbolKind,
 };
 
 fn plain(content: String, line: u32, col: u32, end_col: u32) -> HoverInfo {
@@ -168,8 +168,7 @@ fn hover_kwarg(
   if shadowed {
     return None;
   }
-  let (_canonical, fn_def) =
-    ctx.lookup_builtin(resolve_draw_command(&call.fn_name, call.in_path_block))?;
+  let (_canonical, fn_def) = ctx.lookup_builtin(&call.fn_name)?;
   let arg = fn_def
     .signatures
     .iter()

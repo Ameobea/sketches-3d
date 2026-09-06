@@ -4329,6 +4329,7 @@ fn exec_op(
 mod sk {
   #![allow(clippy::missing_inline_in_public_items)]
   use super::kern;
+  use crate::dmath;
 
   #[inline(always)]
   pub fn neg(x: f32) -> f32 {
@@ -4344,35 +4345,35 @@ mod sk {
   }
   #[inline(always)]
   pub fn sin(x: f32) -> f32 {
-    x.sin()
+    dmath::sin(x)
   }
   #[inline(always)]
   pub fn cos(x: f32) -> f32 {
-    x.cos()
+    dmath::cos(x)
   }
   #[inline(always)]
   pub fn tan(x: f32) -> f32 {
-    x.tan()
+    dmath::tan(x)
   }
   #[inline(always)]
   pub fn asin(x: f32) -> f32 {
-    x.asin()
+    dmath::asin(x)
   }
   #[inline(always)]
   pub fn acos(x: f32) -> f32 {
-    x.acos()
+    dmath::acos(x)
   }
   #[inline(always)]
   pub fn atan(x: f32) -> f32 {
-    x.atan()
+    dmath::atan(x)
   }
   #[inline(always)]
   pub fn exp(x: f32) -> f32 {
-    x.exp()
+    dmath::exp(x)
   }
   #[inline(always)]
   pub fn log2(x: f32) -> f32 {
-    x.log2()
+    dmath::log2(x)
   }
   #[inline(always)]
   pub fn floor(x: f32) -> f32 {
@@ -4396,7 +4397,7 @@ mod sk {
   }
   #[inline(always)]
   pub fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+    dmath::sigmoid(x)
   }
   #[inline(always)]
   pub fn not(x: f32) -> f32 {
@@ -4424,11 +4425,11 @@ mod sk {
   }
   #[inline(always)]
   pub fn pow(x: f32, y: f32) -> f32 {
-    x.powf(y)
+    dmath::powf(x, y)
   }
   #[inline(always)]
   pub fn atan2(y: f32, x: f32) -> f32 {
-    y.atan2(x)
+    dmath::atan2(y, x)
   }
   #[inline(always)]
   pub fn min(x: f32, y: f32) -> f32 {

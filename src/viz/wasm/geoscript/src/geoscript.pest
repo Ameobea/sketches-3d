@@ -29,10 +29,9 @@ chained_postfix              = { field_access | static_field_access }
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 parenthized_term             = _{ "(" ~ expr ~ ")" }
-term                         = { path_block | map_literal | array_literal | closure | func_call | range_inclusive_literal_expr
+term                         = { map_literal | array_literal | closure | func_call | range_inclusive_literal_expr
                                  | range_literal_expr | block_expr | if_expression | literal | string_literal | global_ident
                                  | ident | parenthized_term }
-path_block                   = { "path" ~ "{" ~ statement* ~ "}" }
 
 static_field_access          = { "." ~ ident }
 field_access                 = { "[" ~ expr ~ ("," ~ expr)* ~ "]" }

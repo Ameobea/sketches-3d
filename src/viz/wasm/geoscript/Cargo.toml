@@ -10,7 +10,6 @@ pest_derive = "2.8"
 fxhash = "0.2"
 phf = { version = "0.14", features = ["macros"] }
 phf_shared = { version = "0.14" }
-wasm-bindgen = "=0.2.92"
 nalgebra = "0.34"
 log = "0.4"
 rand = { version = "0.10", default-features = false }
@@ -35,10 +34,14 @@ lyon_tessellation = "1.0"
 lyon_extra = "1.0"
 im-rc = { version = "15.1", features = ["pool"] }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.92"
+
 # Native builds call the UV solvers directly; on wasm they live in a separate
 # lazily-loaded module reached via FFI, keeping faer/gemm out of this blob.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uv_solvers = { path = "../uv_solvers" }
+libm = "0.2"
 # Native `load_image` decodes data URIs directly (browser decode on wasm)
 png = "0.17"
 base64 = "0.22"

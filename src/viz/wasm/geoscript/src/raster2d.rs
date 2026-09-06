@@ -203,8 +203,8 @@ impl Segment {
   }
 
   /// Distance from `p` and the clamped projection parameter along `a→b`.
-  #[inline]
-  pub fn nearest(&self, p: Vec2) -> (f32, f32) {
+  #[cfg(test)]
+  fn nearest(&self, p: Vec2) -> (f32, f32) {
     let ab = self.b - self.a;
     let len2 = ab.norm_squared();
     let s = if len2 > 0. {

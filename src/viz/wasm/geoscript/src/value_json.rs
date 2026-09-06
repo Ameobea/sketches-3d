@@ -181,6 +181,37 @@ fn write_value(out: &mut String, ctx: &EvalCtx, val: &Value, sample_count: usize
       out.push_str(&SerJson::serialize_json(light.as_ref()));
       out.push('}');
     }
+    Value::Path(p) => {
+      out.push_str("{\"t\":\"path\"");
+      if sample_count > 0 && depth < MAX_DEPTH {
+        out.push_str(",\"samples\":[");
+        for i in 0..sample_count {
+          if i > 0 {
+            out.push(',');
+          }
+          let t = if sample_count == 1 {
+            0.
+          } else {
+            i as f32 / (sample_count as f32 - 1.)
+          };
+          out.push_str("{\"t_in\":");
+          write_f32(out, t);
+          match p.eval_at(t, ctx) {
+            Ok(v) => {
+              out.push_str(",\"out\":");
+              write_value(out, ctx, &Value::Vec2(v), 0, depth + 1);
+            }
+            Err(e) => {
+              out.push_str(",\"error\":");
+              write_json_string(out, &format!("{e}"));
+            }
+          }
+          out.push('}');
+        }
+        out.push(']');
+      }
+      out.push('}');
+    }
     Value::Callable(c) => {
       out.push_str("{\"t\":\"callable\"");
       if sample_count > 0 && depth < MAX_DEPTH {

@@ -51,24 +51,18 @@ pub(crate) fn collect_vertex_set_multi(a: &[f32], b: &[f32]) -> VertexSet {
   set
 }
 
-/// Detects "critical t values" along a provided path.  Critical t values correspond to
-/// sharp features on the path which should be preserved exactly during later sampling.
-///
-/// A point is considered critical if any of the following apply:
-///  - The angle between its adjacent segments exceeds `config.angle_threshold`
-///  - The angle exceeds a small minimum and one of the adjacent segments is long relative to the
-///    total path length
-///  - The vertex wasn't present in the original geometry meaning that it was created by the boolean
-///    operation and should be preserved explicitly
-pub(crate) fn detect_critical_points(
-  paths: &[Vec<Vec2>],
+/// Per-vertex critical flags for one closed polyline.  A vertex is critical when its turn angle
+/// exceeds `config.angle_threshold`, when it turns at all and borders a segment that's long
+/// relative to the path, or when it's absent from `pre_op_vertices` (created by a boolean op).
+pub(crate) fn detect_critical_vertices(
+  path: &[Vec2],
   config: &CriticalPointConfig,
   pre_op_vertices: Option<&VertexSet>,
-) -> Vec<f32> {
+) -> Vec<bool> {
+  let n = path.len();
   let mut t_values: Vec<f32> = Vec::new();
-
-  if paths.is_empty() {
-    return t_values;
+  if n < 3 {
+    return vec![false; n];
   }
 
   let angle_threshold = config.angle_threshold.max(0.0);
@@ -84,12 +78,8 @@ pub(crate) fn detect_critical_points(
   /// distance of an already-flagged point are suppressed to avoid near-duplicates.
   const MIN_T_GAP_FOR_ANGLE_CRITICAL: f32 = 0.005;
 
-  for path in paths {
-    let n = path.len();
-    if n < 3 {
-      continue;
-    }
-
+  let mut is_critical = vec![false; n];
+  {
     let mut segment_lengths = Vec::with_capacity(n);
     let mut total_length = 0.0f32;
     for i in 0..n {
@@ -100,7 +90,7 @@ pub(crate) fn detect_critical_points(
     }
 
     if total_length < 1e-10 {
-      continue;
+      return vec![false; n];
     }
 
     let mut cumulative = Vec::with_capacity(n);
@@ -112,7 +102,6 @@ pub(crate) fn detect_critical_points(
     let long_threshold = seg_fraction * total_length;
 
     // Track which vertices are already flagged as critical (by index).
-    let mut is_critical = vec![false; n];
 
     // ── Pass 1: segment-length critical points ──────────────────────────
     // Greedily merge consecutive collinear segments (angle between them
@@ -283,10 +272,8 @@ pub(crate) fn detect_critical_points(
       }
     }
   }
-
-  t_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-  t_values.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-  t_values
+  let _ = &t_values;
+  is_critical
 }
 
 #[cfg(test)]
@@ -342,19 +329,11 @@ mod tests {
 
     let path = vec![v0, v1, v2, v3];
     let config = CriticalPointConfig::default();
-    let critical = detect_critical_points(&[path], &config, None);
-
-    // Compute the expected t-value for v2.
-    let seg_v0_v1 = (v1 - v0).norm();
-    let seg_v1_v2 = (v2 - v1).norm();
-    let total: f32 = seg_v0_v1 + seg_v1_v2 + (v3 - v2).norm() + (v0 - v3).norm();
-    let t_v2 = (seg_v0_v1 + seg_v1_v2) / total;
-
+    let critical = detect_critical_vertices(&path, &config, None);
     assert!(
-      critical.iter().any(|&t| (t - t_v2).abs() < 1e-4),
-      "arc→straight transition vertex (angle={angle_at_v2:.4} rad, t≈{t_v2:.4}) must be detected \
-       as critical because its outgoing segment is long, but was not found in \
-       critical_t_values={critical:?}"
+      critical[2],
+      "arc→straight transition vertex (angle={angle_at_v2:.4} rad) must be critical because its \
+       outgoing segment is long; flags={critical:?}"
     );
   }
 }

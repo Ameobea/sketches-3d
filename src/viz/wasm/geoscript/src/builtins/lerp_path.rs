@@ -2,78 +2,12 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 
-use nalgebra::Matrix3;
-
 use crate::{
-  builtins::trace_path::{as_path_sampler, normalize_guides, PathSampler},
+  builtins::trace_path::expect_path,
+  path::{lazy::LerpPath, Path},
   seq::EagerSeq,
-  ArgRef, Callable, ErrorStack, EvalCtx, Sym, Value, Vec2, EMPTY_KWARGS,
+  ArgRef, ErrorStack, EvalCtx, Sym, Value,
 };
-
-pub(crate) struct LerpPathCallable {
-  path_a: Rc<Callable>,
-  path_b: Rc<Callable>,
-  mix: f32,
-  merged_critical_points: Vec<f32>,
-  transform: Matrix3<f32>,
-}
-
-impl PathSampler for LerpPathCallable {
-  fn critical_t_values(&self) -> Vec<f32> {
-    self.merged_critical_points.clone()
-  }
-
-  fn transform(&self) -> &Matrix3<f32> {
-    &self.transform
-  }
-
-  fn with_transform(&self, t: Matrix3<f32>) -> Box<dyn crate::DynamicCallable> {
-    Box::new(LerpPathCallable {
-      path_a: Rc::clone(&self.path_a),
-      path_b: Rc::clone(&self.path_b),
-      mix: self.mix,
-      merged_critical_points: self.merged_critical_points.clone(),
-      transform: t * self.transform,
-    })
-  }
-
-  fn eval_at_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
-    if self.mix <= 0.0 {
-      let val_a = ctx
-        .invoke_callable(&self.path_a, &[Value::Float(t)], EMPTY_KWARGS)
-        .map_err(|e| e.wrap("Error invoking path_a in lerp_paths"))?;
-      return val_a
-        .as_vec2()
-        .copied()
-        .ok_or_else(|| ErrorStack::new("lerp_paths: path_a did not return a vec2"));
-    }
-    if self.mix >= 1.0 {
-      let val_b = ctx
-        .invoke_callable(&self.path_b, &[Value::Float(t)], EMPTY_KWARGS)
-        .map_err(|e| e.wrap("Error invoking path_b in lerp_paths"))?;
-      return val_b
-        .as_vec2()
-        .copied()
-        .ok_or_else(|| ErrorStack::new("lerp_paths: path_b did not return a vec2"));
-    }
-
-    let val_a = ctx
-      .invoke_callable(&self.path_a, &[Value::Float(t)], EMPTY_KWARGS)
-      .map_err(|e| e.wrap("Error invoking path_a in lerp_paths"))?;
-    let val_b = ctx
-      .invoke_callable(&self.path_b, &[Value::Float(t)], EMPTY_KWARGS)
-      .map_err(|e| e.wrap("Error invoking path_b in lerp_paths"))?;
-
-    let a = *val_a
-      .as_vec2()
-      .ok_or_else(|| ErrorStack::new("lerp_paths: path_a did not return a vec2"))?;
-    let b = *val_b
-      .as_vec2()
-      .ok_or_else(|| ErrorStack::new("lerp_paths: path_b did not return a vec2"))?;
-
-    Ok(a + (b - a) * self.mix)
-  }
-}
 
 pub fn lerp_paths_impl(
   _ctx: &EvalCtx,
@@ -82,14 +16,8 @@ pub fn lerp_paths_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_a = arg_refs[0]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("lerp_paths: `path_a` must be a callable"))?;
-  let path_b = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("lerp_paths: `path_b` must be a callable"))?;
+  let path_a = expect_path(arg_refs[0].resolve(args, kwargs), "lerp_paths")?;
+  let path_b = expect_path(arg_refs[1].resolve(args, kwargs), "lerp_paths")?;
   let mix = arg_refs[2]
     .resolve(args, kwargs)
     .as_float()
@@ -101,37 +29,12 @@ pub fn lerp_paths_impl(
     .ok_or_else(|| ErrorStack::new("lerp_paths: `sample_count` must be an integer"))?
     as usize;
 
-  let cps_a = as_path_sampler(&path_a).map(|s| s.critical_t_values());
-  let cps_b = as_path_sampler(&path_b).map(|s| s.critical_t_values());
-
-  let merged_critical_points = match (cps_a, cps_b) {
-    (Some(mut a), Some(mut b)) => {
-      a.append(&mut b);
-      normalize_guides(&a)
-    }
-    (Some(a), None) => normalize_guides(&a),
-    (None, Some(b)) => normalize_guides(&b),
-    (None, None) => {
-      let count = sample_count + 1;
-      if count <= 1 {
-        vec![0., 1.]
-      } else {
-        let denom = (count - 1) as f32;
-        (0..count).map(|i| i as f32 / denom).collect()
-      }
-    }
-  };
-
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "lerp_paths".to_owned(),
-    inner: Box::new(LerpPathCallable {
-      path_a: Rc::clone(&path_a),
-      path_b: Rc::clone(&path_b),
-      mix,
-      merged_critical_points,
-      transform: Matrix3::identity(),
-    }),
-  })))
+  Ok(Value::Path(Rc::new(Path::lazy(Rc::new(LerpPath::new(
+    Rc::clone(path_a),
+    Rc::clone(path_b),
+    mix,
+    sample_count,
+  ))))))
 }
 
 pub fn critical_points_impl(
@@ -141,20 +44,12 @@ pub fn critical_points_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path = arg_refs[0]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("critical_points: `path` must be a callable"))?;
-
-  let sampler = as_path_sampler(&path).ok_or_else(|| {
-    ErrorStack::new(
-      "critical_points: argument must be a path sampler (e.g. from trace_path, offset_path, \
-       lerp_paths). Generic callables do not have topology information.",
-    )
-  })?;
-
-  let points = sampler.critical_t_values();
-  let values: Vec<Value> = points.into_iter().map(Value::Float).collect();
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "critical_points")?;
+  let values: Vec<Value> = path
+    .critical_t_values()
+    .into_iter()
+    .map(Value::Float)
+    .collect();
   Ok(Value::Sequence(Rc::new(EagerSeq {
     inner: Rc::new(values),
   })))

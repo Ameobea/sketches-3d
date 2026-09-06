@@ -6,7 +6,7 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use super::texture::MAX_TEXTURE_DIM;
-use super::trace_path::{as_path_sampler, as_path_tracer, sample_path_subpaths, FillRule};
+use super::trace_path::{expect_path, sample_path_subpaths, FillRule};
 use crate::builtins::resolve_tile_period;
 use crate::raster2d::{replicate_tiled, EdgeList, Segment, SegmentField, MAX_TILED_POINTS};
 use crate::{
@@ -69,12 +69,7 @@ impl RasterInput {
     ix: ArgIx,
     fn_name: &str,
   ) -> Result<Self, ErrorStack> {
-    let path_val = arg_refs[0].resolve(args, kwargs);
-    let cb = path_val.as_callable().ok_or_else(|| {
-      ErrorStack::new(format!(
-        "Invalid `path` argument for `{fn_name}`; expected Callable, found: {path_val:?}"
-      ))
-    })?;
+    let path = expect_path(arg_refs[0].resolve(args, kwargs), fn_name)?;
     let w = arg_refs[1].resolve(args, kwargs).as_int().unwrap();
     let h = arg_refs[2].resolve(args, kwargs).as_int().unwrap();
     if w < 1 || h < 1 || w > MAX_TEXTURE_DIM || h > MAX_TEXTURE_DIM {
@@ -99,45 +94,21 @@ impl RasterInput {
     } else {
       (angle.to_radians(), f32::INFINITY)
     };
-    let sampler = as_path_sampler(cb);
     let fill_rule = match ix.fill_rule.map(|i| arg_refs[i].resolve(args, kwargs)) {
       Some(v) if !matches!(v, Value::Nil) => FillRule::parse(v, fn_name)?,
-      _ => sampler
-        .and_then(|s| s.fill_rule())
-        .unwrap_or(FillRule::NonZero),
+      _ => path.fill_rule.unwrap_or(FillRule::NonZero),
     };
 
-    let (subpaths, t_spans): (Vec<_>, Vec<_>) =
-      match sampler.and_then(|s| s.sample_subpaths_flat(flat_angle, max_sagitta)) {
-        Some(raw) => {
-          let mut spans = sampler
-            .unwrap()
-            .subpath_t_spans()
-            .filter(|s| s.len() == raw.len())
-            .unwrap_or_else(|| length_spans(&raw));
-          // `sample_subpaths` keeps subpath order under `reverse`; `subpath_t_spans` flips it.
-          if as_path_tracer(cb).is_some_and(|t| t.reverse) {
-            spans.reverse();
-          }
-          raw
-            .into_iter()
-            .zip(spans)
-            .filter(|((pts, _), _)| pts.len() >= 2)
-            .unzip()
-        }
-        None => {
-          let polys = sample_path_subpaths(
-            ctx,
-            cb,
-            angle.to_radians(),
-            BLACK_BOX_SAMPLES,
-            None,
-            fn_name,
-          )?;
-          let spans = length_spans(&polys);
-          (polys, spans)
-        }
-      };
+    let raw = path.sample_subpaths_flat(flat_angle, max_sagitta, BLACK_BOX_SAMPLES, ctx)?;
+    let spans = path
+      .subpath_t_spans()
+      .filter(|s| s.len() == raw.len())
+      .unwrap_or_else(|| length_spans(&raw));
+    let (subpaths, t_spans): (Vec<_>, Vec<_>) = raw
+      .into_iter()
+      .zip(spans)
+      .filter(|((pts, _), _)| pts.len() >= 2)
+      .unzip();
     if subpaths.is_empty() {
       return Err(ErrorStack::new(format!(
         "`{fn_name}`: path contains no drawable segments"
@@ -325,24 +296,18 @@ pub(crate) fn fit_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "Invalid `path` argument for `fit_path`; expected Callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "fit_path")?;
   let pad = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
   if !(0. ..0.5).contains(&pad) {
     return Err(ErrorStack::new(format!(
       "`fit_path` pad must be in [0, 0.5); found {pad}"
     )));
   }
-  let analytic = as_path_tracer(cb).and_then(|t| t.analytic_aabb().ok().flatten());
-  let (mins, maxs) = match analytic {
+  let (mins, maxs) = match path.concrete_aabb() {
     Some(b) => b,
     None => {
       let angle = ctx.resolve_curve_angle_degrees(&Value::Nil).to_radians();
-      let polys = sample_path_subpaths(ctx, cb, angle, BLACK_BOX_SAMPLES, None, "fit_path")?;
+      let polys = sample_path_subpaths(ctx, path, angle, BLACK_BOX_SAMPLES, None)?;
       let pts = polys.iter().flat_map(|(pts, _)| pts.iter());
       let mut lo = Vec2::repeat(f32::INFINITY);
       let mut hi = Vec2::repeat(f32::NEG_INFINITY);
@@ -363,7 +328,7 @@ pub(crate) fn fit_path_impl(
   let s = (1. - 2. * pad) / extent;
   let off = (Vec2::repeat(1. - 2. * pad) - size * s) * 0.5 + Vec2::repeat(pad) - mins * s;
   let m = nalgebra::Matrix3::new(s, 0., off.x, 0., s, off.y, 0., 0., 1.);
-  super::apply_path_transform(cb, m)
+  Ok(super::apply_path_transform(path, m))
 }
 
 #[cfg(test)]
@@ -387,19 +352,19 @@ mod tests {
   fn coverage_area_fill_rules_and_implicit_close() {
     let ctx = parse_and_eval_program(
       r#"
-sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) })
+sq = rect(vec2(0.5, 0.5), 0.5)
 sq_cov = rasterize_path(sq, width=16, height=16)
-circ = build_path(path { circle(vec2(0.5, 0.5), 0.25) })
+circ = circle(vec2(0.5, 0.5), 0.25)
 circ_cov = rasterize_path(circ, width=128, height=128)
-ring = build_path(path { rect(vec2(0.5, 0.5), 0.5) circle(vec2(0.5, 0.5), 0.125) })
+ring = path([rect(vec2(0.5, 0.5), 0.5), circle(vec2(0.5, 0.5), 0.125)])
 ring_nz = rasterize_path(ring, width=16, height=16)
 ring_eo = rasterize_path(ring, width=16, height=16, fill_rule="evenodd")
-ring_hole = build_path(path { rect(vec2(0.5, 0.5), 0.5) circle(vec2(0.5, 0.5), 0.125) | reverse })
+ring_hole = path([rect(vec2(0.5, 0.5), 0.5), circle(vec2(0.5, 0.5), 0.125) | reverse])
 ring_hole_nz = rasterize_path(ring_hole, width=16, height=16)
-tri = build_path(path { move(0, 0) line(1, 0) line(0, 1) })
+tri = path() | move(0, 0) | line(1, 0) | line(0, 1)
 tri_cov = rasterize_path(tri, width=16, height=16)
 tri_sd = path_sdf(tri, width=16, height=16)
-tiny = build_path(path { circle(vec2(0.5, 0.5), 0.03) })
+tiny = circle(vec2(0.5, 0.5), 0.03)
 tiny_cov = rasterize_path(tiny, width=256, height=256)
 "#,
     )
@@ -448,7 +413,7 @@ tiny_cov = rasterize_path(tiny, width=256, height=256)
   fn sdf_matches_analytic_circle_and_offset_path_threshold() {
     let ctx = parse_and_eval_program(
       r#"
-circ = build_path(path { circle(vec2(0.5, 0.5), 0.25) })
+circ = circle(vec2(0.5, 0.5), 0.25)
 sd = path_sdf(circ, width=64, height=32)
 "#,
     )
@@ -471,12 +436,12 @@ sd = path_sdf(circ, width=64, height=32)
   fn uv_along_and_across_with_reverse_and_inward_flip() {
     let ctx = parse_and_eval_program(
       r#"
-line = build_path(path { move(0, 0.5) line(1, 0.5) })
-uv = path_uv(line, width=32, height=16)
-uv_rev = path_uv(build_path(path { move(0, 0.5) line(1, 0.5) }, reverse=true), width=32, height=16)
-cw_sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) | reverse })
+seg = path() | move(0, 0.5) | line(1, 0.5)
+uv = path_uv(seg, width=32, height=16)
+uv_rev = path_uv(path() | move(0, 0.5) | line(1, 0.5) | reverse, width=32, height=16)
+cw_sq = rect(vec2(0.5, 0.5), 0.5) | reverse
 uv_cw = path_uv(cw_sq, width=16, height=16)
-ccw_sq = build_path(path { rect(vec2(0.5, 0.5), 0.5) })
+ccw_sq = rect(vec2(0.5, 0.5), 0.5)
 uv_ccw = path_uv(ccw_sq, width=16, height=16)
 "#,
     )
@@ -505,7 +470,7 @@ uv_ccw = path_uv(ccw_sq, width=16, height=16)
   fn local_t_restarts_on_every_subpath() {
     let ctx = parse_and_eval_program(
       r#"
-rings = build_path(path { circle(vec2(0.5, 0.5), 0.4) circle(vec2(0.5, 0.5), 0.2) })
+rings = path([circle(vec2(0.5, 0.5), 0.4), circle(vec2(0.5, 0.5), 0.2)])
 uv = path_uv(rings, width=64, height=64)
 uv_local = path_uv(rings, width=64, height=64, local_t=true)
 "#,
@@ -544,7 +509,7 @@ uv_local = path_uv(rings, width=64, height=64, local_t=true)
   fn tiling_wraps_coverage_and_distance() {
     let ctx = parse_and_eval_program(
       r#"
-dot = build_path(path { circle(vec2(0, 0), 0.25) })
+dot = circle(vec2(0, 0), 0.25)
 cov = rasterize_path(dot, width=64, height=64, tileable=true)
 cov_half = rasterize_path(dot, width=64, height=64, tileable=0.5)
 sd = path_sdf(dot, width=64, height=64, tileable=true)
@@ -587,7 +552,7 @@ uv = path_uv(dot, width=64, height=64, tileable=true)
   fn fit_path_scales_aabb_into_padded_unit_square() {
     let ctx = parse_and_eval_program(
       r#"
-wide = build_path(path { rect(vec2(3, 7), vec2(6, 2)) })
+wide = rect(vec2(3, 7), vec2(6, 2))
 fitted = fit_path(wide, pad=0.1)
 bb = path_aabb(fitted)
 lo = bb[0]

@@ -1,3 +1,4 @@
+use crate::dmath;
 use crate::ValueMap;
 use mesh::triangle_intersection::TriTriIntersectionType;
 use paste::paste;
@@ -22,10 +23,7 @@ use parry3d::query::Ray;
 use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
-use crate::builtins::trace_path::{
-  as_path_sampler, build_segment_dicts, build_topology_samples, sample_path_subpaths, trim_tracer,
-  PathSubpath, PathTracerCallable, SubpathsSeq, TrimmedPathSampler,
-};
+use crate::builtins::trace_path::{build_segment_dicts, expect_path, sample_path_subpaths};
 use crate::materials::Material;
 use crate::mesh_ops::compute_uvs::{compute_uvs, UvParams, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -39,6 +37,12 @@ use crate::mesh_ops::voxels::sample_voxels;
 use crate::noise::{
   curl_noise_2d, curl_noise_3d, fbm_1d, fbm_2d, fbm_2d_tileable, ridged_2d, ridged_3d,
   worley_noise_2d, worley_noise_3d, RangeFunction, WorleyReturnType,
+};
+use crate::path::Path;
+use crate::path::{
+  builder::{circle_subpath, polygon_subpath, polyline_subpath, rect_subpath},
+  lazy::ClosurePath,
+  DrawCommand,
 };
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
@@ -125,6 +129,13 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "path_render" => "render_path",
   "path_trim" => "trim_path",
   "path_sub" => "path_difference",
+  "quad" => "quadratic_bezier",
+  "quad_bezier" => "quadratic_bezier",
+  "smooth_quad" => "smooth_quadratic_bezier",
+  "smooth_quad_bezier" => "smooth_quadratic_bezier",
+  "cubic" => "cubic_bezier",
+  "smooth_cubic" => "smooth_cubic_bezier",
+  "smooth_bezier" => "smooth_cubic_bezier",
   "skewer" => "subdivide_by_line",
   "partition_mesh" => "partition_faces",
   "transform_gizmo" => "gizmo_transform",
@@ -1145,6 +1156,9 @@ pub(crate) fn translate_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= TRANSLATE_PATH_DEF_IX {
+    return path_trans_impl(def_ix - TRANSLATE_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (translation, obj) = match def_ix {
     TRANSLATE_TEX_VEC2_DEF_IX => {
       let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
@@ -1194,6 +1208,9 @@ pub(crate) fn scale_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   // 0/2: x,y,z form, 1/3: single scale form (mesh vs mat4).
+  if def_ix >= SCALE_PATH_DEF_IX {
+    return path_scale_impl(def_ix - SCALE_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (scale, obj) = match def_ix {
     0 | 2 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
@@ -1283,8 +1300,16 @@ const ROT_TEX_DEF_IX: usize = 9;
 /// Trailing `translate` signatures for textures (vec2 / x,y forms); break the even/odd convention.
 const TRANSLATE_TEX_VEC2_DEF_IX: usize = 6;
 const TRANSLATE_TEX_XY_DEF_IX: usize = 7;
+/// Path overloads sit after every mesh/texture signature: `translate` (vec2 / x,y), `rot`
+/// (angle), `scale` (num|vec2 / x,y), `reflect` (axis / axis+offset), `reflect_x`/`reflect_y`
+/// (bare / offset).
+const TRANSLATE_PATH_DEF_IX: usize = 8;
+const ROT_PATH_DEF_IX: usize = 10;
+const SCALE_PATH_DEF_IX: usize = 5;
+const REFLECT_PATH_DEF_IX: usize = 2;
+const REFLECT_AXIS_PATH_DEF_IX: usize = 2;
 
-/// Counter-clockwise, matching `path_rot` — the opposite winding from the 3D Tait-Bryan `rot`.
+/// Counter-clockwise, the opposite winding from the 3D Tait-Bryan `rot`.
 fn rot_vec2(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>) -> Value {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
   let p = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
@@ -2539,7 +2564,7 @@ fn fan_fill_impl(
       })))
     }
     1 => {
-      let path_callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
       let closed_override: Option<bool> = match arg_refs[1].resolve(args, kwargs) {
         Value::Bool(b) => Some(*b),
         _ => None,
@@ -2567,19 +2592,7 @@ fn fan_fill_impl(
         }
       };
 
-      let raw = match as_path_sampler(path_callable)
-        .and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count))
-      {
-        Some(v) => v,
-        None => sample_path_subpaths(
-          ctx,
-          path_callable,
-          curve_angle_radians,
-          sample_count.unwrap_or(64),
-          closed_override,
-          "fan_fill",
-        )?,
-      };
+      let raw = path.sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?;
 
       let subpaths: Vec<(Vec<Vec3>, bool)> = raw
         .into_iter()
@@ -2628,16 +2641,7 @@ fn tessellate_path_impl(
           )))
         }
       };
-      let closed_override = match arg_refs[4].resolve(args, kwargs) {
-        Value::Bool(val) => Some(val),
-        Value::Nil => None,
-        other => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `tessellate_path`; expected bool or nil, found: {other:?}"
-          )))
-        }
-      };
-      let fill_rule_override_val = arg_refs[5].resolve(args, kwargs);
+      let fill_rule_override_val = arg_refs[4].resolve(args, kwargs);
       let fill_rule_override: Option<trace_path::FillRule> = match fill_rule_override_val {
         Value::Nil => None,
         val => Some(trace_path::FillRule::parse(val, "tessellate_path")?),
@@ -2650,7 +2654,7 @@ fn tessellate_path_impl(
         Cgal,
       }
 
-      let engine_val = arg_refs[6].resolve(args, kwargs);
+      let engine_val = arg_refs[5].resolve(args, kwargs);
       let requested_engine = match engine_val {
         Value::Nil => TessEngine::Auto,
         Value::String(s) => match s.as_str() {
@@ -2671,7 +2675,7 @@ fn tessellate_path_impl(
         }
       };
 
-      let max_edge_len: Option<f32> = match arg_refs[7].resolve(args, kwargs) {
+      let max_edge_len: Option<f32> = match arg_refs[6].resolve(args, kwargs) {
         Value::Nil => None,
         Value::Int(n) if *n > 0 => Some(*n as f32),
         Value::Float(f) if *f > 0.0 => Some(*f),
@@ -2691,7 +2695,7 @@ fn tessellate_path_impl(
       // corresponds to min angle ≲ arcsin(sqrt(0.125)) ≈ 20.7°.  Higher values can loop
       // indefinitely, so we cap there.
       const MIN_ANGLE_DEGREES_CAP: f32 = 20.7;
-      let min_angle_squared_sine: Option<f32> = match arg_refs[8].resolve(args, kwargs) {
+      let min_angle_squared_sine: Option<f32> = match arg_refs[7].resolve(args, kwargs) {
         Value::Nil => None,
         Value::Int(n) => Some(*n as f32),
         Value::Float(f) => Some(*f),
@@ -2715,7 +2719,7 @@ fn tessellate_path_impl(
       })
       .transpose()?;
 
-      let plane = match arg_refs[9].resolve(args, kwargs) {
+      let plane = match arg_refs[8].resolve(args, kwargs) {
         Value::Nil => crate::mesh_ops::tessellate_polygon::TessPlane::default(),
         Value::String(s) => crate::mesh_ops::tessellate_polygon::TessPlane::parse(s.as_str())
           .ok_or_else(|| {
@@ -2748,12 +2752,6 @@ fn tessellate_path_impl(
         }
       }
 
-      if matches!(closed_override, Some(false)) {
-        return Err(ErrorStack::new(
-          "`tessellate_path` does not support open paths; omit `closed` or set closed=true.",
-        ));
-      }
-
       let curve_angle_radians = if curve_angle_degrees <= 0.0 {
         0.0
       } else {
@@ -2766,9 +2764,9 @@ fn tessellate_path_impl(
         && max_edge_len.is_none()
         && min_angle_squared_sine.is_none()
       {
-        if let Some(cb) = path_val.as_callable() {
-          if let Some(sampler) = as_path_sampler(cb) {
-            let sampler_fr = sampler.fill_rule();
+        if let Some(sampler) = path_val.as_path() {
+          {
+            let sampler_fr = sampler.fill_rule;
             let sampler_lyon_fr = sampler_fr.and_then(|fr| fr.to_lyon_fill_rule().ok());
 
             // A fill rule only forces lyon when CGAL's nesting-based fill can't honor it:
@@ -2783,7 +2781,7 @@ fn tessellate_path_impl(
               || sampler_fr.map(fr_needs_lyon).unwrap_or(false);
 
             if should_use_lyon {
-              if let Some(lyon_path) = sampler.to_lyon_path_for_tessellation() {
+              if let Some(lyon_path) = sampler.to_lyon_path() {
                 let fill_rule = fill_rule_override
                   .and_then(|fr| fr.to_lyon_fill_rule().ok())
                   .or(sampler_lyon_fr)
@@ -2898,47 +2896,16 @@ fn tessellate_path_impl(
         if saw_points {
           push_clean_path(flat_points, "path sequence")?;
         }
-      } else if let Some(cb) = path_val.as_callable() {
-        let sampler = as_path_sampler(cb);
-
+      } else if let Some(path) = path_val.as_path() {
         if fill_rule_override.is_none() {
-          if let Some(s) = sampler {
-            sampler_fill_rule = s.fill_rule();
-          }
+          sampler_fill_rule = path.fill_rule;
         }
-
-        let subpath_data =
-          sampler.and_then(|s| s.sample_subpaths_with_limit(curve_angle_radians, sample_count));
-
-        if let Some(subpath_data) = subpath_data {
-          for (ix, (points, _closed)) in subpath_data.into_iter().enumerate() {
-            push_clean_path(points, &format!("subpath {ix}"))?;
-          }
-        } else {
-          let sample_point = |t: f32| -> Result<Vec2, ErrorStack> {
-            let out = ctx
-              .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
-              .map_err(|err| err.wrap("Error sampling callable passed to `tessellate_path`"))?;
-            let point = out.as_vec2().ok_or_else(|| {
-              ErrorStack::new(format!(
-                "Expected Vec2 from callable passed to `tessellate_path`, found: {out:?}"
-              ))
-            })?;
-            Ok(*point)
-          };
-
-          let p0 = sample_point(0.0)?;
-          let p1 = sample_point(1.0)?;
-          let actual_closed = (p0 - p1).norm() <= 1e-4;
-          let include_end = !actual_closed;
-          let effective_sample_count = sample_count.unwrap_or(64);
-          let t_samples = build_topology_samples(effective_sample_count, None, None, include_end);
-          let mut points = Vec::with_capacity(t_samples.len());
-          for t in t_samples {
-            points.push(sample_point(t)?);
-          }
-
-          push_clean_path(points, "callable path")?;
+        for (ix, (points, _closed)) in path
+          .sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?
+          .into_iter()
+          .enumerate()
+        {
+          push_clean_path(points, &format!("subpath {ix}"))?;
         }
       } else {
         return Err(ErrorStack::new(format!(
@@ -3103,15 +3070,8 @@ fn discretize_fillable_paths(
     if saw_points {
       push_clean(flat_points, "path sequence")?;
     }
-  } else if let Some(cb) = path_val.as_callable() {
-    let subpaths = sample_path_subpaths(
-      ctx,
-      cb,
-      curve_angle_radians,
-      sample_count,
-      Some(true),
-      fn_name,
-    )?;
+  } else if let Some(path) = path_val.as_path() {
+    let subpaths = sample_path_subpaths(ctx, path, curve_angle_radians, sample_count, Some(true))?;
     for (ix, (points, _closed)) in subpaths.into_iter().enumerate() {
       push_clean(points, &format!("subpath {ix}"))?;
     }
@@ -4521,20 +4481,11 @@ fn extrude_path_impl(
           )));
         }
         vec![(points, false)]
-      } else if let Some(path_callable) = path_val.as_callable() {
-        let raw = if let Some(s) = as_path_sampler(path_callable) {
-          s.sample_subpaths_with_limit(curve_angle_radians, sample_count)
-            .unwrap_or_default()
-        } else {
-          sample_path_subpaths(
-            ctx,
-            path_callable,
-            curve_angle_radians,
-            sample_count.unwrap_or(64),
-            Some(false),
-            "extrude_path",
-          )?
-        };
+      } else if let Some(path) = path_val.as_path() {
+        let mut raw = path.sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?;
+        if !path.is_concrete() {
+          raw.iter_mut().for_each(|(_, closed)| *closed = false);
+        }
         raw
           .into_iter()
           .map(|(pts, closed)| {
@@ -4894,58 +4845,9 @@ fn render_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
       let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
-
-      // PathSampler path: topology-aware, handles subpaths + closed/open + critical t
-      if let Some(sampler) = as_path_sampler(callable) {
-        if let Some(subpath_data) = sampler.sample_subpaths(1.0_f32.to_radians()) {
-          for (points, is_closed) in subpath_data {
-            if points.is_empty() {
-              continue;
-            }
-            let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
-            if is_closed {
-              path3d.push(path3d[0]);
-            }
-            ctx.rendered_paths.push(crate::RenderedPath {
-              points: path3d,
-              source_module: ctx.current_module.borrow().clone(),
-              path_id: ctx.next_render_id(),
-            });
-          }
-          return Ok(Value::Nil);
-        }
-      }
-
-      // Fallback: uniform sampling for black-box callables
-      let sample = |t: f32| -> Result<Vec2, ErrorStack> {
-        let v = ctx
-          .invoke_callable(callable, &[Value::Float(t)], EMPTY_KWARGS)
-          .map_err(|e| e.wrap("Error sampling callable in `render_path`"))?;
-        v.as_vec2()
-          .map(|p| *p)
-          .ok_or_else(|| ErrorStack::new(format!("render_path: expected vec2, got {v:?}")))
-      };
-
-      let p0 = sample(0.)?;
-      let p1 = sample(1.)?;
-      let is_closed = (p0 - p1).norm() < 1e-4;
-
-      let mut path3d = Vec::with_capacity(resolution + 1);
-      for i in 0..resolution {
-        let p = sample(i as f32 / resolution as f32)?;
-        path3d.push(Vec3::new(p.x, 0., p.y));
-      }
-      if is_closed {
-        path3d.push(path3d[0]);
-      }
-
-      ctx.rendered_paths.push(crate::RenderedPath {
-        points: path3d,
-        source_module: ctx.current_module.borrow().clone(),
-        path_id: ctx.next_render_id(),
-      });
+      push_rendered_path(ctx, path, resolution)?;
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -5816,6 +5718,13 @@ fn len_impl(
       let m = arg_refs[0].resolve(args, kwargs).as_map().unwrap();
       Ok(Value::Int(m.len() as i64))
     }
+    8 => Ok(Value::Float(
+      arg_refs[0]
+        .resolve(args, kwargs)
+        .as_path()
+        .unwrap()
+        .length(ctx)?,
+    )),
     _ => unimplemented!(),
   }
 }
@@ -5996,6 +5905,7 @@ fn aabb_impl(
 }
 
 fn path_aabb_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -6003,26 +5913,10 @@ fn path_aabb_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      let path_val = arg_refs[0].resolve(args, kwargs);
-      let callable = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "Invalid `path` argument for `path_aabb`; expected Callable, found: {path_val:?}"
-        ))
-      })?;
-
-      let tracer = trace_path::as_path_tracer(callable).ok_or_else(|| {
-        ErrorStack::new(
-          "`path_aabb` requires a path sampler with analytic segment topology (e.g. from `path { \
-           ... }`, `trace_path`, `trace_svg_path`, `text_to_path`). Black-box callables and \
-           samplers like `lerp_path` or `catmull_rom` that don't expose explicit segments are not \
-           supported.",
-        )
-      })?;
-
-      let (mins, maxs) = tracer
-        .analytic_aabb()?
+      let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_aabb")?;
+      let (mins, maxs) = path
+        .aabb(ctx)?
         .ok_or_else(|| ErrorStack::new("`path_aabb`: path contains no contributing segments"))?;
-
       Ok(Value::Sequence(Rc::new(EagerSeq {
         inner: Rc::new(vec![Value::Vec2(mins), Value::Vec2(maxs)]),
       })))
@@ -7038,10 +6932,11 @@ fn render_impl(
             let iter = inner_seq.consume(ctx);
             render_path(ctx, iter)?;
           }
+          Ok(Value::Path(path)) => push_rendered_path(ctx, &path, RENDER_LAZY_SAMPLES)?,
           Ok(other) => {
             return Err(ErrorStack::new(format!(
-              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh | Light> \
-               or seq<seq<Vec3>> representing a path, found: {other:?}",
+              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh | Light | \
+               Path> or seq<seq<Vec3>> representing a path, found: {other:?}",
             )))
           }
           Err(err) => {
@@ -7054,7 +6949,8 @@ fn render_impl(
       let mut iter = sequence.consume(ctx).peekable();
       match iter.peek() {
         // rendering a sequence of meshes, lights, and/or paths
-        Some(Ok(Value::Mesh(_) | Value::Light(_) | Value::Sequence(_))) | Some(Err(_)) => (),
+        Some(Ok(Value::Mesh(_) | Value::Light(_) | Value::Sequence(_) | Value::Path(_)))
+        | Some(Err(_)) => (),
         // rendering a single top-level path (Vec3 or Vec2 projected to the XZ plane)
         Some(Ok(Value::Vec3(_) | Value::Vec2(_))) => {
           render_path(ctx, iter)?;
@@ -7077,30 +6973,8 @@ fn render_impl(
       Ok(Value::Nil)
     }
     3 => {
-      let callable = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
-      let Some(sampler) = as_path_sampler(callable) else {
-        return Err(ErrorStack::new(
-          "Callable passed to `render` does not implement `PathSampler`; only path samplers (e.g. \
-           from `trace_svg_path`, `trace_path`, `lerp_path`) can be rendered directly",
-        ));
-      };
-
-      const SAMPLE_COUNT: usize = 10_000;
-      let mut path = Vec::with_capacity(SAMPLE_COUNT + 1);
-      for i in 0..SAMPLE_COUNT {
-        let t = i as f32 / SAMPLE_COUNT as f32;
-        let v = sampler.eval_at(t, ctx)?;
-        path.push(Vec3::new(v.x, 0., v.y));
-      }
-      // Close the path by appending the start point
-      if let Some(&first) = path.first() {
-        path.push(first);
-      }
-      ctx.rendered_paths.push(crate::RenderedPath {
-        points: path,
-        source_module: ctx.current_module.borrow().clone(),
-        path_id: ctx.next_render_id(),
-      });
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
+      push_rendered_path(ctx, path, RENDER_LAZY_SAMPLES)?;
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -7474,34 +7348,36 @@ fn pow_impl(
     0 => {
       let base = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(base.powf(exponent)))
+      Ok(Value::Float(dmath::powf(base, exponent)))
     }
     1 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        base.x.powf(exponent),
-        base.y.powf(exponent),
-        base.z.powf(exponent),
+        dmath::powf(base.x, exponent),
+        dmath::powf(base.y, exponent),
+        dmath::powf(base.z, exponent),
       )))
     }
     2 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(
-        base.x.powf(exponent),
-        base.y.powf(exponent),
+        dmath::powf(base.x, exponent),
+        dmath::powf(base.y, exponent),
       )))
     }
     3 => {
       let base = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(base, |x| x.powf(exponent)))
+      Ok(texture::texture_map_unary(base, |x| {
+        dmath::powf(x, exponent)
+      }))
     }
     4 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Vec4(Rc::new(base.map(|x| x.powf(exponent)))))
+      Ok(Value::Vec4(Rc::new(base.map(|x| dmath::powf(x, exponent)))))
     }
     _ => unimplemented!(),
   }
@@ -7516,27 +7392,30 @@ fn exp_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.exp()))
+      Ok(Value::Float(dmath::exp(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.exp(),
-        value.y.exp(),
-        value.z.exp(),
+        dmath::exp(value.x),
+        dmath::exp(value.y),
+        dmath::exp(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.exp(), value.y.exp())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::exp(value.x),
+        dmath::exp(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.exp()))
+      Ok(texture::texture_map_unary(t, dmath::exp))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.exp()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::exp))))
     }
     _ => unimplemented!(),
   }
@@ -7551,19 +7430,22 @@ fn log10_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.log10()))
+      Ok(Value::Float(dmath::log10(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.log10(),
-        value.y.log10(),
-        value.z.log10(),
+        dmath::log10(value.x),
+        dmath::log10(value.y),
+        dmath::log10(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.log10(), value.y.log10())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::log10(value.x),
+        dmath::log10(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7578,27 +7460,30 @@ fn log2_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.log2()))
+      Ok(Value::Float(dmath::log2(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.log2(),
-        value.y.log2(),
-        value.z.log2(),
+        dmath::log2(value.x),
+        dmath::log2(value.y),
+        dmath::log2(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.log2(), value.y.log2())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::log2(value.x),
+        dmath::log2(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.log2()))
+      Ok(texture::texture_map_unary(t, dmath::log2))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.log2()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::log2))))
     }
     _ => unimplemented!(),
   }
@@ -7613,19 +7498,22 @@ fn ln_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.ln()))
+      Ok(Value::Float(dmath::ln(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.ln(),
-        value.y.ln(),
-        value.z.ln(),
+        dmath::ln(value.x),
+        dmath::ln(value.y),
+        dmath::ln(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.ln(), value.y.ln())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::ln(value.x),
+        dmath::ln(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7640,27 +7528,30 @@ fn tan_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.tan()))
+      Ok(Value::Float(dmath::tan(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.tan(),
-        value.y.tan(),
-        value.z.tan(),
+        dmath::tan(value.x),
+        dmath::tan(value.y),
+        dmath::tan(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.tan(), value.y.tan())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::tan(value.x),
+        dmath::tan(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.tan()))
+      Ok(texture::texture_map_unary(t, dmath::tan))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.tan()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::tan))))
     }
     _ => unimplemented!(),
   }
@@ -7675,27 +7566,30 @@ fn cos_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.cos()))
+      Ok(Value::Float(dmath::cos(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.cos(),
-        value.y.cos(),
-        value.z.cos(),
+        dmath::cos(value.x),
+        dmath::cos(value.y),
+        dmath::cos(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.cos(), value.y.cos())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::cos(value.x),
+        dmath::cos(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.cos()))
+      Ok(texture::texture_map_unary(t, dmath::cos))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.cos()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::cos))))
     }
     _ => unimplemented!(),
   }
@@ -7710,27 +7604,30 @@ fn sin_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.sin()))
+      Ok(Value::Float(dmath::sin(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.sin(),
-        value.y.sin(),
-        value.z.sin(),
+        dmath::sin(value.x),
+        dmath::sin(value.y),
+        dmath::sin(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.sin(), value.y.sin())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::sin(value.x),
+        dmath::sin(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.sin()))
+      Ok(texture::texture_map_unary(t, dmath::sin))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.sin()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::sin))))
     }
     _ => unimplemented!(),
   }
@@ -7745,19 +7642,22 @@ fn sinh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.sinh()))
+      Ok(Value::Float(dmath::sinh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.sinh(),
-        value.y.sinh(),
-        value.z.sinh(),
+        dmath::sinh(value.x),
+        dmath::sinh(value.y),
+        dmath::sinh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.sinh(), value.y.sinh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::sinh(value.x),
+        dmath::sinh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7772,19 +7672,22 @@ fn cosh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.cosh()))
+      Ok(Value::Float(dmath::cosh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.cosh(),
-        value.y.cosh(),
-        value.z.cosh(),
+        dmath::cosh(value.x),
+        dmath::cosh(value.y),
+        dmath::cosh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.cosh(), value.y.cosh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::cosh(value.x),
+        dmath::cosh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7799,19 +7702,22 @@ fn tanh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.tanh()))
+      Ok(Value::Float(dmath::tanh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.tanh(),
-        value.y.tanh(),
-        value.z.tanh(),
+        dmath::tanh(value.x),
+        dmath::tanh(value.y),
+        dmath::tanh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.tanh(), value.y.tanh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::tanh(value.x),
+        dmath::tanh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7826,27 +7732,30 @@ fn acos_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.acos()))
+      Ok(Value::Float(dmath::acos(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.acos(),
-        value.y.acos(),
-        value.z.acos(),
+        dmath::acos(value.x),
+        dmath::acos(value.y),
+        dmath::acos(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.acos(), value.y.acos())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::acos(value.x),
+        dmath::acos(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.acos()))
+      Ok(texture::texture_map_unary(t, dmath::acos))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.acos()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::acos))))
     }
     _ => unimplemented!(),
   }
@@ -7861,27 +7770,30 @@ fn asin_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.asin()))
+      Ok(Value::Float(dmath::asin(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.asin(),
-        value.y.asin(),
-        value.z.asin(),
+        dmath::asin(value.x),
+        dmath::asin(value.y),
+        dmath::asin(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.asin(), value.y.asin())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::asin(value.x),
+        dmath::asin(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.asin()))
+      Ok(texture::texture_map_unary(t, dmath::asin))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.asin()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::asin))))
     }
     _ => unimplemented!(),
   }
@@ -7896,27 +7808,30 @@ fn atan_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.atan()))
+      Ok(Value::Float(dmath::atan(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.atan(),
-        value.y.atan(),
-        value.z.atan(),
+        dmath::atan(value.x),
+        dmath::atan(value.y),
+        dmath::atan(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.atan(), value.y.atan())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::atan(value.x),
+        dmath::atan(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.atan()))
+      Ok(texture::texture_map_unary(t, dmath::atan))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.atan()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::atan))))
     }
     _ => unimplemented!(),
   }
@@ -7932,27 +7847,27 @@ fn atan2_impl(
     0 => {
       let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(y.atan2(x)))
+      Ok(Value::Float(dmath::atan2(y, x)))
     }
     1 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Float(v.y.atan2(v.x)))
+      Ok(Value::Float(dmath::atan2(v.y, v.x)))
     }
     2 => texture::texture_zip(
       arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
       arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
       "atan2",
-      |y, x| y.atan2(x),
+      |y, x| dmath::atan2(y, x),
     ),
     3 => {
       let y = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(y, move |v| v.atan2(x)))
+      Ok(texture::texture_map_unary(y, move |v| dmath::atan2(v, x)))
     }
     4 => {
       let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(x, move |v| y.atan2(v)))
+      Ok(texture::texture_map_unary(x, move |v| dmath::atan2(y, v)))
     }
     _ => unimplemented!(),
   }
@@ -8215,6 +8130,9 @@ fn rot_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix == ROT_PATH_DEF_IX {
+    return path_rot_impl(arg_refs, args, kwargs);
+  }
   if def_ix == ROT_VEC2_DEF_IX {
     return Ok(rot_vec2(arg_refs, args, kwargs));
   }
@@ -8390,6 +8308,7 @@ fn align_impl(
 }
 
 fn origin_to_geometry_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -8410,67 +8329,8 @@ fn origin_to_geometry_impl(
       })))
     }
     1 => {
-      // origin_to_geometry for paths
-      let path_val = arg_refs[0].resolve(args, kwargs);
-      let cb = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "origin_to_geometry: expected a path callable, got {path_val:?}"
-        ))
-      })?;
-      let tracer = match &**cb {
-        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-        _ => None,
-      };
-      let Some(tracer) = tracer else {
-        return Err(ErrorStack::new(
-          "origin_to_geometry for paths requires a trace_path/trace_svg_path path sampler.",
-        ));
-      };
-
-      // Compute centroid from all segment endpoints
-      let mut sum = Vec2::new(0.0, 0.0);
-      let mut count = 0usize;
-      for subpath in tracer.subpaths.iter() {
-        for seg in &subpath.segments {
-          sum += seg.end();
-          count += 1;
-        }
-      }
-      if count == 0 {
-        return Ok(path_val.clone());
-      }
-      let centroid = sum / count as f32;
-      let offset = -centroid;
-
-      // Build a fresh Vec; we're about to mutate, which would defeat Rc-sharing.
-      let mut new_subpaths: Vec<trace_path::PathSubpath> = (*tracer.subpaths).clone();
-      for subpath in &mut new_subpaths {
-        for seg in &mut subpath.segments {
-          seg.translate(offset);
-        }
-      }
-
-      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
-      let mut total_length = 0.0;
-      for subpath in &new_subpaths {
-        total_length += subpath.total_length;
-        subpath_cumulative_lengths.push(total_length);
-      }
-
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(PathTracerCallable {
-          interned_t_kwarg: tracer.interned_t_kwarg,
-          subpaths: Rc::new(new_subpaths),
-          subpath_cumulative_lengths: Rc::new(subpath_cumulative_lengths),
-          total_length,
-          reverse: tracer.reverse,
-          override_critical_points: tracer.override_critical_points.clone(),
-          fill_rule: tracer.fill_rule,
-          transform: tracer.transform, // preserve existing transform
-          inward_flip_cache: std::cell::RefCell::new(None),
-        }),
-      })))
+      let path = expect_path(arg_refs[0].resolve(args, kwargs), "origin_to_geometry")?;
+      Ok(Value::Path(Rc::new(path.origin_to_geometry(ctx)?)))
     }
     _ => unimplemented!(),
   }
@@ -8503,62 +8363,15 @@ fn apply_transforms_impl(
       })))
     }
     1 => {
-      // apply_transforms for paths
       let path_val = arg_refs[0].resolve(args, kwargs);
-      let cb = path_val.as_callable().ok_or_else(|| {
-        ErrorStack::new(format!(
-          "apply_transforms: expected a path callable, got {path_val:?}"
-        ))
-      })?;
-      let tracer = match &**cb {
-        Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-        _ => None,
-      };
-      let Some(tracer) = tracer else {
-        return Err(ErrorStack::new(
-          "apply_transforms for paths requires a trace_path/trace_svg_path path sampler. Generic \
-           callables do not have geometry to bake transforms into.",
-        ));
-      };
-
-      if tracer.transform == nalgebra::Matrix3::identity() {
-        return Ok(path_val.clone());
+      let path = expect_path(path_val, "apply_transforms")?;
+      if let Some(lazy) = path.first_lazy_name() {
+        return Err(ErrorStack::new(format!(
+          "apply_transforms: cannot bake transforms into a lazy path (contains `{lazy}`); use \
+           `discretize_path` first"
+        )));
       }
-
-      let m = &tracer.transform;
-
-      let mut new_subpaths = Vec::with_capacity(tracer.subpaths.len());
-      for subpath in tracer.subpaths.iter() {
-        let mut new_segments = Vec::with_capacity(subpath.segments.len());
-        for seg in &subpath.segments {
-          new_segments.push(trace_path::transform_segment(seg, m)?);
-        }
-        if let Some(new_subpath) = trace_path::PathSubpath::new(new_segments, subpath.closed) {
-          new_subpaths.push(new_subpath);
-        }
-      }
-
-      let mut subpath_cumulative_lengths = Vec::with_capacity(new_subpaths.len());
-      let mut total_length = 0.0;
-      for subpath in &new_subpaths {
-        total_length += subpath.total_length;
-        subpath_cumulative_lengths.push(total_length);
-      }
-
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(PathTracerCallable {
-          interned_t_kwarg: tracer.interned_t_kwarg,
-          subpaths: Rc::new(new_subpaths),
-          subpath_cumulative_lengths: Rc::new(subpath_cumulative_lengths),
-          total_length,
-          reverse: tracer.reverse,
-          override_critical_points: tracer.override_critical_points.clone(),
-          fill_rule: tracer.fill_rule,
-          transform: nalgebra::Matrix3::identity(),
-          inward_flip_cache: std::cell::RefCell::new(None),
-        }),
-      })))
+      Ok(path_val.clone())
     }
     2 => {
       let sequence = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
@@ -8570,29 +8383,8 @@ fn apply_transforms_impl(
   }
 }
 
-/// Applies a 2D transform matrix to a path sampler, returning a new callable with the
-/// transform composed onto the path.
-fn apply_path_transform(
-  cb: &Rc<Callable>,
-  transform_matrix: nalgebra::Matrix3<f32>,
-) -> Result<Value, ErrorStack> {
-  if let Some(sampler) = as_path_sampler(cb) {
-    let transformed = sampler.with_transform(transform_matrix);
-    Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: transformed,
-    })))
-  } else {
-    // Black-box callable: wrap in TransformedCallableSampler
-    Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: Box::new(trace_path::TransformedCallableSampler {
-        inner: Rc::clone(cb),
-        transform: transform_matrix,
-        cached_critical_points: Vec::new(),
-      }),
-    })))
-  }
+pub(crate) fn apply_path_transform(path: &Path, m: nalgebra::Matrix3<f32>) -> Value {
+  Value::Path(Rc::new(path.transformed(&m)))
 }
 
 fn path_trans_impl(
@@ -8614,13 +8406,9 @@ fn path_trans_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_trans: expected a callable path sampler"))?;
-
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
   let t = nalgebra::Matrix3::new(1.0, 0.0, offset.x, 0.0, 1.0, offset.y, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, t)
+  Ok(apply_path_transform(path, t))
 }
 
 fn path_rot_impl(
@@ -8629,15 +8417,11 @@ fn path_rot_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-  let cb = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_rot: expected a callable path sampler"))?;
-
+  let path = arg_refs[1].resolve(args, kwargs).as_path().unwrap();
   let cos = angle.cos();
   let sin = angle.sin();
   let r = nalgebra::Matrix3::new(cos, -sin, 0.0, sin, cos, 0.0, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, r)
+  Ok(apply_path_transform(path, r))
 }
 
 fn path_scale_impl(
@@ -8668,13 +8452,9 @@ fn path_scale_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_scale: expected a callable path sampler"))?;
-
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
   let s = nalgebra::Matrix3::new(sx, 0.0, 0.0, 0.0, sy, 0.0, 0.0, 0.0, 1.0);
-  apply_path_transform(&cb, s)
+  Ok(apply_path_transform(path, s))
 }
 
 /// Reflection across the line `n·p = c`, where `n` is a unit normal.
@@ -8722,12 +8502,8 @@ fn path_reflect_impl(
   let d = axis / len;
   let n = Vec2::new(-d.y, d.x);
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_reflect: expected a callable path sampler"))?;
-
-  apply_path_transform(&cb, reflect_matrix(n, offset))
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
+  Ok(apply_path_transform(path, reflect_matrix(n, offset)))
 }
 
 fn path_reflect_axis_impl(
@@ -8747,381 +8523,359 @@ fn path_reflect_axis_impl(
     _ => unimplemented!(),
   };
 
-  let cb = path_arg
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new(format!("{name}: expected a callable path sampler")))?;
-
-  apply_path_transform(&cb, reflect_matrix(n, offset))
+  let _ = name;
+  let path = path_arg.resolve(args, kwargs).as_path().unwrap();
+  Ok(apply_path_transform(path, reflect_matrix(n, offset)))
 }
 
-pub(crate) fn make_tagged_map(entries: &[(&str, Value)]) -> Value {
-  let mut map: ValueMap = ValueMap::default();
-  for (k, v) in entries {
-    map.insert((*k).to_owned(), v.clone());
+const RENDER_LAZY_SAMPLES: usize = 1000;
+
+/// One rendered polyline per subpath, sampled at the ambient curve tolerance; closed subpaths
+/// get their start point appended.
+fn push_rendered_path(ctx: &EvalCtx, path: &Path, lazy_samples: usize) -> Result<(), ErrorStack> {
+  let angle = ctx.resolve_curve_angle_degrees(&Value::Nil).to_radians();
+  for (points, is_closed) in path.sample_subpaths(angle, lazy_samples, ctx)? {
+    if points.is_empty() {
+      continue;
+    }
+    let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
+    if is_closed {
+      path3d.push(path3d[0]);
+    }
+    ctx.rendered_paths.push(crate::RenderedPath {
+      points: path3d,
+      source_module: ctx.current_module.borrow().clone(),
+      path_id: ctx.next_render_id(),
+    });
   }
-  Value::Map(Rc::new(map))
+  Ok(())
 }
 
-fn path_move_impl(
+fn path_items(ctx: &EvalCtx, val: &Value, out: &mut Vec<Rc<Path>>) -> Result<(), ErrorStack> {
+  match val {
+    Value::Path(p) => out.push(Rc::clone(p)),
+    Value::Nil => {}
+    Value::Sequence(seq) => {
+      for item in seq.consume(ctx) {
+        path_items(ctx, &item?, out)?;
+      }
+    }
+    other => {
+      return Err(ErrorStack::new(format!(
+        "`path`: expected a sequence of paths, found {other:?}. Pen ops chain with `|` (e.g. \
+         `path() | move(0, 0) | line(1, 1)`); wrap a `|t|: vec2` closure with `path(f)`"
+      )))
+    }
+  }
+  Ok(())
+}
+
+fn path_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let to = match def_ix {
+  let path = match def_ix {
     0 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Vec2::new(x, y)
+      let mut items = Vec::new();
+      path_items(ctx, arg_refs[0].resolve(args, kwargs), &mut items)?;
+      let fill_rule = match arg_refs[1].resolve(args, kwargs) {
+        Value::Nil => None,
+        val => Some(trace_path::FillRule::parse(val, "path")?),
+      };
+      Path::group_items(items, fill_rule, ctx)?
     }
-    1 => *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-    _ => unreachable!(),
+    1 => {
+      let f = Rc::clone(arg_refs[0].resolve(args, kwargs).as_callable().unwrap());
+      let closed = arg_refs[1].resolve(args, kwargs).as_bool();
+      Path::lazy(Rc::new(ClosurePath { f, closed }))
+    }
+    _ => unimplemented!(),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("move".to_owned())),
-    ("to", Value::Vec2(to)),
-  ]))
+  Ok(Value::Path(Rc::new(path)))
 }
 
-fn path_line_impl(
+fn num_arg(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>, ix: usize) -> f32 {
+  arg_refs[ix].resolve(args, kwargs).as_float().unwrap()
+}
+
+fn vec2_arg(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  ix: usize,
+) -> Vec2 {
+  *arg_refs[ix].resolve(args, kwargs).as_vec2().unwrap()
+}
+
+fn xy_arg(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>, ix: usize) -> Vec2 {
+  Vec2::new(
+    num_arg(arg_refs, args, kwargs, ix),
+    num_arg(arg_refs, args, kwargs, ix + 1),
+  )
+}
+
+fn pen(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  path_ix: usize,
+  op: &str,
+  cmd: DrawCommand,
+) -> Result<Value, ErrorStack> {
+  let path = arg_refs[path_ix].resolve(args, kwargs).as_path().unwrap();
+  Ok(Value::Path(Rc::new(path.pen(cmd, op)?)))
+}
+
+fn move_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let to = match def_ix {
-    0 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Vec2::new(x, y)
-    }
-    1 => *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-    _ => unreachable!(),
+  let (to, path_ix) = match def_ix {
+    0 => (xy_arg(arg_refs, args, kwargs, 0), 2),
+    _ => (vec2_arg(arg_refs, args, kwargs, 0), 1),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("line".to_owned())),
-    ("to", Value::Vec2(to)),
-  ]))
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "move",
+    DrawCommand::MoveTo(to),
+  )
 }
 
-fn path_quadratic_bezier_impl(
+fn line_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (ctrl, to) = match def_ix {
+  let (to, path_ix) = match def_ix {
+    0 => (xy_arg(arg_refs, args, kwargs, 0), 2),
+    _ => (vec2_arg(arg_refs, args, kwargs, 0), 1),
+  };
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "line",
+    DrawCommand::LineTo(to),
+  )
+}
+
+fn quadratic_bezier_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (ctrl, to, path_ix) = match def_ix {
     0 => (
-      *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-      *arg_refs[1].resolve(args, kwargs).as_vec2().unwrap(),
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      2,
     ),
-    1 => {
-      let cx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let cy = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
-      (Vec2::new(cx, cy), Vec2::new(x, y))
-    }
-    _ => unreachable!(),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      4,
+    ),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("quad".to_owned())),
-    ("ctrl", Value::Vec2(ctrl)),
-    ("to", Value::Vec2(to)),
-  ]))
+  let cmd = DrawCommand::QuadraticBezier { ctrl, to };
+  pen(arg_refs, args, kwargs, path_ix, "quadratic_bezier", cmd)
 }
 
-fn path_smooth_quadratic_bezier_impl(
+fn smooth_quadratic_bezier_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let to = match def_ix {
-    0 => *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-    1 => {
-      let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Vec2::new(x, y)
-    }
-    _ => unreachable!(),
+  let (to, path_ix) = match def_ix {
+    0 => (vec2_arg(arg_refs, args, kwargs, 0), 1),
+    _ => (xy_arg(arg_refs, args, kwargs, 0), 2),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("smooth_quad".to_owned())),
-    ("to", Value::Vec2(to)),
-  ]))
+  let cmd = DrawCommand::SmoothQuadraticBezier { to };
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "smooth_quadratic_bezier",
+    cmd,
+  )
 }
 
-fn path_cubic_bezier_impl(
+fn cubic_bezier_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (ctrl1, ctrl2, to) = match def_ix {
+  let (ctrl1, ctrl2, to, path_ix) = match def_ix {
     0 => (
-      *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-      *arg_refs[1].resolve(args, kwargs).as_vec2().unwrap(),
-      *arg_refs[2].resolve(args, kwargs).as_vec2().unwrap(),
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      vec2_arg(arg_refs, args, kwargs, 2),
+      3,
     ),
-    1 => {
-      let c1x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let c1y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let c2x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let c2y = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
-      let x = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
-      (Vec2::new(c1x, c1y), Vec2::new(c2x, c2y), Vec2::new(x, y))
-    }
-    _ => unreachable!(),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      xy_arg(arg_refs, args, kwargs, 4),
+      6,
+    ),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("cubic".to_owned())),
-    ("ctrl1", Value::Vec2(ctrl1)),
-    ("ctrl2", Value::Vec2(ctrl2)),
-    ("to", Value::Vec2(to)),
-  ]))
+  let cmd = DrawCommand::CubicBezier { ctrl1, ctrl2, to };
+  pen(arg_refs, args, kwargs, path_ix, "cubic_bezier", cmd)
 }
 
-fn path_smooth_cubic_bezier_impl(
+fn smooth_cubic_bezier_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (ctrl2, to) = match def_ix {
+  let (ctrl2, to, path_ix) = match def_ix {
     0 => (
-      *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap(),
-      *arg_refs[1].resolve(args, kwargs).as_vec2().unwrap(),
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      2,
     ),
-    1 => {
-      let c2x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let c2y = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let x = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
-      (Vec2::new(c2x, c2y), Vec2::new(x, y))
-    }
-    _ => unreachable!(),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      4,
+    ),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("smooth_cubic".to_owned())),
-    ("ctrl2", Value::Vec2(ctrl2)),
-    ("to", Value::Vec2(to)),
-  ]))
+  let cmd = DrawCommand::SmoothCubicBezier { ctrl2, to };
+  pen(arg_refs, args, kwargs, path_ix, "smooth_cubic_bezier", cmd)
 }
 
-fn path_arc_impl(
+fn arc_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let rx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-  let ry = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-  let x_axis_rotation = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-  let (large_arc, sweep, to) = match def_ix {
-    0 => {
-      let large_arc = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
-      let sweep = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
-      let x = arg_refs[5].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[6].resolve(args, kwargs).as_float().unwrap();
-      (large_arc, sweep, Vec2::new(x, y))
-    }
-    1 => {
-      let large_arc = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
-      let sweep = arg_refs[4].resolve(args, kwargs).as_bool().unwrap();
-      let to = *arg_refs[5].resolve(args, kwargs).as_vec2().unwrap();
-      (large_arc, sweep, to)
-    }
-    2 => {
-      let x = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
-      let y = arg_refs[4].resolve(args, kwargs).as_float().unwrap();
-      (false, true, Vec2::new(x, y))
-    }
-    3 => {
-      let to = *arg_refs[3].resolve(args, kwargs).as_vec2().unwrap();
-      (false, true, to)
-    }
-    _ => unreachable!(),
+  let rx = num_arg(arg_refs, args, kwargs, 0);
+  let ry = num_arg(arg_refs, args, kwargs, 1);
+  let x_axis_rotation = num_arg(arg_refs, args, kwargs, 2);
+  let flag = |ix: usize| arg_refs[ix].resolve(args, kwargs).as_bool().unwrap();
+  let (large_arc, sweep, to, path_ix) = match def_ix {
+    0 => (flag(3), flag(4), vec2_arg(arg_refs, args, kwargs, 5), 6),
+    1 => (flag(3), flag(4), xy_arg(arg_refs, args, kwargs, 5), 7),
+    2 => (false, true, vec2_arg(arg_refs, args, kwargs, 3), 4),
+    _ => (false, true, xy_arg(arg_refs, args, kwargs, 3), 5),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("arc".to_owned())),
-    ("rx", Value::Float(rx)),
-    ("ry", Value::Float(ry)),
-    ("x_axis_rotation", Value::Float(x_axis_rotation)),
-    ("large_arc", Value::Bool(large_arc)),
-    ("sweep", Value::Bool(sweep)),
-    ("to", Value::Vec2(to)),
-  ]))
+  let cmd = DrawCommand::Arc {
+    rx,
+    ry,
+    x_axis_rotation,
+    large_arc,
+    sweep,
+    to,
+  };
+  pen(arg_refs, args, kwargs, path_ix, "arc", cmd)
 }
 
-fn path_circle_impl(
+fn circle_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let (center, radius) = match def_ix {
-    0 => {
-      let center = *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      let radius = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      (center, radius)
-    }
-    1 => {
-      let cx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let cy = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let radius = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      (Vec2::new(cx, cy), radius)
-    }
-    _ => unreachable!(),
+    0 => (
+      vec2_arg(arg_refs, args, kwargs, 0),
+      num_arg(arg_refs, args, kwargs, 1),
+    ),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      num_arg(arg_refs, args, kwargs, 2),
+    ),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("circle".to_owned())),
-    ("center", Value::Vec2(center)),
-    ("radius", Value::Float(radius)),
-  ]))
+  Ok(Value::Path(Rc::new(Path::leaf(circle_subpath(
+    center, radius, false,
+  )))))
 }
 
-fn path_rect_impl(
+fn rect_impl(
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let (center, width, height) = match def_ix {
+  let (center, size) = match def_ix {
     0 => {
-      let center = *arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       let size_val = arg_refs[1].resolve(args, kwargs);
-      let (w, h) = if let Some(v) = size_val.as_vec2() {
-        (v.x, v.y)
-      } else if let Some(s) = size_val.as_float() {
-        (s, s)
-      } else {
-        return Err(ErrorStack::new(format!(
-          "path_rect: `size` must be a vec2 or numeric, found: {size_val:?}"
-        )));
+      let size = match size_val.as_vec2() {
+        Some(v) => *v,
+        None => {
+          let s = size_val.as_float().unwrap();
+          Vec2::new(s, s)
+        }
       };
-      (center, w, h)
+      (vec2_arg(arg_refs, args, kwargs, 0), size)
     }
-    1 => {
-      let cx = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let cy = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      let w = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      let h = arg_refs[3].resolve(args, kwargs).as_float().unwrap();
-      (Vec2::new(cx, cy), w, h)
-    }
-    _ => unreachable!(),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+    ),
   };
-  Ok(make_tagged_map(&[
-    ("type", Value::String("rect".to_owned())),
-    ("center", Value::Vec2(center)),
-    ("width", Value::Float(width)),
-    ("height", Value::Float(height)),
-  ]))
+  Ok(Value::Path(Rc::new(Path::leaf(rect_subpath(
+    center, size.x, size.y, false,
+  )))))
 }
 
-fn path_close_impl(
-  _def_ix: usize,
-  _arg_refs: &[ArgRef],
-  _args: &[Value],
-  _kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  Ok(make_tagged_map(&[(
-    "type",
-    Value::String("close".to_owned()),
-  )]))
+fn consume_vec2_points(ctx: &EvalCtx, val: &Value, fn_name: &str) -> Result<Vec<Vec2>, ErrorStack> {
+  val
+    .as_sequence()
+    .unwrap()
+    .consume(ctx)
+    .map(|res| match res? {
+      Value::Vec2(v) => Ok(v),
+      other => Err(ErrorStack::new(format!(
+        "`{fn_name}`: expected a sequence of vec2, found: {other:?}"
+      ))),
+    })
+    .collect()
 }
 
-fn path_reverse_impl(
-  _def_ix: usize,
+fn polygon_impl(
+  ctx: &EvalCtx,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  match path_val {
-    Value::Map(map) => {
-      let ty = map
-        .get("type")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| ErrorStack::new("path_reverse: input map is missing a `type` field"))?
-        .to_owned();
-      match ty.as_str() {
-        "rect" | "circle" => {
-          let cur = map
-            .get("reversed")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-          let mut new_map: ValueMap = (**map).clone();
-          new_map.insert("reversed".to_owned(), Value::Bool(!cur));
-          Ok(Value::Map(Rc::new(new_map)))
-        }
-        other => Err(ErrorStack::new(format!(
-          "path_reverse: cannot reverse draw command of type \"{other}\"; only `rect` and \
-           `circle` support per-shape reversal.  To reverse an entire built path, pass the path \
-           tracer callable instead."
-        ))),
-      }
-    }
-    Value::Callable(cb) => {
-      let tracer = extract_path_tracer(cb).ok_or_else(|| {
-        ErrorStack::new(
-          "path_reverse: callable is not a path tracer (must come from `build_path`, \
-           `trace_svg_path`, `text_to_path`, etc.)",
-        )
-      })?;
-      let toggled = PathTracerCallable {
-        interned_t_kwarg: tracer.interned_t_kwarg,
-        subpaths: tracer.subpaths.clone(),
-        subpath_cumulative_lengths: tracer.subpath_cumulative_lengths.clone(),
-        total_length: tracer.total_length,
-        reverse: !tracer.reverse,
-        override_critical_points: tracer.override_critical_points.clone(),
-        fill_rule: tracer.fill_rule,
-        transform: tracer.transform,
-        inward_flip_cache: RefCell::new(None),
-      };
-      Ok(Value::Callable(Rc::new(Callable::Dynamic {
-        name: "trace_path".to_owned(),
-        inner: Box::new(toggled),
-      })))
-    }
-    other => Err(ErrorStack::new(format!(
-      "path_reverse: expected a draw command map (e.g. from `rect`/`circle`) or a path tracer \
-       callable; found: {other:?}.  To reverse a bare sequence of points, use sequence operations."
-    ))),
-  }
+  let points = consume_vec2_points(ctx, arg_refs[0].resolve(args, kwargs), "polygon")?;
+  Ok(Value::Path(Rc::new(Path::leaf(polygon_subpath(&points)?))))
 }
 
-fn extract_path_tracer<'a>(callable: &'a Callable) -> Option<&'a PathTracerCallable> {
-  match callable {
-    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-    _ => None,
-  }
+fn polyline_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let points = consume_vec2_points(ctx, arg_refs[0].resolve(args, kwargs), "polyline")?;
+  Ok(Value::Path(Rc::new(Path::leaf(polyline_subpath(&points)?))))
 }
 
-/// Appends each of `tracer`'s subpaths to `out`, baking any non-identity transform into the
-/// segments. Identity transforms hit the cheap `PathSubpath::clone` path.
-fn bake_tracer_subpaths_into(
-  tracer: &PathTracerCallable,
-  out: &mut Vec<PathSubpath>,
-) -> Result<(), ErrorStack> {
-  if tracer.transform == nalgebra::Matrix3::identity() {
-    out.extend(tracer.subpaths.iter().cloned());
-    return Ok(());
-  }
-  let m = &tracer.transform;
-  for subpath in tracer.subpaths.iter() {
-    let mut new_segments = Vec::with_capacity(subpath.segments.len());
-    for seg in &subpath.segments {
-      new_segments.push(trace_path::transform_segment(seg, m)?);
-    }
-    if let Some(new_subpath) = trace_path::PathSubpath::new(new_segments, subpath.closed) {
-      out.push(new_subpath);
-    }
-  }
-  Ok(())
+fn fill_rule_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let rule = trace_path::FillRule::parse(arg_refs[0].resolve(args, kwargs), "fill_rule")?;
+  let path = arg_refs[1].resolve(args, kwargs).as_path().unwrap();
+  Ok(Value::Path(Rc::new(path.with_fill_rule(Some(rule)))))
 }
 
 fn path_segments_impl(
@@ -9130,21 +8884,8 @@ fn path_segments_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let callable = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_segments: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
-  let tracer = extract_path_tracer(callable).ok_or_else(|| {
-    ErrorStack::new(
-      "path_segments: only paths created by `build_path` / `trace_svg_path` / `text_to_path` / \
-       offset/boolean operations expose segment topology. Paths from `catmull_rom` / `lerp_paths` \
-       are not supported.",
-    )
-  })?;
-
-  let dicts = build_segment_dicts(tracer)?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_segments")?;
+  let dicts = build_segment_dicts(path, "path_segments")?;
   Ok(Value::Sequence(Rc::new(EagerSeq {
     inner: Rc::new(dicts),
   })))
@@ -9159,51 +8900,30 @@ const FRAME_TANGENT_MIN_NORM: f32 = 1e-12;
 /// Tolerance used by the polyline-based fallback for non-tracer samplers.
 const INWARD_FLIP_FALLBACK_TOLERANCE_DEG: f32 = 5.0;
 
-/// Determines whether the subpath that contains parameter `t` is a closed CW polygon (in which
-/// case the left-perpendicular of the tangent points outward, and we should flip it to get a
-/// normal that consistently points inward).
-///
-/// `Ok(None)` means the topology says no flip is needed (open subpath, degenerate path).
-/// For `PathTracerCallable` the orientation is cached on the tracer; for other `PathSampler`
-/// implementations (lerp, catmull-rom, transformed) the orientation is computed by sampling.
-/// For callables without any topology the function errors so the caller doesn't get silent
-/// wrong output.
-fn closed_subpath_inward_flip(callable: &Callable, t: f32) -> Result<Option<bool>, ErrorStack> {
-  if let Some(tracer) = extract_path_tracer(callable) {
-    if tracer.total_length <= 0.0 || tracer.subpaths.is_empty() {
+/// Whether the subpath containing `t` is a closed CW polygon (so the tangent's
+/// left-perpendicular points outward and must be flipped inward). `None` for degenerate paths.
+fn closed_subpath_inward_flip(
+  path: &Path,
+  t: f32,
+  ctx: &EvalCtx,
+) -> Result<Option<bool>, ErrorStack> {
+  if path.is_concrete() {
+    let Some(ix) = path.leaf_index_at(t) else {
       return Ok(None);
-    }
-    let target = t.clamp(0.0, 1.0) * tracer.total_length;
-    let subpath_ix = tracer
-      .subpath_cumulative_lengths
-      .iter()
-      .position(|&len| target <= len)
-      .unwrap_or(tracer.subpaths.len() - 1);
-    if !tracer.subpaths[subpath_ix].closed {
-      return Ok(Some(false));
-    }
-    return Ok(Some(tracer.subpath_inward_flip(subpath_ix)));
+    };
+    return Ok(Some(path.leaves()[ix].inward_flip()));
   }
-
-  if let Some(sampler) = as_path_sampler(callable) {
-    return Ok(inward_flip_from_polylines(sampler, t));
-  }
-
-  Err(ErrorStack::new(
-    "path_frame: cannot determine inward normal for a callable without path topology. Pass \
-     `inward_normal=false`, or use `build_path` / `trace_svg_path` / `text_to_path` to obtain a \
-     topology-aware path.",
-  ))
+  let polylines = path.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians(), 64, ctx)?;
+  Ok(inward_flip_from_polylines(&polylines, t))
 }
 
-fn inward_flip_from_polylines(sampler: &dyn trace_path::PathSampler, t: f32) -> Option<bool> {
-  let polylines = sampler.sample_subpaths(INWARD_FLIP_FALLBACK_TOLERANCE_DEG.to_radians())?;
+fn inward_flip_from_polylines(polylines: &[(Vec<Vec2>, bool)], t: f32) -> Option<bool> {
   if polylines.is_empty() {
     return None;
   }
   let mut subpath_lengths = Vec::with_capacity(polylines.len());
   let mut total_length = 0.0f32;
-  for (points, _) in &polylines {
+  for (points, _) in polylines {
     let len: f32 = points.windows(2).map(|w| (w[1] - w[0]).norm()).sum();
     subpath_lengths.push(len);
     total_length += len;
@@ -9247,12 +8967,7 @@ fn path_frame_impl(
     .as_float()
     .unwrap()
     .clamp(0.0, 1.0);
-  let path_val = arg_refs[1].resolve(args, kwargs);
-  let callable = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_frame: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[1].resolve(args, kwargs), "path_frame")?;
   let inward_normal = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
   let dt = FRAME_FINITE_DIFF_DT;
@@ -9265,14 +8980,9 @@ fn path_frame_impl(
   };
 
   let sample = |t: f32| -> Result<Vec2, ErrorStack> {
-    let out = ctx
-      .invoke_callable(callable, &[Value::Float(t)], EMPTY_KWARGS)
-      .map_err(|e| e.wrap("path_frame: error sampling path"))?;
-    out.as_vec2().copied().ok_or_else(|| {
-      ErrorStack::new(format!(
-        "path_frame: callable returned a non-Vec2 value: {out:?}"
-      ))
-    })
+    path
+      .eval_at(t, ctx)
+      .map_err(|e| e.wrap("path_frame: error sampling path"))
   };
 
   let pos = sample(t_in)?;
@@ -9288,7 +8998,7 @@ fn path_frame_impl(
   let mut normal = Vec2::new(-tangent.y, tangent.x);
 
   if inward_normal {
-    if let Some(true) = closed_subpath_inward_flip(callable, t_in)? {
+    if let Some(true) = closed_subpath_inward_flip(path, t_in, ctx)? {
       normal = -normal;
     }
   }
@@ -9298,67 +9008,6 @@ fn path_frame_impl(
   map.insert("tangent".to_owned(), Value::Vec2(tangent));
   map.insert("normal".to_owned(), Value::Vec2(normal));
   Ok(Value::Map(Rc::new(map)))
-}
-
-fn invoke_path_point(ctx: &EvalCtx, cb: &Rc<Callable>, t: f32) -> Result<Vec2, ErrorStack> {
-  let out = ctx
-    .invoke_callable(cb, &[Value::Float(t)], EMPTY_KWARGS)
-    .map_err(|e| e.wrap("path_len: error sampling path"))?;
-  out.as_vec2().copied().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_len: callable returned a non-Vec2 value: {out:?}"
-    ))
-  })
-}
-
-/// Sums chord lengths of `samples` uniform samples — the sampling fallback used by `path_len` and
-/// `trim_path` (distance unit) for black-box callables that don't expose segment topology.
-fn estimate_path_length(
-  ctx: &EvalCtx,
-  cb: &Rc<Callable>,
-  samples: usize,
-) -> Result<f32, ErrorStack> {
-  let n = samples.max(2);
-  let mut prev = invoke_path_point(ctx, cb, 0.0)?;
-  let mut total = 0.0;
-  for i in 1..=n {
-    let p = invoke_path_point(ctx, cb, i as f32 / n as f32)?;
-    total += (p - prev).norm();
-    prev = p;
-  }
-  Ok(total)
-}
-
-fn path_len_impl(
-  ctx: &EvalCtx,
-  _def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "path_len: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
-  let apply_transform = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
-
-  if let Some(tracer) = extract_path_tracer(cb) {
-    let len = if apply_transform {
-      tracer.transformed_total_length()?
-    } else {
-      tracer.total_length
-    };
-    return Ok(Value::Float(len));
-  }
-
-  let samples = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_int()
-    .unwrap_or(512)
-    .max(2) as usize;
-  Ok(Value::Float(estimate_path_length(ctx, cb, samples)?))
 }
 
 #[derive(Clone, Copy)]
@@ -9392,12 +9041,7 @@ fn trim_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  let path_val = arg_refs[0].resolve(args, kwargs);
-  let cb = path_val.as_callable().ok_or_else(|| {
-    ErrorStack::new(format!(
-      "trim_path: expected a path callable, found: {path_val:?}"
-    ))
-  })?;
+  let path = expect_path(arg_refs[0].resolve(args, kwargs), "trim_path")?;
 
   let start = arg_refs[1].resolve(args, kwargs).as_float();
   let end = arg_refs[2].resolve(args, kwargs).as_float();
@@ -9419,16 +9063,9 @@ fn trim_path_impl(
     }
   };
 
-  let tracer = extract_path_tracer(cb);
-
-  // Resolve start/end into a normalized sampling-`t` range. For the distance unit we divide by the
-  // total arc length, which yields the correct fraction under identity and uniform transforms.
   let total = match unit {
     TrimUnit::T => 1.0,
-    TrimUnit::Distance => match tracer {
-      Some(t) => t.transformed_total_length()?,
-      None => estimate_path_length(ctx, cb, 512)?,
-    },
+    TrimUnit::Distance => path.length(ctx)?,
   };
   if total <= 1e-5 {
     return Err(ErrorStack::new("trim_path: path has zero length"));
@@ -9442,94 +9079,7 @@ fn trim_path_impl(
     )));
   }
 
-  if let Some(tracer) = tracer {
-    let trimmed = trim_tracer(tracer, start_t, end_t);
-    return Ok(Value::Callable(Rc::new(Callable::Dynamic {
-      name: "trace_path".to_owned(),
-      inner: Box::new(trimmed),
-    })));
-  }
-
-  // Non-tracer fallback: remap the inner sampler's critical points into the trimmed `[0, 1]` range.
-  let span = end_t - start_t;
-  let cached_critical_points = as_path_sampler(cb)
-    .map(|s| {
-      s.critical_t_values()
-        .into_iter()
-        .filter(|&t| t >= start_t - 1e-6 && t <= end_t + 1e-6)
-        .map(|t| ((t - start_t) / span).clamp(0.0, 1.0))
-        .collect()
-    })
-    .unwrap_or_default();
-
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "trace_path".to_owned(),
-    inner: Box::new(TrimmedPathSampler {
-      inner: Rc::clone(cb),
-      start_t,
-      span,
-      transform: nalgebra::Matrix3::identity(),
-      cached_critical_points,
-    }),
-  })))
-}
-
-fn path_join_impl(
-  ctx: &EvalCtx,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  let cb_a = arg_refs[0]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_join: expected a callable path sampler for `path1`"))?;
-  let cb_b = arg_refs[1]
-    .resolve(args, kwargs)
-    .as_callable()
-    .ok_or_else(|| ErrorStack::new("path_join: expected a callable path sampler for `path2`"))?;
-
-  let tracer_a = extract_path_tracer(cb_a).ok_or_else(|| {
-    ErrorStack::new(
-      "path_join: `path1` must be a path sampler from \
-       `build_path`/`trace_svg_path`/`text_to_path`.",
-    )
-  })?;
-  let tracer_b = extract_path_tracer(cb_b).ok_or_else(|| {
-    ErrorStack::new(
-      "path_join: `path2` must be a path sampler from \
-       `build_path`/`trace_svg_path`/`text_to_path`.",
-    )
-  })?;
-
-  let fill_rule = match (tracer_a.fill_rule, tracer_b.fill_rule) {
-    (Some(a), Some(b)) if a != b => {
-      return Err(ErrorStack::new(format!(
-        "path_join: conflicting fill rules between paths ({a:?} vs {b:?}). Apply matching \
-         `fill_rule` settings or join paths that don't have explicit fill rules."
-      )));
-    }
-    (Some(a), _) => Some(a),
-    (None, Some(b)) => Some(b),
-    (None, None) => None,
-  };
-
-  // Each input may carry its own transform; bake them into world coordinates before
-  // concatenation, otherwise the joined tracer's identity transform would silently shift
-  // either side's geometry.
-  let mut subpaths: Vec<PathSubpath> =
-    Vec::with_capacity(tracer_a.subpaths.len() + tracer_b.subpaths.len());
-  bake_tracer_subpaths_into(tracer_a, &mut subpaths)?;
-  bake_tracer_subpaths_into(tracer_b, &mut subpaths)?;
-
-  let interned_t_kwarg = ctx.interned_symbols.intern("t");
-  let mut tracer = PathTracerCallable::from_subpaths(subpaths, interned_t_kwarg);
-  tracer.fill_rule = fill_rule;
-
-  Ok(Value::Callable(Rc::new(Callable::Dynamic {
-    name: "trace_path".to_string(),
-    inner: Box::new(tracer),
-  })))
+  Ok(Value::Path(Rc::new(path.trimmed(start_t, end_t))))
 }
 
 fn flip_normals_impl(
@@ -9575,6 +9125,9 @@ fn reflect_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= REFLECT_PATH_DEF_IX {
+    return path_reflect_impl(def_ix - REFLECT_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (normal, offset, mesh_arg) = match def_ix {
     0 => (
       *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap(),
@@ -9604,6 +9157,19 @@ fn reflect_axis_impl(
   kwargs: &FxHashMap<Sym, Value>,
   normal: Vec3,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= REFLECT_AXIS_PATH_DEF_IX {
+    // `reflect_x` mirrors a path across the x axis (normal +y), the opposite of the mesh
+    // convention where it negates x.
+    let line_normal = Vec2::new(normal.y, normal.x);
+    return path_reflect_axis_impl(
+      def_ix - REFLECT_AXIS_PATH_DEF_IX,
+      arg_refs,
+      args,
+      kwargs,
+      line_normal,
+      "reflect",
+    );
+  }
   let (offset, mesh_arg) = match def_ix {
     0 => (0., &arg_refs[0]),
     1 => (
@@ -10157,6 +9723,13 @@ fn reverse_impl(
         inner: Rc::new(vals),
       })))
     }
+    1 => Ok(Value::Path(Rc::new(
+      arg_refs[0]
+        .resolve(args, kwargs)
+        .as_path()
+        .unwrap()
+        .reversed(),
+    ))),
     _ => unimplemented!(),
   }
 }
@@ -10414,32 +9987,30 @@ fn sigmoid_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(1.0 / (1.0 + (-value).exp())))
+      Ok(Value::Float(dmath::sigmoid(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        1.0 / (1.0 + (-value.x).exp()),
-        1.0 / (1.0 + (-value.y).exp()),
-        1.0 / (1.0 + (-value.z).exp()),
+        dmath::sigmoid(value.x),
+        dmath::sigmoid(value.y),
+        dmath::sigmoid(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(
-        1.0 / (1.0 + (-value.x).exp()),
-        1.0 / (1.0 + (-value.y).exp()),
+        dmath::sigmoid(value.x),
+        dmath::sigmoid(value.y),
       )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| 1.0 / (1.0 + (-x).exp())))
+      Ok(texture::texture_map_unary(t, dmath::sigmoid))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(
-        value.map(|x| 1.0 / (1.0 + (-x).exp())),
-      )))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::sigmoid))))
     }
     _ => unimplemented!(),
   }
@@ -10702,6 +10273,7 @@ fn str_impl(
         Value::Material(material) => format!("{material:?}"),
         Value::Mat4(m) => format!("{m:?}"),
         Value::Texture(tex) => format!("{tex:?}"),
+        Value::Path(p) => format!("{p:?}"),
         Value::Nil => String::from("nil"),
       };
       Ok(Value::String(s))
@@ -10711,25 +10283,10 @@ fn str_impl(
 }
 
 fn subpaths_impl(args: &[Value]) -> Result<Value, ErrorStack> {
-  let path_val = &args[0];
-  let Some(cb) = path_val.as_callable() else {
-    return Err(ErrorStack::new(format!(
-      "subpaths: expected a path callable, got {path_val:?}"
-    )));
-  };
-
-  let tracer = match &**cb {
-    Callable::Dynamic { inner, .. } => inner.as_any().downcast_ref::<PathTracerCallable>(),
-    _ => None,
-  };
-
-  let Some(_) = tracer else {
-    return Err(ErrorStack::new(
-      "subpaths: expected a path sampler created by trace_path or similar functions",
-    ));
-  };
-
-  Ok(Value::Sequence(Rc::new(SubpathsSeq::new(Rc::clone(cb)))))
+  let path = expect_path(&args[0], "subpaths")?;
+  Ok(Value::Sequence(Rc::new(EagerSeq {
+    inner: Rc::new(path.subpaths().into_iter().map(Value::Path).collect()),
+  })))
 }
 
 macro_rules! builtin_fn {
@@ -10823,8 +10380,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "align" => builtin_fn!(align, |_def_ix, arg_refs, args, kwargs, _ctx| {
     align_impl(arg_refs, args, kwargs)
   }),
-  "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, _ctx| {
-    origin_to_geometry_impl(def_ix, arg_refs, args, kwargs)
+  "origin_to_geometry" => builtin_fn!(origin_to_geometry, |def_ix, arg_refs, args, kwargs, ctx| {
+    origin_to_geometry_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "apply_transforms" => builtin_fn!(apply_transforms, |def_ix, arg_refs, args, kwargs, ctx| {
     apply_transforms_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -11437,8 +10994,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "aabb" => builtin_fn!(aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
     aabb_impl(def_ix, arg_refs, args, kwargs)
   }),
-  "path_aabb" => builtin_fn!(path_aabb, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_aabb_impl(def_ix, arg_refs, args, kwargs)
+  "path_aabb" => builtin_fn!(path_aabb, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_aabb_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "is_self_intersecting" => builtin_fn!(is_self_intersecting, |def_ix, arg_refs, args, kwargs, _ctx| {
     is_self_intersecting_impl(def_ix, arg_refs, args, kwargs)
@@ -11521,53 +11078,57 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "path_xor" => builtin_fn!(path_xor, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_xor_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "build_path" => builtin_fn!(build_path, |def_ix, arg_refs, args, kwargs, ctx| {
-    trace_path::build_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  "path" => builtin_fn!(path, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "circle" => builtin_fn!(circle, |def_ix, arg_refs, args, kwargs, _ctx| {
+    circle_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rect" => builtin_fn!(rect, |def_ix, arg_refs, args, kwargs, _ctx| {
+    rect_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "polygon" => builtin_fn!(polygon, |_def_ix, arg_refs, args, kwargs, ctx| {
+    polygon_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "polyline" => builtin_fn!(polyline, |_def_ix, arg_refs, args, kwargs, ctx| {
+    polyline_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "move" => builtin_fn!(move, |def_ix, arg_refs, args, kwargs, _ctx| {
+    move_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "line" => builtin_fn!(line, |def_ix, arg_refs, args, kwargs, _ctx| {
+    line_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "quadratic_bezier" => builtin_fn!(quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "smooth_quadratic_bezier" => builtin_fn!(smooth_quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smooth_quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "cubic_bezier" => builtin_fn!(cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "smooth_cubic_bezier" => builtin_fn!(smooth_cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smooth_cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "arc" => builtin_fn!(arc, |def_ix, arg_refs, args, kwargs, _ctx| {
+    arc_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "close" => builtin_fn!(close, |_def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    pen(arg_refs, args, kwargs, 0, "close", DrawCommand::Close)
+  }),
+  "close_all" => builtin_fn!(close_all, |_def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
+    Ok(Value::Path(Rc::new(path.close_all()?)))
+  }),
+  "fill_rule" => builtin_fn!(fill_rule, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    fill_rule_impl(arg_refs, args, kwargs)
   }),
   "discretize_path" => builtin_fn!(discretize_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::discretize_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "path_join" => builtin_fn!(path_join, |_def_ix, arg_refs, args, kwargs, ctx| {
-    path_join_impl(ctx, arg_refs, args, kwargs)
-  }),
-  "path_move" => builtin_fn!(path_move, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_move_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_line" => builtin_fn!(path_line, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_line_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_quadratic_bezier" => builtin_fn!(path_quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_smooth_quadratic_bezier" => builtin_fn!(path_smooth_quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_smooth_quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_cubic_bezier" => builtin_fn!(path_cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_smooth_cubic_bezier" => builtin_fn!(path_smooth_cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_smooth_cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_arc" => builtin_fn!(path_arc, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_arc_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_circle" => builtin_fn!(path_circle, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_circle_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_rect" => builtin_fn!(path_rect, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_rect_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_close" => builtin_fn!(path_close, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_close_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_reverse" => builtin_fn!(path_reverse, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_reverse_impl(def_ix, arg_refs, args, kwargs)
-  }),
   "path_segments" => builtin_fn!(path_segments, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_segments_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_len" => builtin_fn!(path_len, |def_ix, arg_refs, args, kwargs, ctx| {
-    path_len_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "trim_path" => builtin_fn!(trim_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trim_path_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -11577,24 +11138,6 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "polyline_frames" => builtin_fn!(polyline_frames, |def_ix, arg_refs, args, kwargs, ctx| {
     polyline_frames::polyline_frames_impl(ctx, def_ix, arg_refs, args, kwargs)
-  }),
-  "path_trans" => builtin_fn!(path_trans, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_trans_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_rot" => builtin_fn!(path_rot, |_def_ix, arg_refs, args, kwargs, _ctx| {
-    path_rot_impl(arg_refs, args, kwargs)
-  }),
-  "path_scale" => builtin_fn!(path_scale, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_scale_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_reflect" => builtin_fn!(path_reflect, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_reflect_impl(def_ix, arg_refs, args, kwargs)
-  }),
-  "path_reflect_x" => builtin_fn!(path_reflect_x, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec2::new(0.0, 1.0), "path_reflect_x")
-  }),
-  "path_reflect_y" => builtin_fn!(path_reflect_y, |def_ix, arg_refs, args, kwargs, _ctx| {
-    path_reflect_axis_impl(def_ix, arg_refs, args, kwargs, Vec2::new(1.0, 0.0), "path_reflect_y")
   }),
   "extrude_along_normals" => builtin_fn!(extrude_along_normals, |def_ix, arg_refs, args, kwargs, ctx| {
     extrude_along_normals_impl(ctx, def_ix, arg_refs, args, kwargs)
@@ -11761,7 +11304,7 @@ pub(crate) fn resolve_builtin_impl(
 
 #[cfg(test)]
 mod vec4_math_tests {
-  use crate::{parse_and_eval_program, Vec4};
+  use crate::{dmath, parse_and_eval_program, Vec4};
 
   #[test]
   fn vec4_overloads_match_component_formulas() {
@@ -11803,23 +11346,23 @@ r_distance = distance(v, w)
     let u = Vec4::new(0.5, -0.5, 0.125, 0.25);
     let p = Vec4::new(0.5, 1.5, 2., 0.25);
     let w = Vec4::new(1., 2., -3., 0.5);
-    assert_eq!(vec("r_sin"), v.map(f32::sin));
-    assert_eq!(vec("r_cos"), v.map(f32::cos));
-    assert_eq!(vec("r_tan"), v.map(f32::tan));
-    assert_eq!(vec("r_asin"), u.map(f32::asin));
-    assert_eq!(vec("r_acos"), u.map(f32::acos));
-    assert_eq!(vec("r_atan"), v.map(f32::atan));
+    assert_eq!(vec("r_sin"), v.map(dmath::sin));
+    assert_eq!(vec("r_cos"), v.map(dmath::cos));
+    assert_eq!(vec("r_tan"), v.map(dmath::tan));
+    assert_eq!(vec("r_asin"), u.map(dmath::asin));
+    assert_eq!(vec("r_acos"), u.map(dmath::acos));
+    assert_eq!(vec("r_atan"), v.map(dmath::atan));
     assert_eq!(vec("r_sqrt"), p.map(f32::sqrt));
-    assert_eq!(vec("r_exp"), v.map(f32::exp));
-    assert_eq!(vec("r_log2"), p.map(f32::log2));
+    assert_eq!(vec("r_exp"), v.map(dmath::exp));
+    assert_eq!(vec("r_log2"), p.map(dmath::log2));
     assert_eq!(vec("r_floor"), Vec4::new(0., -2., 2., 0.));
     assert_eq!(vec("r_ceil"), Vec4::new(1., -1., 2., 1.));
     assert_eq!(vec("r_round"), Vec4::new(1., -2., 2., 0.));
     assert_eq!(vec("r_fract"), Vec4::new(0.5, -0.5, 0., 0.25));
     assert_eq!(vec("r_trunc"), Vec4::new(0., -1., 2., 0.));
-    assert_eq!(vec("r_sigmoid"), v.map(|x| 1.0 / (1.0 + (-x).exp())));
+    assert_eq!(vec("r_sigmoid"), v.map(dmath::sigmoid));
     assert_eq!(vec("r_abs"), Vec4::new(0.5, 1.5, 2., 0.25));
-    assert_eq!(vec("r_pow"), p.map(|x| x.powf(2.5)));
+    assert_eq!(vec("r_pow"), p.map(|x| dmath::powf(x, 2.5)));
     assert_eq!(vec("r_min"), Vec4::new(0.5, -1.5, -3., 0.25));
     assert_eq!(vec("r_max"), Vec4::new(1., 2., 2., 0.5));
     assert_eq!(vec("r_clamp"), Vec4::new(0.5, 0., 1., 0.25));
@@ -13270,7 +12813,7 @@ axis_self = rot_axis(v3(1, 1, 1), 1.234, normalize(v3(1, 1, 1)))
   #[test]
   fn test_rot_on_2d_points() {
     let src = r#"
-// One rotation axis in 2D, so a single angle in radians.  CCW, matching `path_rot`.
+// One rotation axis in 2D, so a single angle in radians.  CCW.
 quarter = rot(pi/2, v2(1, 0))
 // A bare point has no frame, so the global variant agrees.
 global = rot_global(pi/2, v2(1, 0))

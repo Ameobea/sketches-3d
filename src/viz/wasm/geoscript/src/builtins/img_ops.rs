@@ -1,5 +1,6 @@
 //! Image-processing builtins: `resize`, `dilate`/`erode`, `concat_channels`, levels.
 
+use crate::dmath;
 use crate::ValueMap;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -79,7 +80,7 @@ impl ResizeFilter {
           1.
         } else if x < 3. {
           let pix = std::f32::consts::PI * x;
-          3. * pix.sin() * (pix / 3.).sin() / (pix * pix)
+          3. * dmath::sin(pix) * dmath::sin(pix / 3.) / (pix * pix)
         } else {
           0.
         }
@@ -615,7 +616,7 @@ pub(crate) fn apply_levels(t: &Rc<TextureHandle>, p: LevelsParams) -> Value {
     let t = if inv_gamma == 1. {
       t
     } else {
-      t.powf(inv_gamma)
+      dmath::powf(t, inv_gamma)
     };
     p.out_lo + (p.out_hi - p.out_lo) * t
   };

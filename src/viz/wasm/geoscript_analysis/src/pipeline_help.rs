@@ -40,7 +40,7 @@ struct Binding {
   certain: bool,
 }
 
-fn type_flags(ty: &AbstractType) -> u16 {
+fn type_flags(ty: &AbstractType) -> u32 {
   match ty {
     AbstractType::Concrete(ty) => ty.as_bitflags(),
     AbstractType::Union(types) => types.iter().fold(0, |flags, ty| flags | ty.as_bitflags()),

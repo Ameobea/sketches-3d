@@ -27,7 +27,7 @@ pub struct ArgDef {
   /// This will be populated lazily
   pub interned_name: Sym,
   /// Bitflags
-  pub valid_types: u16,
+  pub valid_types: u32,
   pub default_value: DefaultValue,
   pub description: &'static str,
 }
@@ -455,6 +455,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Translates a texture's placement transform in base-UV units (right-multiply: M = M * T). Alias: `trans`.",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Translation."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Translates a path.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X translation."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y translation."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Translates a path.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "translate_global" => FnDef {
@@ -861,7 +908,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
           ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
         ],
-        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.",
+        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.",
         return_type: &[ArgType::Vec2],
       },
       FnSignature {
@@ -883,6 +930,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Rotates a texture's placement transform in the UV plane (right-multiply: M = M * R; local ops act about the texture's centered origin).  Counter-clockwise, matching the 2D point `rot` convention.",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Angle in radians."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Rotates a path counter-clockwise about the origin.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -1075,7 +1142,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef { name: "angle", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Numeric), default_value: DefaultValue::Required, description: "Rotation angle in radians." },
           ArgDef { name: "point", interned_name: Sym(0), valid_types: argtype_flags!(ArgType::Vec2), default_value: DefaultValue::Required, description: "" },
         ],
-        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  Matches `path_rot` and the `v2(cos(a), sin(a))` angle convention — note that is the opposite winding from the 3D `rot(v3(0, a, 0))`, whose nalgebra Tait-Bryan convention maps `(1,0,0)` to `(cos a, 0, -sin a)`.  A bare point has no frame of its own, so this matches `rot`.",
+        description: "Rotates a 2D point counter-clockwise around the origin.  There is only one rotation axis in 2D, so this takes a single angle in radians.  A bare point has no frame of its own, so this matches `rot`.",
         return_type: &[ArgType::Vec2],
       },
       FnSignature {
@@ -1686,6 +1753,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Scales a texture's placement transform (right-multiply: M = M * S; local ops act about the texture's centered origin). Accepts a Vec2 for non-uniform scaling or a number for uniform scaling.",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Uniform factor, or per-axis factors as a `vec2`."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Scales a path about the origin. A non-uniform scale converts arcs to cubic Béziers.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X factor."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y factor."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Scales a path about the origin. A non-uniform scale converts arcs to cubic Béziers.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "origin_to_geometry" => FnDef {
@@ -1710,13 +1824,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "Path sampler callable to center."
+            description: "Path to center."
           },
         ],
-        description: "Moves a 2D path so that its origin is at the centroid of its segment endpoints, returning a new path sampler. Preserves any existing transforms.",
-        return_type: &[ArgType::Callable],
+        description: "Moves a 2D path so that its origin is at its centroid (signed-area centroid of the filled region when any subpath is closed, arc-length centroid otherwise), returning a new path. Preserves any existing transforms.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -1742,13 +1856,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "Path sampler callable whose transform will be baked into its geometry."
+            description: "Path whose transform will be baked into its geometry."
           },
         ],
         description: "Bakes the 2D affine transform into the path's segment control points, resetting the transform to identity. Only works with trace_path/trace_svg_path paths.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -2001,6 +2115,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Mirrors a mesh across the plane with the given `normal`, shifted from the origin by `offset` along that normal, returning a new mesh.  Vertex positions and normals are reflected and triangle winding is reversed so the result stays consistently oriented.  Operates in the mesh's local space.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line, which passes through the origin."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line through the origin running along `axis`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Distance of the mirror line from the origin along the line's normal."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line running along `axis`, shifted by `offset` along the line's normal.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "reflect_x" => FnDef {
@@ -2040,6 +2201,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Mirrors a mesh across the plane `x = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the x axis (negates y).",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Mirror over the line `y = offset` instead."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line `y = offset`.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "reflect_y" => FnDef {
@@ -2078,6 +2272,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Mirrors a mesh across the plane `y = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the y axis (negates x).",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Mirror over the line `x = offset` instead."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line `x = offset`.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -6268,6 +6495,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Returns a new sequence with the elements in reverse order.  \n\nThis is NOT lazy and will evaluate the entire sequence immediately and collect all of its elements into memory.",
         return_type: &[ArgType::Sequence],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reverses a path's direction: `t` runs the other way, subpath order and every segment flip.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "collect" => FnDef {
@@ -6356,12 +6596,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A `PathSampler` callable (e.g. from `trace_svg_path`, `trace_path`, `lerp_path`) to render as a closed path in the XZ plane",
+            description: "A path to render as a closed path in the XZ plane",
           },
         ],
-        description: "Renders a `PathSampler` as a closed path in the XZ plane.  The sampler is evaluated at 10,000 evenly-spaced points and the resulting 2D positions are projected onto the XZ plane (y=0).",
+        description: "Renders a path in the XZ plane, one polyline per subpath, flattened at the ambient curve tolerance. The resulting 2D positions are projected onto the XZ plane (y=0).",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -6572,19 +6812,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler (from `trace_path`, `trace_svg_path`, `text_to_path`, etc.) or any `|t: num|: vec2` callable.",
+            description: "The path to render.",
           },
           ArgDef {
             name: "resolution",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(1000)),
-            description: "Sample count for non-PathSampler callables. PathSampler callables use adaptive sampling instead.",
+            description: "Sample count for non-path callables. path callables use adaptive sampling instead.",
           },
         ],
-        description: "Renders a path callable as a 2D path in the XZ plane. For PathSampler callables (e.g. from `trace_path`, `trace_svg_path`, `text_to_path`), subpaths and topology are handled correctly. For plain callables, uniform sampling is used.",
+        description: "Renders a path in the XZ plane, one polyline per subpath. Concrete subpaths are flattened adaptively (1° tolerance); lazy paths are sampled uniformly at `resolution` points.",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -9324,9 +9564,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A 2D path sampler callable of signature `|t: num|: vec2`."
+            description: "A 2D path."
           },
           ArgDef {
             name: "pad",
@@ -9337,7 +9577,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Uniformly scales and translates a 2D path so its bounding box fits inside `[pad, 1-pad]²`, filling the longer axis and centering the shorter one.  Aspect ratio is preserved.  The usual first step before `rasterize_path` / `path_sdf` / `path_uv` for glyphs, traced SVGs, or anything authored in arbitrary units.\n\nUses the exact analytic bounding box when available (see `path_aabb`), falling back to the discretized outline for black-box samplers or arcs under non-uniform transforms.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -9350,9 +9590,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler with analytic segment topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`)."
+            description: "A path with analytic segment topology (e.g. from `circle`, `rect`, `path()` pen ops, `trace_svg_path`, `text_to_path`)."
           },
         ],
         description: "Returns the exact axis-aligned bounding box of a 2D path as a 2-element sequence `[mins, maxs]` of Vec2 corners.\n\nThe bound is computed analytically from the path's line segments, beziers, and arcs (exact modulo floating-point rounding), not from a polyline discretization. Any transforms applied to the path are baked in. Errors if the path is empty, or if it contains arc segments under a non-uniform transform (skew or non-uniform scale), since transformed arcs are conics with no closed-form axis-aligned bound; bake the transform with `apply_transforms` first in that case.",
@@ -9526,6 +9766,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns the number of entries in a map",
         return_type: &[ArgType::Int],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Total arc length of a path over all its subpaths. Lazy paths are measured by sampling.",
+        return_type: &[ArgType::Float],
       },
     ],
   },
@@ -10048,7 +10301,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "profile",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Path, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Callable with signature `|u: float, v: float, u_ix: int, v_ix: int, spine_center: vec3|: vec2` that returns the local (x, y) offset for each point in the ring. Optional when `dynamic_profile` is provided."
           },
@@ -10083,16 +10336,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "profile_samplers",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence, ArgType::Nil),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Path, ArgType::Sequence, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional path sampler or sequence of path samplers (from `trace_path`)`.  Used to align profile `v` sampling with critical points."
+            description: "Optional path or sequence of paths whose critical points align the profile's `v` sampling."
           },
           ArgDef {
             name: "dynamic_profile",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float, u_ix: int|: PathSampler | { sampler: |v|: vec2, path_samplers: PathSampler | Seq<PathSampler>, sharp: bool, adaptive: bool, closed: bool }`. Returns either a path sampler directly (critical points and subpath topology extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_path samplers for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring), `closed` (for a black-box sampler, whether the profile ring wraps closed — default true; an open profile sweeps into a sheet with boundary; not valid for multi-subpath samplers, whose per-subpath openness comes from their own topology). Multi-subpath profiles (disjoint loops, or nested opposite-winding loops for a hollow tube) require a real path sampler and a topology (count/closedness/winding/nesting) that stays constant along the spine. More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
+            description: "Alternative to `profile` (mutually exclusive). Callable with signature `|u: float, u_ix: int|: path | { sampler: |v|: vec2, path_samplers: path | Seq<path>, sharp: bool, adaptive: bool, closed: bool }`. Returns either a path directly (critical points and subpath topology extracted automatically if it's a PathTracerCallable) or a map with a sampler plus optional keys: `path_samplers` (trace_paths for critical points), `sharp` (mark ring edges as sharp), `adaptive` (override global adaptive_profile_sampling for this ring), `closed` (for a black-box sampler, whether the profile ring wraps closed — default true; an open profile sweeps into a sheet with boundary; not valid for multi-subpaths, whose per-subpath openness comes from their own topology). Multi-subpath profiles (disjoint loops, or nested opposite-winding loops for a hollow tube) require a real path and a topology (count/closedness/winding/nesting) that stays constant along the spine. More efficient than `profile` for dynamic profiles as it's called once per ring instead of per vertex. Cannot be used together with `profile_samplers`."
           },
           ArgDef {
             name: "fku_stitching",
@@ -10365,9 +10618,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence),
+            valid_types: argtype_flags!(ArgType::Path, ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Either:\n - A path callable: a `PathSampler` (e.g. from `trace_path`, `trace_svg_path`, `catmull_rom`, `lerp_paths`) sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count`; or a black-box `|t: float|: vec2`, sampled uniformly at `sample_count` points (default 64).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
+            description: "Either:\n - A path, sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count` (lazy paths are sampled uniformly at `sample_count` points, default 64).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
           },
           ArgDef {
             name: "up",
@@ -10388,17 +10641,17 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max turning angle (degrees) per segment when discretizing curves in a `PathSampler` input.  Ignored for black-box callables."
+            description: "Max turning angle (degrees) per segment when discretizing curves in a path input.  Ignored for lazy paths."
           },
           ArgDef {
             name: "sample_count",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "For black-box `|t|: vec2` callables: number of uniform samples (defaults to 64 when nil).  For `PathSampler` inputs: optional cap on total points across all subpaths after adaptive sampling."
+            description: "For lazy paths: number of uniform samples (defaults to 64 when nil).  For path inputs: optional cap on total points across all subpaths after adaptive sampling."
           },
         ],
-        description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from `PathSampler` inputs) are extruded independently; closed paths are not supported and trigger an error.",
+        description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from path inputs) are extruded independently; closed paths are not supported and trigger an error.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -10688,23 +10941,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "",
           },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, centers the path around the origin after parsing.",
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Fill rule for tessellation: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.",
-          },
         ],
-        description: "Fetches SVG path data for the given text and returns a path sampler callable of signature `|t: num|: vec2`. Suitable for use with `tessellate_path`, `render_path`, `subpaths`, etc.",
-        return_type: &[ArgType::Callable],
+        description: "Fetches SVG path data for the given text and returns a path. Suitable for use with `tessellate_path`, `render_path`, `subpaths`, etc.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -10805,9 +11044,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable of signature `|t: num|: vec2`.  Every subpath is discretized into line segments; closed subpaths are sealed, open ones are treated as strokes."
+            description: "A path.  Every subpath is discretized into line segments; closed subpaths are sealed, open ones are treated as strokes."
           },
           ArgDef {
             name: "alpha",
@@ -10849,18 +11088,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
         ],
         description: "Computes a 2D alpha-wrap of a path: a simple, hole-aware outline that strictly encloses every segment of the input, roughly `offset` away from it, with concavities narrower than `alpha` filled in.  Think of it as a concave hull of the strokes and filled regions of the path.  Overlapping or self-intersecting subpaths and open strokes are all fine as input.  The output is a polyline path (no continuous curve detail) with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -10901,7 +11133,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes a 2D alpha-wrap of a set of points: a simple, hole-aware outline enclosing all of them, roughly `offset` away from the outermost points, with gaps narrower than `alpha` closed over.  Useful for blob-like silhouettes around scattered points.  The output is a polyline path with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -11318,16 +11550,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A `PathSampler` callable (e.g. from `trace_path`, `trace_svg_path`, `lerp_path`, `catmull_rom`) or any `|t: num|: vec2` callable.  Sampled in the XZ plane (`vec2(x, y)` -> `vec3(x, 0, y)`).  Multi-subpath inputs are fanned independently and combined into one mesh."
+            description: "A path.  Sampled in the XZ plane (`vec2(x, y)` -> `vec3(x, 0, y)`).  Multi-subpath inputs are fanned independently and combined into one mesh."
           },
           ArgDef {
             name: "closed",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating each subpath as closed.  When nil (default), closedness is inherited from the path sampler's topology (or inferred from `p(0) ~= p(1)` for black-box callables)."
+            description: "Optional override for treating each subpath as closed.  When nil (default), closedness is inherited from the path's topology (or inferred from `p(0) ~= p(1)` for black-box callables)."
           },
           ArgDef {
             name: "flipped",
@@ -11348,17 +11580,17 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max turning angle (degrees) per segment when adaptively discretizing curves.  Currently honored by traced-path samplers (`trace_path`, `trace_svg_path`); other `PathSampler` inputs (`lerp_path`, `catmull_rom`) and black-box callables fall back to uniform `sample_count` sampling."
+            description: "Max turning angle (degrees) per segment when adaptively discretizing curves.  Lazy paths (`lerp_paths`, `catmull_rom`, `path(fn)`) fall back to uniform `sample_count` sampling."
           },
           ArgDef {
             name: "sample_count",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Uniform sample count, used when adaptive sampling is unavailable (black-box callables, `lerp_path`, `catmull_rom`).  Defaults to 64 when nil.  For traced-path samplers, optionally caps the total points across all subpaths after adaptive sampling."
+            description: "Uniform sample count, used when adaptive sampling is unavailable (lazy paths: `lerp_paths`, `catmull_rom`, `path(fn)`).  Defaults to 64 when nil.  For traced-paths, optionally caps the total points across all subpaths after adaptive sampling."
           }
         ],
-        description: "Builds a fan of triangles by discretizing a path callable and filling the area inside each subpath.  One triangle will be built per pair of adjacent points in each subpath, connecting to that subpath's center.  Output lives in the XZ plane.",
+        description: "Builds a fan of triangles by discretizing a path and filling the area inside each subpath.  One triangle will be built per pair of adjacent points in each subpath, connecting to that subpath's center.  Output lives in the XZ plane.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -11372,9 +11604,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A sequence of Vec2 points, a sequence of Vec2 sequences, or a callable `|t: num|: vec2` (preferably from `trace_path`)."
+            description: "A sequence of Vec2 points, a sequence of Vec2 sequences, or a path."
           },
           ArgDef {
             name: "flipped",
@@ -11398,18 +11630,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Maximum total number of output points across all subpaths. When provided, adaptively resamples the path to this count using curvature+arc-length weighting while preserving critical corners. When nil (default), uses the path's natural tessellation resolution."
           },
           ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed. Tessellation always closes the path; passing closed=false will return an error."
-          },
-          ArgDef {
             name: "fill_rule",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Fill rule used to identify the interior of the shape: \"nonzero\", \"evenodd\", \"positive\", or \"negative\".  If nil, inherited from the path sampler (e.g. set via `trace_path`) and otherwise defaulting to \"nonzero\".\n\nThe CGAL engine always uses nesting-based fill (equivalent to \"evenodd\"); requesting any winding-dependent rule (\"nonzero\"/\"positive\"/\"negative\") with multiple subpaths under CGAL is a runtime error.  The lyon engine honors all four rules per its tessellator semantics."
+            description: "Fill rule used to identify the interior of the shape: \"nonzero\", \"evenodd\", \"positive\", or \"negative\".  If nil, inherited from the path (e.g. set via `trace_path`) and otherwise defaulting to \"nonzero\".\n\nThe CGAL engine always uses nesting-based fill (equivalent to \"evenodd\"); requesting any winding-dependent rule (\"nonzero\"/\"positive\"/\"negative\") with multiple subpaths under CGAL is a runtime error.  The lyon engine honors all four rules per its tessellator semantics."
           },
           ArgDef {
             name: "engine",
@@ -11440,7 +11665,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Coordinate plane the mesh is triangulated into, as a two-axis swizzle mapping the 2D (u, v) point to two of x/y/z (the remaining axis is 0).  Order matters: \"xz\" (default) maps u→x, v→z; \"zx\" maps u→z, v→x (a mirror embedding).  Any two distinct axes are accepted (\"xy\", \"yx\", \"xz\", \"zx\", \"yz\", \"zy\").  The default front face points along the +remaining axis (+Y for \"xz\"); use `flipped` to reverse it."
           },
         ],
-        description: "Tessellates a 2D path into a triangle mesh, by default in the XZ plane (override with `plane`).\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `build_path(path { rect(...) rect(...) | reverse })`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
+        description: "Tessellates a 2D path into a triangle mesh, by default in the XZ plane (override with `plane`).\n\nPath topology (subpaths and the holes they imply via nesting) is preserved by both backends.  Build paths-with-holes by either using a multi-subpath path (e.g. `path([rect(...), rect(...) | reverse])`) or applying a Clipper2 boolean op upstream.\n\nCGAL refinement runs when either `max_edge_len` or `min_angle_degrees` is supplied; otherwise the raw constrained Delaunay triangulation is returned.  Each constraint independently triggers splitting of triangles that violate it; a triangle is split if it has either an edge longer than `max_edge_len` OR an angle smaller than `min_angle_degrees`.",
         return_type: &[ArgType::Mesh],
       }
     ],
@@ -11454,9 +11679,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A filled 2D region to embed and thicken.  A sequence of Vec2 points, a sequence of Vec2 sequences (outer + holes via subpath nesting), or a path callable `|t: num|: vec2` (e.g. from `trace_path`).  Holes drilled through the plate come straight from subpath nesting, exactly like `tessellate_path`."
+            description: "A filled 2D region to embed and thicken.  A sequence of Vec2 points, a sequence of Vec2 sequences (outer + holes via subpath nesting), or a path.  Holes drilled through the plate come straight from subpath nesting, exactly like `tessellate_path`."
           },
           ArgDef {
             name: "embed",
@@ -11491,7 +11716,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max turning angle (degrees) per segment when discretizing the input path's 2D curves (beziers/arcs/circles from `trace_path` etc.) into the boundary polyline that gets embedded.  Falls back to the runtime default (settable via `set_curve_angle_threshold`, seeded by the prelude) when nil.  Only affects callable/`PathSampler` inputs with actual curve features; a raw `Seq<Vec2>` is used as-is."
+            description: "Max turning angle (degrees) per segment when discretizing the input path's 2D curves (beziers/arcs/circles) into the boundary polyline that gets embedded.  Falls back to the runtime default (settable via `set_curve_angle_threshold`, seeded by the prelude) when nil.  Only affects callable/path inputs with actual curve features; a raw `Seq<Vec2>` is used as-is."
           },
           ArgDef {
             name: "normal_mode",
@@ -13079,30 +13304,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: "An SVG path data string using move, line, cubic/quadratic, smooth, and arc commands."
           },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be centered around the origin after being traced."
-          },
-          ArgDef {
-            name: "reverse",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be sampled in reverse direction (from end to start). Sampling at t=0 will return the end point and t=1 will return the start point."
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional fill rule that describes how the interior of this path should be interpreted for operations like tessellation.  One of \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil."
-          }
         ],
-        description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
-        return_type: &[ArgType::Callable]
+        description: "Parses SVG path data (`M`, `L`, `H`, `V`, `C`, `S`, `Q`, `T`, `A`, `Z`, absolute or relative) into a path.",
+        return_type: &[ArgType::Path]
       }
     ]
   },
@@ -13115,12 +13319,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler created by `trace_path` or similar functions"
+            description: "A path to split"
           }
         ],
-        description: "Returns a lazy sequence of path samplers, one for each disconnected subpath in the input path.\n\nFor example, if a path is created with multiple `move` commands, each segment between moves becomes a separate subpath. Each returned sampler works like the original, with `t` in [0,1] sampling along that particular subpath.",
+        description: "Returns a lazy sequence of paths, one for each disconnected subpath in the input path.\n\nFor example, if a path is created with multiple `move` commands, each segment between moves becomes a separate subpath. Each returned sampler works like the original, with `t` in [0,1] sampling along that particular subpath.",
         return_type: &[ArgType::Sequence]
       }
     ]
@@ -13134,9 +13338,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable of signature `|t: num|: vec2`. Use `trace_path` for topology-aware sampling."
+            description: "A path."
           },
           ArgDef {
             name: "delta",
@@ -13259,18 +13463,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             // TODO: this seems to be getting used for all paths even when the underlying path has topology data.
             //
             // maybe only with the lerp_paths case?
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
         ],
-        description: "Offsets a 2D path using Clipper2 and returns a new path sampler.  Note: continuous curve detail is lost; the output is a polyline representation.",
-        return_type: &[ArgType::Callable],
+        description: "Offsets a 2D path using Clipper2 and returns a new path.  Note: continuous curve detail is lost; the output is a polyline representation.",
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13283,16 +13480,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path_a",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "First path sampler callable of signature `|t: float|: vec2`."
+            description: "First path."
           },
           ArgDef {
             name: "path_b",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "Second path sampler callable of signature `|t: float|: vec2`."
+            description: "Second path."
           },
           ArgDef {
             name: "mix",
@@ -13309,8 +13506,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Fallback critical point resolution when inputs lack topology data."
           },
         ],
-        description: "Interpolates between two path samplers, returning a new path callable. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation.",
-        return_type: &[ArgType::Callable],
+        description: "Interpolates between two paths, returning a new path. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation.",
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13342,8 +13539,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "If true, the spline wraps from the last control point back to the first, forming a closed loop."
           },
         ],
-        description: "Returns a path sampler callable `|t: float|: vec2` that evaluates a Catmull-Rom spline through the given 2D control points. The spline passes through every control point. All interior joints are C1 smooth; only the endpoints of an open spline are non-smooth. `tension` generalises to the full cardinal spline family (`0.5` = standard Catmull-Rom).",
-        return_type: &[ArgType::Callable],
+        description: "Returns a path `|t: float|: vec2` that evaluates a Catmull-Rom spline through the given 2D control points. The spline passes through every control point. All interior joints are C1 smooth; only the endpoints of an open spline are non-smooth. `tension` generalises to the full cardinal spline family (`0.5` = standard Catmull-Rom).",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -13483,12 +13680,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable (e.g. from trace_path, offset_path, lerp_paths)."
+            description: "A path (e.g. from trace_path, offset_path, lerp_paths)."
           },
         ],
-        description: "Returns the critical t values of a path sampler as a sequence of floats. Critical points are parameter values where sharp features (corners, segment boundaries) occur. Only works with path samplers that have topology information.",
+        description: "Returns the critical t values of a path as a sequence of floats. Critical points are parameter values where sharp features (corners, segment boundaries) occur. Only works with paths that have topology information.",
         return_type: &[ArgType::Sequence],
       }
     ]
@@ -13502,16 +13699,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The first path sampler callable of signature `|t: num|: vec2`."
+            description: "The first path."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The second path sampler callable of signature `|t: num|: vec2`."
+            description: "The second path."
           },
           ArgDef {
             name: "fill_rule",
@@ -13532,14 +13729,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
           ArgDef {
             name: "engine",
@@ -13550,7 +13740,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the union of two 2D paths. The union contains all areas inside either path.\n\nWhich regions count as \"inside\" depends on `fill_rule` (default `nonzero`):\n- `nonzero`: a point is inside if the signed-crossing count of a ray from it to infinity is non-zero.  Inner subpaths must wind opposite to outer subpaths to register as holes.\n- `evenodd`: a point is inside if the unsigned crossing count is odd.  Winding direction is ignored; holes arise purely from nesting.\n- `positive` / `negative`: like `nonzero` but keep only regions with positive or negative winding number respectively.\n\n**Engine selection** (`engine` kwarg, default `clipper`):\n- `clipper`: Clipper2, fast but operates in fixed-point internally so float coordinates are quantized and exact-coincident points may shift slightly.  This can cause T-junctions and tiny gaps in the output topology that break downstream operations like 2-manifold extrusion.\n- `cgal`: CGAL `Polygon_set_2` over `Exact_predicates_exact_constructions_kernel`; exact arithmetic preserves coincident edges precisely.  Slower (often 10–100×) but produces clean topology suitable for `extrude` / `tessellate_path`.  Only `evenodd` fill rule is supported; within each input, subpaths combine under XOR (matching the nesting-based fill model).\n\nFor paths built procedurally as non-overlapping subpaths (e.g. an outer shape plus enclosed holes), skip the boolean op entirely and pass the multi-subpath path directly to downstream consumers; they will treat nested subpaths as holes under their own fill rule.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -13559,7 +13749,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Sequence of path callables to union together."
+            description: "Sequence of paths to union together."
           },
           ArgDef {
             name: "fill_rule",
@@ -13580,14 +13770,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
           ArgDef {
             name: "engine",
@@ -13598,7 +13781,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the union of every path in a sequence in a single boolean pass.  Much faster than chaining pairwise unions (`reduce(path_union)` and `fold(init, path_union)` route here automatically), since each pairwise step would re-sample and re-analyze the growing result.  Options and engines behave as for the two-path form; with `engine=\"cgal\"` the inputs are combined pairwise internally.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13611,16 +13794,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The first path sampler callable of signature `|t: num|: vec2`."
+            description: "The first path."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The second path sampler callable of signature `|t: num|: vec2`."
+            description: "The second path."
           },
           ArgDef {
             name: "fill_rule",
@@ -13641,14 +13824,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
           ArgDef {
             name: "engine",
@@ -13659,7 +13835,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the intersection of two 2D paths. The intersection contains only areas inside both paths.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13672,16 +13848,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "a",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The first path sampler. Must be a callable with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); black-box `|t|: vec2` callables are rejected."
+            description: "The first path."
           },
           ArgDef {
             name: "b",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The second path sampler. Same restriction as `a`."
+            description: "The second path. Same restriction as `a`."
           },
           ArgDef {
             name: "fill_rule",
@@ -13702,17 +13878,10 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count fallback for path samplers without curvature-adaptive sampling."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count fallback for paths without curvature-adaptive sampling."
           },
         ],
-        description: "Returns `true` if the two 2D path regions overlap under the given fill rule, `false` otherwise.\n\nDetects both cases where path segments cross and cases where one path is fully contained inside the other. Uses Clipper2's region intersection internally, so winding order and the chosen fill rule determine what counts as interior.\n\nOnly supported for path samplers with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); generic black-box `|t|: vec2` callables raise an error.",
+        description: "Returns `true` if the two 2D path regions overlap under the given fill rule, `false` otherwise.\n\nDetects both cases where path segments cross and cases where one path is fully contained inside the other. Uses Clipper2's region intersection internally, so winding order and the chosen fill rule determine what counts as interior.\n\nOnly supported for paths with known topology (e.g. from `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); generic black-box `|t|: vec2` callables raise an error.",
         return_type: &[ArgType::Bool],
       }
     ]
@@ -13726,16 +13895,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The first path sampler callable of signature `|t: num|: vec2`."
+            description: "The first path."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The second path sampler callable of signature `|t: num|: vec2`."
+            description: "The second path."
           },
           ArgDef {
             name: "fill_rule",
@@ -13756,14 +13925,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
           ArgDef {
             name: "engine",
@@ -13774,7 +13936,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the difference of two 2D paths (subject minus clip). The result contains areas inside subject but not inside clip.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
   },
@@ -13787,16 +13949,16 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "subject",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The first path sampler callable of signature `|t: num|: vec2`."
+            description: "The first path."
           },
           ArgDef {
             name: "clip",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "The second path sampler callable of signature `|t: num|: vec2`."
+            description: "The second path."
           },
           ArgDef {
             name: "fill_rule",
@@ -13817,14 +13979,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
+            description: "Uniform sample count for non-trace_paths."
           },
           ArgDef {
             name: "engine",
@@ -13835,56 +13990,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Computes the exclusive-or (XOR) of two 2D paths. The result contains areas inside either path but not both.\n\nSee `path_union` for the full fill-rule and engine reference; the same conventions apply here.",
-        return_type: &[ArgType::Callable],
+        return_type: &[ArgType::Path],
       }
     ]
-  },
-  "build_path" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cmds",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Sequence),
-            default_value: DefaultValue::Required,
-            description: "A sequence of draw command maps as produced by the `path { ... }` macro or hand-built via `path_move`, `path_line`, `path_close`, `path_arc`, etc."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, each subpath is closed by connecting the last point back to the first.",
-          },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path is centered around the origin after construction.",
-          },
-          ArgDef {
-            name: "reverse",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path is sampled in reverse direction.  Applies to the whole path uniformly.  To reverse the winding of individual subpaths (e.g. to mark some `rect`/`circle` subpaths as holes), use `path_reverse` / `| reverse` on the relevant draw commands inside the `path { ... }` block.",
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional fill rule: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.  Consumed only by downstream operations that respect it (Clipper2 boolean ops; lyon tessellation).  The CGAL tessellation engine uses nesting-based domain identification regardless of this value.",
-          },
-        ],
-        description: "Builds a 2D path sampler from a sequence of draw command maps.\n\nThe canonical input source is the `path { ... }` macro, which evaluates to a sequence of draw command maps.  This function turns that sequence into a `|t: num|: vec2` callable, where `t` ranges over the path's arc length from 0 to 1.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.\n\nThe resulting tracer preserves subpath identity; each `rect`, `circle`, or explicit `move`-delimited run becomes its own subpath.  Multi-subpath paths are consumed correctly by boolean ops, tessellation, and the various sampling builtins.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
   },
   "discretize_path" => FnDef {
     module: "path",
@@ -13895,9 +14003,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable. Topology-aware paths use adaptive curvature sampling; black-box `|t: num|: vec2` callables fall back to uniform sampling."
+            description: "A path. Topology-aware paths use adaptive curvature sampling; lazy paths fall back to uniform sampling."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -13911,551 +14019,81 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
-            description: "Uniform sample count for black-box callables that don't expose topology."
+            description: "Uniform sample count for lazy paths."
+          },
+        ],
+
+        description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive curvature-based sampling driven by `curve_angle_degrees` for paths backed by a path tracer. For black-box callables, falls back to uniform sampling at `sample_count` points.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "path_segments" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "path from any path constructor or op / boolean ops."
+          },
+        ],
+        description: "Returns a sequence of tagged dicts, one per segment of the path, in subpath traversal order with the path's transform applied.\n\nEvery segment dict has these common fields:\n- `type`: `\"line\"` | `\"quad\"` | `\"cubic\"` | `\"arc\"`\n- `start`, `end`: vec2 endpoints\n- `length`: arc length of the segment\n- `subpath`: int - index of the parent subpath\n- `closed`: bool - whether the parent subpath is closed\n- `t_start`, `t_end`: floats in [0, 1] - arc-length parameters within the parent subpath\n- `t_start_global`, `t_end_global`: floats in [0, 1] - arc-length parameters across the full path\n\nPer-type extras:\n- `quad`: `ctrl: vec2`\n- `cubic`: `ctrl1: vec2`, `ctrl2: vec2`\n- `arc`: `center: vec2`, `rx: num`, `ry: num`, `x_axis_rotation: num` (radians), `large_arc: bool`, `sweep: bool`, `theta_start: num`, `theta_delta: num`\n\nThe path's `reverse` flag is a sampling-order concern and is intentionally not honoured here; segments are always emitted in their as-built order.\n\nOnly works with paths that expose segment topology (i.e. those backed by a path tracer); paths from `catmull_rom` / `lerp_paths` are not supported.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "items",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "A path, a sequence of paths, or nested sequences of them; `nil` entries are skipped."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for the grouped path (`\"nonzero\"`, `\"evenodd\"`, `\"positive\"`, `\"negative\"`). When omitted it is inherited if every item agrees; conflicting rules are an error."
+          },
+        ],
+        description: "Groups paths into one path whose subpaths run in order. Concrete inputs are merged into a single flat list of subpaths; lazy inputs (`lerp_paths`, `catmull_rom`, `path(fn)`) are kept as they are. `path()` is the empty path, the usual start of a pen-op chain: `path() | move(0, 0) | line(1, 1) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "f",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A `|t: num|: vec2` callable sampled over `t` in [0, 1]."
           },
           ArgDef {
             name: "closed",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed/open. When nil, the input's existing topology is preserved (or inferred from `p(0) ≈ p(1)` for black-box callables)."
+            description: "Whether the sampled curve is a closed loop. When nil it is inferred from whether `f(0)` and `f(1)` coincide."
           },
         ],
-
-        description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path sampler.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive curvature-based sampling driven by `curve_angle_degrees` for paths backed by a path tracer. For black-box callables, falls back to uniform sampling at `sample_count` points.",
-        return_type: &[ArgType::Callable],
+        description: "Wraps a `|t: num|: vec2` callable as a lazy path. It has no draw commands, so pen ops and `path_segments` need `discretize_path` first; everything else samples it.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
-  "path_join" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "path1",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "First path sampler (from `build_path`, `trace_svg_path`, etc.)."
-          },
-          ArgDef {
-            name: "path2",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Second path sampler (from `build_path`, `trace_svg_path`, etc.)."
-          },
-        ],
-        description: "Joins two paths by structurally concatenating their subpath arrays.  Avoids the Clipper2 round-trip used by `path_union`/`path_difference` etc.; appropriate when the inputs are known not to overlap.\n\nBoth inputs must be path samplers with identity transforms.  Apply `apply_transforms` first to bake non-identity transforms into geometry before joining.\n\nThe returned path inherits the `fill_rule` of the first input that has one; conflicting fill rules raise an error.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "path_move" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a `move` draw command tagged dict for use inside a `path { ... }` block (which rewrites bare `move` calls to `path_move`).  Equivalent to writing `move(x, y)` inside the block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "pos",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a `move` draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_line" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a `line` draw command tagged dict for use inside a `path { ... }` block (which rewrites bare `line` calls to `path_line`).",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "pos",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a `line` draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_quadratic_bezier" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "cx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "cy",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_smooth_quadratic_bezier" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a smooth quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a smooth quadratic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_cubic_bezier" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl1",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "ctrl2",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "c1x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c1y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_smooth_cubic_bezier" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "ctrl2",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a smooth cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "c2x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "c2y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds a smooth cubic Bezier draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_arc" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "large_arc_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "sweep_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds an SVG-style elliptical arc draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "large_arc_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "sweep_flag",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds an SVG-style elliptical arc draw command tagged dict for use inside a `path { ... }` block.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds an SVG-style elliptical arc draw command tagged dict.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.",
-        return_type: &[ArgType::Map],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "rx",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X-axis radius"
-          },
-          ArgDef {
-            name: "ry",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y-axis radius"
-          },
-          ArgDef {
-            name: "x_axis_rotation",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation of the arc's x-axis in degrees"
-          },
-          ArgDef {
-            name: "to",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: ""
-          },
-        ],
-        description: "Builds an SVG-style elliptical arc draw command tagged dict.  When flags are omitted, `large_arc_flag` defaults to false and `sweep_flag` defaults to true.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_circle" => FnDef {
+  "circle" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
@@ -14476,8 +14114,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Radius of the circle."
           },
         ],
-        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.\n\nTraced CCW (math Y-up) starting at the rightmost point: right -> top -> left -> bottom -> right.  Pipe through `reverse` (i.e. `circle(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
-        return_type: &[ArgType::Map],
+        description: "Closed circular path built from two arcs, starting at the rightmost point and running counter-clockwise.",
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -14486,14 +14124,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "X coordinate of the center of the circle."
+            description: "Center x."
           },
           ArgDef {
             name: "cy",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "Y coordinate of the center of the circle."
+            description: "Center y."
           },
           ArgDef {
             name: "radius",
@@ -14503,12 +14141,12 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Radius of the circle."
           },
         ],
-        description: "Builds a `circle` draw command tagged dict for use inside a `path { ... }` block.\n\nTraced CCW (math Y-up) starting at the rightmost point: right -> top -> left -> bottom -> right.  Pipe through `reverse` (i.e. `circle(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
-        return_type: &[ArgType::Map],
+        description: "Closed circular path built from two arcs, starting at the rightmost point and running counter-clockwise.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
-  "path_rect" => FnDef {
+  "rect" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
@@ -14526,11 +14164,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "Size of the rectangle as a `vec2` of `(width, height)`, or a single number for a square."
+            description: "Width and height as a `vec2`, or one number for a square."
           },
         ],
-        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.\n\nTraced CCW (math Y-up) starting at the top-right corner: top-right -> top-left -> bottom-left -> bottom-right -> top-right.  Pipe through `reverse` (i.e. `rect(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
-        return_type: &[ArgType::Map],
+        description: "Closed rectangular path traced counter-clockwise from the top-right corner.",
+        return_type: &[ArgType::Path],
       },
       FnSignature {
         arg_defs: &[
@@ -14539,114 +14177,748 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "X coordinate of the center of the rectangle."
+            description: "Center x."
           },
           ArgDef {
             name: "cy",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "Y coordinate of the center of the rectangle."
+            description: "Center y."
           },
           ArgDef {
             name: "width",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "Width along the X axis."
+            description: "Width."
           },
           ArgDef {
             name: "height",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Required,
-            description: "Height along the Y axis."
+            description: "Height."
           },
         ],
-        description: "Builds a `rect` draw command tagged dict for use inside a `path { ... }` block.  Emitted as a closed subpath of four line segments.\n\nTraced CCW (math Y-up) starting at the top-right corner: top-right -> top-left -> bottom-left -> bottom-right -> top-right.  Pipe through `reverse` (i.e. `rect(...) | reverse`) to flip to CW winding, which is the convention for holes under `nonzero`/`positive`/`negative` fill rules.  Winding is not significant under `evenodd` or the CGAL tessellation engine, which identify holes by nesting depth.",
-        return_type: &[ArgType::Map],
+        description: "Closed rectangular path traced counter-clockwise from the top-right corner.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
-  "path_close" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[],
-        description: "Builds a `close` draw command tagged dict.  Closes the current subpath by drawing a straight line from the current point back to the initial point of the subpath (the position of the last `move` command).  Mirrors the SVG `z` command.",
-        return_type: &[ArgType::Map],
-      },
-    ],
-  },
-  "path_reverse" => FnDef {
+  "polygon" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
-            name: "path",
+            name: "points",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Map, ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Either a `rect`/`circle` draw command tagged dict (built by `rect` / `circle` inside a `path { ... }` block) or a path tracer callable (from `build_path`, `trace_svg_path`, `text_to_path`, etc.)."
+            description: "Sequence of `vec2` vertices (at least 3 distinct)."
           },
         ],
-        description: "Reverses the winding of a path.  For a `rect` or `circle` draw command, toggles its `reversed` flag so the shape is traced in the opposite direction (same start point, opposite orientation).  For a path tracer callable, returns a new tracer with the whole-path `reverse` flag toggled.\n\nUseful for building paths-with-holes: the standard convention is that an outer shape and its enclosed holes have opposite winding.  Under the CGAL tessellation engine, winding doesn't matter (holes are identified by nesting), but reversing is still required when feeding the path through fill rules that depend on winding (`nonzero`, `positive`, `negative`).\n\nDoes not accept bare point sequences.  To reverse a `Sequence<Vec2>`, use a sequence operation directly.\n\nAliased to `reverse` inside `path { ... }` blocks.",
-        return_type: &[ArgType::Map, ArgType::Callable],
+        description: "Closed path through `points`, joined by straight segments and closed back to the first point.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
-  "path_segments" => FnDef {
+  "polyline" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
-            name: "path",
+            name: "points",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Path sampler from `build_path` / `trace_svg_path` / `text_to_path` / `offset_path` / boolean ops."
+            description: "Sequence of `vec2` vertices (at least 2)."
           },
         ],
-        description: "Returns a sequence of tagged dicts, one per segment of the path, in subpath traversal order with the path's transform applied.\n\nEvery segment dict has these common fields:\n- `type`: `\"line\"` | `\"quad\"` | `\"cubic\"` | `\"arc\"`\n- `start`, `end`: vec2 endpoints\n- `length`: arc length of the segment\n- `subpath`: int - index of the parent subpath\n- `closed`: bool - whether the parent subpath is closed\n- `t_start`, `t_end`: floats in [0, 1] - arc-length parameters within the parent subpath\n- `t_start_global`, `t_end_global`: floats in [0, 1] - arc-length parameters across the full path\n\nPer-type extras:\n- `quad`: `ctrl: vec2`\n- `cubic`: `ctrl1: vec2`, `ctrl2: vec2`\n- `arc`: `center: vec2`, `rx: num`, `ry: num`, `x_axis_rotation: num` (radians), `large_arc: bool`, `sweep: bool`, `theta_start: num`, `theta_delta: num`\n\nThe path's `reverse` flag is a sampling-order concern and is intentionally not honoured here; segments are always emitted in their as-built order.\n\nOnly works with paths that expose segment topology (i.e. those backed by a path tracer); paths from `catmull_rom` / `lerp_paths` are not supported.",
-        return_type: &[ArgType::Sequence],
+        description: "Open path through `points`, joined by straight segments.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
-  "path_len" => FnDef {
+  "move" => FnDef {
     module: "path",
     examples: &[],
     signatures: &[
       FnSignature {
         arg_defs: &[
           ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X of the new subpath start."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y of the new subpath start."
+          },
+          ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable. Tracer-backed paths (from `build_path` / `trace_svg_path` / `text_to_path` / offset/boolean ops) get the exact analytic arc length; any other `|t: num|: vec2` callable falls back to a sampling estimate."
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
           },
+        ],
+        description: "Pen op: starts a new subpath at the given point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
           ArgDef {
-            name: "samples",
+            name: "to",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Int),
-            default_value: DefaultValue::Optional(|| Value::Int(512)),
-            description: "Number of uniform samples for the chord-length estimate used on black-box callables. Ignored for tracer-backed paths."
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Start of the new subpath."
           },
           ArgDef {
-            name: "apply_transform",
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: starts a new subpath at the given point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "line" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X of the segment end."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y of the segment end."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: straight segment from the current point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End of the segment."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: straight segment from the current point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier from the current point through `ctrl` to `to`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Control point x."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier from the current point through `(cx, cy)` to `(x, y)`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "smooth_quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier whose control point mirrors the previous quadratic's across the current point (the current point itself when there is none), like SVG `T`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier whose control point mirrors the previous quadratic's across the current point (the current point itself when there is none), like SVG `T`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "First control point."
+          },
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Second control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier from the current point with control points `ctrl1` and `ctrl2` to `to`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c1x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "First control point x."
+          },
+          ArgDef {
+            name: "c1y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "First control point y."
+          },
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point x."
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier from the current point with control points `(c1x, c1y)` and `(c2x, c2y)` to `(x, y)`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "smooth_cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Second control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier whose first control point mirrors the previous cubic's second across the current point (the current point itself when there is none), like SVG `S`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point x."
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier whose first control point mirrors the previous cubic's second across the current point (the current point itself when there is none), like SVG `S`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "arc" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "large_arc",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(true)),
-            description: "When true (default), the path's transform is applied before measuring. Set to false to measure the underlying pre-transform geometry. Has no effect on black-box callables, whose transform can't be separated from sampling."
+            default_value: DefaultValue::Required,
+            description: "Take the larger of the two arcs."
+          },
+          ArgDef {
+            name: "sweep",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Sweep counter-clockwise."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
           },
         ],
-        description: "Returns the arc length of a 2D path, with the path's transform applied (pass `apply_transform=false` to measure the underlying pre-transform geometry).\n\nFor paths backed by a path tracer this is the exact sum of segment lengths (the efficient equivalent of `path_segments(p) | fold(0, |acc, { length }| acc + length)`). For black-box `|t: num|: vec2` callables it falls back to summing the chord lengths of `samples` uniform samples.",
-        return_type: &[ArgType::Numeric],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "large_arc",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Take the larger of the two arcs."
+          },
+          ArgDef {
+            name: "sweep",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Sweep counter-clockwise."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "close" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: closes the open last subpath with a straight segment back to its start. No-op when the last subpath is already closed or empty.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "close_all" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Closes every open subpath of the path.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "fill_rule" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "One of `\"nonzero\"`, `\"evenodd\"`, `\"positive\"`, `\"negative\"` (or the Clipper2 numeric code)."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Returns the path with the given fill rule, which tessellation, rasterization and boolean ops read from the path when they are not given one explicitly.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14659,9 +14931,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path sampler callable. Tracer-backed paths are sliced geometrically (curves and sharp corners preserved exactly); other callables are wrapped and resampled over the trimmed range."
+            description: "A path. Concrete paths are sliced geometrically (curves and sharp corners preserved exactly); lazy paths are wrapped and resampled over the trimmed range."
           },
           ArgDef {
             name: "start",
@@ -14685,8 +14957,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "`\"t\"` (default) treats `start`/`end` as normalized arc-length parameters in [0, 1]; `\"distance\"` treats them as arc-length distances."
           },
         ],
-        description: "Returns a new path sampler covering the portion of `path` between `start` and `end`.\n\nTrimming is done in the global arc-length parameterization that spans all subpaths, so `start`/`end` cut across the concatenated subpaths; iterate `path_subpaths` first to trim an individual subpath. Negative bounds count back from the end (e.g. `trim_path(p, start=4, end=-4, unit='distance')` drops 4 units from each end).\n\nFor tracer-backed paths the result is a real sliced path: lines, beziers and arcs keep their exact geometry and every sharp corner inside the range is preserved. Black-box callables are wrapped and resampled, with `distance` bounds resolved against a sampling-based length estimate.",
-        return_type: &[ArgType::Callable],
+        description: "Returns a new path covering the portion of `path` between `start` and `end`.\n\nTrimming is done in the global arc-length parameterization that spans all subpaths, so `start`/`end` cut across the concatenated subpaths; iterate `path_subpaths` first to trim an individual subpath. Negative bounds count back from the end (e.g. `trim_path(p, start=4, end=-4, unit='distance')` drops 4 units from each end).\n\nFor tracer-backed paths the result is a real sliced path: lines, beziers and arcs keep their exact geometry and every sharp corner inside the range is preserved. Black-box callables are wrapped and resampled, with `distance` bounds resolved against a sampling-based length estimate.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -14706,9 +14978,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
+            description: "path."
           },
           ArgDef {
             name: "inward_normal",
@@ -14772,7 +15044,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "vec2 polylines only.  When true and the polyline is closed, the normal is flipped to point into the interior regardless of CW/CCW winding, matching `path_frame`.  No effect on open or vec3 polylines."
           },
         ],
-        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D path callables.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
+        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D paths.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
         return_type: &[ArgType::Sequence],
       },
       FnSignature {
@@ -14820,232 +15092,8 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "vec2 polylines only.  When true and the polyline is closed, the normal is flipped to point into the interior regardless of CW/CCW winding, matching `path_frame`.  No effect on open or vec3 polylines."
           },
         ],
-        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D path callables.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
+        description: "Samples a polyline (a `Seq<Vec2>` or `Seq<Vec3>` of points) at a set of positions and returns a `Seq` of frame dicts.\n\nvec2 polylines yield `{t, pos, tangent, normal}`; vec3 polylines additionally yield `binormal`.  `t` is normalized arc length in [0, 1], so evenly-spaced `t` gives evenly-spaced points no matter how the input vertices are distributed.  Values outside [0, 1] are clamped.\n\nFrames are piecewise constant per segment: a sample lands on a segment and takes that segment's direction, with `pos` interpolated along it.  Pass `smooth` to blend orientation across corners instead of snapping.\n\nThis is the polyline counterpart to `path_frame`, which works on continuous 2D paths.  Every call walks the whole point sequence to build its arc-length table, so it's built for short static point lists (tens of points) sampled in one shot — not for repeated random access into long paths.  Consecutive duplicate points are dropped.",
         return_type: &[ArgType::Sequence],
-      },
-    ],
-  },
-  "path_trans" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "offset",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: "Translation offset as a vec2."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Translates a 2D path by the given offset, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X translation."
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y translation."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Translates a 2D path by (x, y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "path_rot" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "angle",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Rotation angle in radians."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Rotates a 2D path around the origin by the given angle (radians), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "path_scale" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "scale",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Scale factor as a vec2 (non-uniform) or number (uniform)."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Scales a 2D path, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "x",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X scale factor."
-          },
-          ArgDef {
-            name: "y",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y scale factor."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Scales a 2D path by (x, y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "path_reflect" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "axis",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: "Direction of the mirror line (need not be normalized)."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the line running through the origin in the `axis` direction, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "axis",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Vec2),
-            default_value: DefaultValue::Required,
-            description: "Direction of the mirror line (need not be normalized)."
-          },
-          ArgDef {
-            name: "offset",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Signed perpendicular offset of the mirror line from the origin, measured along the normal `(-axis.y, axis.x)`."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the line running in the `axis` direction, shifted perpendicular from the origin by `offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-    ],
-  },
-  "path_reflect_x" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the x-axis (negating y), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "offset",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "Y position of the horizontal mirror line."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the horizontal line `y = offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
       },
     ],
   },
@@ -15715,9 +15763,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+            description: "A path. Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
           ArgDef {
             name: "width",
@@ -15776,9 +15824,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+            description: "A path. Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
           ArgDef {
             name: "width",
@@ -15837,9 +15885,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "path",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
+            valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A 2D path sampler callable of signature `|t: num|: vec2` (e.g. from `path { ... }`, `trace_svg_path`, `text_to_path`). Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
+            description: "A path. Path space maps onto the texture's [0,1]² UV space; place it with `translate`/`scale`/`rot` on the path."
           },
           ArgDef {
             name: "width",
@@ -16325,45 +16373,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Generates exactly `count` blue-noise (Poisson-disk) points over [0,1)² with toroidal distances (tiles seamlessly). The point order is shuffled, so any prefix is itself a well-spaced subset. Deterministic for a given seed.",
         return_type: &[ArgType::Sequence],
-      },
-    ],
-  },
-  "path_reflect_y" => FnDef {
-    module: "path",
-    examples: &[],
-    signatures: &[
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the y-axis (negating x), returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
-      },
-      FnSignature {
-        arg_defs: &[
-          ArgDef {
-            name: "offset",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Numeric),
-            default_value: DefaultValue::Required,
-            description: "X position of the vertical mirror line."
-          },
-          ArgDef {
-            name: "path",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Callable),
-            default_value: DefaultValue::Required,
-            description: "Path sampler callable of signature `|t: num|: vec2`."
-          },
-        ],
-        description: "Reflects a 2D path across the vertical line `x = offset`, returning a new path sampler with the transform composed.",
-        return_type: &[ArgType::Callable],
       },
     ],
   },

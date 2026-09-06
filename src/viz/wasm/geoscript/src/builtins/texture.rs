@@ -1,3 +1,4 @@
+use crate::dmath;
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -1040,7 +1041,7 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
   let half = ((sigma * 3.).ceil() as i64).max(1);
   let mut weights = Vec::with_capacity(half as usize + 1);
   for i in 0..=half {
-    weights.push((-((i * i) as f32) / (2. * sigma * sigma)).exp());
+    weights.push(dmath::exp(-((i * i) as f32) / (2. * sigma * sigma)));
   }
   let norm = weights[0] + 2. * weights[1..].iter().sum::<f32>();
   for wt in &mut weights {

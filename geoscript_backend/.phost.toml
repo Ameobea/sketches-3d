@@ -15,4 +15,4 @@ volumes = [
   "/opt/conf/dream/geoscript-backend.yml:/opt/conf.yml",
   "/opt/dream/db:/data",
 ]
-cmd = ["/usr/local/bin/geoscript_backend", "--config", "/opt/conf.yml"]
+cmd = ["/usr/local/bin/geoscript-backend", "--config", "/opt/conf.yml"]

@@ -589,6 +589,7 @@ dependencies = [
  "fxhash",
  "im-rc",
  "lazy_static",
+ "libm",
  "log",
  "lyon_extra",
  "lyon_tessellation",

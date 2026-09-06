@@ -114,6 +114,7 @@ export class TextureMode implements Mode {
   previewTarget = $state<TexturePreviewTarget | null>(null);
   /** 3D view showing instead of the 2D canvas; only meaningful with a target. */
   preview3d = $state(false);
+  private drawWaiters: (() => void)[] = [];
   /** Camera pose while the 3D view is hidden; the live camera is authoritative while shown. */
   private previewCamera: MeshTabView | null = null;
   /** Set at run-build time when the target can't be pulled into the run. */
@@ -320,6 +321,15 @@ export class TextureMode implements Mode {
       this.previewScene.clear();
     }
     this.deps.onPreviewChanged();
+  };
+
+  /** Resolves after the 2D preview's next draw (the render harness captures right after). */
+  untilDrawn = () => new Promise<void>(resolve => this.drawWaiters.push(resolve));
+
+  notifyDrawn = () => {
+    const waiters = this.drawWaiters;
+    this.drawWaiters = [];
+    for (const w of waiters) w();
   };
 
   setPreview3d = (on: boolean) => {

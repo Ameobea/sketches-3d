@@ -163,7 +163,14 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
 /// Whatever receives a callable argument invokes it, and argument callables aren't folded into
 /// the const-eval cache key the way the callee is — so an effectful one has to block the fold.
 fn arg_blocks_const_eval(value: &Value, allow_rng_const_eval: bool) -> bool {
-  matches!(value, Value::Callable(c) if callable_is_dyn_for_const_eval(c, allow_rng_const_eval))
+  match value {
+    Value::Callable(c) => callable_is_dyn_for_const_eval(c, allow_rng_const_eval),
+    Value::Path(p) => p
+      .closures()
+      .iter()
+      .any(|c| callable_is_dyn_for_const_eval(c, allow_rng_const_eval)),
+    _ => false,
+  }
 }
 
 thread_local! {
@@ -527,6 +534,7 @@ fn callable_requires_rng_state(callable: &Callable) -> bool {
 fn value_requires_rng_state(value: &Value) -> bool {
   match value {
     Value::Callable(c) => callable_requires_rng_state(c),
+    Value::Path(p) => p.closures().iter().any(|c| callable_requires_rng_state(c)),
     Value::Sequence(seq) => seq_consumption_draws_rng(seq),
     Value::Map(m) => m.values().any(value_requires_rng_state),
     _ => false,
@@ -994,6 +1002,10 @@ fn seq_consumption_uses(seq: &Rc<dyn crate::Sequence>, uses: &mut Uses) {
 fn value_consumption_uses(value: &Value, uses: &mut Uses) {
   match value {
     Value::Callable(c) => callable_consumption_uses(c, uses),
+    Value::Path(p) => p
+      .closures()
+      .iter()
+      .for_each(|c| callable_consumption_uses(c, uses)),
     Value::Sequence(s) => seq_consumption_uses(s, uses),
     Value::Map(m) => m.values().for_each(|v| value_consumption_uses(v, uses)),
     _ => {}
@@ -1218,6 +1230,17 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     }
     Value::Texture(tex) => {
       (Rc::as_ptr(tex) as usize).hash(hasher);
+    }
+    // Concrete trees key by content so folds stay stable across runs; lazy ones by identity,
+    // with their driving closures walked for rng/settings usage.
+    Value::Path(path) => {
+      if !path.content_hash(hasher) {
+        (Rc::as_ptr(path) as usize).hash(hasher);
+      }
+      for c in path.closures() {
+        uses.rng |= callable_requires_rng_state(&c);
+        uses.settings |= c.reads_ctx_settings();
+      }
     }
   }
   Some(())
@@ -1956,6 +1979,7 @@ fn fold_constants<'a>(
               Value::Callable(callable) => {
                 *target = FunctionCallTarget::Literal(callable.clone());
               }
+              Value::Path(_) => (),
               other => {
                 let (line, col) = ctx.resolve_loc(*loc);
                 return ctx.with_resolved_sym(*name, |name| {
@@ -2107,6 +2131,12 @@ fn fold_constants<'a>(
                   let (line, col) = ctx.resolve_loc(*loc);
                   err.with_loc(line, col)
                 })?,
+                Value::Path(path) => {
+                  Some(ctx.call_path(path, &arg_vals, &kwarg_vals).map_err(|err| {
+                    let (line, col) = ctx.resolve_loc(*loc);
+                    err.with_loc(line, col)
+                  })?)
+                }
                 other => {
                   let (line, col) = ctx.resolve_loc(*loc);
                   return ctx
@@ -4027,163 +4057,42 @@ a = 0..4 -> |x| x + offset
 }
 
 #[test]
-fn test_const_eval_cache_persists_across_runs_with_path_block() {
+fn test_const_eval_cache_persists_across_runs_with_path_pipeline() {
   let code = r#"
 distance = 1
-path_sampler = build_path(path {
-  move(0, 0)
-  line(distance, 0)
-  line(distance, distance)
-})
+path_sampler = path() | move(0, 0) | line(distance, 0) | line(distance, distance)
 "#;
 
   let ctx = EvalCtx::default();
-  let mut ast1 = crate::parse_program_src(&ctx, code).unwrap();
-  optimize_ast(&ctx, &mut ast1).unwrap();
-
-  let sampler1 = match &ast1.statements[1] {
+  let literal_path = |ast: &crate::ast::Program| match &ast.statements[1] {
     TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
       Expr::Literal {
-        value: Value::Callable(callable),
+        value: Value::Path(path),
         ..
-      } => Rc::clone(callable),
+      } => Rc::clone(path),
       _ => unreachable!(),
     },
     _ => unreachable!(),
   };
+  let mut ast1 = crate::parse_program_src(&ctx, code).unwrap();
+  optimize_ast(&ctx, &mut ast1).unwrap();
+  let path1 = literal_path(&ast1);
 
   let mut ast2 = crate::parse_program_src(&ctx, code).unwrap();
   optimize_ast(&ctx, &mut ast2).unwrap();
+  let path2 = literal_path(&ast2);
 
-  let sampler2 = match &ast2.statements[1] {
-    TopLevelStatement::Statement(Statement::Assignment { expr, .. }) => match expr {
-      Expr::Literal {
-        value: Value::Callable(callable),
-        ..
-      } => Rc::clone(callable),
-      _ => unreachable!(),
-    },
-    _ => unreachable!(),
-  };
-
-  assert!(Rc::ptr_eq(&sampler1, &sampler2));
+  assert!(Rc::ptr_eq(&path1, &path2));
 
   // should be functional
   let ctx = crate::parse_and_eval_program(code).unwrap();
   let sampler = ctx.get_global("path_sampler").unwrap();
-  let sampler = sampler.as_callable().unwrap();
-  let p0 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p1 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.25)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p2 = ctx
-    .invoke_callable(sampler, &[Value::Float(0.5)], crate::EMPTY_KWARGS)
-    .unwrap();
-  let p3 = ctx
-    .invoke_callable(sampler, &[Value::Float(1.)], crate::EMPTY_KWARGS)
-    .unwrap();
-  assert_eq!(*p0.as_vec2().unwrap(), crate::Vec2::new(0., 0.));
-  assert_eq!(*p1.as_vec2().unwrap(), crate::Vec2::new(0.5, 0.));
-  assert_eq!(*p2.as_vec2().unwrap(), crate::Vec2::new(1., 0.));
-  assert_eq!(*p3.as_vec2().unwrap(), crate::Vec2::new(1., 1.));
-}
-
-/// Helper closures defined inside a `path { ... }` block can still call rewritten draw
-/// commands (`move`, `line`, etc.) — the rewriting pass recurses into nested closure bodies.
-#[test]
-fn test_path_block_nested_closure_rewrite() {
-  let code = r#"
-path_sampler = build_path(path {
-  l = |x, y| line(x, y)
-
-  move(0, 0)
-  l(10, 0)
-})
-out = path_sampler(0.5)
-"#;
-
-  let ctx = crate::parse_and_eval_program(code).unwrap();
-  let out = ctx.get_global("out").unwrap();
-  let out = out.as_vec2().unwrap();
-  assert_eq!(*out, crate::Vec2::new(5., 0.));
-}
-
-#[cfg(test)]
-fn path_block_sample(code: &str) -> crate::Vec2 {
-  let ctx = crate::parse_and_eval_program(code).unwrap();
-  *ctx.get_global("out").unwrap().as_vec2().unwrap()
-}
-
-/// The `path { ... }` expansion is hygienic: bindings inside the block neither break it nor get
-/// hijacked by draw-command rewriting.
-#[test]
-fn test_path_block_hygiene() {
-  // the expansion calls `flatten`/`filter` internally; locals of those names must not shadow them
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  flatten = 5
-  filter = 6
-  move(0, 0)
-  line(10, 0)
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-
-  // a local that collides with a draw-command name wins over the rewrite
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  rect = |a| a * 2
-  move(0, 0)
-  line(rect(5), 0)
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-}
-
-/// A draw command guarded by a condition that didn't fire evaluates to nil; those drop out of the
-/// command list rather than reaching `build_path`.
-#[test]
-fn test_path_block_drops_undrawn_commands() {
-  assert_eq!(
-    path_block_sample(
-      r#"
-closed = false
-s = build_path(path {
-  move(0, 0)
-  line(10, 0)
-  if closed { close() }
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
-
-  // ...including nils nested inside a mapped subsequence, which `flatten` hoists to the top level
-  assert_eq!(
-    path_block_sample(
-      r#"
-s = build_path(path {
-  move(0, 0)
-  0..3 -> |i| if i == 1 { line(10, 0) }
-})
-out = s(0.5)
-"#
-    ),
-    crate::Vec2::new(5., 0.)
-  );
+  let sampler = sampler.as_path().unwrap();
+  let at = |t: f32| sampler.eval_at(t, &ctx).unwrap();
+  assert_eq!(at(0.), crate::Vec2::new(0., 0.));
+  assert_eq!(at(0.25), crate::Vec2::new(0.5, 0.));
+  assert_eq!(at(0.5), crate::Vec2::new(1., 0.));
+  assert_eq!(at(1.), crate::Vec2::new(1., 1.));
 }
 
 #[cfg(test)]

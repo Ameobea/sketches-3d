@@ -6,7 +6,6 @@ use crate::{
   format::{builtin_docs, BuiltinDocs, ParamDocs, SignatureDocs},
   parse_lenient,
   pipeline_help::{pipeline_guidance, PipelineHelp},
-  resolve_draw_command,
   source_scan::{self, CallContext},
   AnalysisCtx,
 };
@@ -41,9 +40,8 @@ pub(crate) fn signature_help(
   let analysis = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src)
     .map(|program| Analysis::build(&ctx.eval_ctx, &program));
 
-  // a draw command inside `path { }` always means the builtin, as in the evaluator's rewrite
-  let name = resolve_draw_command(&call.fn_name, call.in_path_block);
-  let shadowing_def = if call.uses_global_sigil || name != call.fn_name {
+  let name = call.fn_name.as_str();
+  let shadowing_def = if call.uses_global_sigil {
     None
   } else {
     analysis.as_ref().and_then(|a| {
@@ -256,13 +254,11 @@ mod tests {
   }
 
   #[test]
-  fn draw_commands_in_path_blocks() {
-    let h = help("p = path {\n  move(‸)\n}").unwrap();
-    assert_eq!(h.docs.name, "path_move");
-    assert_eq!(h.call_line, 2);
-    assert_eq!(h.call_col, 3);
-    let h = help("circle = |r: float| r\np = path {\n  circle(1‸)\n}").unwrap();
-    assert_eq!(h.docs.name, "path_circle");
+  fn pen_ops_take_the_path_last() {
+    let h = help("p = path() | move(‸)").unwrap();
+    assert_eq!(h.docs.name, "move");
+    assert_eq!(h.call_line, 1);
+    assert_eq!(h.call_col, 14);
   }
 
   #[test]

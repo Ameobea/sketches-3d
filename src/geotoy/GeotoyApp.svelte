@@ -942,8 +942,10 @@
       userData: untrack(() => userData)!,
       execution,
       meshScene,
+      textureMode,
       getTree: () => treeState.state.tree,
       getTabs: () => tabs.tabs.map(t => ({ id: t.id, kind: t.kind, name: t.name })),
+      getActiveTabKind: () => tabs.active.kind,
     });
   }
 
@@ -1177,7 +1179,16 @@
   const wrappedToggleAxesHelpers = () => toggleAxisHelpers(viz);
 
   onMount(() => {
-    setTimeout(() => mode.restoreViewState(tabs.active.view));
+    setTimeout(() => {
+      mode.restoreViewState(tabs.active.view);
+      // Headless renders of texture tabs capture the 2D canvas framing the whole texture: the
+      // saved pan/zoom is relative to the editor viewport, and the 3D preview has no harness path.
+      if (userData?.renderMode) {
+        textureMode.setPreview3d(false);
+        textureMode.center = null;
+        textureMode.zoom = null;
+      }
+    });
 
     if (!userData?.renderMode) {
       let loggedVizEngaged = false;
@@ -1419,29 +1430,37 @@
   />
 {/snippet}
 
-{#if mode.kind === 'texture' && !userData?.renderMode}
+{#if mode.kind === 'texture'}
   {#if textureMode.preview3d}
-    <Preview3dHud
-      mode={textureMode}
-      onPick={() => (previewPickerOpen = true)}
-      onShow2d={() => textureMode.setPreview3d(false)}
-    />
+    {#if !userData?.renderMode}
+      <Preview3dHud
+        mode={textureMode}
+        onPick={() => (previewPickerOpen = true)}
+        onShow2d={() => textureMode.setPreview3d(false)}
+      />
+    {/if}
   {:else if textureMode.textures.length > 0}
+    <!-- Headless renders capture this canvas as the thumbnail, sized to the whole viewport. -->
     <TexturePreview
       mode={textureMode}
+      hud={!userData?.renderMode}
       onSetTextureParams={(sourceModule, output, patch) => {
         const sep = sourceModule.indexOf(':');
         if (sep <= 0) return;
         tabs.setTextureParams(sourceModule.slice(0, sep), output, patch);
         void execution.run();
       }}
-      width={Math.max(innerWidth - (layout.orientation === 'horizontal' ? layout.panelSize : 0), 0)}
-      height={Math.max(
-        innerHeight - layout.barHeight - (layout.orientation === 'vertical' ? layout.panelSize : 0),
-        0
-      )}
+      width={userData?.renderMode
+        ? innerWidth
+        : Math.max(innerWidth - (layout.orientation === 'horizontal' ? layout.panelSize : 0), 0)}
+      height={userData?.renderMode
+        ? innerHeight
+        : Math.max(
+            innerHeight - layout.barHeight - (layout.orientation === 'vertical' ? layout.panelSize : 0),
+            0
+          )}
     />
-  {:else}
+  {:else if !userData?.renderMode}
     <TexturePlaceholder hasRun={textureMode.hasRun} />
   {/if}
 {/if}
