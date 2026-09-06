@@ -72,6 +72,7 @@ pub mod mesh_ops;
 pub mod noise;
 pub mod noise_batch;
 pub mod optimizer;
+pub mod path;
 pub mod path_building;
 pub mod preprocess;
 pub(crate) mod raster2d;
