@@ -4,6 +4,8 @@
 
 pub(crate) mod builder;
 pub(crate) mod centroid;
+#[cfg(test)]
+mod lang_tests;
 pub(crate) mod lazy;
 pub(crate) mod segment;
 pub(crate) mod subpath;

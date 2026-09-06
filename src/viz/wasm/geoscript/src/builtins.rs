@@ -39,6 +39,11 @@ use crate::noise::{
   worley_noise_2d, worley_noise_3d, RangeFunction, WorleyReturnType,
 };
 use crate::path::Path;
+use crate::path::{
+  builder::{circle_subpath, polygon_subpath, polyline_subpath, rect_subpath},
+  lazy::ClosurePath,
+  DrawCommand,
+};
 use crate::path_building::build_lissajous_knot_path;
 use crate::{
   lights::{AmbientLight, DirectionalLight, HemisphereLight, Light, RectAreaLight, ShadowCamera},
@@ -124,6 +129,13 @@ pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map
   "path_render" => "render_path",
   "path_trim" => "trim_path",
   "path_sub" => "path_difference",
+  "quad" => "quadratic_bezier",
+  "quad_bezier" => "quadratic_bezier",
+  "smooth_quad" => "smooth_quadratic_bezier",
+  "smooth_quad_bezier" => "smooth_quadratic_bezier",
+  "cubic" => "cubic_bezier",
+  "smooth_cubic" => "smooth_cubic_bezier",
+  "smooth_bezier" => "smooth_cubic_bezier",
   "skewer" => "subdivide_by_line",
   "partition_mesh" => "partition_faces",
   "transform_gizmo" => "gizmo_transform",
@@ -1144,6 +1156,9 @@ pub(crate) fn translate_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= TRANSLATE_PATH_DEF_IX {
+    return path_trans_impl(def_ix - TRANSLATE_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (translation, obj) = match def_ix {
     TRANSLATE_TEX_VEC2_DEF_IX => {
       let xy = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
@@ -1193,6 +1208,9 @@ pub(crate) fn scale_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   // 0/2: x,y,z form, 1/3: single scale form (mesh vs mat4).
+  if def_ix >= SCALE_PATH_DEF_IX {
+    return path_scale_impl(def_ix - SCALE_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (scale, obj) = match def_ix {
     0 | 2 => {
       let x = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
@@ -1282,6 +1300,14 @@ const ROT_TEX_DEF_IX: usize = 9;
 /// Trailing `translate` signatures for textures (vec2 / x,y forms); break the even/odd convention.
 const TRANSLATE_TEX_VEC2_DEF_IX: usize = 6;
 const TRANSLATE_TEX_XY_DEF_IX: usize = 7;
+/// Path overloads sit after every mesh/texture signature: `translate` (vec2 / x,y), `rot`
+/// (angle), `scale` (num|vec2 / x,y), `reflect` (axis / axis+offset), `reflect_x`/`reflect_y`
+/// (bare / offset).
+const TRANSLATE_PATH_DEF_IX: usize = 8;
+const ROT_PATH_DEF_IX: usize = 10;
+const SCALE_PATH_DEF_IX: usize = 5;
+const REFLECT_PATH_DEF_IX: usize = 2;
+const REFLECT_AXIS_PATH_DEF_IX: usize = 2;
 
 /// Counter-clockwise, matching `path_rot` — the opposite winding from the 3D Tait-Bryan `rot`.
 fn rot_vec2(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>) -> Value {
@@ -2615,16 +2641,7 @@ fn tessellate_path_impl(
           )))
         }
       };
-      let closed_override = match arg_refs[4].resolve(args, kwargs) {
-        Value::Bool(val) => Some(val),
-        Value::Nil => None,
-        other => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `tessellate_path`; expected bool or nil, found: {other:?}"
-          )))
-        }
-      };
-      let fill_rule_override_val = arg_refs[5].resolve(args, kwargs);
+      let fill_rule_override_val = arg_refs[4].resolve(args, kwargs);
       let fill_rule_override: Option<trace_path::FillRule> = match fill_rule_override_val {
         Value::Nil => None,
         val => Some(trace_path::FillRule::parse(val, "tessellate_path")?),
@@ -2637,7 +2654,7 @@ fn tessellate_path_impl(
         Cgal,
       }
 
-      let engine_val = arg_refs[6].resolve(args, kwargs);
+      let engine_val = arg_refs[5].resolve(args, kwargs);
       let requested_engine = match engine_val {
         Value::Nil => TessEngine::Auto,
         Value::String(s) => match s.as_str() {
@@ -2658,7 +2675,7 @@ fn tessellate_path_impl(
         }
       };
 
-      let max_edge_len: Option<f32> = match arg_refs[7].resolve(args, kwargs) {
+      let max_edge_len: Option<f32> = match arg_refs[6].resolve(args, kwargs) {
         Value::Nil => None,
         Value::Int(n) if *n > 0 => Some(*n as f32),
         Value::Float(f) if *f > 0.0 => Some(*f),
@@ -2678,7 +2695,7 @@ fn tessellate_path_impl(
       // corresponds to min angle ≲ arcsin(sqrt(0.125)) ≈ 20.7°.  Higher values can loop
       // indefinitely, so we cap there.
       const MIN_ANGLE_DEGREES_CAP: f32 = 20.7;
-      let min_angle_squared_sine: Option<f32> = match arg_refs[8].resolve(args, kwargs) {
+      let min_angle_squared_sine: Option<f32> = match arg_refs[7].resolve(args, kwargs) {
         Value::Nil => None,
         Value::Int(n) => Some(*n as f32),
         Value::Float(f) => Some(*f),
@@ -2702,7 +2719,7 @@ fn tessellate_path_impl(
       })
       .transpose()?;
 
-      let plane = match arg_refs[9].resolve(args, kwargs) {
+      let plane = match arg_refs[8].resolve(args, kwargs) {
         Value::Nil => crate::mesh_ops::tessellate_polygon::TessPlane::default(),
         Value::String(s) => crate::mesh_ops::tessellate_polygon::TessPlane::parse(s.as_str())
           .ok_or_else(|| {
@@ -2733,12 +2750,6 @@ fn tessellate_path_impl(
             "Invalid sample_count for `tessellate_path`; expected >= 3, found: {n}"
           )));
         }
-      }
-
-      if matches!(closed_override, Some(false)) {
-        return Err(ErrorStack::new(
-          "`tessellate_path` does not support open paths; omit `closed` or set closed=true.",
-        ));
       }
 
       let curve_angle_radians = if curve_angle_degrees <= 0.0 {
@@ -4836,20 +4847,7 @@ fn render_path_impl(
     0 => {
       let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
       let resolution = arg_refs[1].resolve(args, kwargs).as_int().unwrap() as usize;
-      for (points, is_closed) in path.sample_subpaths(1.0_f32.to_radians(), resolution, ctx)? {
-        if points.is_empty() {
-          continue;
-        }
-        let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
-        if is_closed {
-          path3d.push(path3d[0]);
-        }
-        ctx.rendered_paths.push(crate::RenderedPath {
-          points: path3d,
-          source_module: ctx.current_module.borrow().clone(),
-          path_id: ctx.next_render_id(),
-        });
-      }
+      push_rendered_path(ctx, path, resolution)?;
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -5720,6 +5718,13 @@ fn len_impl(
       let m = arg_refs[0].resolve(args, kwargs).as_map().unwrap();
       Ok(Value::Int(m.len() as i64))
     }
+    8 => Ok(Value::Float(
+      arg_refs[0]
+        .resolve(args, kwargs)
+        .as_path()
+        .unwrap()
+        .length(ctx)?,
+    )),
     _ => unimplemented!(),
   }
 }
@@ -6927,10 +6932,11 @@ fn render_impl(
             let iter = inner_seq.consume(ctx);
             render_path(ctx, iter)?;
           }
+          Ok(Value::Path(path)) => push_rendered_path(ctx, &path, RENDER_LAZY_SAMPLES)?,
           Ok(other) => {
             return Err(ErrorStack::new(format!(
-              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh | Light> \
-               or seq<seq<Vec3>> representing a path, found: {other:?}",
+              "Invalid type yielded from sequence passed to `render`; expected seq<Mesh | Light | \
+               Path> or seq<seq<Vec3>> representing a path, found: {other:?}",
             )))
           }
           Err(err) => {
@@ -6943,7 +6949,8 @@ fn render_impl(
       let mut iter = sequence.consume(ctx).peekable();
       match iter.peek() {
         // rendering a sequence of meshes, lights, and/or paths
-        Some(Ok(Value::Mesh(_) | Value::Light(_) | Value::Sequence(_))) | Some(Err(_)) => (),
+        Some(Ok(Value::Mesh(_) | Value::Light(_) | Value::Sequence(_) | Value::Path(_)))
+        | Some(Err(_)) => (),
         // rendering a single top-level path (Vec3 or Vec2 projected to the XZ plane)
         Some(Ok(Value::Vec3(_) | Value::Vec2(_))) => {
           render_path(ctx, iter)?;
@@ -6966,24 +6973,8 @@ fn render_impl(
       Ok(Value::Nil)
     }
     3 => {
-      let sampler = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
-
-      const SAMPLE_COUNT: usize = 10_000;
-      let mut path = Vec::with_capacity(SAMPLE_COUNT + 1);
-      for i in 0..SAMPLE_COUNT {
-        let t = i as f32 / SAMPLE_COUNT as f32;
-        let v = sampler.eval_at(t, ctx)?;
-        path.push(Vec3::new(v.x, 0., v.y));
-      }
-      // Close the path by appending the start point
-      if let Some(&first) = path.first() {
-        path.push(first);
-      }
-      ctx.rendered_paths.push(crate::RenderedPath {
-        points: path,
-        source_module: ctx.current_module.borrow().clone(),
-        path_id: ctx.next_render_id(),
-      });
+      let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
+      push_rendered_path(ctx, path, RENDER_LAZY_SAMPLES)?;
       Ok(Value::Nil)
     }
     _ => unimplemented!(),
@@ -8139,6 +8130,9 @@ fn rot_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix == ROT_PATH_DEF_IX {
+    return path_rot_impl(arg_refs, args, kwargs);
+  }
   if def_ix == ROT_VEC2_DEF_IX {
     return Ok(rot_vec2(arg_refs, args, kwargs));
   }
@@ -8532,6 +8526,356 @@ fn path_reflect_axis_impl(
   let _ = name;
   let path = path_arg.resolve(args, kwargs).as_path().unwrap();
   Ok(apply_path_transform(path, reflect_matrix(n, offset)))
+}
+
+const RENDER_LAZY_SAMPLES: usize = 1000;
+
+/// One rendered polyline per subpath, sampled at the ambient curve tolerance; closed subpaths
+/// get their start point appended.
+fn push_rendered_path(ctx: &EvalCtx, path: &Path, lazy_samples: usize) -> Result<(), ErrorStack> {
+  let angle = ctx.resolve_curve_angle_degrees(&Value::Nil).to_radians();
+  for (points, is_closed) in path.sample_subpaths(angle, lazy_samples, ctx)? {
+    if points.is_empty() {
+      continue;
+    }
+    let mut path3d: Vec<Vec3> = points.iter().map(|p| Vec3::new(p.x, 0., p.y)).collect();
+    if is_closed {
+      path3d.push(path3d[0]);
+    }
+    ctx.rendered_paths.push(crate::RenderedPath {
+      points: path3d,
+      source_module: ctx.current_module.borrow().clone(),
+      path_id: ctx.next_render_id(),
+    });
+  }
+  Ok(())
+}
+
+fn path_items(ctx: &EvalCtx, val: &Value, out: &mut Vec<Rc<Path>>) -> Result<(), ErrorStack> {
+  match val {
+    Value::Path(p) => out.push(Rc::clone(p)),
+    Value::Nil => {}
+    Value::Sequence(seq) => {
+      for item in seq.consume(ctx) {
+        path_items(ctx, &item?, out)?;
+      }
+    }
+    other => {
+      return Err(ErrorStack::new(format!(
+        "`path`: expected a sequence of paths, found {other:?}. Pen ops chain with `|` (e.g. \
+         `path() | move(0, 0) | line(1, 1)`); wrap a `|t|: vec2` closure with `path(f)`"
+      )))
+    }
+  }
+  Ok(())
+}
+
+fn path_impl(
+  ctx: &EvalCtx,
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let path = match def_ix {
+    0 => {
+      let mut items = Vec::new();
+      path_items(ctx, arg_refs[0].resolve(args, kwargs), &mut items)?;
+      let fill_rule = match arg_refs[1].resolve(args, kwargs) {
+        Value::Nil => None,
+        val => Some(trace_path::FillRule::parse(val, "path")?),
+      };
+      Path::group_items(items, fill_rule, ctx)?
+    }
+    1 => {
+      let f = Rc::clone(arg_refs[0].resolve(args, kwargs).as_callable().unwrap());
+      let closed = arg_refs[1].resolve(args, kwargs).as_bool();
+      Path::lazy(Rc::new(ClosurePath { f, closed }))
+    }
+    _ => unimplemented!(),
+  };
+  Ok(Value::Path(Rc::new(path)))
+}
+
+fn num_arg(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>, ix: usize) -> f32 {
+  arg_refs[ix].resolve(args, kwargs).as_float().unwrap()
+}
+
+fn vec2_arg(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  ix: usize,
+) -> Vec2 {
+  *arg_refs[ix].resolve(args, kwargs).as_vec2().unwrap()
+}
+
+fn xy_arg(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>, ix: usize) -> Vec2 {
+  Vec2::new(
+    num_arg(arg_refs, args, kwargs, ix),
+    num_arg(arg_refs, args, kwargs, ix + 1),
+  )
+}
+
+fn pen(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+  path_ix: usize,
+  op: &str,
+  cmd: DrawCommand,
+) -> Result<Value, ErrorStack> {
+  let path = arg_refs[path_ix].resolve(args, kwargs).as_path().unwrap();
+  Ok(Value::Path(Rc::new(path.pen(cmd, op)?)))
+}
+
+fn move_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (to, path_ix) = match def_ix {
+    0 => (xy_arg(arg_refs, args, kwargs, 0), 2),
+    _ => (vec2_arg(arg_refs, args, kwargs, 0), 1),
+  };
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "move",
+    DrawCommand::MoveTo(to),
+  )
+}
+
+fn line_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (to, path_ix) = match def_ix {
+    0 => (xy_arg(arg_refs, args, kwargs, 0), 2),
+    _ => (vec2_arg(arg_refs, args, kwargs, 0), 1),
+  };
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "line",
+    DrawCommand::LineTo(to),
+  )
+}
+
+fn quadratic_bezier_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (ctrl, to, path_ix) = match def_ix {
+    0 => (
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      2,
+    ),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      4,
+    ),
+  };
+  let cmd = DrawCommand::QuadraticBezier { ctrl, to };
+  pen(arg_refs, args, kwargs, path_ix, "quadratic_bezier", cmd)
+}
+
+fn smooth_quadratic_bezier_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (to, path_ix) = match def_ix {
+    0 => (vec2_arg(arg_refs, args, kwargs, 0), 1),
+    _ => (xy_arg(arg_refs, args, kwargs, 0), 2),
+  };
+  let cmd = DrawCommand::SmoothQuadraticBezier { to };
+  pen(
+    arg_refs,
+    args,
+    kwargs,
+    path_ix,
+    "smooth_quadratic_bezier",
+    cmd,
+  )
+}
+
+fn cubic_bezier_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (ctrl1, ctrl2, to, path_ix) = match def_ix {
+    0 => (
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      vec2_arg(arg_refs, args, kwargs, 2),
+      3,
+    ),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      xy_arg(arg_refs, args, kwargs, 4),
+      6,
+    ),
+  };
+  let cmd = DrawCommand::CubicBezier { ctrl1, ctrl2, to };
+  pen(arg_refs, args, kwargs, path_ix, "cubic_bezier", cmd)
+}
+
+fn smooth_cubic_bezier_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (ctrl2, to, path_ix) = match def_ix {
+    0 => (
+      vec2_arg(arg_refs, args, kwargs, 0),
+      vec2_arg(arg_refs, args, kwargs, 1),
+      2,
+    ),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+      4,
+    ),
+  };
+  let cmd = DrawCommand::SmoothCubicBezier { ctrl2, to };
+  pen(arg_refs, args, kwargs, path_ix, "smooth_cubic_bezier", cmd)
+}
+
+fn arc_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let rx = num_arg(arg_refs, args, kwargs, 0);
+  let ry = num_arg(arg_refs, args, kwargs, 1);
+  let x_axis_rotation = num_arg(arg_refs, args, kwargs, 2);
+  let flag = |ix: usize| arg_refs[ix].resolve(args, kwargs).as_bool().unwrap();
+  let (large_arc, sweep, to, path_ix) = match def_ix {
+    0 => (flag(3), flag(4), vec2_arg(arg_refs, args, kwargs, 5), 6),
+    1 => (flag(3), flag(4), xy_arg(arg_refs, args, kwargs, 5), 7),
+    2 => (false, true, vec2_arg(arg_refs, args, kwargs, 3), 4),
+    _ => (false, true, xy_arg(arg_refs, args, kwargs, 3), 5),
+  };
+  let cmd = DrawCommand::Arc {
+    rx,
+    ry,
+    x_axis_rotation,
+    large_arc,
+    sweep,
+    to,
+  };
+  pen(arg_refs, args, kwargs, path_ix, "arc", cmd)
+}
+
+fn circle_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (center, radius) = match def_ix {
+    0 => (
+      vec2_arg(arg_refs, args, kwargs, 0),
+      num_arg(arg_refs, args, kwargs, 1),
+    ),
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      num_arg(arg_refs, args, kwargs, 2),
+    ),
+  };
+  Ok(Value::Path(Rc::new(Path::leaf(circle_subpath(
+    center, radius, false,
+  )))))
+}
+
+fn rect_impl(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let (center, size) = match def_ix {
+    0 => {
+      let size_val = arg_refs[1].resolve(args, kwargs);
+      let size = match size_val.as_vec2() {
+        Some(v) => *v,
+        None => {
+          let s = size_val.as_float().unwrap();
+          Vec2::new(s, s)
+        }
+      };
+      (vec2_arg(arg_refs, args, kwargs, 0), size)
+    }
+    _ => (
+      xy_arg(arg_refs, args, kwargs, 0),
+      xy_arg(arg_refs, args, kwargs, 2),
+    ),
+  };
+  Ok(Value::Path(Rc::new(Path::leaf(rect_subpath(
+    center, size.x, size.y, false,
+  )))))
+}
+
+fn consume_vec2_points(ctx: &EvalCtx, val: &Value, fn_name: &str) -> Result<Vec<Vec2>, ErrorStack> {
+  val
+    .as_sequence()
+    .unwrap()
+    .consume(ctx)
+    .map(|res| match res? {
+      Value::Vec2(v) => Ok(v),
+      other => Err(ErrorStack::new(format!(
+        "`{fn_name}`: expected a sequence of vec2, found: {other:?}"
+      ))),
+    })
+    .collect()
+}
+
+fn polygon_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let points = consume_vec2_points(ctx, arg_refs[0].resolve(args, kwargs), "polygon")?;
+  Ok(Value::Path(Rc::new(Path::leaf(polygon_subpath(&points)?))))
+}
+
+fn polyline_impl(
+  ctx: &EvalCtx,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let points = consume_vec2_points(ctx, arg_refs[0].resolve(args, kwargs), "polyline")?;
+  Ok(Value::Path(Rc::new(Path::leaf(polyline_subpath(&points)?))))
+}
+
+fn fill_rule_impl(
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> Result<Value, ErrorStack> {
+  let rule = trace_path::FillRule::parse(arg_refs[0].resolve(args, kwargs), "fill_rule")?;
+  let path = arg_refs[1].resolve(args, kwargs).as_path().unwrap();
+  Ok(Value::Path(Rc::new(path.with_fill_rule(Some(rule)))))
 }
 
 pub(crate) fn make_tagged_map(entries: &[(&str, Value)]) -> Value {
@@ -9124,6 +9468,9 @@ fn reflect_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= REFLECT_PATH_DEF_IX {
+    return path_reflect_impl(def_ix - REFLECT_PATH_DEF_IX, arg_refs, args, kwargs);
+  }
   let (normal, offset, mesh_arg) = match def_ix {
     0 => (
       *arg_refs[0].resolve(args, kwargs).as_vec3().unwrap(),
@@ -9153,6 +9500,19 @@ fn reflect_axis_impl(
   kwargs: &FxHashMap<Sym, Value>,
   normal: Vec3,
 ) -> Result<Value, ErrorStack> {
+  if def_ix >= REFLECT_AXIS_PATH_DEF_IX {
+    // `reflect_x` mirrors a path across the x axis (normal +y), the opposite of the mesh
+    // convention where it negates x.
+    let line_normal = Vec2::new(normal.y, normal.x);
+    return path_reflect_axis_impl(
+      def_ix - REFLECT_AXIS_PATH_DEF_IX,
+      arg_refs,
+      args,
+      kwargs,
+      line_normal,
+      "reflect",
+    );
+  }
   let (offset, mesh_arg) = match def_ix {
     0 => (0., &arg_refs[0]),
     1 => (
@@ -9706,6 +10066,13 @@ fn reverse_impl(
         inner: Rc::new(vals),
       })))
     }
+    1 => Ok(Value::Path(Rc::new(
+      arg_refs[0]
+        .resolve(args, kwargs)
+        .as_path()
+        .unwrap()
+        .reversed(),
+    ))),
     _ => unimplemented!(),
   }
 }
@@ -11053,6 +11420,52 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "path_xor" => builtin_fn!(path_xor, |def_ix, arg_refs, args, kwargs, ctx| {
     path_boolean::path_xor_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "path" => builtin_fn!(path, |def_ix, arg_refs, args, kwargs, ctx| {
+    path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "circle" => builtin_fn!(circle, |def_ix, arg_refs, args, kwargs, _ctx| {
+    circle_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "rect" => builtin_fn!(rect, |def_ix, arg_refs, args, kwargs, _ctx| {
+    rect_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "polygon" => builtin_fn!(polygon, |_def_ix, arg_refs, args, kwargs, ctx| {
+    polygon_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "polyline" => builtin_fn!(polyline, |_def_ix, arg_refs, args, kwargs, ctx| {
+    polyline_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "move" => builtin_fn!(move, |def_ix, arg_refs, args, kwargs, _ctx| {
+    move_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "line" => builtin_fn!(line, |def_ix, arg_refs, args, kwargs, _ctx| {
+    line_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "quadratic_bezier" => builtin_fn!(quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "smooth_quadratic_bezier" => builtin_fn!(smooth_quadratic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smooth_quadratic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "cubic_bezier" => builtin_fn!(cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "smooth_cubic_bezier" => builtin_fn!(smooth_cubic_bezier, |def_ix, arg_refs, args, kwargs, _ctx| {
+    smooth_cubic_bezier_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "arc" => builtin_fn!(arc, |def_ix, arg_refs, args, kwargs, _ctx| {
+    arc_impl(def_ix, arg_refs, args, kwargs)
+  }),
+  "close" => builtin_fn!(close, |_def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    pen(arg_refs, args, kwargs, 0, "close", DrawCommand::Close)
+  }),
+  "close_all" => builtin_fn!(close_all, |_def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    let path = arg_refs[0].resolve(args, kwargs).as_path().unwrap();
+    Ok(Value::Path(Rc::new(path.close_all()?)))
+  }),
+  "fill_rule" => builtin_fn!(fill_rule, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    fill_rule_impl(arg_refs, args, kwargs)
   }),
   "build_path" => builtin_fn!(build_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::build_path_impl(ctx, def_ix, arg_refs, args, kwargs)

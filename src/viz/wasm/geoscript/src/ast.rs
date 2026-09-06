@@ -94,6 +94,7 @@ impl ArgType {
       (ArgType::Mat4, Value::Mat4(_)) => Ok(()),
       (ArgType::Texture, Value::Texture(_)) => Ok(()),
       (ArgType::Light, Value::Light(_)) => Ok(()),
+      (ArgType::Path, Value::Path(_)) => Ok(()),
       _ => Err(ErrorStack::new(format!(
         "Value {val:?} does not match type {self:?}"
       ))),

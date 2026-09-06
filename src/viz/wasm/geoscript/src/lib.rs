@@ -8557,8 +8557,7 @@ x = len(m)"#;
 
 #[test]
 fn test_render_path_sampler() {
-  // A path sampler (which implements PathSampler) should be renderable directly.
-  // It should produce a single closed path with 10001 points (10000 samples + closing repeat).
+  // A path renders as one polyline per subpath at the ambient curve tolerance.
   let src = r#"
 p = build_path(path {
   move(0, 0)
@@ -8573,10 +8572,8 @@ p | render
   let paths = ctx.rendered_paths.into_inner();
   assert_eq!(paths.len(), 1);
   let path = &paths[0].points;
-  // 10000 samples + 1 closing point
-  assert_eq!(path.len(), 10001);
-  // First and last point should be equal (closed)
-  assert_eq!(path[0], path[path.len() - 1]);
+  assert_eq!(path.len(), 4);
+  assert_ne!(path[0], path[path.len() - 1]);
   // All points should be in the XZ plane (y == 0)
   for pt in path {
     assert_eq!(pt.y, 0.0);

@@ -455,6 +455,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Translates a texture's placement transform in base-UV units (right-multiply: M = M * T). Alias: `trans`.",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Translation."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Translates a path.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X translation."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y translation."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Translates a path.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "translate_global" => FnDef {
@@ -883,6 +930,26 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Rotates a texture's placement transform in the UV plane (right-multiply: M = M * R; local ops act about the texture's centered origin).  Counter-clockwise, matching the 2D point `rot` convention.",
         return_type: &[ArgType::Texture],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "angle",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Angle in radians."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Rotates a path counter-clockwise about the origin.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -1686,6 +1753,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Scales a texture's placement transform (right-multiply: M = M * S; local ops act about the texture's centered origin). Accepts a Vec2 for non-uniform scaling or a number for uniform scaling.",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Uniform factor, or per-axis factors as a `vec2`."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Scales a path about the origin. A non-uniform scale converts arcs to cubic Béziers.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X factor."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y factor."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Scales a path about the origin. A non-uniform scale converts arcs to cubic Béziers.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "origin_to_geometry" => FnDef {
@@ -2001,6 +2115,53 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Mirrors a mesh across the plane with the given `normal`, shifted from the origin by `offset` along that normal, returning a new mesh.  Vertex positions and normals are reflected and triangle winding is reversed so the result stays consistently oriented.  Operates in the mesh's local space.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line, which passes through the origin."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line through the origin running along `axis`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "axis",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Direction of the mirror line."
+          },
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Distance of the mirror line from the origin along the line's normal."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line running along `axis`, shifted by `offset` along the line's normal.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "reflect_x" => FnDef {
@@ -2040,6 +2201,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Mirrors a mesh across the plane `x = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
         return_type: &[ArgType::Mesh],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the x axis (negates y).",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Mirror over the line `y = offset` instead."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line `y = offset`.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "reflect_y" => FnDef {
@@ -2078,6 +2272,39 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Mirrors a mesh across the plane `y = offset`, returning a new mesh with winding reversed to stay consistently oriented.",
         return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the y axis (negates x).",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "offset",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Mirror over the line `x = offset` instead."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reflects a path across the line `x = offset`.",
+        return_type: &[ArgType::Path],
       },
     ],
   },
@@ -6268,6 +6495,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Returns a new sequence with the elements in reverse order.  \n\nThis is NOT lazy and will evaluate the entire sequence immediately and collect all of its elements into memory.",
         return_type: &[ArgType::Sequence],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Reverses a path's direction: `t` runs the other way, subpath order and every segment flip.",
+        return_type: &[ArgType::Path],
+      },
     ],
   },
   "collect" => FnDef {
@@ -9527,6 +9767,19 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Returns the number of entries in a map",
         return_type: &[ArgType::Int],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Total arc length of a path over all its subpaths. Lazy paths are measured by sampling.",
+        return_type: &[ArgType::Float],
+      },
     ],
   },
   "chars" => FnDef {
@@ -10688,20 +10941,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "",
           },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, centers the path around the origin after parsing.",
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Fill rule for tessellation: \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil.",
-          },
         ],
         description: "Fetches SVG path data for the given text and returns a path sampler callable of signature `|t: num|: vec2`. Suitable for use with `tessellate_path`, `render_path`, `subpaths`, etc.",
         return_type: &[ArgType::Path],
@@ -11396,13 +11635,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "Maximum total number of output points across all subpaths. When provided, adaptively resamples the path to this count using curvature+arc-length weighting while preserving critical corners. When nil (default), uses the path's natural tessellation resolution."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed. Tessellation always closes the path; passing closed=false will return an error."
           },
           ArgDef {
             name: "fill_rule",
@@ -13079,27 +13311,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: "An SVG path data string using move, line, cubic/quadratic, smooth, and arc commands."
           },
-          ArgDef {
-            name: "center",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be centered around the origin after being traced."
-          },
-          ArgDef {
-            name: "reverse",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool),
-            default_value: DefaultValue::Optional(|| Value::Bool(false)),
-            description: "If true, the path will be sampled in reverse direction (from end to start). Sampling at t=0 will return the end point and t=1 will return the start point."
-          },
-          ArgDef {
-            name: "fill_rule",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional fill rule that describes how the interior of this path should be interpreted for operations like tessellation.  One of \"nonzero\", \"evenodd\", \"positive\", \"negative\", or nil."
-          }
         ],
         description: "Parses SVG path data and returns a callable of signature `|t: num|: vec2` where `t` is a parameter from 0 to 1 representing the position along the path.\n\nValues <0 or >1 will be clamped to the start or end of the path respectively.",
         return_type: &[ArgType::Path]
@@ -13260,13 +13471,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             //
             // maybe only with the lerp_paths case?
             description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed/open."
           },
         ],
         description: "Offsets a 2D path using Clipper2 and returns a new path sampler.  Note: continuous curve detail is lost; the output is a polyline representation.",
@@ -13535,13 +13739,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Uniform sample count for non-trace_path callables."
           },
           ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
-          },
-          ArgDef {
             name: "engine",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
@@ -13581,13 +13778,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
             description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
           },
           ArgDef {
             name: "engine",
@@ -13644,13 +13834,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Uniform sample count for non-trace_path callables."
           },
           ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
-          },
-          ArgDef {
             name: "engine",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
@@ -13704,13 +13887,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Int(64)),
             description: "Uniform sample count fallback for path samplers without curvature-adaptive sampling."
           },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
-          },
         ],
         description: "Returns `true` if the two 2D path regions overlap under the given fill rule, `false` otherwise.\n\nDetects both cases where path segments cross and cases where one path is fully contained inside the other. Uses Clipper2's region intersection internally, so winding order and the chosen fill rule determine what counts as interior.\n\nOnly supported for path samplers with known topology (e.g. from `path { ... }`, `trace_path`, `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); generic black-box `|t|: vec2` callables raise an error.",
         return_type: &[ArgType::Bool],
@@ -13757,13 +13933,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
             description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
           },
           ArgDef {
             name: "engine",
@@ -13818,13 +13987,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
             description: "Uniform sample count for non-trace_path callables."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the inputs as closed/open."
           },
           ArgDef {
             name: "engine",
@@ -13912,13 +14074,6 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
             description: "Uniform sample count for black-box callables that don't expose topology."
-          },
-          ArgDef {
-            name: "closed",
-            interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
-            default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Optional override for treating the input as closed/open. When nil, the input's existing topology is preserved (or inferred from `p(0) ≈ p(1)` for black-box callables)."
           },
         ],
 
@@ -14647,6 +14802,881 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         ],
         description: "Returns the arc length of a 2D path, with the path's transform applied (pass `apply_transform=false` to measure the underlying pre-transform geometry).\n\nFor paths backed by a path tracer this is the exact sum of segment lengths (the efficient equivalent of `path_segments(p) | fold(0, |acc, { length }| acc + length)`). For black-box `|t: num|: vec2` callables it falls back to summing the chord lengths of `samples` uniform samples.",
         return_type: &[ArgType::Numeric],
+      },
+    ],
+  },
+  "path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "items",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Path, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "A path, a sequence of paths, or nested sequences of them; `nil` entries are skipped."
+          },
+          ArgDef {
+            name: "fill_rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Fill rule for the grouped path (`\"nonzero\"`, `\"evenodd\"`, `\"positive\"`, `\"negative\"`). When omitted it is inherited if every item agrees; conflicting rules are an error."
+          },
+        ],
+        description: "Groups paths into one path whose subpaths run in order. Concrete inputs are merged into a single flat list of subpaths; lazy inputs (`lerp_paths`, `catmull_rom`, `path(fn)`) are kept as they are. `path()` is the empty path, the usual start of a pen-op chain: `path() | move(0, 0) | line(1, 1) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "f",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "A `|t: num|: vec2` callable sampled over `t` in [0, 1]."
+          },
+          ArgDef {
+            name: "closed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Whether the sampled curve is a closed loop. When nil it is inferred from whether `f(0)` and `f(1)` coincide."
+          },
+        ],
+        description: "Wraps a `|t: num|: vec2` callable as a lazy path. It has no draw commands, so pen ops and `path_segments` need `discretize_path` first; everything else samples it.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "circle" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the circle."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Closed circular path built from two arcs, starting at the rightmost point and running counter-clockwise.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Center x."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Center y."
+          },
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Radius of the circle."
+          },
+        ],
+        description: "Closed circular path built from two arcs, starting at the rightmost point and running counter-clockwise.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "rect" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "center",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Center of the rectangle."
+          },
+          ArgDef {
+            name: "size",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Width and height as a `vec2`, or one number for a square."
+          },
+        ],
+        description: "Closed rectangular path traced counter-clockwise from the top-right corner.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Center x."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Center y."
+          },
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Width."
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Height."
+          },
+        ],
+        description: "Closed rectangular path traced counter-clockwise from the top-right corner.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "polygon" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` vertices (at least 3 distinct)."
+          },
+        ],
+        description: "Closed path through `points`, joined by straight segments and closed back to the first point.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "polyline" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "points",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Sequence of `vec2` vertices (at least 2)."
+          },
+        ],
+        description: "Open path through `points`, joined by straight segments.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "move" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X of the new subpath start."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y of the new subpath start."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: starts a new subpath at the given point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Start of the new subpath."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: starts a new subpath at the given point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "line" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X of the segment end."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y of the segment end."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: straight segment from the current point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End of the segment."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: straight segment from the current point. Pen ops append to the open last subpath; on a closed or empty path they start a new subpath from the current point (the last subpath's end, its start if it is closed, or the origin when the path is empty). Chain them with `|`: `path() | move(0, 0) | line(1, 0) | close`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier from the current point through `ctrl` to `to`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "cx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Control point x."
+          },
+          ArgDef {
+            name: "cy",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier from the current point through `(cx, cy)` to `(x, y)`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "smooth_quadratic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier whose control point mirrors the previous quadratic's across the current point (the current point itself when there is none), like SVG `T`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: quadratic Bézier whose control point mirrors the previous quadratic's across the current point (the current point itself when there is none), like SVG `T`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl1",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "First control point."
+          },
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Second control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier from the current point with control points `ctrl1` and `ctrl2` to `to`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c1x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "First control point x."
+          },
+          ArgDef {
+            name: "c1y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "First control point y."
+          },
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point x."
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier from the current point with control points `(c1x, c1y)` and `(c2x, c2y)` to `(x, y)`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "smooth_cubic_bezier" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "ctrl2",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "Second control point."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier whose first control point mirrors the previous cubic's second across the current point (the current point itself when there is none), like SVG `S`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "c2x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point x."
+          },
+          ArgDef {
+            name: "c2y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Second control point y."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: cubic Bézier whose first control point mirrors the previous cubic's second across the current point (the current point itself when there is none), like SVG `S`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "arc" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "large_arc",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Take the larger of the two arcs."
+          },
+          ArgDef {
+            name: "sweep",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Sweep counter-clockwise."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "large_arc",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Take the larger of the two arcs."
+          },
+          ArgDef {
+            name: "sweep",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Required,
+            description: "Sweep counter-clockwise."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "to",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec2),
+            default_value: DefaultValue::Required,
+            description: "End point."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rx",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "X radius."
+          },
+          ArgDef {
+            name: "ry",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Y radius."
+          },
+          ArgDef {
+            name: "x_axis_rotation",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Rotation of the ellipse's x axis in degrees."
+          },
+          ArgDef {
+            name: "x",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End x."
+          },
+          ArgDef {
+            name: "y",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "End y."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: elliptical arc from the current point to the end point with radii `rx`, `ry` and x-axis rotation `x_axis_rotation` (degrees), following SVG's arc parameterization. `large_arc` picks the longer of the two candidate arcs; `sweep` picks the counter-clockwise one. The short forms use `large_arc=false, sweep=true`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "close" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Pen op: closes the open last subpath with a straight segment back to its start. No-op when the last subpath is already closed or empty.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "close_all" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Closes every open subpath of the path.",
+        return_type: &[ArgType::Path],
+      },
+    ],
+  },
+  "fill_rule" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "rule",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "One of `\"nonzero\"`, `\"evenodd\"`, `\"positive\"`, `\"negative\"` (or the Clipper2 numeric code)."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "The path to operate on; pen ops take it last so they can be chained with `|`."
+          },
+        ],
+        description: "Returns the path with the given fill rule, which tessellation, rasterization and boolean ops read from the path when they are not given one explicitly.",
+        return_type: &[ArgType::Path],
       },
     ],
   },

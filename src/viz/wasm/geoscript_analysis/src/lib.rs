@@ -1550,8 +1550,9 @@ my_fn = |x: int|: int {
     // `reverse` means `path_reverse` here, so the seq builtin mustn't also be offered
     assert_eq!(inside.iter().filter(|l| *l == "reverse").count(), 1);
 
+    // pen ops are ordinary builtins outside blocks too
     let outside = labels(4, 1);
-    assert!(!outside.contains(&"move".to_string()));
+    assert!(outside.contains(&"move".to_string()));
     assert!(outside.contains(&"reverse".to_string()));
   }
 
@@ -1629,8 +1630,8 @@ my_fn = |x: int|: int {
       .into_iter()
       .map(|c| c.label)
       .collect();
-    assert!(!labels.contains(&"move".to_string()));
     assert!(labels.contains(&"reverse".to_string()));
+    assert_eq!(labels.iter().filter(|l| *l == "reverse").count(), 1);
   }
 
   #[test]

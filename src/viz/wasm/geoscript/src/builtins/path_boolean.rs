@@ -358,7 +358,6 @@ struct BooleanOpts {
   fill_rule: FillRule,
   curve_angle_radians: f32,
   sample_count: usize,
-  closed_override: Option<bool>,
   engine: BooleanEngine,
 }
 
@@ -393,19 +392,7 @@ fn parse_boolean_opts(
   };
   let sample_count = sample_count.max(2) as usize;
 
-  let closed_override_val = opt_refs[3].resolve(args, kwargs);
-  let closed_override = match closed_override_val {
-    Value::Bool(b) => Some(*b),
-    Value::Nil => None,
-    _ => {
-      return Err(ErrorStack::new(format!(
-        "Invalid closed argument for `{fn_name}`; expected bool or nil, found: \
-         {closed_override_val:?}"
-      )))
-    }
-  };
-
-  let engine = parse_engine(opt_refs[4].resolve(args, kwargs), fn_name)?;
+  let engine = parse_engine(opt_refs[3].resolve(args, kwargs), fn_name)?;
 
   // Engine-specific default fill rule when caller leaves it unset (nil): Clipper2's
   // historical default is NonZero; CGAL's `Polygon_set_2` natively combines subpaths
@@ -444,7 +431,6 @@ fn parse_boolean_opts(
     fill_rule,
     curve_angle_radians,
     sample_count,
-    closed_override,
     engine,
   })
 }
@@ -455,13 +441,7 @@ fn sample_boolean_input(
   path: &Path,
   opts: &BooleanOpts,
 ) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
-  sample_path_to_coords(
-    ctx,
-    path,
-    opts.curve_angle_radians,
-    opts.sample_count,
-    opts.closed_override,
-  )
+  sample_path_to_coords(ctx, path, opts.curve_angle_radians, opts.sample_count, None)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -815,18 +795,6 @@ pub fn path_intersects_impl(
         }
       };
 
-      let closed_override_val = arg_refs[5].resolve(args, kwargs);
-      let closed_override = match closed_override_val {
-        Value::Bool(b) => Some(*b),
-        Value::Nil => None,
-        _ => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `path_intersects`; expected bool or nil, found: \
-             {closed_override_val:?}"
-          )))
-        }
-      };
-
       let (a_box, b_box) = (a_path.concrete_aabb(), b_path.concrete_aabb());
       if let (Some((a_min, a_max)), Some((b_min, b_max))) = (a_box, b_box) {
         if a_max.x < b_min.x || b_max.x < a_min.x || a_max.y < b_min.y || b_max.y < a_min.y {
@@ -834,20 +802,10 @@ pub fn path_intersects_impl(
         }
       }
 
-      let (a_coords, a_lengths) = sample_path_to_coords(
-        ctx,
-        a_path,
-        curve_angle_radians,
-        sample_count,
-        closed_override,
-      )?;
-      let (b_coords, b_lengths) = sample_path_to_coords(
-        ctx,
-        b_path,
-        curve_angle_radians,
-        sample_count,
-        closed_override,
-      )?;
+      let (a_coords, a_lengths) =
+        sample_path_to_coords(ctx, a_path, curve_angle_radians, sample_count, None)?;
+      let (b_coords, b_lengths) =
+        sample_path_to_coords(ctx, b_path, curve_angle_radians, sample_count, None)?;
 
       if a_coords.is_empty() || b_coords.is_empty() {
         return Ok(Value::Bool(false));
@@ -899,7 +857,6 @@ pub fn path_union_seq(ctx: &EvalCtx, seq: Rc<dyn Sequence>) -> Result<Value, Err
     ArgRef::Default(Value::Nil),
     ArgRef::Default(Value::Nil),
     ArgRef::Default(Value::Int(64)),
-    ArgRef::Default(Value::Nil),
     ArgRef::Default(Value::Nil),
   ];
   path_union_impl(ctx, 1, &arg_refs, &[Value::Sequence(seq)], EMPTY_KWARGS)

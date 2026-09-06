@@ -652,25 +652,7 @@ pub fn discretize_path_impl(
   })?;
   let sample_count = sample_count.max(2) as usize;
 
-  let closed_override_val = arg_refs[3].resolve(args, kwargs);
-  let closed_override = match closed_override_val {
-    Value::Bool(b) => Some(*b),
-    Value::Nil => None,
-    _ => {
-      return Err(ErrorStack::new(format!(
-        "Invalid closed argument for `discretize_path`; expected bool or nil, found: \
-         {closed_override_val:?}"
-      )))
-    }
-  };
-
-  let out = discretize_path(
-    ctx,
-    path,
-    curve_angle_radians,
-    sample_count,
-    closed_override,
-  )?;
+  let out = discretize_path(ctx, path, curve_angle_radians, sample_count, None)?;
   Ok(Value::Path(Rc::new(out.with_fill_rule(path.fill_rule))))
 }
 
@@ -831,21 +813,10 @@ pub fn trace_svg_path_impl(
   match def_ix {
     0 => {
       let svg_path_str = arg_refs[0].resolve(args, kwargs).as_str().unwrap();
-      let center = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
-      let reverse = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
-      let fill_rule_val = arg_refs[3].resolve(args, kwargs);
-      let fill_rule = match fill_rule_val {
-        Value::Nil => None,
-        val => Some(FillRule::parse(val, "trace_svg_path")?),
-      };
-
       let draw_cmds = parse_svg_path_to_draw_commands(svg_path_str)
         .map_err(|err| err.wrap("Error while parsing SVG path string"))?;
-      Ok(Value::Path(Rc::new(finish_built_path(
-        Path::from_draw_commands(draw_cmds, false),
-        center,
-        reverse,
-        fill_rule,
+      Ok(Value::Path(Rc::new(Path::from_draw_commands(
+        draw_cmds, false,
       ))))
     }
     _ => unimplemented!(),
@@ -906,12 +877,6 @@ pub fn text_to_path_impl(
           )));
         }
       };
-      let center = arg_refs[6].resolve(args, kwargs).as_bool().unwrap();
-      let fill_rule_val = arg_refs[7].resolve(args, kwargs);
-      let fill_rule = match fill_rule_val {
-        Value::Nil => None,
-        val => Some(FillRule::parse(val, "text_to_path")?),
-      };
 
       #[cfg(target_arch = "wasm32")]
       crate::or_async_dep_bit(crate::DEP_BIT_TEXT2PATH);
@@ -940,11 +905,8 @@ pub fn text_to_path_impl(
 
       let draw_cmds = parse_svg_path_to_draw_commands(&svg_path)
         .map_err(|e| e.wrap("Error parsing SVG path from text_to_path"))?;
-      Ok(Value::Path(Rc::new(finish_built_path(
-        Path::from_draw_commands(draw_cmds, false),
-        center,
-        false,
-        fill_rule,
+      Ok(Value::Path(Rc::new(Path::from_draw_commands(
+        draw_cmds, false,
       ))))
     }
     _ => unimplemented!(),

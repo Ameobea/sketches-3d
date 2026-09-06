@@ -339,17 +339,6 @@ pub fn offset_path_impl(
         }
       };
       let sample_count = sample_count.max(2) as usize;
-      let closed_override_val = arg_refs[18].resolve(args, kwargs);
-      let closed_override = match closed_override_val {
-        Value::Bool(b) => Some(*b),
-        Value::Nil => None,
-        _ => {
-          return Err(ErrorStack::new(format!(
-            "Invalid closed argument for `offset_path`; expected bool or nil, found: \
-             {closed_override_val:?}"
-          )))
-        }
-      };
 
       let opts = OffsetOptions {
         delta,
@@ -377,7 +366,7 @@ pub fn offset_path_impl(
         path,
         curve_angle_radians,
         sample_count,
-        closed_override,
+        None,
       )?;
       for (points, is_closed) in subpaths {
         if is_closed {
