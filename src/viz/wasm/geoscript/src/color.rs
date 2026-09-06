@@ -2,13 +2,14 @@
 //! converts to/from that. OKLAB matrices per Björn Ottosson's reference (which take
 //! LINEAR sRGB — feeding gamma-encoded values into them is the classic mistake).
 
+use crate::dmath;
 use mesh::linked_mesh::Vec3;
 
 pub fn srgb_channel_to_linear(c: f32) -> f32 {
   if c <= 0.04045 {
     c / 12.92
   } else {
-    ((c + 0.055) / 1.055).powf(2.4)
+    dmath::powf((c + 0.055) / 1.055, 2.4)
   }
 }
 
@@ -16,7 +17,7 @@ pub fn linear_channel_to_srgb(c: f32) -> f32 {
   if c <= 0.003_130_8 {
     c * 12.92
   } else {
-    1.055 * c.powf(1. / 2.4) - 0.055
+    1.055 * dmath::powf(c, 1. / 2.4) - 0.055
   }
 }
 
@@ -32,7 +33,7 @@ pub fn linear_to_oklab(c: Vec3) -> Vec3 {
   let l = 0.4122214708 * c.x + 0.5363325363 * c.y + 0.0514459929 * c.z;
   let m = 0.2119034982 * c.x + 0.6806995451 * c.y + 0.1073969566 * c.z;
   let s = 0.0883024619 * c.x + 0.2817188376 * c.y + 0.6299787005 * c.z;
-  let (l, m, s) = (l.cbrt(), m.cbrt(), s.cbrt());
+  let (l, m, s) = (dmath::cbrt(l), dmath::cbrt(m), dmath::cbrt(s));
   Vec3::new(
     0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
     1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,

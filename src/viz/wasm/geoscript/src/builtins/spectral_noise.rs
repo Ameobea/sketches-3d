@@ -9,6 +9,7 @@
 //! — the forward transform only ever re-derived a spectrum whose distribution is known in
 //! closed form — at a quarter of the butterflies and none of the whitening.
 
+use crate::dmath;
 use std::f32::consts::{FRAC_1_SQRT_2, PI};
 use std::rc::Rc;
 
@@ -209,7 +210,7 @@ fn twiddles(len: usize) -> Vec<[f32; 2]> {
   while half < len {
     let step = PI / half as f32;
     for k in 0..half {
-      let (s, c) = (step * k as f32).sin_cos();
+      let (s, c) = dmath::sin_cos(step * k as f32);
       tw.push([c, s]);
     }
     half *= 2;
@@ -317,8 +318,8 @@ fn erf(x: f32) -> f32 {
 }
 
 fn band_centers() -> ([f32; KR], f32) {
-  let c0 = (1. / N_FIT as f32).ln();
-  let step = ((0.5f32).ln() - c0) / (KR - 1) as f32;
+  let c0 = dmath::ln(1. / N_FIT as f32);
+  let step = (dmath::ln(0.5f32) - c0) / (KR - 1) as f32;
   (core::array::from_fn(|i| c0 + step * i as f32), step)
 }
 
@@ -797,8 +798,8 @@ fn add_kernel_lobes(
   e_resid: f64,
 ) {
   for k in kernels {
-    let (s1, s2) = (10f32.powf(k.sig[0]), 10f32.powf(k.sig[1]));
-    let (sa, ca) = k.angle.sin_cos();
+    let (s1, s2) = (dmath::powf(10f32, k.sig[0]), dmath::powf(10f32, k.sig[1]));
+    let (sa, ca) = dmath::sin_cos(k.angle);
     let (is1, is2) = (1. / (s1 * s1), 1. / (s2 * s2));
     let i11 = ca * ca * is1 + sa * sa * is2;
     let i22 = sa * sa * is1 + ca * ca * is2;
@@ -844,7 +845,7 @@ fn add_kernel_lobes(
     }
 
     if lsum > 0. {
-      let scale = (10f64.powf(k.energy as f64) * e_resid / lsum) as f32;
+      let scale = (dmath::pow64(10f64, k.energy as f64) * e_resid / lsum) as f32;
       for b in &boxes {
         let nx = b.xs.len();
         for (iy, &(y, _)) in b.ys.iter().enumerate() {

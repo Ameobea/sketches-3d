@@ -5,6 +5,7 @@
 //! edges, zero quantization); ramps with closure easings or non-linear color-space mixing
 //! bake a 256-entry lerp-sampled LUT so the expensive math runs only at construct.
 
+use crate::dmath;
 use crate::ValueMap;
 use std::rc::Rc;
 
@@ -104,7 +105,7 @@ fn to_space(space: MixSpace, v: Vec3) -> Vec3 {
       Vec3::new(
         lab.x,
         (lab.y * lab.y + lab.z * lab.z).sqrt(),
-        lab.z.atan2(lab.y),
+        dmath::atan2(lab.z, lab.y),
       )
     }
   }
@@ -118,8 +119,8 @@ fn from_space(space: MixSpace, v: Vec3) -> Vec3 {
     MixSpace::Oklab => clamp01(oklab_to_linear(v)),
     MixSpace::Oklch => clamp01(oklab_to_linear(Vec3::new(
       v.x,
-      v.y * v.z.cos(),
-      v.y * v.z.sin(),
+      v.y * dmath::cos(v.z),
+      v.y * dmath::sin(v.z),
     ))),
   }
 }

@@ -5,9 +5,9 @@
 //! raw f32 bits + mean/min/max, and compared line-for-line against `goldens.txt`.
 //!
 //! Goldens are native-only by decision: the property that matters is same-target A/B
-//! (old-vs-new code, later scalar-vs-vectorized), never native-vs-wasm — cross-target
-//! bit-equality is impossible anyway (different libm). Regenerate with
-//! `UPDATE_GOLDENS=1 cargo test -p geoscript texture_golden`.
+//! (old-vs-new code, later scalar-vs-vectorized), never native-vs-wasm. Transcendentals go
+//! through `dmath` (the `libm` crate natively), so goldens don't drift between macOS and Linux.
+//! Regenerate with `UPDATE_GOLDENS=1 cargo test -p geoscript texture_golden`.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;

@@ -39,6 +39,7 @@ im-rc = { version = "15.1", features = ["pool"] }
 # lazily-loaded module reached via FFI, keeping faer/gemm out of this blob.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 uv_solvers = { path = "../uv_solvers" }
+libm = "0.2"
 # Native `load_image` decodes data URIs directly (browser decode on wasm)
 png = "0.17"
 base64 = "0.22"

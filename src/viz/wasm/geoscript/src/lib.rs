@@ -64,6 +64,7 @@ pub mod autodiff;
 pub mod builtins;
 pub mod color;
 pub mod desugar;
+pub mod dmath;
 mod guards;
 pub mod lights;
 pub mod materials;
@@ -8390,41 +8391,53 @@ j = atan(vec3(1.0, 0.0, 0.1))"#;
   let ctx = parse_and_eval_program(src).unwrap();
 
   let a = ctx.get_global("a").unwrap().as_float().unwrap();
-  assert_eq!(a, (0.5_f32).asin());
+  assert_eq!(a, dmath::asin(0.5_f32));
   let b = ctx.get_global("b").unwrap().as_float().unwrap();
-  assert_eq!(b, (0.5_f32).acos());
+  assert_eq!(b, dmath::acos(0.5_f32));
   let c = ctx.get_global("c").unwrap().as_float().unwrap();
-  assert_eq!(c, (1.0_f32).atan());
+  assert_eq!(c, dmath::atan(1.0_f32));
   let d = ctx.get_global("d").unwrap().as_float().unwrap();
-  assert_eq!(d, (1.0_f32).atan2(1.0));
+  assert_eq!(d, dmath::atan2(1.0_f32, 1.0));
 
   let e = ctx.get_global("e").unwrap();
   let e = e.as_vec2().unwrap();
-  assert_eq!(e, &Vec2::new(0.5_f32.asin(), 0.2_f32.asin()));
+  assert_eq!(e, &Vec2::new(dmath::asin(0.5_f32), dmath::asin(0.2_f32)));
   let f = ctx.get_global("f").unwrap();
   let f = f.as_vec2().unwrap();
-  assert_eq!(f, &Vec2::new(0.5_f32.acos(), 0.6_f32.acos()));
+  assert_eq!(f, &Vec2::new(dmath::acos(0.5_f32), dmath::acos(0.6_f32)));
   let g = ctx.get_global("g").unwrap();
   let g = g.as_vec2().unwrap();
-  assert_eq!(g, &Vec2::new(1.0_f32.atan(), 0.3_f32.atan()));
+  assert_eq!(g, &Vec2::new(dmath::atan(1.0_f32), dmath::atan(0.3_f32)));
 
   let h = ctx.get_global("h").unwrap();
   let h = h.as_vec3().unwrap();
   assert_eq!(
     h,
-    &Vec3::new(0.5_f32.asin(), 0.0_f32.asin(), 0.7_f32.asin())
+    &Vec3::new(
+      dmath::asin(0.5_f32),
+      dmath::asin(0.0_f32),
+      dmath::asin(0.7_f32)
+    )
   );
   let i = ctx.get_global("i").unwrap();
   let i = i.as_vec3().unwrap();
   assert_eq!(
     i,
-    &Vec3::new(0.5_f32.acos(), 0.0_f32.acos(), 0.5_f32.acos())
+    &Vec3::new(
+      dmath::acos(0.5_f32),
+      dmath::acos(0.0_f32),
+      dmath::acos(0.5_f32)
+    )
   );
   let j = ctx.get_global("j").unwrap();
   let j = j.as_vec3().unwrap();
   assert_eq!(
     j,
-    &Vec3::new(1.0_f32.atan(), 0.0_f32.atan(), 0.1_f32.atan())
+    &Vec3::new(
+      dmath::atan(1.0_f32),
+      dmath::atan(0.0_f32),
+      dmath::atan(0.1_f32)
+    )
   );
 }
 

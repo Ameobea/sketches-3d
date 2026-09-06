@@ -1,3 +1,4 @@
+use crate::dmath;
 use crate::ValueMap;
 use mesh::triangle_intersection::TriTriIntersectionType;
 use paste::paste;
@@ -7474,34 +7475,36 @@ fn pow_impl(
     0 => {
       let base = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(base.powf(exponent)))
+      Ok(Value::Float(dmath::powf(base, exponent)))
     }
     1 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        base.x.powf(exponent),
-        base.y.powf(exponent),
-        base.z.powf(exponent),
+        dmath::powf(base.x, exponent),
+        dmath::powf(base.y, exponent),
+        dmath::powf(base.z, exponent),
       )))
     }
     2 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       Ok(Value::Vec2(Vec2::new(
-        base.x.powf(exponent),
-        base.y.powf(exponent),
+        dmath::powf(base.x, exponent),
+        dmath::powf(base.y, exponent),
       )))
     }
     3 => {
       let base = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(base, |x| x.powf(exponent)))
+      Ok(texture::texture_map_unary(base, |x| {
+        dmath::powf(x, exponent)
+      }))
     }
     4 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Vec4(Rc::new(base.map(|x| x.powf(exponent)))))
+      Ok(Value::Vec4(Rc::new(base.map(|x| dmath::powf(x, exponent)))))
     }
     _ => unimplemented!(),
   }
@@ -7516,27 +7519,30 @@ fn exp_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.exp()))
+      Ok(Value::Float(dmath::exp(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.exp(),
-        value.y.exp(),
-        value.z.exp(),
+        dmath::exp(value.x),
+        dmath::exp(value.y),
+        dmath::exp(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.exp(), value.y.exp())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::exp(value.x),
+        dmath::exp(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.exp()))
+      Ok(texture::texture_map_unary(t, dmath::exp))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.exp()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::exp))))
     }
     _ => unimplemented!(),
   }
@@ -7551,19 +7557,22 @@ fn log10_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.log10()))
+      Ok(Value::Float(dmath::log10(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.log10(),
-        value.y.log10(),
-        value.z.log10(),
+        dmath::log10(value.x),
+        dmath::log10(value.y),
+        dmath::log10(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.log10(), value.y.log10())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::log10(value.x),
+        dmath::log10(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7578,27 +7587,30 @@ fn log2_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.log2()))
+      Ok(Value::Float(dmath::log2(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.log2(),
-        value.y.log2(),
-        value.z.log2(),
+        dmath::log2(value.x),
+        dmath::log2(value.y),
+        dmath::log2(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.log2(), value.y.log2())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::log2(value.x),
+        dmath::log2(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.log2()))
+      Ok(texture::texture_map_unary(t, dmath::log2))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.log2()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::log2))))
     }
     _ => unimplemented!(),
   }
@@ -7613,19 +7625,22 @@ fn ln_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.ln()))
+      Ok(Value::Float(dmath::ln(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.ln(),
-        value.y.ln(),
-        value.z.ln(),
+        dmath::ln(value.x),
+        dmath::ln(value.y),
+        dmath::ln(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.ln(), value.y.ln())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::ln(value.x),
+        dmath::ln(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7640,27 +7655,30 @@ fn tan_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.tan()))
+      Ok(Value::Float(dmath::tan(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.tan(),
-        value.y.tan(),
-        value.z.tan(),
+        dmath::tan(value.x),
+        dmath::tan(value.y),
+        dmath::tan(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.tan(), value.y.tan())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::tan(value.x),
+        dmath::tan(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.tan()))
+      Ok(texture::texture_map_unary(t, dmath::tan))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.tan()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::tan))))
     }
     _ => unimplemented!(),
   }
@@ -7675,27 +7693,30 @@ fn cos_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.cos()))
+      Ok(Value::Float(dmath::cos(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.cos(),
-        value.y.cos(),
-        value.z.cos(),
+        dmath::cos(value.x),
+        dmath::cos(value.y),
+        dmath::cos(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.cos(), value.y.cos())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::cos(value.x),
+        dmath::cos(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.cos()))
+      Ok(texture::texture_map_unary(t, dmath::cos))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.cos()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::cos))))
     }
     _ => unimplemented!(),
   }
@@ -7710,27 +7731,30 @@ fn sin_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.sin()))
+      Ok(Value::Float(dmath::sin(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.sin(),
-        value.y.sin(),
-        value.z.sin(),
+        dmath::sin(value.x),
+        dmath::sin(value.y),
+        dmath::sin(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.sin(), value.y.sin())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::sin(value.x),
+        dmath::sin(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.sin()))
+      Ok(texture::texture_map_unary(t, dmath::sin))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.sin()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::sin))))
     }
     _ => unimplemented!(),
   }
@@ -7745,19 +7769,22 @@ fn sinh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.sinh()))
+      Ok(Value::Float(dmath::sinh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.sinh(),
-        value.y.sinh(),
-        value.z.sinh(),
+        dmath::sinh(value.x),
+        dmath::sinh(value.y),
+        dmath::sinh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.sinh(), value.y.sinh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::sinh(value.x),
+        dmath::sinh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7772,19 +7799,22 @@ fn cosh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.cosh()))
+      Ok(Value::Float(dmath::cosh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.cosh(),
-        value.y.cosh(),
-        value.z.cosh(),
+        dmath::cosh(value.x),
+        dmath::cosh(value.y),
+        dmath::cosh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.cosh(), value.y.cosh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::cosh(value.x),
+        dmath::cosh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7799,19 +7829,22 @@ fn tanh_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.tanh()))
+      Ok(Value::Float(dmath::tanh(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.tanh(),
-        value.y.tanh(),
-        value.z.tanh(),
+        dmath::tanh(value.x),
+        dmath::tanh(value.y),
+        dmath::tanh(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.tanh(), value.y.tanh())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::tanh(value.x),
+        dmath::tanh(value.y),
+      )))
     }
     _ => unimplemented!(),
   }
@@ -7826,27 +7859,30 @@ fn acos_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.acos()))
+      Ok(Value::Float(dmath::acos(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.acos(),
-        value.y.acos(),
-        value.z.acos(),
+        dmath::acos(value.x),
+        dmath::acos(value.y),
+        dmath::acos(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.acos(), value.y.acos())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::acos(value.x),
+        dmath::acos(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.acos()))
+      Ok(texture::texture_map_unary(t, dmath::acos))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.acos()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::acos))))
     }
     _ => unimplemented!(),
   }
@@ -7861,27 +7897,30 @@ fn asin_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.asin()))
+      Ok(Value::Float(dmath::asin(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.asin(),
-        value.y.asin(),
-        value.z.asin(),
+        dmath::asin(value.x),
+        dmath::asin(value.y),
+        dmath::asin(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.asin(), value.y.asin())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::asin(value.x),
+        dmath::asin(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.asin()))
+      Ok(texture::texture_map_unary(t, dmath::asin))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.asin()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::asin))))
     }
     _ => unimplemented!(),
   }
@@ -7896,27 +7935,30 @@ fn atan_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.atan()))
+      Ok(Value::Float(dmath::atan(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        value.x.atan(),
-        value.y.atan(),
-        value.z.atan(),
+        dmath::atan(value.x),
+        dmath::atan(value.y),
+        dmath::atan(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.atan(), value.y.atan())))
+      Ok(Value::Vec2(Vec2::new(
+        dmath::atan(value.x),
+        dmath::atan(value.y),
+      )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.atan()))
+      Ok(texture::texture_map_unary(t, dmath::atan))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.atan()))))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::atan))))
     }
     _ => unimplemented!(),
   }
@@ -7932,27 +7974,27 @@ fn atan2_impl(
     0 => {
       let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(y.atan2(x)))
+      Ok(Value::Float(dmath::atan2(y, x)))
     }
     1 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Float(v.y.atan2(v.x)))
+      Ok(Value::Float(dmath::atan2(v.y, v.x)))
     }
     2 => texture::texture_zip(
       arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
       arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
       "atan2",
-      |y, x| y.atan2(x),
+      |y, x| dmath::atan2(y, x),
     ),
     3 => {
       let y = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(y, move |v| v.atan2(x)))
+      Ok(texture::texture_map_unary(y, move |v| dmath::atan2(v, x)))
     }
     4 => {
       let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(x, move |v| y.atan2(v)))
+      Ok(texture::texture_map_unary(x, move |v| dmath::atan2(y, v)))
     }
     _ => unimplemented!(),
   }
@@ -10414,32 +10456,30 @@ fn sigmoid_impl(
   match def_ix {
     0 => {
       let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(1.0 / (1.0 + (-value).exp())))
+      Ok(Value::Float(dmath::sigmoid(value)))
     }
     1 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       Ok(Value::Vec3(Vec3::new(
-        1.0 / (1.0 + (-value.x).exp()),
-        1.0 / (1.0 + (-value.y).exp()),
-        1.0 / (1.0 + (-value.z).exp()),
+        dmath::sigmoid(value.x),
+        dmath::sigmoid(value.y),
+        dmath::sigmoid(value.z),
       )))
     }
     2 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(Vec2::new(
-        1.0 / (1.0 + (-value.x).exp()),
-        1.0 / (1.0 + (-value.y).exp()),
+        dmath::sigmoid(value.x),
+        dmath::sigmoid(value.y),
       )))
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| 1.0 / (1.0 + (-x).exp())))
+      Ok(texture::texture_map_unary(t, dmath::sigmoid))
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(
-        value.map(|x| 1.0 / (1.0 + (-x).exp())),
-      )))
+      Ok(Value::Vec4(Rc::new(value.map(dmath::sigmoid))))
     }
     _ => unimplemented!(),
   }
@@ -11761,7 +11801,7 @@ pub(crate) fn resolve_builtin_impl(
 
 #[cfg(test)]
 mod vec4_math_tests {
-  use crate::{parse_and_eval_program, Vec4};
+  use crate::{dmath, parse_and_eval_program, Vec4};
 
   #[test]
   fn vec4_overloads_match_component_formulas() {
@@ -11803,23 +11843,23 @@ r_distance = distance(v, w)
     let u = Vec4::new(0.5, -0.5, 0.125, 0.25);
     let p = Vec4::new(0.5, 1.5, 2., 0.25);
     let w = Vec4::new(1., 2., -3., 0.5);
-    assert_eq!(vec("r_sin"), v.map(f32::sin));
-    assert_eq!(vec("r_cos"), v.map(f32::cos));
-    assert_eq!(vec("r_tan"), v.map(f32::tan));
-    assert_eq!(vec("r_asin"), u.map(f32::asin));
-    assert_eq!(vec("r_acos"), u.map(f32::acos));
-    assert_eq!(vec("r_atan"), v.map(f32::atan));
+    assert_eq!(vec("r_sin"), v.map(dmath::sin));
+    assert_eq!(vec("r_cos"), v.map(dmath::cos));
+    assert_eq!(vec("r_tan"), v.map(dmath::tan));
+    assert_eq!(vec("r_asin"), u.map(dmath::asin));
+    assert_eq!(vec("r_acos"), u.map(dmath::acos));
+    assert_eq!(vec("r_atan"), v.map(dmath::atan));
     assert_eq!(vec("r_sqrt"), p.map(f32::sqrt));
-    assert_eq!(vec("r_exp"), v.map(f32::exp));
-    assert_eq!(vec("r_log2"), p.map(f32::log2));
+    assert_eq!(vec("r_exp"), v.map(dmath::exp));
+    assert_eq!(vec("r_log2"), p.map(dmath::log2));
     assert_eq!(vec("r_floor"), Vec4::new(0., -2., 2., 0.));
     assert_eq!(vec("r_ceil"), Vec4::new(1., -1., 2., 1.));
     assert_eq!(vec("r_round"), Vec4::new(1., -2., 2., 0.));
     assert_eq!(vec("r_fract"), Vec4::new(0.5, -0.5, 0., 0.25));
     assert_eq!(vec("r_trunc"), Vec4::new(0., -1., 2., 0.));
-    assert_eq!(vec("r_sigmoid"), v.map(|x| 1.0 / (1.0 + (-x).exp())));
+    assert_eq!(vec("r_sigmoid"), v.map(dmath::sigmoid));
     assert_eq!(vec("r_abs"), Vec4::new(0.5, 1.5, 2., 0.25));
-    assert_eq!(vec("r_pow"), p.map(|x| x.powf(2.5)));
+    assert_eq!(vec("r_pow"), p.map(|x| dmath::powf(x, 2.5)));
     assert_eq!(vec("r_min"), Vec4::new(0.5, -1.5, -3., 0.25));
     assert_eq!(vec("r_max"), Vec4::new(1., 2., 2., 0.5));
     assert_eq!(vec("r_clamp"), Vec4::new(0.5, 0., 1., 0.25));
