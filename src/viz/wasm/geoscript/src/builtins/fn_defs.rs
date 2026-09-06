@@ -27,7 +27,7 @@ pub struct ArgDef {
   /// This will be populated lazily
   pub interned_name: Sym,
   /// Bitflags
-  pub valid_types: u16,
+  pub valid_types: u32,
   pub default_value: DefaultValue,
   pub description: &'static str,
 }

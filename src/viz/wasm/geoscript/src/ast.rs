@@ -67,6 +67,7 @@ impl FromStr for ArgType {
       "mat4" => Ok(ArgType::Mat4),
       "texture" | "tex" => Ok(ArgType::Texture),
       "light" => Ok(ArgType::Light),
+      "path" => Ok(ArgType::Path),
       _ => Err(format!("Unknown type name: {s}")),
     }
   }
@@ -820,8 +821,9 @@ static mut UNOP_DEF_IX_TABLE: [usize; 3] = [usize::MAX; 3];
 // Per-(op, lhs type bit, rhs type bit) resolved signature index (+1; 0 = no match), so the
 // hot path skips the per-call overload scan. Resolution is purely type-driven, so this is
 // exact, not a heuristic cache.
-static mut BINOP_RESOLVED_DEF_TABLE: [[[u8; 16]; 16]; 19] = [[[0; 16]; 16]; 19];
-static mut UNOP_RESOLVED_DEF_TABLE: [[u8; 16]; 3] = [[0; 16]; 3];
+const N_TY: usize = crate::TYPE_FLAG_COUNT;
+static mut BINOP_RESOLVED_DEF_TABLE: [[[u8; N_TY]; N_TY]; 19] = [[[0; N_TY]; N_TY]; 19];
+static mut UNOP_RESOLVED_DEF_TABLE: [[u8; N_TY]; 3] = [[0; N_TY]; 3];
 
 pub(crate) fn maybe_init_op_def_shorthands() {
   unsafe {
@@ -869,12 +871,12 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       let (fn_entry_ix, _) = (addr_of!(BINOP_DEF_IX_TABLE) as *const (usize, bool))
         .add(op_ix)
         .read();
-      for l in 0..16 {
-        for r in 0..16 {
+      for l in 0..N_TY {
+        for r in 0..N_TY {
           if let Some(def_ix) = crate::resolve_def_ix_for_flag_pair(fn_entry_ix, 1 << l, 1 << r) {
             debug_assert!(def_ix < 255);
             (addr_of_mut!(BINOP_RESOLVED_DEF_TABLE) as *mut u8)
-              .add(op_ix * 256 + l * 16 + r)
+              .add(op_ix * N_TY * N_TY + l * N_TY + r)
               .write(def_ix as u8 + 1);
           }
         }
@@ -884,11 +886,11 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       let fn_entry_ix = (addr_of!(UNOP_DEF_IX_TABLE) as *const usize)
         .add(op_ix)
         .read();
-      for f in 0..16 {
+      for f in 0..N_TY {
         if let Some(def_ix) = crate::resolve_def_ix_for_flag(fn_entry_ix, 1 << f) {
           debug_assert!(def_ix < 255);
           (addr_of_mut!(UNOP_RESOLVED_DEF_TABLE) as *mut u8)
-            .add(op_ix * 16 + f)
+            .add(op_ix * N_TY + f)
             .write(def_ix as u8 + 1);
         }
       }
@@ -971,7 +973,7 @@ impl BinOp {
         .read();
       let (arg1, arg2) = if args_flipped { (rhs, lhs) } else { (lhs, rhs) };
       let resolved = (addr_of!(BINOP_RESOLVED_DEF_TABLE) as *const u8)
-        .add((*self as usize) * 256 + arg1.type_flag_ix() * 16 + arg2.type_flag_ix())
+        .add((*self as usize) * N_TY * N_TY + arg1.type_flag_ix() * N_TY + arg2.type_flag_ix())
         .read();
       if resolved != 0 {
         Ok((resolved - 1) as usize)
@@ -1025,7 +1027,7 @@ impl PrefixOp {
   pub fn apply(&self, ctx: &EvalCtx, val: Value) -> Result<Value, ErrorStack> {
     let def_ix = unsafe {
       let resolved = (addr_of!(UNOP_RESOLVED_DEF_TABLE) as *const u8)
-        .add((*self as usize) * 16 + val.type_flag_ix())
+        .add((*self as usize) * N_TY + val.type_flag_ix())
         .read();
       if resolved != 0 {
         (resolved - 1) as usize

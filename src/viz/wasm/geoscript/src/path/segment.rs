@@ -10,7 +10,7 @@ pub(crate) const LENGTH_EPSILON: f32 = 1e-5;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ArcLengthTable {
-  cumulative: Vec<f32>,
+  pub(crate) cumulative: Vec<f32>,
   total: f32,
 }
 

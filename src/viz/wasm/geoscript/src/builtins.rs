@@ -10742,6 +10742,7 @@ fn str_impl(
         Value::Material(material) => format!("{material:?}"),
         Value::Mat4(m) => format!("{m:?}"),
         Value::Texture(tex) => format!("{tex:?}"),
+        Value::Path(p) => format!("{p:?}"),
         Value::Nil => String::from("nil"),
       };
       Ok(Value::String(s))

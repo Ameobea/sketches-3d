@@ -1254,6 +1254,7 @@ pub enum Value {
   // enum size. Must stay after discriminant 5; `Clone` has a dedicated non-cold branch
   // keyed on `VEC4_DISCRIMINANT`.
   Vec4(Rc<Vec4>),
+  Path(Rc<crate::path::Path>),
 }
 
 const VEC4_DISCRIMINANT: u8 = 15;
@@ -1278,8 +1279,8 @@ impl Value {
 /// mirroring `get_binop_def_ix`'s first-match-wins resolution.
 pub(crate) fn resolve_def_ix_for_flag_pair(
   fn_entry_ix: usize,
-  lhs_flag: u16,
-  rhs_flag: u16,
+  lhs_flag: u32,
+  rhs_flag: u32,
 ) -> Option<usize> {
   let defs = fn_sigs().entries[fn_entry_ix].1.signatures;
   defs.iter().position(|def| {
@@ -1289,7 +1290,7 @@ pub(crate) fn resolve_def_ix_for_flag_pair(
   })
 }
 
-pub(crate) fn resolve_def_ix_for_flag(fn_entry_ix: usize, flag: u16) -> Option<usize> {
+pub(crate) fn resolve_def_ix_for_flag(fn_entry_ix: usize, flag: u32) -> Option<usize> {
   let defs = fn_sigs().entries[fn_entry_ix].1.signatures;
   defs
     .iter()
@@ -1317,6 +1318,10 @@ fn test_value_discriminant_order() {
     Value::Vec4(Rc::new(Vec4::zeros())).discriminant(),
     VEC4_DISCRIMINANT
   );
+  assert_eq!(
+    Value::Path(Rc::new(crate::path::Path::empty())).discriminant(),
+    16
+  );
 }
 
 #[cold]
@@ -1339,6 +1344,7 @@ fn clone_value_slow(val: &Value) -> Value {
     Value::Mat4(mat) => Value::Mat4(Rc::clone(mat)),
     Value::Texture(tex) => Value::Texture(Rc::clone(tex)),
     Value::Vec4(v) => Value::Vec4(Rc::clone(v)),
+    Value::Path(p) => Value::Path(Rc::clone(p)),
   }
 }
 
@@ -1381,6 +1387,7 @@ impl Debug for Value {
       Value::Mat4(mat) => write!(f, "Mat4({mat:?})"),
       Value::Texture(tex) => write!(f, "{tex:?}"),
       Value::Vec4(v) => write!(f, "Vec4({}, {}, {}, {})", v.x, v.y, v.z, v.w),
+      Value::Path(p) => write!(f, "{p:?}"),
       Value::Nil => write!(f, "Nil"),
     }
   }
@@ -1600,26 +1607,27 @@ impl ConstEvalCache {
   }
 }
 
-const INT_FLAG: u16 = 0b0000_0000_0000_0001;
-const FLOAT_FLAG: u16 = 0b0000_0000_0000_0010;
-const NUMERIC_FLAG: u16 = INT_FLAG | FLOAT_FLAG;
-const VEC2_FLAG: u16 = 0b0000_0000_0000_0100;
-const VEC3_FLAG: u16 = 0b0000_0000_0000_1000;
-const MESH_FLAG: u16 = 0b0000_0000_0001_0000;
-const LIGHT_FLAG: u16 = 0b0000_0000_0010_0000;
-const CALLABLE_FLAG: u16 = 0b0000_0000_0100_0000;
-const SEQUENCE_FLAG: u16 = 0b0000_0000_1000_0000;
-const MAP_FLAG: u16 = 0b0000_0001_0000_0000;
-const BOOL_FLAG: u16 = 0b0000_0010_0000_0000;
-const STRING_FLAG: u16 = 0b0000_0100_0000_0000;
-const MATERIAL_FLAG: u16 = 0b0000_1000_0000_0000;
-const NIL_FLAG: u16 = 0b0001_0000_0000_0000;
-const MAT4_FLAG: u16 = 0b0010_0000_0000_0000;
-const TEXTURE_FLAG: u16 = 0b0100_0000_0000_0000;
-// Takes the final u16 bit; the next type added forces a u16 -> u32 widening of the whole
-// `valid_types` / dispatch-table flag space.
-const VEC4_FLAG: u16 = 0b1000_0000_0000_0000;
-const ANY_FLAG: u16 = 0xFFFF;
+const INT_FLAG: u32 = 0b0000_0000_0000_0001;
+const FLOAT_FLAG: u32 = 0b0000_0000_0000_0010;
+const NUMERIC_FLAG: u32 = INT_FLAG | FLOAT_FLAG;
+const VEC2_FLAG: u32 = 0b0000_0000_0000_0100;
+const VEC3_FLAG: u32 = 0b0000_0000_0000_1000;
+const MESH_FLAG: u32 = 0b0000_0000_0001_0000;
+const LIGHT_FLAG: u32 = 0b0000_0000_0010_0000;
+const CALLABLE_FLAG: u32 = 0b0000_0000_0100_0000;
+const SEQUENCE_FLAG: u32 = 0b0000_0000_1000_0000;
+const MAP_FLAG: u32 = 0b0000_0001_0000_0000;
+const BOOL_FLAG: u32 = 0b0000_0010_0000_0000;
+const STRING_FLAG: u32 = 0b0000_0100_0000_0000;
+const MATERIAL_FLAG: u32 = 0b0000_1000_0000_0000;
+const NIL_FLAG: u32 = 0b0001_0000_0000_0000;
+const MAT4_FLAG: u32 = 0b0010_0000_0000_0000;
+const TEXTURE_FLAG: u32 = 0b0100_0000_0000_0000;
+const VEC4_FLAG: u32 = 0b1000_0000_0000_0000;
+const PATH_FLAG: u32 = 1 << 16;
+/// Number of type bits; sizes the operator dispatch tables.
+pub(crate) const TYPE_FLAG_COUNT: usize = 17;
+const ANY_FLAG: u32 = (1 << TYPE_FLAG_COUNT) - 1;
 
 impl Value {
   pub fn as_float(&self) -> Option<f32> {
@@ -1661,6 +1669,13 @@ impl Value {
   fn as_callable(&self) -> Option<&Rc<Callable>> {
     match self {
       Value::Callable(callable) => Some(callable),
+      _ => None,
+    }
+  }
+
+  fn as_path(&self) -> Option<&Rc<crate::path::Path>> {
+    match self {
+      Value::Path(path) => Some(path),
       _ => None,
     }
   }
@@ -1772,11 +1787,12 @@ impl Value {
       Value::Mat4(_) => ArgType::Mat4,
       Value::Texture(_) => ArgType::Texture,
       Value::Vec4(_) => ArgType::Vec4,
+      Value::Path(_) => ArgType::Path,
       Value::Nil => ArgType::Nil,
     }
   }
 
-  fn as_bitflags(&self) -> u16 {
+  fn as_bitflags(&self) -> u32 {
     match self {
       Value::Int(_) => INT_FLAG,
       Value::Float(_) => FLOAT_FLAG,
@@ -1793,6 +1809,7 @@ impl Value {
       Value::Mat4(_) => MAT4_FLAG,
       Value::Texture(_) => TEXTURE_FLAG,
       Value::Vec4(_) => VEC4_FLAG,
+      Value::Path(_) => PATH_FLAG,
       Value::Nil => NIL_FLAG,
     }
   }
@@ -1816,16 +1833,17 @@ pub enum ArgType {
   Mat4,
   Texture,
   Vec4,
+  Path,
   Nil,
   Any,
 }
 
 impl ArgType {
-  pub fn any_valid(valid_types_flags: u16, arg: &Value) -> bool {
+  pub fn any_valid(valid_types_flags: u32, arg: &Value) -> bool {
     valid_types_flags & arg.as_bitflags() != 0
   }
 
-  pub const fn as_bitflags(&self) -> u16 {
+  pub const fn as_bitflags(&self) -> u32 {
     match self {
       ArgType::Int => INT_FLAG,
       ArgType::Float => FLOAT_FLAG,
@@ -1843,6 +1861,7 @@ impl ArgType {
       ArgType::Mat4 => MAT4_FLAG,
       ArgType::Texture => TEXTURE_FLAG,
       ArgType::Vec4 => VEC4_FLAG,
+      ArgType::Path => PATH_FLAG,
       ArgType::Nil => NIL_FLAG,
       ArgType::Any => ANY_FLAG,
     }
@@ -1866,12 +1885,13 @@ impl ArgType {
       ArgType::Mat4 => "mat4",
       ArgType::Texture => "texture",
       ArgType::Vec4 => "vec4",
+      ArgType::Path => "path",
       ArgType::Nil => "nil",
       ArgType::Any => "any",
     }
   }
 
-  pub fn list_from_bitflags(valid_types: u16) -> Vec<ArgType> {
+  pub fn list_from_bitflags(valid_types: u32) -> Vec<ArgType> {
     if valid_types == ANY_FLAG {
       return vec![ArgType::Any];
     }
@@ -1891,6 +1911,7 @@ impl ArgType {
       ArgType::Material,
       ArgType::Mat4,
       ArgType::Texture,
+      ArgType::Path,
       ArgType::Nil,
     ] {
       if valid_types & arg_type.as_bitflags() != 0 {
@@ -2282,7 +2303,7 @@ pub fn match_signature_by_arg_types(
 /// overload, but the baked-in def_ix then panics (`as_int().unwrap()`) when the value turns out to
 /// be a float at runtime. Ambiguous types that aren't fully covered fall back to runtime dispatch.
 #[inline]
-fn arg_type_covered(arg_flags: u16, param_valid: u16) -> bool {
+fn arg_type_covered(arg_flags: u32, param_valid: u32) -> bool {
   arg_flags & !param_valid == 0
 }
 
@@ -3053,6 +3074,26 @@ impl EvalCtx {
     let _ = borrowed.try_push(kwargs);
   }
 
+  #[cold]
+  fn call_path(
+    &self,
+    path: &crate::path::Path,
+    args: &[Value],
+    kwargs: &FxHashMap<Sym, Value>,
+  ) -> Result<Value, ErrorStack> {
+    let t = match (args, kwargs.len()) {
+      ([t], 0) => Some(t),
+      ([], 1) => kwargs.get(&self.interned_symbols.intern("t")),
+      _ => None,
+    };
+    let Some(t) = t.and_then(Value::as_float) else {
+      return Err(ErrorStack::new(
+        "paths take exactly one numeric argument `t`",
+      ));
+    };
+    Ok(Value::Vec2(path.eval_at(t, self)?))
+  }
+
   fn eval_fn_call(&self, env: &FrameEnv, call: &FunctionCall) -> Result<Value, ErrorStack> {
     let mut args_opt = None;
     if !call.args.is_empty() {
@@ -3115,18 +3156,29 @@ impl EvalCtx {
           VarRes::Unresolved => None,
         };
         if let Some(global) = resolved_target {
-          let Value::Callable(callable) = global else {
-            if let Some(args) = args_opt {
-              self.restore_args_scratch(args);
+          let callable = match global {
+            Value::Callable(callable) => callable,
+            global => {
+              let ret = match &global {
+                Value::Path(path) => self.call_path(
+                  path,
+                  args_opt.as_deref().unwrap_or(EMPTY_ARGS),
+                  kwargs_opt.as_ref().unwrap_or(EMPTY_KWARGS),
+                ),
+                _ => self.with_resolved_sym(*name, |name| {
+                  Err(ErrorStack::new(format!(
+                    "\"{name}\" is not a callable; found: {global:?}"
+                  )))
+                }),
+              };
+              if let Some(args) = args_opt {
+                self.restore_args_scratch(args);
+              }
+              if let Some(kwargs) = kwargs_opt {
+                self.restore_kwargs_scratch(kwargs);
+              }
+              return ret;
             }
-            if let Some(kwargs) = kwargs_opt {
-              self.restore_kwargs_scratch(kwargs);
-            }
-            return self.with_resolved_sym(*name, |name| {
-              Err(ErrorStack::new(format!(
-                "\"{name}\" is not a callable; found: {global:?}"
-              )))
-            });
           };
 
           do_call(&callable, args_opt, kwargs_opt)

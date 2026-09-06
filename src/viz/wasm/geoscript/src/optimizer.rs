@@ -163,7 +163,14 @@ fn is_known_rng_free_callable(callable: &Callable) -> bool {
 /// Whatever receives a callable argument invokes it, and argument callables aren't folded into
 /// the const-eval cache key the way the callee is — so an effectful one has to block the fold.
 fn arg_blocks_const_eval(value: &Value, allow_rng_const_eval: bool) -> bool {
-  matches!(value, Value::Callable(c) if callable_is_dyn_for_const_eval(c, allow_rng_const_eval))
+  match value {
+    Value::Callable(c) => callable_is_dyn_for_const_eval(c, allow_rng_const_eval),
+    Value::Path(p) => p
+      .closures()
+      .iter()
+      .any(|c| callable_is_dyn_for_const_eval(c, allow_rng_const_eval)),
+    _ => false,
+  }
 }
 
 thread_local! {
@@ -527,6 +534,7 @@ fn callable_requires_rng_state(callable: &Callable) -> bool {
 fn value_requires_rng_state(value: &Value) -> bool {
   match value {
     Value::Callable(c) => callable_requires_rng_state(c),
+    Value::Path(p) => p.closures().iter().any(|c| callable_requires_rng_state(c)),
     Value::Sequence(seq) => seq_consumption_draws_rng(seq),
     Value::Map(m) => m.values().any(value_requires_rng_state),
     _ => false,
@@ -994,6 +1002,10 @@ fn seq_consumption_uses(seq: &Rc<dyn crate::Sequence>, uses: &mut Uses) {
 fn value_consumption_uses(value: &Value, uses: &mut Uses) {
   match value {
     Value::Callable(c) => callable_consumption_uses(c, uses),
+    Value::Path(p) => p
+      .closures()
+      .iter()
+      .for_each(|c| callable_consumption_uses(c, uses)),
     Value::Sequence(s) => seq_consumption_uses(s, uses),
     Value::Map(m) => m.values().for_each(|v| value_consumption_uses(v, uses)),
     _ => {}
@@ -1218,6 +1230,17 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     }
     Value::Texture(tex) => {
       (Rc::as_ptr(tex) as usize).hash(hasher);
+    }
+    // Concrete trees key by content so folds stay stable across runs; lazy ones by identity,
+    // with their driving closures walked for rng/settings usage.
+    Value::Path(path) => {
+      if !path.content_hash(hasher) {
+        (Rc::as_ptr(path) as usize).hash(hasher);
+      }
+      for c in path.closures() {
+        uses.rng |= callable_requires_rng_state(&c);
+        uses.settings |= c.reads_ctx_settings();
+      }
     }
   }
   Some(())

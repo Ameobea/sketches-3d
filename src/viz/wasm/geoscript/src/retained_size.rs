@@ -124,6 +124,7 @@ impl Walk {
           self.callable(callable);
         }
       }
+      Value::Path(path) => self.path(path),
       Value::String(s) => self.str_buf(s),
       Value::Material(m) => {
         self.charge(Rc::as_ptr(m) as usize, size_of::<crate::Material>());
@@ -143,6 +144,57 @@ impl Walk {
       | Value::Vec2(_)
       | Value::Vec3(_)
       | Value::Bool(_) => (),
+    }
+  }
+
+  fn path(&mut self, path: &Rc<crate::path::Path>) {
+    use crate::path::{PathKind, PathSegment};
+    if !self.charge(Rc::as_ptr(path) as usize, size_of::<crate::path::Path>()) {
+      return;
+    }
+    match &path.kind {
+      PathKind::Subpath(sp) => {
+        self.charge(
+          sp.segments.as_ptr() as usize,
+          sp.segments.capacity() * size_of::<PathSegment>(),
+        );
+        self.charge(
+          sp.cumulative_lengths.as_ptr() as usize,
+          sp.cumulative_lengths.capacity() * 4,
+        );
+        self.charge(sp.anchors.as_ptr() as usize, sp.anchors.capacity());
+        for seg in &sp.segments {
+          if let PathSegment::Quadratic { table, .. }
+          | PathSegment::Cubic { table, .. }
+          | PathSegment::Arc { table, .. } = seg
+          {
+            self.charge(
+              table.cumulative.as_ptr() as usize,
+              table.cumulative.capacity() * 4,
+            );
+          }
+        }
+      }
+      PathKind::Group(g) => {
+        self.charge(
+          g.children.as_ptr() as usize,
+          g.children.capacity() * size_of::<Rc<crate::path::Path>>(),
+        );
+        for c in &g.children {
+          self.path(c);
+        }
+      }
+      PathKind::Abstract(a) => {
+        self.charge(Rc::as_ptr(a) as *const () as usize, 64);
+        for c in &a.children() {
+          self.path(c);
+        }
+        if let Some(c) = a.closure() {
+          if self.charge(Rc::as_ptr(c) as usize, size_of::<Callable>()) {
+            self.callable(c);
+          }
+        }
+      }
     }
   }
 

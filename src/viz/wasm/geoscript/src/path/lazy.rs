@@ -21,6 +21,9 @@ pub(crate) trait AbstractPath {
   fn closure(&self) -> Option<&Rc<Callable>> {
     None
   }
+  fn children(&self) -> Vec<&Rc<Path>> {
+    Vec::new()
+  }
 }
 
 pub(crate) struct ClosurePath {
@@ -105,6 +108,10 @@ impl AbstractPath for LerpPath {
   fn critical_t_values(&self) -> Vec<f32> {
     self.merged_critical.clone()
   }
+
+  fn children(&self) -> Vec<&Rc<Path>> {
+    vec![&self.a, &self.b]
+  }
 }
 
 pub(crate) struct CatmullRom2D {
@@ -186,5 +193,9 @@ impl AbstractPath for Trimmed {
 
   fn critical_t_values(&self) -> Vec<f32> {
     self.critical.clone()
+  }
+
+  fn children(&self) -> Vec<&Rc<Path>> {
+    vec![&self.inner]
   }
 }

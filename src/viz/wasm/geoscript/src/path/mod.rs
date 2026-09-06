@@ -872,6 +872,23 @@ impl Path {
     Path::concrete_group(out, self.fill_rule)
   }
 
+  /// Every user callable reachable through lazy leaves.
+  pub(crate) fn closures(&self) -> Vec<Rc<crate::Callable>> {
+    fn walk(p: &Path, out: &mut Vec<Rc<crate::Callable>>) {
+      match &p.kind {
+        PathKind::Subpath(_) => {}
+        PathKind::Group(g) => g.children.iter().for_each(|c| walk(c, out)),
+        PathKind::Abstract(a) => {
+          out.extend(a.closure().cloned());
+          a.children().iter().for_each(|c| walk(c, out));
+        }
+      }
+    }
+    let mut out = Vec::new();
+    walk(self, &mut out);
+    out
+  }
+
   /// `true` when the tree hashed structurally; `false` means fall back to identity.
   pub(crate) fn content_hash(&self, h: &mut dyn Hasher) -> bool {
     for v in self.transform.iter() {
