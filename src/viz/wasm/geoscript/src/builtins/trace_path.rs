@@ -270,16 +270,6 @@ pub(crate) fn build_topology_samples(
   samples
 }
 
-/// Discretizes a path callable into per-subpath polylines.
-///
-/// Returns one `(points, is_closed)` entry per subpath. For paths backed by a `PathSampler`
-/// implementation that exposes subpath topology, uses adaptive curvature-based sampling driven
-/// by `curve_angle_radians`. For black-box `|t: num|: vec2` callables, falls back to a single
-/// subpath of `sample_count` uniform samples; closedness is inferred from `p(0) ≈ p(1)`
-/// unless `closed_override` is provided.
-///
-/// Subpaths whose discretization produces fewer than 2 points are filtered out.
-
 /// Discretizes a path into per-subpath polylines: adaptive curvature-based sampling driven by
 /// `curve_angle_radians` for concrete leaves, `sample_count` uniform samples for lazy ones.
 /// `closed_override` replaces every subpath's closedness. Subpaths with fewer than 2 points

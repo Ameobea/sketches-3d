@@ -4057,7 +4057,7 @@ a = 0..4 -> |x| x + offset
 }
 
 #[test]
-fn test_const_eval_cache_persists_across_runs_with_path_block() {
+fn test_const_eval_cache_persists_across_runs_with_path_pipeline() {
   let code = r#"
 distance = 1
 path_sampler = path() | move(0, 0) | line(distance, 0) | line(distance, distance)
@@ -4093,12 +4093,6 @@ path_sampler = path() | move(0, 0) | line(distance, 0) | line(distance, distance
   assert_eq!(at(0.25), crate::Vec2::new(0.5, 0.));
   assert_eq!(at(0.5), crate::Vec2::new(1., 0.));
   assert_eq!(at(1.), crate::Vec2::new(1., 1.));
-}
-
-#[cfg(test)]
-fn path_block_sample(code: &str) -> crate::Vec2 {
-  let ctx = crate::parse_and_eval_program(code).unwrap();
-  *ctx.get_global("out").unwrap().as_vec2().unwrap()
 }
 
 #[cfg(test)]

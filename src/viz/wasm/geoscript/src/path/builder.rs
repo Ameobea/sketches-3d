@@ -154,11 +154,6 @@ impl PathBuilder {
     }
   }
 
-  pub(crate) fn push_leaf(&mut self, sp: Subpath) {
-    self.flush_open(false);
-    self.leaves.push(Rc::new(Path::leaf(sp)));
-  }
-
   pub(crate) fn apply(&mut self, cmd: DrawCommand) {
     match cmd {
       DrawCommand::MoveTo(p) => {

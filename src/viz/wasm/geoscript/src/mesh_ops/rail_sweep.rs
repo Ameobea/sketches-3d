@@ -437,8 +437,8 @@ fn build_loop_specs(sampler: &Callable) -> Result<Vec<LoopSpec>, ErrorStack> {
     n => {
       let Some(spans) = callable_path(sampler).and_then(|p| p.subpath_t_spans()) else {
         return Err(ErrorStack::new(
-          "multi-subpath rail_sweep profile requires a real path (trace_path / offset_path / \
-           path_join / text_to_path); this sampler can't expose per-subpath spans",
+          "multi-subpath rail_sweep profile requires a concrete path (e.g. `path([...])`, \
+           `offset_path`, `text_to_path`); this sampler can't expose per-subpath spans",
         ));
       };
       if spans.len() != n {

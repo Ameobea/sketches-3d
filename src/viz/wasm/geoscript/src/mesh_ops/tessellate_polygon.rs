@@ -2029,10 +2029,9 @@ pub fn tessellate_lyon_path(
 /// Tessellates one or more closed 2D paths (as `Vec<Vec2>` polylines) into a flat mesh in the
 /// given coordinate plane.
 ///
-/// Multiple paths are treated as subpaths under the given fill rule. For `PathSampler` callables
-/// (e.g. from `trace_path`), prefer `tessellate_lyon_path` with a path built via
-/// `to_lyon_path_for_tessellation()` which passes curve geometry (beziers, arcs) directly to
-/// lyon rather than pre-discretizing.
+/// Multiple paths are treated as subpaths under the given fill rule. For concrete paths, prefer
+/// `tessellate_lyon_path` with `Path::to_lyon_path()`, which passes curve geometry (beziers,
+/// arcs) directly to lyon rather than pre-discretizing.
 pub fn tessellate_2d_paths_with_lyon(
   paths: &[Vec<Vec2>],
   fill_rule: lyon_tessellation::FillRule,

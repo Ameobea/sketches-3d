@@ -116,38 +116,6 @@ pub(crate) fn apply_transform_to_point(m: &Matrix3<f32>, p: Vec2) -> Vec2 {
 }
 
 impl PathSegment {
-  pub(crate) fn translate(&mut self, offset: Vec2) {
-    match self {
-      PathSegment::Line { start, end, .. } => {
-        *start = *start + offset;
-        *end = *end + offset;
-      }
-      PathSegment::Quadratic {
-        start, ctrl, end, ..
-      } => {
-        *start = *start + offset;
-        *ctrl = *ctrl + offset;
-        *end = *end + offset;
-      }
-      PathSegment::Cubic {
-        start,
-        ctrl1,
-        ctrl2,
-        end,
-        ..
-      } => {
-        *start = *start + offset;
-        *ctrl1 = *ctrl1 + offset;
-        *ctrl2 = *ctrl2 + offset;
-        *end = *end + offset;
-      }
-      PathSegment::Arc { center, end, .. } => {
-        *center = *center + offset;
-        *end = *end + offset;
-      }
-    }
-  }
-
   pub(crate) fn length(&self) -> f32 {
     match self {
       PathSegment::Line { length, .. } => *length,
@@ -230,80 +198,6 @@ impl PathSegment {
         *theta_start,
         *theta_delta,
       ),
-    }
-  }
-
-  /// Returns the exact AABB of this segment after applying the given 2D affine transform.
-  /// Errors only for arc segments under a non-uniform transform, where the result is not an
-  /// arc and an exact bound would require evaluating a transformed conic.
-  pub(crate) fn aabb_under_transform(&self, m: &Matrix3<f32>) -> Result<(Vec2, Vec2), ErrorStack> {
-    if *m == Matrix3::identity() {
-      return Ok(self.aabb());
-    }
-    match self {
-      PathSegment::Line { start, end, .. } => {
-        let s = apply_transform_to_point(m, *start);
-        let e = apply_transform_to_point(m, *end);
-        Ok((
-          Vec2::new(s.x.min(e.x), s.y.min(e.y)),
-          Vec2::new(s.x.max(e.x), s.y.max(e.y)),
-        ))
-      }
-      PathSegment::Quadratic {
-        start, ctrl, end, ..
-      } => Ok(quadratic_bezier_aabb(
-        apply_transform_to_point(m, *start),
-        apply_transform_to_point(m, *ctrl),
-        apply_transform_to_point(m, *end),
-      )),
-      PathSegment::Cubic {
-        start,
-        ctrl1,
-        ctrl2,
-        end,
-        ..
-      } => Ok(cubic_bezier_aabb(
-        apply_transform_to_point(m, *start),
-        apply_transform_to_point(m, *ctrl1),
-        apply_transform_to_point(m, *ctrl2),
-        apply_transform_to_point(m, *end),
-      )),
-      PathSegment::Arc {
-        center,
-        rx,
-        ry,
-        cos_phi,
-        sin_phi,
-        theta_start,
-        theta_delta,
-        ..
-      } => {
-        if !is_uniform_transform(m) {
-          return Err(ErrorStack::new(
-            "exact AABB of an arc segment under a non-uniform transform (e.g. non-uniform scale \
-             or skew) is not supported; bake the transform into the path first or convert arcs to \
-             cubic beziers",
-          ));
-        }
-        let cos_a = m[(0, 0)];
-        let sin_a = m[(1, 0)];
-        let scale = (cos_a * cos_a + sin_a * sin_a).sqrt();
-        let rot_angle = sin_a.atan2(cos_a);
-        let new_center = apply_transform_to_point(m, *center);
-        let new_rx = rx * scale;
-        let new_ry = ry * scale;
-        let old_phi = sin_phi.atan2(*cos_phi);
-        let new_phi = old_phi + rot_angle;
-        Ok(arc_aabb(
-          new_center,
-          new_rx,
-          new_ry,
-          new_phi.cos(),
-          new_phi.sin(),
-          *theta_start,
-          *theta_delta,
-        ))
-      }
     }
   }
 

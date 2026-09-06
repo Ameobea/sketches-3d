@@ -1309,7 +1309,7 @@ const SCALE_PATH_DEF_IX: usize = 5;
 const REFLECT_PATH_DEF_IX: usize = 2;
 const REFLECT_AXIS_PATH_DEF_IX: usize = 2;
 
-/// Counter-clockwise, matching `path_rot` — the opposite winding from the 3D Tait-Bryan `rot`.
+/// Counter-clockwise, the opposite winding from the 3D Tait-Bryan `rot`.
 fn rot_vec2(arg_refs: &[ArgRef], args: &[Value], kwargs: &FxHashMap<Sym, Value>) -> Value {
   let angle = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
   let p = arg_refs[1].resolve(args, kwargs).as_vec2().unwrap();
@@ -12813,7 +12813,7 @@ axis_self = rot_axis(v3(1, 1, 1), 1.234, normalize(v3(1, 1, 1)))
   #[test]
   fn test_rot_on_2d_points() {
     let src = r#"
-// One rotation axis in 2D, so a single angle in radians.  CCW, matching `path_rot`.
+// One rotation axis in 2D, so a single angle in radians.  CCW.
 quarter = rot(pi/2, v2(1, 0))
 // A bare point has no frame, so the global variant agrees.
 global = rot_global(pi/2, v2(1, 0))

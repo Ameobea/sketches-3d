@@ -224,17 +224,6 @@ impl Group {
       }
     }
   }
-
-  fn spans(&self) -> Vec<(f32, f32)> {
-    (0..self.children.len())
-      .map(|ix| {
-        (
-          (self.child_start(ix) / self.total_length).clamp(0., 1.),
-          (self.cumulative_lengths[ix] / self.total_length).clamp(0., 1.),
-        )
-      })
-      .collect()
-  }
 }
 
 fn max_singular_value(m: &Matrix3<f32>) -> f32 {
@@ -266,6 +255,7 @@ impl Path {
     Path::with_kind(PathKind::Abstract(inner))
   }
 
+  #[cfg(test)]
   pub(crate) fn empty() -> Path {
     Path::concrete_group(Vec::new(), None)
   }
@@ -309,18 +299,6 @@ impl Path {
         })
         .collect(),
       PathKind::Abstract(_) => panic!("leaves() on a lazy path"),
-    }
-  }
-
-  fn leaf_children(&self, out: &mut Vec<Rc<Path>>, into: fn(&Subpath) -> Subpath) {
-    match &self.kind {
-      PathKind::Subpath(sp) => out.push(Rc::new(Path::leaf(into(sp)))),
-      PathKind::Group(g) => {
-        for c in &g.children {
-          c.leaf_children(out, into);
-        }
-      }
-      PathKind::Abstract(_) => unreachable!(),
     }
   }
 
