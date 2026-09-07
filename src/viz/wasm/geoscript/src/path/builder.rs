@@ -1,9 +1,8 @@
 use std::rc::Rc;
 
-use im_rc::Vector;
-
 use super::{
   segment::*,
+  shared_vec::SharedVec,
   subpath::{LastCtrl, Subpath},
   FillRule, Path, PathKind,
 };
@@ -43,9 +42,10 @@ pub enum DrawCommand {
 struct OpenLeaf {
   start: Vec2,
   current: Vec2,
-  segments: Vector<PathSegment>,
-  cumulative_lengths: Vector<f32>,
-  anchors: Vector<bool>,
+  total: f32,
+  segments: SharedVec<PathSegment>,
+  cumulative_lengths: SharedVec<f32>,
+  anchors: SharedVec<bool>,
   last_ctrl: Option<LastCtrl>,
 }
 
@@ -54,9 +54,10 @@ impl OpenLeaf {
     Self {
       start,
       current: start,
-      segments: Vector::new(),
-      cumulative_lengths: Vector::new(),
-      anchors: Vector::new(),
+      total: 0.,
+      segments: SharedVec::new(),
+      cumulative_lengths: SharedVec::new(),
+      anchors: SharedVec::new(),
       last_ctrl: None,
     }
   }
@@ -65,6 +66,7 @@ impl OpenLeaf {
     Self {
       start: sp.start,
       current: sp.end(),
+      total: sp.total_length(),
       segments: sp.segments.clone(),
       cumulative_lengths: sp.cumulative_lengths.clone(),
       anchors: sp.anchors.clone(),
@@ -74,10 +76,10 @@ impl OpenLeaf {
 
   fn push(&mut self, seg: Option<PathSegment>, to: Vec2, ctrl: Option<LastCtrl>) {
     if let Some(seg) = seg.filter(|s| s.length() > LENGTH_EPSILON) {
-      let total = self.cumulative_lengths.last().copied().unwrap_or(0.) + seg.length();
-      self.cumulative_lengths.push_back(total);
-      self.segments.push_back(seg);
-      self.anchors.push_back(true);
+      self.total += seg.length();
+      self.cumulative_lengths.push(self.total);
+      self.segments.push(seg);
+      self.anchors.push(true);
     }
     self.current = to;
     self.last_ctrl = ctrl;
@@ -86,6 +88,7 @@ impl OpenLeaf {
   fn into_subpath(self, closed: bool) -> Subpath {
     Subpath::from_parts(
       self.start,
+      self.current,
       self.segments,
       self.cumulative_lengths,
       closed,

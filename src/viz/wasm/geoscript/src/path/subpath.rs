@@ -1,9 +1,8 @@
 use std::{cell::OnceCell, cmp::Ordering, hash::Hasher};
 
-use im_rc::Vector;
 use nalgebra::Matrix3;
 
-use super::{centroid::segments_signed_area, segment::*};
+use super::{centroid::segments_signed_area, segment::*, shared_vec::SharedVec};
 use crate::Vec2;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -13,15 +12,17 @@ pub(crate) enum LastCtrl {
 }
 
 /// One concrete subpath. `anchors[i]` flags the joint at `segments[i].start`; for a closed
-/// subpath that joint doubles as the end joint. Persistent vectors so pen ops extending an open
-/// tail share the prefix instead of copying it.
+/// subpath that joint doubles as the end joint. `end`/`total_length` are stored so pen ops can
+/// extend the tail without reading (and thereby freezing) the shared buffers.
 #[derive(Clone, Debug)]
 pub struct Subpath {
   pub(crate) start: Vec2,
-  pub(crate) segments: Vector<PathSegment>,
-  pub(crate) cumulative_lengths: Vector<f32>,
+  end: Vec2,
+  total_length: f32,
+  pub(crate) segments: SharedVec<PathSegment>,
+  pub(crate) cumulative_lengths: SharedVec<f32>,
   pub(crate) closed: bool,
-  pub(crate) anchors: Vector<bool>,
+  pub(crate) anchors: SharedVec<bool>,
   /// Producer-marked anchors (booleans, offsets, discretization) are mandatory boundaries when
   /// resampling under a point budget; authored joints are left to the adaptive sampler.
   pub(crate) explicit_anchors: bool,
@@ -46,8 +47,10 @@ impl Subpath {
         total
       })
       .collect();
+    let end = segments.last().map(|s| s.end()).unwrap_or(start);
     Self::from_parts(
       start,
+      end,
       segments.into(),
       cumulative_lengths,
       closed,
@@ -59,10 +62,11 @@ impl Subpath {
 
   pub(crate) fn from_parts(
     start: Vec2,
-    segments: Vector<PathSegment>,
-    cumulative_lengths: Vector<f32>,
+    end: Vec2,
+    segments: SharedVec<PathSegment>,
+    cumulative_lengths: SharedVec<f32>,
     closed: bool,
-    anchors: Vector<bool>,
+    anchors: SharedVec<bool>,
     explicit_anchors: bool,
     last_ctrl: Option<LastCtrl>,
   ) -> Self {
@@ -70,6 +74,8 @@ impl Subpath {
     debug_assert_eq!(cumulative_lengths.len(), segments.len());
     Self {
       start,
+      end,
+      total_length: cumulative_lengths.last_copied().unwrap_or(0.),
       segments,
       cumulative_lengths,
       closed,
@@ -81,7 +87,7 @@ impl Subpath {
   }
 
   pub(crate) fn total_length(&self) -> f32 {
-    self.cumulative_lengths.last().copied().unwrap_or(0.)
+    self.total_length
   }
 
   pub(crate) fn is_degenerate(&self) -> bool {
@@ -89,26 +95,16 @@ impl Subpath {
   }
 
   pub(crate) fn end(&self) -> Vec2 {
-    self.segments.last().map(|s| s.end()).unwrap_or(self.start)
+    self.end
   }
 
   pub(crate) fn sample_by_length(&self, length: f32) -> Vec2 {
-    let mut idx = match self
-      .cumulative_lengths
-      .binary_search_by(|len| len.partial_cmp(&length).unwrap_or(Ordering::Less))
-    {
-      Ok(ix) => ix,
-      Err(ix) => ix,
-    };
-    if idx >= self.segments.len() {
-      idx = self.segments.len() - 1;
-    }
-    let seg_start_len = if idx == 0 {
-      0.0
-    } else {
-      self.cumulative_lengths[idx - 1]
-    };
-    let seg = &self.segments[idx];
+    let lens = self.cumulative_lengths.as_slice();
+    let idx = lens
+      .partition_point(|&len| len < length)
+      .min(lens.len() - 1);
+    let seg_start_len = if idx == 0 { 0.0 } else { lens[idx - 1] };
+    let seg = &self.segments.as_slice()[idx];
     let seg_len = seg.length();
     if seg_len <= LENGTH_EPSILON {
       return seg.end();
@@ -227,14 +223,17 @@ impl Subpath {
     let mut segments = self.segments.clone();
     let mut cumulative_lengths = self.cumulative_lengths.clone();
     let mut anchors = self.anchors.clone();
-    let closing = line_segment(self.end(), self.start);
+    let closing = line_segment(self.end, self.start);
+    let mut end = self.end;
     if closing.length() > LENGTH_EPSILON {
-      cumulative_lengths.push_back(self.total_length() + closing.length());
-      segments.push_back(closing);
-      anchors.push_back(true);
+      cumulative_lengths.push(self.total_length + closing.length());
+      segments.push(closing);
+      anchors.push(true);
+      end = self.start;
     }
     Subpath::from_parts(
       self.start,
+      end,
       segments,
       cumulative_lengths,
       true,
