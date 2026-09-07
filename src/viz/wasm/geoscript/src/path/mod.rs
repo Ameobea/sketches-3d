@@ -781,7 +781,7 @@ impl Path {
     }
     let leaves = self.leaves();
     let closed = leaves.iter().filter(|sp| sp.closed && !sp.is_degenerate());
-    let region = centroid::region_centroid(closed.map(|sp| sp.segments.as_slice()));
+    let region = centroid::region_centroid(closed.flat_map(|sp| sp.segments.iter()));
     Ok(
       region
         .or_else(|| centroid::arc_length_centroid(leaves.iter().flat_map(|sp| sp.segments.iter()))),

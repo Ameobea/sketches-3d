@@ -1,5 +1,6 @@
 use std::{cell::OnceCell, cmp::Ordering, hash::Hasher};
 
+use im_rc::Vector;
 use nalgebra::Matrix3;
 
 use super::{centroid::segments_signed_area, segment::*};
@@ -12,14 +13,15 @@ pub(crate) enum LastCtrl {
 }
 
 /// One concrete subpath. `anchors[i]` flags the joint at `segments[i].start`; for a closed
-/// subpath that joint doubles as the end joint.
+/// subpath that joint doubles as the end joint. Persistent vectors so pen ops extending an open
+/// tail share the prefix instead of copying it.
 #[derive(Clone, Debug)]
 pub struct Subpath {
   pub(crate) start: Vec2,
-  pub(crate) segments: Vec<PathSegment>,
-  pub(crate) cumulative_lengths: Vec<f32>,
+  pub(crate) segments: Vector<PathSegment>,
+  pub(crate) cumulative_lengths: Vector<f32>,
   pub(crate) closed: bool,
-  pub(crate) anchors: Vec<bool>,
+  pub(crate) anchors: Vector<bool>,
   /// Producer-marked anchors (booleans, offsets, discretization) are mandatory boundaries when
   /// resampling under a point budget; authored joints are left to the adaptive sampler.
   pub(crate) explicit_anchors: bool,
@@ -36,13 +38,36 @@ impl Subpath {
     explicit_anchors: bool,
     last_ctrl: Option<LastCtrl>,
   ) -> Self {
-    debug_assert_eq!(anchors.len(), segments.len());
-    let mut cumulative_lengths = Vec::with_capacity(segments.len());
     let mut total = 0.;
-    for seg in &segments {
-      total += seg.length();
-      cumulative_lengths.push(total);
-    }
+    let cumulative_lengths = segments
+      .iter()
+      .map(|seg| {
+        total += seg.length();
+        total
+      })
+      .collect();
+    Self::from_parts(
+      start,
+      segments.into(),
+      cumulative_lengths,
+      closed,
+      anchors.into(),
+      explicit_anchors,
+      last_ctrl,
+    )
+  }
+
+  pub(crate) fn from_parts(
+    start: Vec2,
+    segments: Vector<PathSegment>,
+    cumulative_lengths: Vector<f32>,
+    closed: bool,
+    anchors: Vector<bool>,
+    explicit_anchors: bool,
+    last_ctrl: Option<LastCtrl>,
+  ) -> Self {
+    debug_assert_eq!(anchors.len(), segments.len());
+    debug_assert_eq!(cumulative_lengths.len(), segments.len());
     Self {
       start,
       segments,
@@ -135,7 +160,7 @@ impl Subpath {
   pub(crate) fn signed_area(&self) -> f32 {
     *self.signed_area.get_or_init(|| {
       if self.closed {
-        segments_signed_area(&self.segments)
+        segments_signed_area(self.segments.iter())
       } else {
         0.
       }
@@ -200,15 +225,18 @@ impl Subpath {
       return self.clone();
     }
     let mut segments = self.segments.clone();
+    let mut cumulative_lengths = self.cumulative_lengths.clone();
     let mut anchors = self.anchors.clone();
     let closing = line_segment(self.end(), self.start);
     if closing.length() > LENGTH_EPSILON {
-      segments.push(closing);
-      anchors.push(true);
+      cumulative_lengths.push_back(self.total_length() + closing.length());
+      segments.push_back(closing);
+      anchors.push_back(true);
     }
-    Subpath::new(
+    Subpath::from_parts(
       self.start,
       segments,
+      cumulative_lengths,
       true,
       anchors,
       self.explicit_anchors,

@@ -154,15 +154,18 @@ impl Walk {
     }
     match &path.kind {
       PathKind::Subpath(sp) => {
-        self.charge(
-          sp.segments.as_ptr() as usize,
-          sp.segments.capacity() * size_of::<PathSegment>(),
-        );
-        self.charge(
-          sp.cumulative_lengths.as_ptr() as usize,
-          sp.cumulative_lengths.capacity() * 4,
-        );
-        self.charge(sp.anchors.as_ptr() as usize, sp.anchors.capacity());
+        for chunk in sp.segments.leaves() {
+          self.charge(
+            chunk.as_ptr() as usize,
+            chunk.len() * size_of::<PathSegment>(),
+          );
+        }
+        for chunk in sp.cumulative_lengths.leaves() {
+          self.charge(chunk.as_ptr() as usize, chunk.len() * 4);
+        }
+        for chunk in sp.anchors.leaves() {
+          self.charge(chunk.as_ptr() as usize, chunk.len());
+        }
         for seg in &sp.segments {
           if let PathSegment::Quadratic { table, .. }
           | PathSegment::Cubic { table, .. }

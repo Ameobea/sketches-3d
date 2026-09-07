@@ -1,5 +1,7 @@
 use std::rc::Rc;
 
+use im_rc::Vector;
+
 use super::{
   segment::*,
   subpath::{LastCtrl, Subpath},
@@ -41,8 +43,9 @@ pub enum DrawCommand {
 struct OpenLeaf {
   start: Vec2,
   current: Vec2,
-  segments: Vec<PathSegment>,
-  anchors: Vec<bool>,
+  segments: Vector<PathSegment>,
+  cumulative_lengths: Vector<f32>,
+  anchors: Vector<bool>,
   last_ctrl: Option<LastCtrl>,
 }
 
@@ -51,8 +54,9 @@ impl OpenLeaf {
     Self {
       start,
       current: start,
-      segments: Vec::new(),
-      anchors: Vec::new(),
+      segments: Vector::new(),
+      cumulative_lengths: Vector::new(),
+      anchors: Vector::new(),
       last_ctrl: None,
     }
   }
@@ -62,6 +66,7 @@ impl OpenLeaf {
       start: sp.start,
       current: sp.end(),
       segments: sp.segments.clone(),
+      cumulative_lengths: sp.cumulative_lengths.clone(),
       anchors: sp.anchors.clone(),
       last_ctrl: sp.last_ctrl,
     }
@@ -69,17 +74,20 @@ impl OpenLeaf {
 
   fn push(&mut self, seg: Option<PathSegment>, to: Vec2, ctrl: Option<LastCtrl>) {
     if let Some(seg) = seg.filter(|s| s.length() > LENGTH_EPSILON) {
-      self.segments.push(seg);
-      self.anchors.push(true);
+      let total = self.cumulative_lengths.last().copied().unwrap_or(0.) + seg.length();
+      self.cumulative_lengths.push_back(total);
+      self.segments.push_back(seg);
+      self.anchors.push_back(true);
     }
     self.current = to;
     self.last_ctrl = ctrl;
   }
 
   fn into_subpath(self, closed: bool) -> Subpath {
-    Subpath::new(
+    Subpath::from_parts(
       self.start,
       self.segments,
+      self.cumulative_lengths,
       closed,
       self.anchors,
       false,

@@ -123,18 +123,16 @@ pub(crate) fn segment_moments(seg: &PathSegment) -> (f64, f64, f64) {
   }
 }
 
-pub(crate) fn segments_signed_area(segments: &[PathSegment]) -> f32 {
-  segments.iter().map(|s| segment_moments(s).0).sum::<f64>() as f32
+pub(crate) fn segments_signed_area<'a>(segments: impl Iterator<Item = &'a PathSegment>) -> f32 {
+  segments.map(|s| segment_moments(s).0).sum::<f64>() as f32
 }
 
 /// Area-weighted centroid of the region bounded by closed leaves; `None` when the signed area
 /// nets out to ~0.
-pub(crate) fn region_centroid<'a>(leaves: impl Iterator<Item = &'a [PathSegment]>) -> Option<Vec2> {
+pub(crate) fn region_centroid<'a>(segments: impl Iterator<Item = &'a PathSegment>) -> Option<Vec2> {
   let mut acc = (0., 0., 0.);
-  for segs in leaves {
-    for m in segs.iter().map(segment_moments) {
-      acc = (acc.0 + m.0, acc.1 + m.1, acc.2 + m.2);
-    }
+  for m in segments.map(segment_moments) {
+    acc = (acc.0 + m.0, acc.1 + m.1, acc.2 + m.2);
   }
   (acc.0.abs() > 1e-12).then(|| {
     Vec2::new(
