@@ -8,6 +8,7 @@ pub(crate) mod centroid;
 mod lang_tests;
 pub(crate) mod lazy;
 pub(crate) mod segment;
+pub(crate) mod shared_vec;
 pub(crate) mod subpath;
 #[cfg(test)]
 mod tests;
@@ -129,6 +130,7 @@ pub struct Path {
   pub(crate) kind: PathKind,
   /// Lazy modifiers; identity / `false` on concrete trees, which bake them eagerly.
   pub(crate) transform: Matrix3<f32>,
+  has_transform: bool,
   pub(crate) reverse: bool,
   pub(crate) fill_rule: Option<FillRule>,
   length: OnceCell<f32>,
@@ -241,6 +243,7 @@ impl Path {
     Path {
       kind,
       transform: Matrix3::identity(),
+      has_transform: false,
       reverse: false,
       fill_rule: None,
       length: OnceCell::new(),
@@ -375,6 +378,7 @@ impl Path {
     Path {
       kind: self.kind.clone(),
       transform: self.transform,
+      has_transform: self.has_transform,
       reverse: self.reverse,
       fill_rule: self.fill_rule,
       length: OnceCell::new(),
@@ -398,6 +402,7 @@ impl Path {
       _ => {
         let mut p = self.lazy_copy();
         p.transform = m * self.transform;
+        p.has_transform = true;
         p
       }
     };
@@ -457,7 +462,11 @@ impl Path {
       PathKind::Group(g) => g.eval_raw(t, ctx)?,
       PathKind::Abstract(a) => a.eval_raw(t, ctx)?,
     };
-    Ok(apply_transform_to_point(&self.transform, p))
+    Ok(if self.has_transform {
+      apply_transform_to_point(&self.transform, p)
+    } else {
+      p
+    })
   }
 
   fn sampled_length(&self, ctx: &EvalCtx) -> Result<f32, ErrorStack> {
