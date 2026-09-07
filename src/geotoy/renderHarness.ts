@@ -7,6 +7,7 @@ import { buildEvalResultJson } from 'src/geotoy/modes/mesh/evalResult';
 import type { TreeDef } from 'src/geoscript/geotoyAPIClient';
 import type { GeoscriptExecution, RunOutcome } from 'src/geotoy/modules/execution.svelte';
 import type { MeshScene } from 'src/geotoy/modes/mesh/meshScene.svelte';
+import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
 import type { ConstEvalCacheStats, RunPhases } from 'src/geoscript/runner/types';
 
 export interface BenchRequest {
@@ -35,8 +36,10 @@ interface RenderHarnessDeps {
   userData: GeoscriptPlaygroundUserData;
   execution: GeoscriptExecution<any>;
   meshScene: MeshScene;
+  textureMode: TextureMode;
   getTree: () => TreeDef;
   getTabs: () => { id: string; kind: string; name: string }[];
+  getActiveTabKind: () => string;
 }
 
 /**
@@ -52,8 +55,10 @@ export const startRenderHarness = ({
   userData,
   execution,
   meshScene,
+  textureMode,
   getTree,
   getTabs,
+  getActiveTabKind,
 }: RenderHarnessDeps) => {
   const stats = document.getElementById('viz-stats');
   if (stats) {
@@ -214,6 +219,16 @@ export const startRenderHarness = ({
       } catch (err) {
         fail(err instanceof Error ? err.message : String(err));
       }
+      return;
+    }
+
+    // Texture tab: the frame is the 2D preview canvas (a fixed overlay on its own rAF); the
+    // mesh scene never gets a view and the viz loop is suspended, so the staging below can't run.
+    if (getActiveTabKind() === 'texture') {
+      if (textureMode.textures.length > 0) {
+        await textureMode.untilDrawn();
+      }
+      (window as any).onRenderReady?.();
       return;
     }
 

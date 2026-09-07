@@ -22,11 +22,13 @@
     mode,
     width,
     height,
+    hud = true,
     onSetTextureParams,
   }: {
     mode: TextureMode;
     width: number;
     height: number;
+    hud?: boolean;
     /** Persist a GPU-param edit for an output and rerun; empty-string fields clear. */
     onSetTextureParams?: (
       sourceModule: string,
@@ -132,7 +134,10 @@
     drawQueued = true;
     requestAnimationFrame(() => {
       drawQueued = false;
-      if (glr && pending) glr.draw(pending);
+      if (glr && pending) {
+        glr.draw(pending);
+        mode.notifyDrawn();
+      }
     });
   };
 
@@ -277,159 +282,161 @@
   ondblclick={fitView}
 ></canvas>
 
-<div class="hud" style={`width: ${width}px; height: ${height}px;`}>
-  {#if cells.length > 1}
-    {#each cells as cell (cell.tex.textureId)}
-      <div
-        class="cell"
-        class:selected={cell.tex === mode.selected}
-        style:left="{cell.x}px"
-        style:top="{cell.y}px"
-        style:width="{cell.w}px"
-        style:height="{cell.h}px"
-      >
-        <span class="cell-label">{cell.tex.name}{cell.tex.usage ? ` · ${cell.tex.usage}` : ''}</span>
-      </div>
-    {/each}
-  {/if}
-  <div class="stack panel" bind:offsetHeight={hudHeight} style:top="{topLeftOffset(TopLeftSlot.hud)}px">
-    {#if mode.selected}
-      {@const sel = mode.selected}
-      {#if mode.visibleTextures.length > 1}
-        <div class="chips">
-          {#each mode.visibleTextures as tex (tex.textureId)}
-            <button
-              class="chip"
-              class:active={tex.name === sel.name}
-              onclick={() => (mode.selectedName = tex.name)}
-            >
-              {tex.name}
-            </button>
-          {/each}
-        </div>
-      {/if}
-      <div class="chips">
-        {#each CHANNELS.filter(ch => ch !== 'a' || sel.channels === 4) as ch (ch)}
-          <button class="chip" class:active={mode.channel === ch} onclick={() => (mode.channel = ch)}>
-            {ch}
-          </button>
-        {/each}
-        <span class="gap"></span>
-        <button class="chip" class:active={mode.tiled} onclick={() => (mode.tiled = !mode.tiled)}>
-          tile
-        </button>
-        <button class="chip" class:active={mode.srgb} onclick={() => (mode.srgbOverride = !mode.srgb)}>
-          srgb
-        </button>
-        <button
-          class="chip"
-          class:active={mode.range === 'fit'}
-          title="display range: the data's min–max (auto for 1-channel outputs without a usage) vs. the 0–1 image contract"
-          onclick={() => (mode.displayRange = mode.range === 'fit' ? 'unit' : 'fit')}
+{#if hud}
+  <div class="hud" style={`width: ${width}px; height: ${height}px;`}>
+    {#if cells.length > 1}
+      {#each cells as cell (cell.tex.textureId)}
+        <div
+          class="cell"
+          class:selected={cell.tex === mode.selected}
+          style:left="{cell.x}px"
+          style:top="{cell.y}px"
+          style:width="{cell.w}px"
+          style:height="{cell.h}px"
         >
-          fit
-        </button>
-        {#if mode.visibleTextures.length > 1}
-          <button class="chip" class:active={mode.layout === 'grid'} onclick={mode.toggleLayout} title="G">
-            grid
-          </button>
-        {/if}
-      </div>
-      {#if stackRef}
-        <div class="stack-t" title="stack interpolation index; shift-drag snaps to layers">
-          <span class="t-label">t</span>
-          <input type="range" min="0" max="1" step="0.001" value={mode.stackT} oninput={onStackTInput} />
-          <span class="t-readout">
-            L{(mode.stackT * (stackRef.layers - 1)).toFixed(2)} / {stackRef.layers - 1}
-          </span>
+          <span class="cell-label">{cell.tex.name}{cell.tex.usage ? ` · ${cell.tex.usage}` : ''}</span>
         </div>
-      {/if}
-    {:else}
-      <span class="note">no visible outputs (solo active)</span>
+      {/each}
     {/if}
-  </div>
-  {#if mode.selected}
-    {@const sel = mode.selected}
-    {@const fmt = sel.format ?? DEFAULT_FORMAT}
-    <div class="info panel">
-      <span class="label">output</span>
-      <span class="value accent">{sel.name}</span>
-      <span class="label">size</span>
-      <span class="value">
-        {sel.width}×{sel.height} · {sel.channels}ch f32{sel.layers > 1 ? ` · ${sel.layers} layers` : ''}
-      </span>
-      {#if sel.usage}
-        <span class="label">usage</span>
-        <span class="value">{sel.usage}</span>
-      {/if}
-      <span class="label">wrap</span>
-      <span class="value">{sel.wrap}</span>
-      {#if statsView}
-        {#each statsView.rows as row (row.c)}
-          <span class="label">{row.name}</span>
-          <span class="value num">
-            {p3(row.s.min)} … {p3(row.s.max)} · μ {p3(row.s.mean)} · σ {p3(row.s.std)}
-          </span>
-        {/each}
-        {#if statsView.nonfinite > 0}
-          <span class="label warn">non-finite</span>
-          <span class="value warn">{statsView.nonfinite} texels</span>
-        {/if}
-        <button class="label disclosure" onclick={mode.toggleStatsHistogram}>
-          {mode.statsHistogram ? '▾' : '▸'} histogram
-        </button>
-        <span class="value num">
-          {mode.statsHistogram ? `${p3(statsView.lo)} … ${p3(statsView.hi)}` : ''}
-        </span>
-        {#if mode.statsHistogram}
-          <div class="hist">
-            <ValueHistogram
-              stats={sel.stats}
-              lo={statsView.win[0]}
-              hi={statsView.win[1]}
-              width={200}
-              height={44}
-              channels={statsView.channels}
-            />
+    <div class="stack panel" bind:offsetHeight={hudHeight} style:top="{topLeftOffset(TopLeftSlot.hud)}px">
+      {#if mode.selected}
+        {@const sel = mode.selected}
+        {#if mode.visibleTextures.length > 1}
+          <div class="chips">
+            {#each mode.visibleTextures as tex (tex.textureId)}
+              <button
+                class="chip"
+                class:active={tex.name === sel.name}
+                onclick={() => (mode.selectedName = tex.name)}
+              >
+                {tex.name}
+              </button>
+            {/each}
           </div>
         {/if}
-        <span class="label">cursor</span>
-        <span class="value num pre">{hover ?? '—'}</span>
+        <div class="chips">
+          {#each CHANNELS.filter(ch => ch !== 'a' || sel.channels === 4) as ch (ch)}
+            <button class="chip" class:active={mode.channel === ch} onclick={() => (mode.channel = ch)}>
+              {ch}
+            </button>
+          {/each}
+          <span class="gap"></span>
+          <button class="chip" class:active={mode.tiled} onclick={() => (mode.tiled = !mode.tiled)}>
+            tile
+          </button>
+          <button class="chip" class:active={mode.srgb} onclick={() => (mode.srgbOverride = !mode.srgb)}>
+            srgb
+          </button>
+          <button
+            class="chip"
+            class:active={mode.range === 'fit'}
+            title="display range: the data's min–max (auto for 1-channel outputs without a usage) vs. the 0–1 image contract"
+            onclick={() => (mode.displayRange = mode.range === 'fit' ? 'unit' : 'fit')}
+          >
+            fit
+          </button>
+          {#if mode.visibleTextures.length > 1}
+            <button class="chip" class:active={mode.layout === 'grid'} onclick={mode.toggleLayout} title="G">
+              grid
+            </button>
+          {/if}
+        </div>
+        {#if stackRef}
+          <div class="stack-t" title="stack interpolation index; shift-drag snaps to layers">
+            <span class="t-label">t</span>
+            <input type="range" min="0" max="1" step="0.001" value={mode.stackT} oninput={onStackTInput} />
+            <span class="t-readout">
+              L{(mode.stackT * (stackRef.layers - 1)).toFixed(2)} / {stackRef.layers - 1}
+            </span>
+          </div>
+        {/if}
+      {:else}
+        <span class="note">no visible outputs (solo active)</span>
       {/if}
-      <span class="label">format</span>
-      <select class="value" value={fmt} onchange={e => setParam('format', e.currentTarget.value)}>
-        {#each formatOptionsForChannels(sel.channels) as f (f)}
-          <option value={f}>{f}</option>
-        {/each}
-      </select>
-      <span class="label">min filter</span>
-      <select
-        class="value"
-        value={sel.minFilter ?? DEFAULT_MIN_FILTER}
-        onchange={e => setParam('minFilter', e.currentTarget.value)}
-      >
-        {#each MIN_FILTERS as f (f)}
-          <option value={f} disabled={fmt.endsWith('32f') && f.includes('mipmap')}>{f}</option>
-        {/each}
-      </select>
-      <span class="label">mag filter</span>
-      <select
-        class="value"
-        value={sel.magFilter ?? defaultMagFilter()}
-        onchange={e => setParam('magFilter', e.currentTarget.value)}
-      >
-        {#each MAG_FILTERS as f (f)}
-          <option value={f}>{f}</option>
-        {/each}
-      </select>
-      <span class="label">outputs</span>
-      <span class="value">{mode.visibleTextures.length}</span>
     </div>
-  {/if}
-  {#if mode.selected && mode.zoom !== null}
-    <span class="zoom panel">{Math.round(mode.zoom * 100)}%</span>
-  {/if}
-</div>
+    {#if mode.selected}
+      {@const sel = mode.selected}
+      {@const fmt = sel.format ?? DEFAULT_FORMAT}
+      <div class="info panel">
+        <span class="label">output</span>
+        <span class="value accent">{sel.name}</span>
+        <span class="label">size</span>
+        <span class="value">
+          {sel.width}×{sel.height} · {sel.channels}ch f32{sel.layers > 1 ? ` · ${sel.layers} layers` : ''}
+        </span>
+        {#if sel.usage}
+          <span class="label">usage</span>
+          <span class="value">{sel.usage}</span>
+        {/if}
+        <span class="label">wrap</span>
+        <span class="value">{sel.wrap}</span>
+        {#if statsView}
+          {#each statsView.rows as row (row.c)}
+            <span class="label">{row.name}</span>
+            <span class="value num">
+              {p3(row.s.min)} … {p3(row.s.max)} · μ {p3(row.s.mean)} · σ {p3(row.s.std)}
+            </span>
+          {/each}
+          {#if statsView.nonfinite > 0}
+            <span class="label warn">non-finite</span>
+            <span class="value warn">{statsView.nonfinite} texels</span>
+          {/if}
+          <button class="label disclosure" onclick={mode.toggleStatsHistogram}>
+            {mode.statsHistogram ? '▾' : '▸'} histogram
+          </button>
+          <span class="value num">
+            {mode.statsHistogram ? `${p3(statsView.lo)} … ${p3(statsView.hi)}` : ''}
+          </span>
+          {#if mode.statsHistogram}
+            <div class="hist">
+              <ValueHistogram
+                stats={sel.stats}
+                lo={statsView.win[0]}
+                hi={statsView.win[1]}
+                width={200}
+                height={44}
+                channels={statsView.channels}
+              />
+            </div>
+          {/if}
+          <span class="label">cursor</span>
+          <span class="value num pre">{hover ?? '—'}</span>
+        {/if}
+        <span class="label">format</span>
+        <select class="value" value={fmt} onchange={e => setParam('format', e.currentTarget.value)}>
+          {#each formatOptionsForChannels(sel.channels) as f (f)}
+            <option value={f}>{f}</option>
+          {/each}
+        </select>
+        <span class="label">min filter</span>
+        <select
+          class="value"
+          value={sel.minFilter ?? DEFAULT_MIN_FILTER}
+          onchange={e => setParam('minFilter', e.currentTarget.value)}
+        >
+          {#each MIN_FILTERS as f (f)}
+            <option value={f} disabled={fmt.endsWith('32f') && f.includes('mipmap')}>{f}</option>
+          {/each}
+        </select>
+        <span class="label">mag filter</span>
+        <select
+          class="value"
+          value={sel.magFilter ?? defaultMagFilter()}
+          onchange={e => setParam('magFilter', e.currentTarget.value)}
+        >
+          {#each MAG_FILTERS as f (f)}
+            <option value={f}>{f}</option>
+          {/each}
+        </select>
+        <span class="label">outputs</span>
+        <span class="value">{mode.visibleTextures.length}</span>
+      </div>
+    {/if}
+    {#if mode.selected && mode.zoom !== null}
+      <span class="zoom panel">{Math.round(mode.zoom * 100)}%</span>
+    {/if}
+  </div>
+{/if}
 
 <style>
   canvas {
