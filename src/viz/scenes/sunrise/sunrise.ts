@@ -6,30 +6,22 @@ import { GraphicsQuality, type VizConfig } from 'src/viz/conf';
 import type { SceneConfig } from '..';
 import { ParkourManager, partitionParkourObjects } from 'src/viz/parkour/ParkourManager.svelte';
 import { Score, type ScoreThresholds } from 'src/viz/parkour/timeDisplayTypes';
-import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { rwritable } from 'src/viz/util/TransparentWritable';
 import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/materials';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
+import { getPlayerColliderCenterToFeetOffset } from 'src/viz/physicsConfig';
+import { buildRobotCharacter } from './robotCharacter';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const playerHeight = 5 * (4 / 5);
   const playerRadius = 1.5 * (4 / 5);
-  const playerMesh = new THREE.Mesh(
-    new THREE.CapsuleGeometry(playerRadius, playerHeight, 16, 16),
-    buildCustomShader(
-      {
-        color: new THREE.Color(0x8d3d9f),
-        metalness: 0.18,
-        roughness: 0.82,
-      },
-      {},
-      { noOcclusion: true }
-    )
-  );
-  playerMesh.castShadow = false;
-  playerMesh.receiveShadow = true;
+  const playerMesh = buildRobotCharacter(viz, {
+    colliderHeight: playerHeight + 2 * playerRadius,
+    centerToFeetOffset: getPlayerColliderCenterToFeetOffset('capsule', playerHeight, playerRadius),
+    minWalkCycleSeconds: 0.2,
+  });
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,

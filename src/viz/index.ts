@@ -81,6 +81,8 @@ export interface FpPlayerStateGetters {
   getIsJumping: () => boolean;
   getJumpAxis: () => [number, number, number];
   getExternalVelocity: () => [number, number, number];
+  /** Input-driven walk velocity in units/s (excludes external + vertical velocity). */
+  getWalkVelocity: () => [number, number, number];
   getIsDashing: () => boolean;
   getIsOnGround: () => boolean;
   getPlayerPos: () => [number, number, number];

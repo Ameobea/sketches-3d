@@ -627,6 +627,7 @@ export const updateAaPixelScale = (
 export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
     vertexShader: /* glsl */ `
+      #include <skinning_pars_vertex>
       varying vec3 vWorldPos;
       varying vec3 vWorldNormal;
       // Pin gl_Position invariant so it bit-matches the color material's depth regardless of which
@@ -664,6 +665,7 @@ export const buildOcclusionDepthMaterial = (): THREE.ShaderMaterial =>
 export const buildPlainDepthMaterial = (): THREE.ShaderMaterial =>
   new THREE.ShaderMaterial({
     vertexShader: /* glsl */ `
+      #include <skinning_pars_vertex>
       invariant gl_Position;
       void main() {
         ${depthExactVertexBody}

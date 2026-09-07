@@ -283,7 +283,7 @@ export interface SceneConfig {
      * If provided, this mesh will be added to the world and moved in sync with the player.  This is not
      * usually needed in `firstPerson` view mode, but is useful for `top-down` mode.
      */
-    mesh?: THREE.Mesh;
+    mesh?: THREE.Object3D;
     /** Renders a circular shadow beneath the player on custom shader materials. */
     playerShadow?: PlayerShadowParams;
   };

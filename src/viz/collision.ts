@@ -304,6 +304,10 @@ export class BulletPhysics {
         const externalVelocity = this.playerController.getExternalVelocity();
         return [externalVelocity.x(), externalVelocity.y(), externalVelocity.z()];
       },
+      getWalkVelocity: () => {
+        const walk = this.playerController.getWalkDirection();
+        return [walk.x(), walk.y(), walk.z()];
+      },
       getIsJumping: () =>
         this.playerController.isJumping() &&
         this.playerController.getLastJumpTime() > this.playerController.getLastDashTime(),
