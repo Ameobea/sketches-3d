@@ -15,6 +15,7 @@ mod diagnostics;
 mod format;
 mod goto;
 mod hover;
+mod pipeline_help;
 mod rewrite_inputs;
 mod scope;
 mod signature_help;
@@ -71,6 +72,8 @@ pub struct CompletionItem {
   pub detail: String,
   /// Longer description
   pub info: String,
+  /// Advisory ranking adjustment; never filters out an otherwise available completion.
+  pub boost: i32,
 }
 
 /// Result of a go-to-definition request.

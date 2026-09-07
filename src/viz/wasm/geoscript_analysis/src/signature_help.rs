@@ -4,7 +4,9 @@ use nanoserde::SerJson;
 use crate::{
   analysis::Analysis,
   format::{builtin_docs, BuiltinDocs, ParamDocs, SignatureDocs},
-  parse_lenient, resolve_draw_command,
+  parse_lenient,
+  pipeline_help::{pipeline_guidance, PipelineHelp},
+  resolve_draw_command,
   source_scan::{self, CallContext},
   AnalysisCtx,
 };
@@ -21,6 +23,7 @@ pub struct SignatureHelp {
   /// Where the callee is written; identifies the call across edits.
   pub call_line: u32,
   pub call_col: u32,
+  pub pipeline: Option<PipelineHelp>,
 }
 
 pub(crate) fn signature_help(
@@ -95,7 +98,7 @@ pub(crate) fn signature_help(
     }
   };
 
-  let (active_params, compatible): (Vec<_>, Vec<_>) = docs
+  let (mut active_params, mut compatible): (Vec<_>, Vec<_>) = docs
     .signatures
     .iter()
     .map(|sig| classify_signature(sig, &call))
@@ -104,12 +107,38 @@ pub(crate) fn signature_help(
   // Prefer an overload with a param under the cursor; the AST's match (from the args typed
   // so far) breaks ties but can't override that, since it doesn't know an arg is being added.
   let has_active = |ix: usize| compatible[ix] && active_params[ix].is_some();
-  let active_signature = matched_sig
+  let mut active_signature = matched_sig
     .filter(|&ix| has_active(ix))
     .or_else(|| (0..docs.signatures.len()).find(|&ix| has_active(ix)))
     .or(matched_sig)
     .or_else(|| compatible.iter().position(|c| *c))
     .unwrap_or(0);
+
+  let pipeline = analysis.as_ref().and_then(|analysis| {
+    let info = analysis
+      .function_calls
+      .iter()
+      .find(|info| ctx.eval_ctx.resolve_loc(info.loc) == (call_line, call_col))?;
+    let (_, def) = ctx.lookup_builtin(name)?;
+    let guidance = pipeline_guidance(def.signatures, info, &call, false)?;
+    if !guidance.help.uncertain {
+      if call.current_kwarg.is_none() {
+        active_params = guidance.positional_params;
+      }
+      // At an empty trailing slot, don't highlight the parameter supplied by the pipe unless
+      // inserting another positional argument could still form a pipeline into this function.
+      if call.current_kwarg.is_none() && call.positional_index >= info.arg_types.len() {
+        for (ix, active) in active_params.iter_mut().enumerate() {
+          if guidance.compatible[ix] && !guidance.can_insert_positional[ix] {
+            *active = None;
+          }
+        }
+      }
+      compatible = guidance.compatible;
+      active_signature = guidance.preferred_signature;
+    }
+    Some(guidance.help)
+  });
 
   Some(SignatureHelp {
     docs,
@@ -118,6 +147,7 @@ pub(crate) fn signature_help(
     compatible,
     call_line,
     call_col,
+    pipeline,
   })
 }
 
@@ -242,5 +272,139 @@ mod tests {
     assert!(ctx.hover(src, 2, 10, false, "").is_none());
     let hover = ctx.hover("box = 1\ny = box", 2, 6, false, "").unwrap();
     assert!(hover.builtin.is_none(), "got: {hover:?}");
+  }
+
+  fn piped_param(h: &SignatureHelp) -> Option<&str> {
+    h.pipeline.as_ref()?.params[h.active_signature].map(|ix| {
+      h.docs.signatures[h.active_signature].params[ix]
+        .name
+        .as_str()
+    })
+  }
+
+  #[test]
+  fn piped_texture_leaves_optional_keyword_available() {
+    let h = help(
+      r#"diffuse = texture(8, 8, |uv| uv.x)
+diffuse | render_texture(name="diffuse", ‸)"#,
+    )
+    .unwrap();
+    assert_eq!(active(&h), None);
+    assert_eq!(piped_param(&h), Some("texture"));
+    let pipeline = h.pipeline.as_ref().unwrap();
+    assert_eq!(pipeline.label, "diffuse");
+    assert_eq!(pipeline.ty.as_deref(), Some("texture"));
+    assert_eq!(pipeline.available_kwargs[h.active_signature], ["usage"]);
+    assert!(!pipeline.uncertain);
+  }
+
+  #[test]
+  fn pipe_does_not_occupy_the_argument_being_inserted() {
+    let h = help(r#"2 | mul(‸)"#).unwrap();
+    assert_eq!(active(&h), Some("a"));
+    assert_eq!(piped_param(&h), None);
+    assert!(h.pipeline.is_some());
+
+    let h = help(r#"2 | mul(3, ‸)"#).unwrap();
+    assert_eq!(active(&h), None);
+    assert_eq!(piped_param(&h), Some("b"));
+    assert!(h.pipeline.as_ref().unwrap().available_kwargs[h.active_signature].is_empty());
+
+    let h = help(r#"2 | mul(‸3)"#).unwrap();
+    assert_eq!(active(&h), Some("a"));
+    assert_eq!(piped_param(&h), Some("b"));
+  }
+
+  #[test]
+  fn pipeline_types_rank_overloads_without_losing_longer_edits() {
+    let h = help(
+      r#"my_mesh = box()
+my_mesh | translate(‸)"#,
+    )
+    .unwrap();
+    assert_eq!(active(&h), Some("translation"));
+    assert_eq!(h.docs.signatures[h.active_signature].params[1].name, "mesh");
+    assert!(h
+      .docs
+      .signatures
+      .iter()
+      .enumerate()
+      .any(|(ix, sig)| sig.params.len() == 4 && sig.params[3].name == "mesh" && h.compatible[ix]));
+    assert!(h.docs.signatures.iter().enumerate().all(|(ix, sig)| !sig
+      .params
+      .iter()
+      .any(|p| p.name == "light")
+      || !h.compatible[ix]));
+
+    let h = help(r#"box() | translate(1, ‸)"#).unwrap();
+    assert_eq!(active(&h), Some("y"));
+    let h = help(r#"box() | translate(1, 2, ‸)"#).unwrap();
+    assert_eq!(active(&h), Some("z"));
+    let h = help(r#"box() | translate(1, 2, 3, ‸)"#).unwrap();
+    assert_eq!(active(&h), None);
+    assert_eq!(piped_param(&h), Some("mesh"));
+  }
+
+  #[test]
+  fn kwargs_anywhere_in_the_call_follow_runtime_binding_order() {
+    let h = help(r#"box() | translate(‸1, x=0, z=0)"#).unwrap();
+    assert_eq!(active(&h), Some("y"));
+    assert_eq!(piped_param(&h), Some("mesh"));
+    let h = help(r#"box() | translate(x=0, 1, z=0, ‸)"#).unwrap();
+    assert_eq!(active(&h), None);
+    assert_eq!(piped_param(&h), Some("mesh"));
+  }
+
+  #[test]
+  fn unknown_inputs_keep_structural_information_without_picking_a_type() {
+    let h = help(r#"f = |diffuse| diffuse | render_texture(name="diffuse", ‸)"#).unwrap();
+    assert_eq!(piped_param(&h), Some("texture"));
+    assert_eq!(h.pipeline.as_ref().unwrap().ty, None);
+
+    let h = help(r#"f = |obj| obj | translate(v3(0, 1, 0), ‸)"#).unwrap();
+    assert_eq!(piped_param(&h), None, "mesh and light overloads disagree");
+    assert!(h.pipeline.is_some());
+  }
+
+  #[test]
+  fn complete_rhs_and_returned_callables_do_not_bind_outer_parameters() {
+    for src in [
+      r#"2 | mul(3, ‸4)"#,
+      r#"box() | box(‸)"#,
+      r#"2 | compose([add(1)], ‸)"#,
+    ] {
+      assert!(help(src).unwrap().pipeline.is_none(), "{src}");
+    }
+  }
+
+  #[test]
+  fn pipe_context_is_ast_owned_and_does_not_leak_into_nested_calls() {
+    let h = help(r#"box() | translate(v3(0, ‸1, 0))"#).unwrap();
+    assert_eq!(h.docs.name, "v3");
+    assert!(h.pipeline.is_none());
+    let h = help(r#"box() | scale(2) | translate(v3(0, 1, 0), ‸)"#).unwrap();
+    assert_eq!(piped_param(&h), Some("mesh"));
+    assert_eq!(h.pipeline.as_ref().unwrap().ty.as_deref(), Some("mesh"));
+    let h = help(
+      r#"// 2 | mul(
+mul(‸)"#,
+    )
+    .unwrap();
+    assert!(h.pipeline.is_none());
+    let h = help(
+      r#"box() |
+// preceding pipeline can span lines
+@trans(v3(0, 1, 0), ‸)"#,
+    )
+    .unwrap();
+    assert_eq!(piped_param(&h), Some("mesh"));
+  }
+
+  #[test]
+  fn incomplete_source_falls_back_to_ordinary_signature_help() {
+    let h =
+      help(r#"f = |diffuse: texture| diffuse | render_texture(name="diffuse", usage=‸)"#).unwrap();
+    assert_eq!(active(&h), Some("usage"));
+    assert!(h.pipeline.is_none());
   }
 }

@@ -15856,6 +15856,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Output height in texels"
           },
           ArgDef {
+            name: "local_t",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, `t` runs over `[0, 1]` separately along every subpath (each ring/stroke gets a full lap) instead of each subpath owning a slice of the global `[0, 1]` proportional to its share of the total length.  Use it for effects that must wrap seamlessly around every loop, e.g. `cos(t * 2 * pi)` on concentric rings."
+          },
+          ArgDef {
             name: "tileable",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Bool, ArgType::Numeric),
@@ -15877,7 +15884,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Max turning angle (degrees) per segment when discretizing curves.  When nil, curves are instead flattened to within 0.05 texels of the true curve (and at most 12° per segment), which is usually far fewer segments than the ambient 1° setting."
           },
         ],
-        description: "Along/across parameterization of a 2D path as a 2-channel `(t, n)` texture.  `t` is the global arc-length parameter (as used by `path_frame` / `trim_path`) of the nearest point on the path; `n` is the signed distance along the `path_frame` normal there: left of travel for open subpaths, inward for closed ones (so `n > 0` inside a closed shape while `path_sdf` is negative).  The 2D analog of `rail_sweep` UVs: stitches via `fract(t * count)` masked by `abs(n) < w`, gradients along a curve via a ramp on `t`.\n\n`t` jumps across the medial axis (texels equidistant from two parts of the path); that discontinuity is inherent to nearest-point parameterization.",
+        description: "Along/across parameterization of a 2D path as a 2-channel `(t, n)` texture.  `t` is the arc-length parameter of the nearest point on the path, global across all subpaths (as used by `path_frame` / `trim_path`) or per-subpath with `local_t=true`; `n` is the signed distance along the `path_frame` normal there: left of travel for open subpaths, inward for closed ones (so `n > 0` inside a closed shape while `path_sdf` is negative).  The 2D analog of `rail_sweep` UVs: stitches via `fract(t * count)` masked by `abs(n) < w`, gradients along a curve via a ramp on `t`.\n\n`t` jumps across the medial axis (texels equidistant from two parts of the path); that discontinuity is inherent to nearest-point parameterization.",
         return_type: &[ArgType::Texture],
       },
     ],

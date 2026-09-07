@@ -1,3 +1,4 @@
+import { closeCompletion, completionStatus } from '@codemirror/autocomplete';
 import { Prec, StateEffect, StateField, type Extension } from '@codemirror/state';
 import {
   EditorView,
@@ -11,6 +12,7 @@ import {
 import type { SignatureHelp } from './analysisClient';
 import { getClient, posToLc, type GetAmbientSource, type GetIncludePrelude } from './analysisShared';
 import { renderDocsInto } from './builtinDocs';
+import { isEditingArgument } from './editorContext';
 
 interface SigHelpState {
   help: SignatureHelp | null;
@@ -20,13 +22,20 @@ interface SigHelpState {
   dismissedKey: string | null;
   /** Start of the cursor's line; the tooltip sits above it. */
   anchor: number;
+  /** Keep call/overload state while waiting for help at the new cursor position. */
+  pending: boolean;
+  /** Completion and word editing temporarily take precedence over signature help. */
+  suppressed: boolean;
+  /** An explicit request can show help even in the middle of an argument. */
+  explicit: boolean;
 }
 
 const callKey = (help: SignatureHelp | null) => (help ? `${help.call_line}:${help.call_col}` : null);
-const isShown = (s: SigHelpState) => s.help !== null && callKey(s.help) !== s.dismissedKey;
+const isShown = (s: SigHelpState) =>
+  s.help !== null && !s.pending && !s.suppressed && callKey(s.help) !== s.dismissedKey;
 const activeSignature = (s: SigHelpState) => s.override ?? s.help!.active_signature;
 
-const setHelp = StateEffect.define<{ help: SignatureHelp | null; explicit: boolean }>();
+export const setHelp = StateEffect.define<{ help: SignatureHelp | null; explicit: boolean }>();
 const selectSignature = StateEffect.define<number>();
 const dismissHelp = StateEffect.define();
 const requestHelp = StateEffect.define();
@@ -40,6 +49,7 @@ const renderKey = (s: SigHelpState) =>
         activeSignature(s),
         s.help.active_params,
         s.help.compatible,
+        s.help.pipeline,
       ])
     : '';
 
@@ -64,6 +74,7 @@ const createTooltip = (view: EditorView): TooltipView => {
       activeSignature: activeSignature(s),
       activeParams: s.help.active_params,
       compatible: s.help.compatible,
+      pipeline: s.help.pipeline,
       compact: true,
       onSelectSignature: ix => view.dispatch({ effects: selectSignature.of(ix) }),
     });
@@ -72,10 +83,22 @@ const createTooltip = (view: EditorView): TooltipView => {
   return { dom, update: render };
 };
 
-const sigHelpField = StateField.define<SigHelpState>({
-  create: () => ({ help: null, override: null, dismissedKey: null, anchor: 0 }),
+export const sigHelpField = StateField.define<SigHelpState>({
+  create: () => ({
+    help: null,
+    override: null,
+    dismissedKey: null,
+    anchor: 0,
+    pending: false,
+    suppressed: false,
+    explicit: false,
+  }),
   update(s, tr) {
     let next = s;
+    if (tr.docChanged || (tr.selection && !tr.selection.eq(tr.startState.selection))) {
+      // Hide stale argument highlights immediately, including during the request debounce.
+      next = { ...next, pending: true, explicit: false };
+    }
     for (const e of tr.effects) {
       if (e.is(setHelp)) {
         const { help, explicit } = e.value;
@@ -83,6 +106,8 @@ const sigHelpField = StateField.define<SigHelpState>({
         next = {
           ...next,
           help,
+          pending: false,
+          explicit,
           override: sameCall ? next.override : null,
           dismissedKey: explicit || help === null ? null : next.dismissedKey,
         };
@@ -91,6 +116,14 @@ const sigHelpField = StateField.define<SigHelpState>({
       } else if (e.is(dismissHelp)) {
         next = { ...next, dismissedKey: callKey(next.help) };
       }
+    }
+    const { main } = tr.state.selection;
+    // A complete identifier is still being edited until the cursor leaves the word. This
+    // also keeps help hidden when completion has no matches, or was dismissed with Escape.
+    const atWord = isEditingArgument(tr.state);
+    const suppressed = !main.empty || completionStatus(tr.state) !== null || (!next.explicit && atWord);
+    if (suppressed !== next.suppressed) {
+      next = { ...next, suppressed };
     }
     if (next.help) {
       const anchor = tr.state.doc.lineAt(tr.state.selection.main.head).from;
@@ -115,8 +148,10 @@ const buildRequestPlugin = (getIncludePrelude: GetIncludePrelude, getAmbientSour
 
       update(u: ViewUpdate) {
         const explicit = u.transactions.some(tr => tr.effects.some(e => e.is(requestHelp)));
-        // Typing opens help; plain cursor movement only updates it while it's already open.
-        const relevant = explicit || u.docChanged || (u.selectionSet && isShown(u.state.field(sigHelpField)));
+        // Keep tracking a call while completion temporarily hides its help, so moving back
+        // to an argument boundary can restore it without another edit.
+        const relevant =
+          explicit || u.docChanged || (u.selectionSet && u.state.field(sigHelpField).help !== null);
         if (relevant) {
           this.explicit ||= explicit;
           this.schedule();
@@ -124,6 +159,7 @@ const buildRequestPlugin = (getIncludePrelude: GetIncludePrelude, getAmbientSour
       }
 
       private schedule() {
+        this.seq++;
         if (this.timer !== null) {
           clearTimeout(this.timer);
         }
@@ -134,7 +170,7 @@ const buildRequestPlugin = (getIncludePrelude: GetIncludePrelude, getAmbientSour
         this.timer = null;
         const explicit = this.explicit;
         this.explicit = false;
-        const seq = ++this.seq;
+        const seq = this.seq;
         const { state } = this.view;
         const head = state.selection.main.head;
         const [line, col] = posToLc(state.doc, head);
@@ -201,6 +237,7 @@ const sigHelpKeymap = Prec.high(
     {
       key: 'Ctrl-Shift-Space',
       run: view => {
+        closeCompletion(view);
         view.dispatch({ effects: requestHelp.of(null) });
         return true;
       },

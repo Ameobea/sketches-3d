@@ -1,4 +1,4 @@
-import type { BuiltinDocs, ParamDocs, SignatureDocs } from './analysisClient';
+import type { BuiltinDocs, ParamDocs, PipelineHelp, SignatureDocs } from './analysisClient';
 
 export interface DocsRenderOpts {
   activeSignature: number;
@@ -6,6 +6,7 @@ export interface DocsRenderOpts {
   activeParams?: (number | null)[];
   /** Per-signature: whether the args typed so far could still fit it. */
   compatible?: boolean[];
+  pipeline?: PipelineHelp;
   /** Signature help mode: signature line + the active param's docs only. */
   compact?: boolean;
   onSelectSignature?: (ix: number) => void;
@@ -58,7 +59,8 @@ const renderSignatureLine = (
   name: string,
   sig: SignatureDocs,
   activeParam: number | null,
-  withDefaults: boolean
+  withDefaults: boolean,
+  pipedParam: number | null = null
 ) => {
   const line = el('div', 'cm-docs-sig');
   line.append(el('span', 'cm-docs-fn', name), '(');
@@ -67,6 +69,10 @@ const renderSignatureLine = (
       line.append(', ');
     }
     const span = el('span', i === activeParam ? 'cm-docs-param cm-docs-param-active' : 'cm-docs-param');
+    if (i === pipedParam) {
+      span.classList.add('cm-docs-param-piped');
+      span.title = 'Supplied by the pipeline';
+    }
     span.append(...renderParamHead(p, withDefaults));
     line.append(span);
   });
@@ -108,13 +114,15 @@ export const renderDocsInto = (root: HTMLElement, docs: BuiltinDocs, opts: DocsR
   const ix = Math.min(opts.activeSignature, count - 1);
   const sig = docs.signatures[ix];
   const activeParam = opts.activeParams?.[ix] ?? null;
+  const pipeline = opts.pipeline;
+  const pipedParam = pipeline?.params[ix] ?? null;
 
   const header = el('div', 'cm-docs-header');
   if (count > 1) {
     header.append(renderNav(ix, count, !!opts.compact, i => opts.onSelectSignature?.(i)));
   }
   // the full view lists defaults per param below; keep its header compact
-  const sigLine = renderSignatureLine(docs.name, sig, activeParam, !!opts.compact);
+  const sigLine = renderSignatureLine(docs.name, sig, activeParam, !!opts.compact, pipedParam);
   if (opts.compatible?.[ix] === false) {
     sigLine.classList.add('cm-docs-sig-incompatible');
     sigLine.title = "The arguments given so far don't fit this overload";
@@ -123,6 +131,26 @@ export const renderDocsInto = (root: HTMLElement, docs: BuiltinDocs, opts: DocsR
   root.append(header);
 
   if (opts.compact) {
+    if (pipeline) {
+      const line = el('div', 'cm-docs-pipeline');
+      const target = pipedParam === null ? null : sig.params[pipedParam];
+      if (target) {
+        line.append(el('code', '', target.name), ' ← ');
+      } else {
+        line.append(pipeline.uncertain ? 'Possible pipeline input: ' : 'Pipeline input: ');
+      }
+      line.append(el('code', '', pipeline.label), ` (${pipeline.ty ?? 'type unknown'})`);
+      root.append(line);
+      const kwargs = pipeline.available_kwargs[ix] ?? [];
+      if (activeParam === null && kwargs.length) {
+        const available = el('div', 'cm-docs-available-kwargs', 'Available keywords: ');
+        kwargs.forEach((name, i) => {
+          if (i) available.append(', ');
+          available.append(el('code', '', `${name}=`));
+        });
+        root.append(available);
+      }
+    }
     const p = activeParam === null ? null : sig.params[activeParam];
     if (p) {
       const line = el('div', 'cm-docs-active-param');
@@ -131,7 +159,7 @@ export const renderDocsInto = (root: HTMLElement, docs: BuiltinDocs, opts: DocsR
         line.append(' — ', renderRichText(p.description));
       }
       root.append(line);
-    } else if (sig.description) {
+    } else if (sig.description && !pipeline) {
       root.append(renderDescription(sig.description, 'cm-docs-desc cm-docs-desc-dim'));
     }
     return;

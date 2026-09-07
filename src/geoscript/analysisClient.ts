@@ -51,6 +51,15 @@ export interface CompletionItem {
   kind: string;
   detail: string;
   info: string;
+  boost?: number;
+}
+
+export interface PipelineHelp {
+  label: string;
+  ty?: string;
+  uncertain: boolean;
+  params: (number | null)[];
+  available_kwargs: string[][];
 }
 
 export interface SignatureHelp {
@@ -61,6 +70,7 @@ export interface SignatureHelp {
   compatible: boolean[];
   call_line: number;
   call_col: number;
+  pipeline?: PipelineHelp;
 }
 
 export interface DefinitionLocation {

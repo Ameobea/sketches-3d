@@ -286,11 +286,12 @@ pub(crate) fn path_uv_impl(
 ) -> Result<Value, ErrorStack> {
   let ix = ArgIx {
     fill_rule: None,
-    tileable: 3,
-    wrap: 4,
-    curve_angle: 5,
+    tileable: 4,
+    wrap: 5,
+    curve_angle: 6,
   };
   let input = RasterInput::from_args(ctx, arg_refs, args, kwargs, ix, "path_uv")?;
+  let local_t = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
   let (w, h) = (input.w, input.h);
   let (segs, lens, flips) = input.segments();
   let field = input.field(segs);
@@ -301,12 +302,12 @@ pub(crate) fn path_uv_impl(
   for (ix, hit) in hits.iter().enumerate() {
     let seg = &segs[hit.seg as usize];
     let sp = seg.subpath as usize;
-    let (t0, t1) = input.t_spans[sp];
     let frac = if lens[sp] > 0. {
       (seg.len_before + hit.s * seg_lens[hit.seg as usize]) / lens[sp]
     } else {
       0.
     };
+    let (t0, t1) = if local_t { (0., 1.) } else { input.t_spans[sp] };
     t.push(t0 + (t1 - t0) * frac);
     let p = Vec2::new(
       ((ix % w) as f32 + 0.5) / w as f32,
@@ -498,6 +499,45 @@ uv_ccw = path_uv(ccw_sq, width=16, height=16)
     assert!(px(&get_tex(&ctx, "uv_cw"), 8, 8, 1) > 0.);
     assert!(px(&get_tex(&ctx, "uv_ccw"), 8, 8, 1) > 0.);
     assert!(px(&get_tex(&ctx, "uv_ccw"), 0, 8, 1) < 0.);
+  }
+
+  #[test]
+  fn local_t_restarts_on_every_subpath() {
+    let ctx = parse_and_eval_program(
+      r#"
+rings = build_path(path { circle(vec2(0.5, 0.5), 0.4) circle(vec2(0.5, 0.5), 0.2) })
+uv = path_uv(rings, width=64, height=64)
+uv_local = path_uv(rings, width=64, height=64, local_t=true)
+"#,
+    )
+    .unwrap();
+    let (uv, uv_local) = (get_tex(&ctx, "uv"), get_tex(&ctx, "uv_local"));
+    // Global t: the outer ring owns [0, 2/3) (perimeter ∝ radius), the inner ring [2/3, 1].
+    let (mut lo, mut hi) = (f32::INFINITY, f32::NEG_INFINITY);
+    for y in 0..64 {
+      for x in 0..64 {
+        let r = ((x as f32 + 0.5) / 64. - 0.5).hypot((y as f32 + 0.5) / 64. - 0.5);
+        let (t0, t1) = match r {
+          r if r < 0.2 => (2. / 3., 1.),
+          r if r > 0.4 => (0., 2. / 3.),
+          _ => continue,
+        };
+        let (t, lt) = (px(&uv, x, y, 0), px(&uv_local, x, y, 0));
+        assert!(t > t0 - 3e-3 && t < t1 + 3e-3, "({x},{y}) r={r} t={t}");
+        assert!(
+          (lt - (t - t0) / (t1 - t0)).abs() < 1e-2,
+          "({x},{y}) {lt} vs {t}"
+        );
+        if r < 0.2 {
+          lo = lo.min(lt);
+          hi = hi.max(lt);
+        }
+      }
+    }
+    assert!(
+      lo < 0.02 && hi > 0.98,
+      "inner ring local t spans {lo}..{hi}"
+    );
   }
 
   #[test]

@@ -1,4 +1,4 @@
-use geoscript::{ast::SourceLoc, Sym};
+use geoscript::{ast::SourceLoc, ty::AbstractType, Sym};
 
 /// What kind of symbol definition this is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,4 +62,18 @@ pub struct FunctionCallInfo {
   /// match could be determined (shadowed call, Unknown arg types, partial application, or
   /// no overload matches).
   pub matched_sig_ix: Option<usize>,
+  /// Types of the written arguments, before any pipeline application.
+  pub arg_types: Vec<AbstractType>,
+  pub kwarg_types: Vec<(Sym, AbstractType)>,
+  /// A bare identifier can also be an unfinished keyword name in completion queries.
+  pub arg_is_ident: Vec<bool>,
+  /// Present only on the direct RHS call of a parsed `|` expression.
+  pub pipeline: Option<PipelineInput>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PipelineInput {
+  pub ty: AbstractType,
+  /// A short AST-derived label; complex expressions use a generic label.
+  pub label: String,
 }

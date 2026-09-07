@@ -4,7 +4,9 @@ use geoscript::{ast::PATH_BLOCK_REWRITE_MAP, builtins::fn_defs::fn_sigs};
 use crate::{
   analysis::Analysis,
   format::{format_arg_type, format_signature_oneliner},
-  parse_lenient, resolve_draw_command, source_scan, AnalysisCtx, CompletionItem, SymbolKind,
+  parse_lenient,
+  pipeline_help::pipeline_guidance,
+  resolve_draw_command, source_scan, AnalysisCtx, CompletionItem, SymbolKind,
 };
 
 pub(crate) fn completions(
@@ -18,9 +20,9 @@ pub(crate) fn completions(
   let mut items = Vec::new();
 
   // Even if parsing fails, we can still offer builtin completions
-  if let Some(program) = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src) {
-    let analysis = Analysis::build(&ctx.eval_ctx, &program);
-
+  let analysis = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src)
+    .map(|program| Analysis::build(&ctx.eval_ctx, &program));
+  if let Some(analysis) = &analysis {
     // Add in-scope user-defined variables
     for def in analysis.definitions_visible_at(&ctx.eval_ctx, target_line, target_col) {
       let Some(name) = ctx
@@ -40,6 +42,7 @@ pub(crate) fn completions(
         },
         detail: String::new(),
         info: String::new(),
+        boost: 0,
       });
     }
   }
@@ -72,6 +75,7 @@ pub(crate) fn completions(
       kind: "function".into(),
       detail,
       info,
+      boost: 0,
     });
   }
 
@@ -80,7 +84,14 @@ pub(crate) fn completions(
   }
 
   // If we're inside a function call, also suggest kwarg names for that function
-  add_kwarg_completions(ctx, src, target_line, target_col, &mut items);
+  add_kwarg_completions(
+    ctx,
+    src,
+    target_line,
+    target_col,
+    analysis.as_ref(),
+    &mut items,
+  );
 
   items
 }
@@ -104,6 +115,7 @@ fn add_draw_command_completions(items: &mut Vec<CompletionItem>) {
       kind: "function".into(),
       detail: format_signature_oneliner(name, sig),
       info: sig.description.to_string(),
+      boost: 0,
     });
   }
 }
@@ -115,6 +127,7 @@ fn add_kwarg_completions(
   src: &str,
   target_line: u32,
   target_col: u32,
+  analysis: Option<&Analysis>,
   items: &mut Vec<CompletionItem>,
 ) {
   let Some(offset) = source_scan::line_col_to_offset(src, target_line, target_col) else {
@@ -130,6 +143,15 @@ fn add_kwarg_completions(
     return;
   };
 
+  let call_pos = source_scan::offset_to_line_col(src, call_info.callee_offset);
+  let guidance = analysis.and_then(|analysis| {
+    let info = analysis
+      .function_calls
+      .iter()
+      .find(|info| ctx.eval_ctx.resolve_loc(info.loc) == call_pos)?;
+    pipeline_guidance(fn_def.signatures, info, &call_info, true)
+  });
+
   // Collect all unique kwarg names across all signatures
   let mut seen = FxHashSet::default();
   for sig in fn_def.signatures {
@@ -142,7 +164,47 @@ fn add_kwarg_completions(
         kind: "property".to_owned(),
         detail: format_arg_type(arg),
         info: arg.description.to_owned(),
+        boost: guidance.as_ref().map_or(0, |g| {
+          if g.help.available_kwargs[g.preferred_signature]
+            .iter()
+            .any(|name| name == arg.name)
+          {
+            20
+          } else if g
+            .help
+            .available_kwargs
+            .iter()
+            .any(|names| names.iter().any(|name| name == arg.name))
+          {
+            10
+          } else {
+            -10
+          }
+        }),
       });
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn pipeline_keywords_are_ranked_but_all_completions_remain_available() {
+    for suffix in ["", "us"] {
+      let src = format!(
+        r#"diffuse = texture(8, 8, |uv| uv.x)
+diffuse | render_texture(name="diffuse", {suffix})"#
+      );
+      let offset = src.len() - 1;
+      let (line, col) = source_scan::offset_to_line_col(&src, offset);
+      let items = AnalysisCtx::new().completions(&src, line, col, false, "");
+      let boost = |name| items.iter().find(|item| item.label == name).unwrap().boost;
+      assert!(boost("usage=") > boost("texture="));
+      assert!(boost("usage=") > boost("name="));
+      assert!(items.iter().any(|item| item.label == "diffuse"));
+      assert!(items.iter().any(|item| item.label == "build_path"));
     }
   }
 }

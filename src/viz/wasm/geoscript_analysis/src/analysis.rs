@@ -16,11 +16,11 @@ use geoscript::{
     classify_pipe_rhs_call, infer_bitor_op_result_type, infer_map_op_result_type,
     infer_reduce_fold_result, resolve_builtin_call, resolve_paf_call, CallResolution, PipeRhsKind,
   },
-  ArgType, Callable, EvalCtx, Program, Sym,
+  ArgType, Callable, EvalCtx, Program, Sym, Value,
 };
 
 use crate::{
-  scope::{FunctionCallInfo, SourceRange, SymbolDef, SymbolKind, SymbolRef},
+  scope::{FunctionCallInfo, PipelineInput, SourceRange, SymbolDef, SymbolKind, SymbolRef},
   AnalysisDiagnostic, DiagnosticSeverity,
 };
 
@@ -781,7 +781,7 @@ impl<'a> AnalysisWalker<'a> {
             call,
             &arg_types,
             &kwarg_types,
-            lhs_ty,
+            lhs_ty.clone(),
             *loc,
           );
 
@@ -793,6 +793,32 @@ impl<'a> AnalysisWalker<'a> {
             kwarg_names: call.kwargs.keys().copied().collect(),
             is_shadowed,
             matched_sig_ix,
+            arg_types,
+            kwarg_types,
+            arg_is_ident: call
+              .args
+              .iter()
+              .map(|arg| matches!(arg, Expr::Ident { .. }))
+              .collect(),
+            pipeline: Some(PipelineInput {
+              ty: lhs_ty,
+              label: match lhs {
+                Expr::Ident { name, .. } => self
+                  .ctx
+                  .interned_symbols
+                  .with_resolved(*name, str::to_owned)
+                  .unwrap_or_else(|| "expression".to_owned()),
+                Expr::Literal {
+                  value: Value::Int(value),
+                  ..
+                } => value.to_string(),
+                Expr::Literal {
+                  value: Value::Float(value),
+                  ..
+                } => value.to_string(),
+                _ => "expression".to_owned(),
+              },
+            }),
           });
 
           return return_ty;
@@ -975,6 +1001,14 @@ impl<'a> AnalysisWalker<'a> {
           kwarg_names: call.kwargs.keys().copied().collect(),
           is_shadowed,
           matched_sig_ix,
+          arg_types,
+          kwarg_types,
+          arg_is_ident: call
+            .args
+            .iter()
+            .map(|arg| matches!(arg, Expr::Ident { .. }))
+            .collect(),
+          pipeline: None,
         });
 
         return_ty

@@ -14,6 +14,7 @@ import {
 import type { AnalysisClient } from './analysisClient';
 import { getClient, lcToPos, posToLc, type GetAmbientSource, type GetIncludePrelude } from './analysisShared';
 import { renderDocsInto, renderRichText } from './builtinDocs';
+import { isNonCodePosition } from './editorContext';
 import { buildSignatureHelpExtension } from './signatureHelp';
 
 // ---------------------------------------------------------------------------
@@ -108,6 +109,7 @@ const buildHoverExtension = (
 const buildCompletionSource =
   (getIncludePrelude: GetIncludePrelude, getAmbientSource: GetAmbientSource) =>
   async (context: CompletionContext): Promise<CompletionResult | null> => {
+    if (isNonCodePosition(context.state, context.pos)) return null;
     const word = context.matchBefore(/\w*/);
     if (!context.explicit && (!word || word.text.length < 1)) return null;
 
@@ -129,6 +131,7 @@ const buildCompletionSource =
         type: item.kind, // "function" | "variable" | "keyword" — CM6 uses these for icons
         detail: item.detail || undefined,
         info: item.info || undefined,
+        boost: item.boost,
       })),
       validFor: /^\w*$/,
     };
@@ -365,6 +368,9 @@ const analysisTheme = EditorView.baseTheme({
     boxShadow: '0 0 0 1px rgba(255,255,255,0.25)',
   },
   '.cm-docs-param-active .cm-docs-type, .cm-docs-param-active .cm-docs-default': { color: '#bbb' },
+  '.cm-docs-param-piped': { borderBottom: '1px dotted #91adad' },
+  '.cm-docs-pipeline': { marginTop: '5px', color: '#91adad', fontSize: '12px' },
+  '.cm-docs-available-kwargs': { marginTop: '4px', color: '#bbb', fontSize: '12px' },
   '.cm-docs-sig-incompatible': { opacity: '0.55' },
   '.cm-docs-nav': {
     display: 'inline-flex',
