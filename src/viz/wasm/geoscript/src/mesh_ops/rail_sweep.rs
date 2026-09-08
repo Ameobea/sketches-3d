@@ -1,8 +1,6 @@
 use crate::ValueMap;
 use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
-use bitvec::prelude::*;
-
 use fxhash::FxHashMap;
 use mesh::{
   linked_mesh::{
@@ -28,6 +26,7 @@ use super::fku_stitch::{
   uniform_stitch_rows,
 };
 use super::helpers::{compute_centroid, vertices_are_collapsed};
+use super::profile_creases::{measure_profile_creases, ProfileCrease};
 
 const FRAME_EPSILON: f32 = 1e-6;
 const COLLAPSE_EPSILON: f32 = 1e-5;
@@ -234,8 +233,8 @@ struct LoopInfo {
   /// Loop-local sample t-values, kept so the FKU stitcher's t-similarity penalty stays meaningful
   /// within each loop.
   t_values: Option<Vec<f32>>,
-  /// Bitmask marking which samples are critical points (sharp seam vertices) for the DP stitcher.
-  critical_mask: Option<BitVec>,
+  /// Crease strengths in [0, 1] for the DP stitcher (binary in legacy mode).
+  critical_strengths: Option<Vec<f32>>,
   /// Sign of the loop's shoelace area in profile space (CCW = true), validated against parity.
   winding_positive: bool,
   /// Nesting depth among this ring's loops (0 = outermost). Even = outer (CCW), odd = hole (CW).
@@ -740,24 +739,13 @@ fn sample_one_loop(
   budget: usize,
   use_adaptive: bool,
   fku_stitching: bool,
+  crease_angle_threshold: Option<f32>,
   verts: &mut Vec<Vec3>,
   uvs: &mut Vec<[f32; 2]>,
   tangents: &mut Vec<Vec3>,
 ) -> Result<(LoopInfo, Vec<Vec2>), ErrorStack> {
   let (lo, hi) = spec.span;
   let width = (hi - lo).max(1e-9);
-
-  // Filter the ring's global critical points to this loop's span and remap to loop-local t.
-  let mut local_crit: Vec<f32> = global_critical
-    .iter()
-    .copied()
-    .filter(|&c| c >= lo - 1e-6 && c <= hi + 1e-6)
-    .map(|c| ((c - lo) / width).clamp(0.0, 1.0))
-    .collect();
-  local_crit.push(0.0);
-  local_crit.push(1.0);
-  local_crit.sort_by(f32::total_cmp);
-  local_crit.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
 
   // Global t exactly on a shared subpath boundary resolves to the *earlier* subpath, so a loop
   // starting at an interior boundary would sample its neighbor. Pad interior span ends inward by
@@ -767,6 +755,47 @@ fn sample_one_loop(
   let sample_lo = lo + lo_pad;
   let sample_width = (width - lo_pad - hi_pad).max(1e-9);
   let to_global = |t_local: f32| sample_lo + t_local * sample_width;
+
+  // Filter/remap the global guides to this loop. In measured mode, invert the same padded
+  // span used for evaluation so probes actually land on corners. Preserve legacy placement
+  // when the option is unset.
+  let (guide_lo, guide_width) = if crease_angle_threshold.is_some() {
+    (sample_lo, sample_width)
+  } else {
+    (lo, width)
+  };
+  let mut local_crit: Vec<f32> = global_critical
+    .iter()
+    .copied()
+    .filter(|&c| c >= lo - 1e-6 && c <= hi + 1e-6)
+    .map(|c| ((c - guide_lo) / guide_width).clamp(0., 1.))
+    .chain([0., 1.])
+    .collect();
+  local_crit.sort_by(f32::total_cmp);
+  local_crit.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+
+  let creases = if let Some(threshold) = crease_angle_threshold {
+    let mut creases = measure_profile_creases(&local_crit, spec.closed, |t| {
+      sample_profile_offset(ctx, ring, to_global(t), -1)
+    })?;
+    // A padded multi-subpath boundary isn't the exact seam. Don't infer smoothness there from
+    // probes that span the small omitted part of the loop.
+    if lo_pad > 0. || hi_pad > 0. {
+      for c in &mut creases {
+        if c.t == 0. || c.t == 1. {
+          c.turn = None;
+        }
+      }
+    }
+    creases.retain(|c| c.retain(threshold));
+    local_crit = creases.iter().map(|c| c.t).collect();
+    creases
+  } else {
+    local_crit
+      .iter()
+      .map(|&t| ProfileCrease { t, turn: None })
+      .collect()
+  };
 
   let mut samples = if use_adaptive {
     adaptive_sample_fallible(
@@ -788,15 +817,18 @@ fn sample_one_loop(
     samples.push(1.0);
   }
 
-  let crit_mask = {
-    let mut mask = bitvec![0; samples.len()];
-    for (i, &t) in samples.iter().enumerate() {
-      if local_crit.iter().any(|&c| (t - c).abs() < 1e-6) {
-        mask.set(i, true);
-      }
-    }
-    Some(mask)
-  };
+  let critical_strengths = Some(
+    samples
+      .iter()
+      .map(|&t| {
+        creases
+          .iter()
+          .filter(|c| (t - c.t).abs() < 1e-6)
+          .map(|c| c.strength())
+          .fold(0f32, f32::max)
+      })
+      .collect(),
+  );
 
   let start = verts.len();
   let mut pts2d = Vec::with_capacity(samples.len());
@@ -817,7 +849,7 @@ fn sample_one_loop(
       winding_positive: shoelace_area(&pts2d) > 0.0,
       depth: 0,
       t_values: Some(samples),
-      critical_mask: crit_mask,
+      critical_strengths,
     },
     pts2d,
   ))
@@ -1242,7 +1274,7 @@ pub fn rail_sweep(
           count: 1,
           closed: true,
           t_values: None,
-          critical_mask: None,
+          critical_strengths: None,
           winding_positive: true,
           depth: 0,
         }],
@@ -1262,7 +1294,7 @@ pub fn rail_sweep(
           count: ring_resolution,
           closed: true,
           t_values: None,
-          critical_mask: None,
+          critical_strengths: None,
           winding_positive: true,
           depth: 0,
         }],
@@ -1386,6 +1418,7 @@ fn rail_sweep_dynamic(
   adaptive_profile_sampling: bool,
   split_seams: bool,
   cap_uv_scale: Vec2,
+  crease_angle_threshold: Option<f32>,
 ) -> Result<LinkedMesh<()>, ErrorStack> {
   let frames = calculate_spine_frames(spine_points, frame_mode, closed)?;
   let u_denom = (frames.len() - 1) as f32;
@@ -1490,7 +1523,7 @@ fn rail_sweep_dynamic(
           count: 1,
           closed: ring.profile_data.loops[0].closed,
           t_values: None,
-          critical_mask: None,
+          critical_strengths: None,
           winding_positive: true,
           depth: 0,
         }],
@@ -1518,6 +1551,7 @@ fn rail_sweep_dynamic(
         budget,
         use_adaptive,
         fku_stitching,
+        crease_angle_threshold,
         &mut verts,
         &mut uvs,
         &mut tangents,
@@ -1601,8 +1635,8 @@ fn rail_sweep_dynamic(
           pts_b,
           la.t_values.as_deref(),
           lb.t_values.as_deref(),
-          la.critical_mask.as_deref(),
-          lb.critical_mask.as_deref(),
+          la.critical_strengths.as_deref(),
+          lb.critical_strengths.as_deref(),
           la.start,
           lb.start,
           v_closed,
@@ -2317,6 +2351,18 @@ pub(crate) fn rail_sweep_impl(
       let adaptive_profile_sampling = arg_refs[12].resolve(args, kwargs).as_bool().unwrap();
       let split_seams = arg_refs[13].resolve(args, kwargs).as_bool().unwrap();
       let cap_uv_scale = *arg_refs[14].resolve(args, kwargs).as_vec2().unwrap();
+      let crease_angle_threshold = match arg_refs[15].resolve(args, kwargs) {
+        Value::Nil => None,
+        value => {
+          let degrees = value.as_float().unwrap();
+          if !degrees.is_finite() || !(0. ..=180.).contains(&degrees) {
+            return Err(ErrorStack::new(
+              "`crease_angle_threshold_deg` must be finite and between 0 and 180",
+            ));
+          }
+          Some(degrees.to_radians())
+        }
+      };
 
       let use_adaptive_spine = is_adaptive_spine_scheme(&spine_sampling_scheme_val);
       let explicit_passthrough = is_passthrough_spine_scheme(&spine_sampling_scheme_val);
@@ -2663,6 +2709,7 @@ pub(crate) fn rail_sweep_impl(
         adaptive_profile_sampling,
         split_seams,
         cap_uv_scale,
+        crease_angle_threshold,
       )?;
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -3534,6 +3581,7 @@ rail_sweep(
       false,
       false,
       Vec2::new(1., 1.),
+      None,
     )
     .unwrap();
 
@@ -3667,6 +3715,7 @@ rail_sweep(
       false,
       false,
       Vec2::new(1., 1.),
+      None,
     )
     .unwrap();
 
@@ -3783,6 +3832,7 @@ rail_sweep(
       false, // adaptive off -> uniform sampling
       false,
       Vec2::new(1., 1.),
+      None,
     )
     .unwrap();
 
@@ -3845,6 +3895,107 @@ mesh = rail_sweep(
     Ok(Rc::clone(
       &mesh_val.as_mesh().expect("`mesh` must be a mesh").mesh,
     ))
+  }
+
+  #[test]
+  fn rail_sweep_crease_strength_releases_flat_lerp_guides() {
+    let build = |mix: f32, threshold: &str, adaptive: bool| {
+      eval_rail_sweep_mesh(&format!(
+        r#"
+flat = path() | move(-0.74, 0) | line(1.26, 0)
+corner = path() | move(-0.74, 0.296) | line(0, 0) | line(1.26, 0.504)
+mesh = rail_sweep(
+  spine_resolution=3, ring_resolution=16,
+  spine=[v3(0,0,0), v3(0,0,1), v3(0,0,2)],
+  dynamic_profile=|u| {{
+    p = lerp_paths(flat, corner, {mix})
+    {{ sampler: p, closed: false }}
+  }},
+  adaptive_profile_sampling={adaptive}, crease_angle_threshold_deg={threshold},
+)
+"#
+      ))
+      .unwrap()
+    };
+    let has_guide = |mesh: &mesh::LinkedMesh<()>| {
+      mesh
+        .vertices
+        .keys()
+        .any(|k| (mesh.vertex_channels["uv"].get(k).unwrap()[1] - 0.37).abs() < 1e-5)
+    };
+    for adaptive in [false, true] {
+      for mix in [0., 0.001, 1.] {
+        let legacy = build(mix, "nil", adaptive);
+        let weighted = build(mix, "0", adaptive);
+        let filtered = build(mix, "1", adaptive);
+        assert!(
+          has_guide(&legacy),
+          "legacy retains inherited guide: mix={mix}"
+        );
+        assert!(has_guide(&weighted), "threshold 0 retains guide: mix={mix}");
+        assert_eq!(
+          has_guide(&filtered),
+          mix == 1.,
+          "only visible corner reserves a sample: mix={mix}, adaptive={adaptive}"
+        );
+        for mesh in [&legacy, &weighted, &filtered] {
+          mesh.check_is_manifold::<false>().unwrap();
+          let uv = &mesh.vertex_channels["uv"];
+          for u in [0., 1., 2.] {
+            for v in [0., 1.] {
+              assert!(
+                mesh.vertices.keys().any(|k| {
+                  let p = uv.get(k).unwrap();
+                  (p[0] - u).abs() < 1e-5 && (p[1] - v).abs() < 1e-5
+                }),
+                "open endpoints must survive"
+              );
+            }
+          }
+        }
+        if adaptive {
+          assert_eq!(
+            legacy.vertices.len(),
+            filtered.vertices.len(),
+            "adaptive budget is redistributed, not reduced"
+          );
+        }
+      }
+    }
+  }
+
+  #[test]
+  fn rail_sweep_crease_threshold_validation() {
+    for threshold in [-1, 181] {
+      let src = format!(
+        r#"
+mesh = rail_sweep(spine_resolution=2, ring_resolution=8,
+  spine=[v3(0,0,0),v3(0,0,1)], profile=path() | move(0,0) | line(1,0),
+  crease_angle_threshold_deg={threshold})
+"#
+      );
+      let err = eval_rail_sweep_mesh(&src)
+        .err()
+        .expect("invalid threshold must fail");
+      assert!(format!("{err:?}").contains("crease_angle_threshold_deg"));
+    }
+  }
+
+  #[test]
+  fn rail_sweep_measured_creases_multiple_loops() {
+    let mesh = eval_rail_sweep_mesh(
+      r#"
+mesh = rail_sweep(spine_resolution=3, ring_resolution=[24,32],
+  spine=[v3(0,0,0),v3(0,0,1),v3(0,0,2)], capped=false,
+  profile=path() | move(-2,-1) | line(-1,-1) | line(-1,1) | line(-2,1) | close
+    | move(1,-1) | line(2,-1) | line(2,1) | line(1,1) | close,
+  crease_angle_threshold_deg=1)
+"#,
+    )
+    .unwrap();
+    mesh.check_is_manifold::<false>().unwrap();
+    assert_eq!(mesh.connected_components().len(), 2);
+    assert_eq!(mesh.vertices.len(), 3 * (24 + 32));
   }
 
   /// Two disjoint CCW squares swept along a straight spine (uncapped) build two independent open

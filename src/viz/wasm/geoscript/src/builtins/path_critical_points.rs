@@ -4,6 +4,81 @@ use crate::Vec2;
 
 pub(crate) type VertexSet = FxHashSet<(u32, u32)>;
 
+pub(crate) fn vertex_key(p: Vec2) -> (u32, u32) {
+  // Boolean kernels can change the sign bit of zero without moving a vertex.
+  (
+    if p.x == 0. { 0 } else { p.x.to_bits() },
+    if p.y == 0. { 0 } else { p.y.to_bits() },
+  )
+}
+
+/// Restore explicit input anchors on a boolean's surviving boundary. Apply this *after* the
+/// geometry-only memo lookup so identical polygons with different flags cannot contaminate
+/// one another. Interior/clipped-away anchors are discarded. Collinear anchors simplified
+/// out by the kernel are reinserted without changing the boundary geometry.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn restore_boundary_anchors(
+  paths: &mut [Vec<Vec2>],
+  flags: &mut [Vec<bool>],
+  source: &[Vec2],
+) {
+  let source_keys: VertexSet = source.iter().map(|&p| vertex_key(p)).collect();
+  let present: VertexSet = paths.iter().flatten().map(|&p| vertex_key(p)).collect();
+  let mut missing: Vec<Vec2> = source
+    .iter()
+    .copied()
+    .filter(|&p| !present.contains(&vertex_key(p)))
+    .collect();
+  missing.sort_unstable_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+  missing.dedup();
+  for (path, anchors) in paths.iter_mut().zip(flags) {
+    for (&p, flag) in path.iter().zip(anchors.iter_mut()) {
+      *flag |= source_keys.contains(&vertex_key(p));
+    }
+    if missing.is_empty() || path.len() < 2 {
+      continue;
+    }
+    let mut rebuilt = Vec::with_capacity(path.len());
+    let mut rebuilt_flags = Vec::with_capacity(path.len());
+    let mut insertions = Vec::new();
+    for i in 0..path.len() {
+      let a = path[i];
+      let b = path[(i + 1) % path.len()];
+      rebuilt.push(a);
+      rebuilt_flags.push(anchors[i]);
+      let start = missing.partition_point(|p| p.x < a.x.min(b.x));
+      let end = missing.partition_point(|p| p.x <= a.x.max(b.x));
+      let edge = b.cast::<f64>() - a.cast::<f64>();
+      let len_sq = edge.norm_squared();
+      if len_sq == 0. {
+        continue;
+      }
+      insertions.clear();
+      for &p in &missing[start..end] {
+        if p.y < a.y.min(b.y) || p.y > a.y.max(b.y) {
+          continue;
+        }
+        let delta = p.cast::<f64>() - a.cast::<f64>();
+        let cross = edge.x * delta.y - edge.y * delta.x;
+        let t = delta.dot(&edge) / len_sq;
+        // Do not snap nearby, distinct features onto this edge: only restore points that
+        // lie on the output segment, up to f64 arithmetic roundoff on f32 coordinates.
+        let roundoff = 4. * f64::EPSILON * (edge.x * delta.y).abs().max((edge.y * delta.x).abs());
+        if cross.abs() <= roundoff && t > 0. && t < 1. {
+          insertions.push((t, p));
+        }
+      }
+      insertions.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+      for &(_, p) in &insertions {
+        rebuilt.push(p);
+        rebuilt_flags.push(true);
+      }
+    }
+    *path = rebuilt;
+    *anchors = rebuilt_flags;
+  }
+}
+
 pub(crate) struct CriticalPointConfig {
   pub angle_threshold: f32,
   pub segment_fraction: f32,
@@ -34,7 +109,7 @@ pub(crate) fn collect_vertex_set(coords: &[f32]) -> VertexSet {
   let mut set = VertexSet::default();
   let mut i = 0;
   while i + 1 < coords.len() {
-    set.insert((coords[i].to_bits(), coords[i + 1].to_bits()));
+    set.insert(vertex_key(Vec2::new(coords[i], coords[i + 1])));
     i += 2;
   }
   set
@@ -45,7 +120,7 @@ pub(crate) fn collect_vertex_set_multi(a: &[f32], b: &[f32]) -> VertexSet {
   let mut set = collect_vertex_set(a);
   let mut i = 0;
   while i + 1 < b.len() {
-    set.insert((b[i].to_bits(), b[i + 1].to_bits()));
+    set.insert(vertex_key(Vec2::new(b[i], b[i + 1])));
     i += 2;
   }
   set
@@ -262,7 +337,7 @@ pub(crate) fn detect_critical_vertices(
           if is_critical[i] {
             continue;
           }
-          let key = (path[i].x.to_bits(), path[i].y.to_bits());
+          let key = vertex_key(path[i]);
           if !pre_op.contains(&key) {
             let t_i = cumulative[i] / total_length;
             is_critical[i] = true;
@@ -279,6 +354,68 @@ pub(crate) fn detect_critical_vertices(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn boolean_anchor_restoration_keeps_boundary_features_only() {
+    let v = Vec2::new;
+    let outline = vec![v(0., 0.), v(4., 0.), v(4., 4.), v(0., 4.)];
+    let mut paths = vec![outline.clone()];
+    let mut flags = vec![vec![false; 4]];
+    let source = [
+      v(-0., 0.),
+      v(3., 0.),
+      v(1., 0.),
+      v(2., 2.),
+      v(8., 0.),
+      v(2., 1e-6),
+    ];
+    restore_boundary_anchors(&mut paths, &mut flags, &source);
+    assert_eq!(
+      paths[0],
+      vec![
+        v(0., 0.),
+        v(1., 0.),
+        v(3., 0.),
+        v(4., 0.),
+        v(4., 4.),
+        v(0., 4.)
+      ]
+    );
+    assert_eq!(flags[0], vec![true, true, true, false, false, false]);
+    // Reapplying restoration is idempotent; a fresh geometry-cache clone has no stale flags.
+    let expected = paths.clone();
+    restore_boundary_anchors(&mut paths, &mut flags, &source);
+    assert_eq!(paths, expected);
+    let mut unmarked = vec![outline];
+    let mut unmarked_flags = vec![vec![false; 4]];
+    restore_boundary_anchors(&mut unmarked, &mut unmarked_flags, &[]);
+    assert_eq!(unmarked_flags[0], vec![false; 4]);
+  }
+
+  #[test]
+  fn surviving_explicit_corner_bypasses_detector_spacing_suppression() {
+    let v = Vec2::new;
+    let p = vec![
+      v(0., 0.),
+      v(0.25, 0.),
+      v(0.5, 0.25),
+      v(100., 0.25),
+      v(100., 100.),
+      v(0., 100.),
+    ];
+    let mut flags = vec![detect_critical_vertices(
+      &p,
+      &CriticalPointConfig::default(),
+      None,
+    )];
+    assert!(
+      !flags[0][1],
+      "repro depends on the short corner being suppressed"
+    );
+    let mut paths = vec![p.clone()];
+    restore_boundary_anchors(&mut paths, &mut flags, &p);
+    assert!(flags[0].iter().all(|&a| a));
+  }
 
   /// Regression test for the asymmetric T-junction sampling bug.
   ///

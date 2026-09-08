@@ -271,7 +271,7 @@ pub(crate) fn build_topology_samples(
 }
 
 /// Discretizes a path into per-subpath polylines: adaptive curvature-based sampling driven by
-/// `curve_angle_radians` for concrete leaves, `sample_count` uniform samples for lazy ones.
+/// `curve_angle_radians`; lazy leaves use `sample_count` initial probes plus known boundaries.
 /// `closed_override` replaces every subpath's closedness. Subpaths with fewer than 2 points
 /// are dropped.
 pub(crate) fn sample_path_subpaths(
@@ -416,8 +416,7 @@ fn segment_to_dict(seg: &PathSegment, meta: SegmentMeta) -> Value {
   Value::Map(Rc::new(map))
 }
 
-/// Polyline copy of `path`. Original joints stay anchors; vertices generated inside curves are
-/// smooth. Lazy paths anchor their `critical_t_values`.
+/// Polyline copy of `path`. Existing anchors are retained; refinement vertices stay smooth.
 pub(crate) fn discretize_path(
   ctx: &EvalCtx,
   path: &Path,
@@ -425,55 +424,13 @@ pub(crate) fn discretize_path(
   sample_count: usize,
   closed_override: Option<bool>,
 ) -> Result<Path, ErrorStack> {
-  let polylines = sample_path_subpaths(
-    ctx,
-    path,
-    curve_angle_radians,
-    sample_count,
-    closed_override,
-  )?;
-  let anchors: Vec<Vec<bool>> = if path.is_concrete() {
-    path
-      .leaves()
-      .into_iter()
-      .filter(|sp| {
-        sp.sample_points(curve_angle_radians, f32::INFINITY, !sp.closed)
-          .len()
-          >= 2
-      })
-      .map(|sp| {
-        let joints: Vec<Vec2> = sp.segments.iter().map(|s| s.start_point()).collect();
-        let mut flags: Vec<bool> = sp
-          .sample_points(curve_angle_radians, f32::INFINITY, !sp.closed)
-          .iter()
-          .map(|p| joints.iter().any(|j| j == p))
-          .collect();
-        if !sp.closed {
-          if let Some(last) = flags.last_mut() {
-            *last = true;
-          }
-        }
-        flags
-      })
-      .collect()
-  } else {
-    let cps = path.critical_t_values();
-    polylines
-      .iter()
-      .map(|(points, closed)| {
-        let n = points.len();
-        let ts = build_topology_samples(sample_count, None, None, !closed);
-        (0..n)
-          .map(|i| {
-            ts.get(i)
-              .map(|t| cps.iter().any(|c| (c - t).abs() <= 1e-6))
-              .unwrap_or(false)
-          })
-          .collect()
-      })
-      .collect()
-  };
-  Ok(Path::from_polylines(polylines, Some(anchors)))
+  let (polylines, anchors) = path
+    .sample_subpaths_tagged(curve_angle_radians, f32::INFINITY, sample_count, ctx)?
+    .into_iter()
+    .filter(|s| s.points.len() >= 2)
+    .map(|s| ((s.points, closed_override.unwrap_or(s.closed)), s.anchors))
+    .unzip();
+  Ok(Path::from_polylines(polylines, Some(anchors)).with_fill_rule(path.fill_rule))
 }
 
 pub fn discretize_path_impl(

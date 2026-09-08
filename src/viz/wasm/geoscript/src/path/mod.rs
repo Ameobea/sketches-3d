@@ -7,6 +7,7 @@ pub(crate) mod centroid;
 #[cfg(test)]
 mod lang_tests;
 pub(crate) mod lazy;
+mod sampling;
 pub(crate) mod segment;
 pub(crate) mod shared_vec;
 pub(crate) mod subpath;
@@ -19,10 +20,11 @@ use nalgebra::Matrix3;
 
 pub(crate) use builder::DrawCommand;
 pub(crate) use lazy::AbstractPath;
+pub(crate) use sampling::SampledSubpath;
 pub(crate) use segment::*;
 pub(crate) use subpath::Subpath;
 
-use crate::{builtins::trace_path::build_topology_samples, ErrorStack, EvalCtx, Value, Vec2};
+use crate::{ErrorStack, EvalCtx, Value, Vec2};
 
 const LAZY_LENGTH_SAMPLES: usize = 512;
 const LAZY_CLOSED_EPSILON: f32 = 1e-4;
@@ -226,12 +228,6 @@ impl Group {
       }
     }
   }
-}
-
-fn max_singular_value(m: &Matrix3<f32>) -> f32 {
-  let (a, b, c, d) = (m.m11, m.m12, m.m21, m.m22);
-  let (sum_sq, det) = (a * a + b * b + c * c + d * d, a * d - b * c);
-  (0.5 * (sum_sq + (sum_sq * sum_sq - 4. * det * det).max(0.).sqrt())).sqrt()
 }
 
 fn uniform_scale(m: &Matrix3<f32>) -> Option<f32> {
@@ -497,15 +493,51 @@ impl Path {
   }
 
   pub(crate) fn critical_t_values(&self) -> Vec<f32> {
+    self.parameter_boundaries::<false>()
+  }
+
+  /// Structural piece boundaries for materialization, including non-anchor polygon joints.
+  /// These do not become critical points in the resulting polyline.
+  pub(crate) fn sampling_t_values(&self) -> Vec<f32> {
+    self.parameter_boundaries::<true>()
+  }
+
+  /// Whether evaluation is linear in `t` between `sampling_t_values` boundaries.
+  pub(crate) fn is_piecewise_linear(&self) -> bool {
+    match &self.kind {
+      PathKind::Subpath(sp) => sp
+        .segments
+        .iter()
+        .all(|s| matches!(s, PathSegment::Line { .. })),
+      PathKind::Group(g) => g.children.iter().all(|p| p.is_piecewise_linear()),
+      PathKind::Abstract(a) => a.is_piecewise_linear(),
+    }
+  }
+
+  fn parameter_boundaries<const ALL_JOINTS: bool>(&self) -> Vec<f32> {
     let mut out = match &self.kind {
+      PathKind::Subpath(sp) if ALL_JOINTS => {
+        if sp.is_degenerate() {
+          Vec::new()
+        } else {
+          std::iter::once(0.)
+            .chain(
+              sp.cumulative_lengths
+                .iter()
+                .map(|l| (l / sp.total_length()).clamp(0., 1.)),
+            )
+            .collect()
+        }
+      }
       PathKind::Subpath(sp) => sp.critical_t_values(),
+      PathKind::Abstract(a) if ALL_JOINTS => a.sampling_t_values(),
       PathKind::Abstract(a) => a.critical_t_values(),
       PathKind::Group(g) => {
         let mut out = Vec::new();
         if g.total_length > LENGTH_EPSILON {
           for (ix, child) in g.children.iter().enumerate() {
             let (start, end) = (g.child_start(ix), g.cumulative_lengths[ix]);
-            for t in child.critical_t_values() {
+            for t in child.parameter_boundaries::<ALL_JOINTS>() {
               let global = ((start + t * (end - start)) / g.total_length).clamp(0., 1.);
               if out.last() != Some(&global) {
                 out.push(global);
@@ -573,28 +605,9 @@ impl Path {
     Some(spans)
   }
 
-  /// Black-box fallback: `lazy_count` uniform samples as one polyline, closedness from the
-  /// topology when known and from `p(0) ≈ p(1)` otherwise.
-  fn sample_lazy(&self, lazy_count: usize, ctx: &EvalCtx) -> Result<(Vec<Vec2>, bool), ErrorStack> {
-    let closed = match &self.kind {
-      PathKind::Abstract(a) => a.topology().map(|t| t.closed),
-      _ => None,
-    };
-    let closed = match closed {
-      Some(c) => c,
-      None => (self.eval_at(0., ctx)? - self.eval_at(1., ctx)?).norm() <= LAZY_CLOSED_EPSILON,
-    };
-    let ts = build_topology_samples(lazy_count, None, None, !closed);
-    let mut points = Vec::with_capacity(ts.len());
-    for t in ts {
-      points.push(self.eval_at(t, ctx)?);
-    }
-    Ok((points, closed))
-  }
-
   /// One `(points, closed)` polyline per subpath in world space. Concrete leaves flatten
   /// adaptively (chords turn at most `angle_tolerance`, sag at most `max_sagitta`); lazy leaves
-  /// fall back to `lazy_count` uniform samples.
+  /// refine from `lazy_count` uniform seeds plus all known critical/structural boundaries.
   pub(crate) fn sample_subpaths_flat(
     &self,
     angle_tolerance: f32,
@@ -602,34 +615,64 @@ impl Path {
     lazy_count: usize,
     ctx: &EvalCtx,
   ) -> Result<Vec<(Vec<Vec2>, bool)>, ErrorStack> {
+    Ok(
+      self
+        .sample_subpaths_tagged(angle_tolerance, max_sagitta, lazy_count, ctx)?
+        .into_iter()
+        .map(|s| (s.points, s.closed))
+        .collect(),
+    )
+  }
+
+  pub(crate) fn sample_subpaths_tagged(
+    &self,
+    angle_tolerance: f32,
+    max_sagitta: f32,
+    lazy_count: usize,
+    ctx: &EvalCtx,
+  ) -> Result<Vec<SampledSubpath>, ErrorStack> {
     let mut out = match &self.kind {
       PathKind::Subpath(sp) => {
-        vec![(
-          sp.sample_points(angle_tolerance, max_sagitta, !sp.closed),
-          sp.closed,
-        )]
+        let (points, anchors) = sp.sample_points_tagged(angle_tolerance, max_sagitta, !sp.closed);
+        vec![SampledSubpath {
+          points,
+          anchors,
+          closed: sp.closed,
+        }]
       }
-      PathKind::Abstract(_) => return Ok(vec![self.sample_lazy(lazy_count, ctx)?]),
+      PathKind::Abstract(_) => {
+        return Ok(vec![sampling::sample_lazy(
+          self,
+          angle_tolerance,
+          max_sagitta,
+          lazy_count,
+          ctx,
+        )?])
+      }
       PathKind::Group(g) => {
-        let sagitta = max_sagitta / max_singular_value(&self.transform).max(1e-12);
         let mut out = Vec::with_capacity(g.children.len());
         for c in &g.children {
-          out.extend(c.sample_subpaths_flat(angle_tolerance, sagitta, lazy_count, ctx)?);
+          // Test tolerances in output space, including nonuniform transforms on mixed groups.
+          // Scaling sagitta alone doesn't account for amplification of turning angles.
+          if self.has_transform {
+            out.extend(c.transformed(&self.transform).sample_subpaths_tagged(
+              angle_tolerance,
+              max_sagitta,
+              lazy_count,
+              ctx,
+            )?);
+          } else {
+            out.extend(c.sample_subpaths_tagged(angle_tolerance, max_sagitta, lazy_count, ctx)?);
+          }
         }
         out
       }
     };
     if self.reverse {
       out.reverse();
-      for (points, _) in &mut out {
-        points.reverse();
-      }
-    }
-    if self.transform != Matrix3::identity() {
-      for (points, _) in &mut out {
-        for p in points {
-          *p = apply_transform_to_point(&self.transform, *p);
-        }
+      for s in &mut out {
+        s.points.reverse();
+        s.anchors.reverse();
       }
     }
     Ok(out)
@@ -657,7 +700,21 @@ impl Path {
     };
 
     if !self.is_concrete() {
-      return self.sample_subpaths(angle_tolerance, total_limit.unwrap_or(64), ctx);
+      if total_limit.is_none() {
+        return self.sample_subpaths(angle_tolerance, 64, ctx);
+      }
+      // Budgeted mesh consumers still honor their cap, but start from the same faithful
+      // materialization as the unbudgeted boolean/offset/discretization consumers.
+      let sampled = self.sample_subpaths_tagged(angle_tolerance, f32::INFINITY, 64, ctx)?;
+      let (polylines, anchors) = sampled
+        .into_iter()
+        .map(|s| ((s.points, s.closed), s.anchors))
+        .unzip();
+      return Path::from_polylines(polylines, Some(anchors)).sample_subpaths_with_limit(
+        angle_tolerance,
+        total_limit,
+        ctx,
+      );
     }
     let Some(limit) = total_limit else {
       return self.sample_subpaths(angle_tolerance, 64, ctx);

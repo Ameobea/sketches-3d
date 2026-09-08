@@ -4,8 +4,8 @@ use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::path_critical_points::{
-  collect_vertex_set, collect_vertex_set_multi, detect_critical_vertices, CriticalPointConfig,
-  VertexSet,
+  collect_vertex_set, collect_vertex_set_multi, detect_critical_vertices, restore_boundary_anchors,
+  CriticalPointConfig, VertexSet,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{expect_path, sample_path_subpaths, FillRule};
@@ -440,8 +440,26 @@ fn sample_boolean_input(
   ctx: &EvalCtx,
   path: &Path,
   opts: &BooleanOpts,
+  source_anchors: &mut Vec<Vec2>,
 ) -> Result<(Vec<f32>, Vec<u32>), ErrorStack> {
-  sample_path_to_coords(ctx, path, opts.curve_angle_radians, opts.sample_count, None)
+  let subpaths = path.sample_subpaths_tagged(
+    opts.curve_angle_radians,
+    f32::INFINITY,
+    opts.sample_count,
+    ctx,
+  )?;
+  let mut coords = Vec::new();
+  let mut lengths = Vec::new();
+  for s in subpaths.into_iter().filter(|s| s.points.len() >= 2) {
+    lengths.push(s.points.len() as u32);
+    for (p, anchor) in s.points.into_iter().zip(s.anchors) {
+      coords.extend([p.x, p.y]);
+      if anchor {
+        source_anchors.push(p);
+      }
+    }
+  }
+  Ok((coords, lengths))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -458,7 +476,8 @@ fn cached_boolean(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn boolean_result_value(result: BooleanResult) -> Value {
+fn boolean_result_value(mut result: BooleanResult, source_anchors: &[Vec2]) -> Value {
+  restore_boundary_anchors(&mut result.paths, &mut result.anchors, source_anchors);
   // The op's fill rule is already resolved into the output: rings are non-crossing and
   // winding-consistent, so nesting-based evenodd describes the region exactly.  Carrying the
   // winding-dependent input rule forward instead would push downstream tessellation onto the
@@ -485,8 +504,11 @@ pub fn path_boolean_impl(
       let clip = expect_path(arg_refs[1].resolve(args, kwargs), fn_name)?;
 
       let opts = parse_boolean_opts(ctx, &arg_refs[2..], args, kwargs, fn_name)?;
-      let (subject_coords, subject_lengths) = sample_boolean_input(ctx, subject, &opts)?;
-      let (clip_coords, clip_lengths) = sample_boolean_input(ctx, clip, &opts)?;
+      let mut source_anchors = Vec::new();
+      let (subject_coords, subject_lengths) =
+        sample_boolean_input(ctx, subject, &opts, &mut source_anchors)?;
+      let (clip_coords, clip_lengths) =
+        sample_boolean_input(ctx, clip, &opts, &mut source_anchors)?;
 
       let op_ix = op as u32;
       let engine_discriminant = match opts.engine {
@@ -520,7 +542,7 @@ pub fn path_boolean_impl(
           fn_name,
         ),
       })?;
-      Ok(boolean_result_value(result))
+      Ok(boolean_result_value(result, &source_anchors))
     }
     // n-ary union of a whole sequence: one boolean pass instead of a pairwise chain that
     // re-samples and re-analyzes the growing accumulator at every step
@@ -528,6 +550,7 @@ pub fn path_boolean_impl(
       let seq = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
       let opts = parse_boolean_opts(ctx, &arg_refs[1..], args, kwargs, fn_name)?;
       let mut inputs: Vec<(Vec<f32>, Vec<u32>)> = Vec::new();
+      let mut source_anchors = Vec::new();
       for (i, res) in seq.consume(ctx).enumerate() {
         let val = res
           .map_err(|err| err.wrap(format!("Error evaluating sequence passed to `{fn_name}`")))?;
@@ -537,7 +560,7 @@ pub fn path_boolean_impl(
              found: {val:?}"
           ))
         })?;
-        inputs.push(sample_boolean_input(ctx, path, &opts)?);
+        inputs.push(sample_boolean_input(ctx, path, &opts, &mut source_anchors)?);
       }
 
       let fill_rule = opts.fill_rule.to_clipper2_u32();
@@ -557,6 +580,12 @@ pub fn path_boolean_impl(
         // CGAL has no n-ary entry point, so fold pairwise; a lone input still goes through the
         // op so it gets normalized like the clipper path does
         BooleanEngine::Cgal => {
+          // Vertices created in an early fold are still operation-created in the final
+          // n-ary result, even if the final pairwise pass sees them in its accumulator.
+          let pre_op_vertices: VertexSet = inputs
+            .iter()
+            .flat_map(|(coords, _)| collect_vertex_set(coords))
+            .collect();
           let mut inputs = inputs.into_iter();
           let (mut acc_coords, mut acc_lengths) = inputs.next().unwrap_or_default();
           let mut result = None;
@@ -572,7 +601,7 @@ pub fn path_boolean_impl(
             (acc_coords, acc_lengths) = paths_to_flat(&r.paths);
             result = Some(r);
           }
-          match result {
+          let mut result = match result {
             Some(r) => r,
             None => run_cgal_boolean(
               &acc_coords,
@@ -582,10 +611,12 @@ pub fn path_boolean_impl(
               BooleanOp::Union,
               fn_name,
             )?,
-          }
+          };
+          result.anchors = path_anchors(&result.paths, &pre_op_vertices);
+          result
         }
       };
-      Ok(boolean_result_value(result))
+      Ok(boolean_result_value(result, &source_anchors))
     }
     _ => unimplemented!(),
   }

@@ -6821,10 +6821,10 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(1000)),
-            description: "Sample count for non-path callables. path callables use adaptive sampling instead.",
+            description: "Initial uniform probe count for lazy paths; known boundaries and adaptive refinement add samples as needed.",
           },
         ],
-        description: "Renders a path in the XZ plane, one polyline per subpath. Concrete subpaths are flattened adaptively (1° tolerance); lazy paths are sampled uniformly at `resolution` points.",
+        description: "Renders a path in the XZ plane, one polyline per subpath. Both concrete and lazy paths use the ambient curve-angle tolerance; `resolution` controls initial probe density for lazy paths.",
         return_type: &[ArgType::Nil],
       },
     ],
@@ -10382,6 +10382,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Vec2(Vec2::new(1., 1.))),
             description: "Extra per-axis multiplier on the planar cap UVs when `split_seams` is set. Caps are baked to match the swept walls' texel density automatically: U in world units (like the body's arc-length U) and V normalized by the cap's mean loop perimeter (like the body's per-loop [0,1] V), so the same material `uvScale` reads consistently across the seam and holed caps land between the outer/inner wall density. This multiplier layers on top for manual tweaks; default (1, 1) keeps the matched density. No effect without `split_seams` (unsplit caps inherit the body's swept UV)."
           },
+          ArgDef {
+            name: "crease_angle_threshold_deg",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Experimental strength-aware profile sampling and FKU stitching. nil (default) preserves legacy critical-point handling. A number from 0 to 180 enables automatic turning-angle measurements at the existing profile guides after interpolation/transforms. Guides below this angle in degrees no longer reserve samples; endpoints and unmeasurable guides are retained. FKU's critical-pair attraction fades smoothly from zero at a flat guide to its existing full strength at 15 degrees, limited by the weaker endpoint. Use 0 to test weighting without dropping guides, or try 1 to ignore almost-flat guides. This measures profile turns, not 3D dihedrals, and does not guarantee crease connections."
+          },
         ],
         description: "Sweeps a profile along a spine to produce a mesh.  Profile points are connected in increasing `v` order; for outward-facing normals, the profile winding should be counter-clockwise when viewed along the local tangent.",
         return_type: &[ArgType::Mesh],
@@ -10620,7 +10627,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Path, ArgType::Sequence),
             default_value: DefaultValue::Required,
-            description: "Either:\n - A path, sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count` (lazy paths are sampled uniformly at `sample_count` points, default 64).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
+            description: "Either:\n - A path, sampled adaptively per `curve_angle_degrees` and optionally capped by `sample_count` (including lazy paths).  Returned 2D points are embedded in the XZ plane (`vec2(x, y)` → `vec3(x, 0, y)`).\n - A `Seq<Vec2 | Vec3>` of pre-discretized points used as-is (no resampling).  `Vec2` points are embedded in the XZ plane; `Vec3` points are used directly, which lets you extrude a polyline that already lives in 3D space.  Errors if the sequence has fewer than 2 points or contains any other element type."
           },
           ArgDef {
             name: "up",
@@ -10641,14 +10648,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max turning angle (degrees) per segment when discretizing curves in a path input.  Ignored for lazy paths."
+            description: "Max turning angle (degrees) per segment when discretizing curves in a path input, including lazy paths."
           },
           ArgDef {
             name: "sample_count",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "For lazy paths: number of uniform samples (defaults to 64 when nil).  For path inputs: optional cap on total points across all subpaths after adaptive sampling."
+            description: "Optional cap on total points across all subpaths after adaptive materialization, including lazy paths. A cap may sacrifice the curve-angle tolerance."
           },
         ],
         description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from path inputs) are extruded independently; closed paths are not supported and trigger an error.",
@@ -11088,7 +11095,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
         ],
         description: "Computes a 2D alpha-wrap of a path: a simple, hole-aware outline that strictly encloses every segment of the input, roughly `offset` away from it, with concavities narrower than `alpha` filled in.  Think of it as a concave hull of the strokes and filled regions of the path.  Overlapping or self-intersecting subpaths and open strokes are all fine as input.  The output is a polyline path (no continuous curve detail) with holes represented as nested subpaths under even-odd filling.\n\nFor more details, see here: https://doc.cgal.org/latest/Alpha_wrap_2/index.html",
@@ -11580,14 +11587,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max turning angle (degrees) per segment when adaptively discretizing curves.  Lazy paths (`lerp_paths`, `catmull_rom`, `path(fn)`) fall back to uniform `sample_count` sampling."
+            description: "Max turning angle (degrees) per segment when adaptively discretizing curves, including lazy paths (`lerp_paths`, `catmull_rom`, `path(fn)`)."
           },
           ArgDef {
             name: "sample_count",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Uniform sample count, used when adaptive sampling is unavailable (lazy paths: `lerp_paths`, `catmull_rom`, `path(fn)`).  Defaults to 64 when nil.  For traced-paths, optionally caps the total points across all subpaths after adaptive sampling."
+            description: "Optional cap on total points across all subpaths after adaptive materialization, including lazy paths. When nil, use the curve-angle tolerance without a point cap."
           }
         ],
         description: "Builds a fan of triangles by discretizing a path and filling the area inside each subpath.  One triangle will be built per pair of adjacent points in each subpath, connecting to that subpath's center.  Output lives in the XZ plane.",
@@ -13460,10 +13467,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
-            // TODO: this seems to be getting used for all paths even when the underlying path has topology data.
-            //
-            // maybe only with the lerp_paths case?
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
         ],
         description: "Offsets a 2D path using Clipper2 and returns a new path.  Note: continuous curve detail is lost; the output is a polyline representation.",
@@ -13729,7 +13733,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
           ArgDef {
             name: "engine",
@@ -13770,7 +13774,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
           ArgDef {
             name: "engine",
@@ -13824,7 +13828,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
           ArgDef {
             name: "engine",
@@ -13878,7 +13882,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count fallback for paths without curvature-adaptive sampling."
+            description: "Initial uniform probe count for lazy paths, augmented by critical points and adaptive refinement; not an output cap."
           },
         ],
         description: "Returns `true` if the two 2D path regions overlap under the given fill rule, `false` otherwise.\n\nDetects both cases where path segments cross and cases where one path is fully contained inside the other. Uses Clipper2's region intersection internally, so winding order and the chosen fill rule determine what counts as interior.\n\nOnly supported for paths with known topology (e.g. from `trace_svg_path`, `text_to_path`, `lerp_path`, `catmull_rom`); generic black-box `|t|: vec2` callables raise an error.",
@@ -13925,7 +13929,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
           ArgDef {
             name: "engine",
@@ -13979,7 +13983,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(64)),
-            description: "Uniform sample count for non-trace_paths."
+            description: "Initial uniform probe count for lazy paths. Critical points and structural boundaries are also sampled, then refined adaptively per curve_angle_degrees; this is not an output cap."
           },
           ArgDef {
             name: "engine",
@@ -14005,7 +14009,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Path),
             default_value: DefaultValue::Required,
-            description: "A path. Topology-aware paths use adaptive curvature sampling; lazy paths fall back to uniform sampling."
+            description: "A path. Concrete and lazy paths both use adaptive sampling and preserve existing critical points."
           },
           ArgDef {
             name: "curve_angle_degrees",
@@ -14019,11 +14023,11 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int),
             default_value: DefaultValue::Optional(|| Value::Int(128)),
-            description: "Uniform sample count for lazy paths."
+            description: "Initial uniform probe count for lazy paths, augmented by critical points and adaptive refinement; not an output cap."
           },
         ],
 
-        description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive curvature-based sampling driven by `curve_angle_degrees` for paths backed by a path tracer. For black-box callables, falls back to uniform sampling at `sample_count` points.",
+        description: "Replaces every continuous curve in the input path with a polyline of straight line segments, returning a new path.\n\nThis is the same discretization step that `path_union` / `offset_path` apply internally before handing geometry to Clipper2; running it explicitly is useful for inspecting the polyline that those operations would see, or for paths where polyline-only consumers need a guaranteed-segment-only input.\n\nUses adaptive sampling driven by the global or explicit `curve_angle_degrees`, including lazy paths. Lazy sampling starts from `sample_count` uniform probes plus known critical points and segment boundaries, then refines between them. Existing anchors are retained; additional refinement vertices are not marked as creases. Finite probes can miss arbitrary black-box oscillations; increase `sample_count` if needed.",
         return_type: &[ArgType::Path],
       },
     ],

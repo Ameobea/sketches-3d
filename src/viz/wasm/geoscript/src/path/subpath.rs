@@ -244,31 +244,47 @@ impl Subpath {
   }
 
   /// Adaptive flattening; segment endpoints are emitted verbatim so corners stay exact.
+  #[cfg(test)]
   pub(crate) fn sample_points(
     &self,
     angle_tolerance: f32,
     max_sagitta: f32,
     include_end: bool,
   ) -> Vec<Vec2> {
+    self
+      .sample_points_tagged(angle_tolerance, max_sagitta, include_end)
+      .0
+  }
+
+  pub(crate) fn sample_points_tagged(
+    &self,
+    angle_tolerance: f32,
+    max_sagitta: f32,
+    include_end: bool,
+  ) -> (Vec<Vec2>, Vec<bool>) {
     if self.is_degenerate() {
-      return Vec::new();
+      return (Vec::new(), Vec::new());
     }
     let mut points = Vec::with_capacity(self.segments.len() + 1);
-    for seg in &self.segments {
+    let mut anchors = Vec::with_capacity(self.segments.len() + 1);
+    for (seg, &anchor) in self.segments.iter().zip(&self.anchors) {
       let seg_len = seg.length();
       if seg_len <= LENGTH_EPSILON {
         continue;
       }
       points.push(seg.start_point());
+      anchors.push(anchor);
       let subdivs = segment_subdivisions(seg, angle_tolerance, max_sagitta);
       for j in 1..subdivs {
         points.push(seg.sample_by_length(seg_len * (j as f32 / subdivs as f32)));
+        anchors.push(false);
       }
     }
     if include_end && !points.is_empty() {
       points.push(self.segments.last().unwrap().end());
+      anchors.push(!self.closed || self.anchors[0]);
     }
-    points
+    (points, anchors)
   }
 
   pub(crate) fn aabb(&self) -> Option<(Vec2, Vec2)> {

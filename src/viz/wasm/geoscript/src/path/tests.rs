@@ -46,6 +46,182 @@ fn closure_path(_ctx: &EvalCtx, src: &str) -> Rc<Path> {
 }
 
 #[test]
+fn lazy_materialization_refines_curves_and_inflections() {
+  let ctx = EvalCtx::default();
+  let circle = closure_path(&ctx, r#"|t| vec2(cos(t * pi * 2), sin(t * pi * 2))"#);
+  let coarse = circle
+    .sample_subpaths_tagged(20f32.to_radians(), f32::INFINITY, 8, &ctx)
+    .unwrap();
+  let fine = circle
+    .sample_subpaths_tagged(1f32.to_radians(), f32::INFINITY, 8, &ctx)
+    .unwrap();
+  assert!(fine[0].closed && coarse[0].closed);
+  assert!(fine[0].points.len() > coarse[0].points.len() * 4);
+  assert!(fine[0].points.len() > 64);
+  assert!(fine[0].anchors.iter().all(|&a| !a));
+  for i in 0..fine[0].points.len() {
+    let mid = (fine[0].points[i] + fine[0].points[(i + 1) % fine[0].points.len()]) * 0.5;
+    assert!(1. - mid.norm() < 0.00005);
+  }
+  let inflection = closure_path(&ctx, r#"|t| vec2(t, sin(t * pi * 2))"#);
+  let sampled = inflection
+    .sample_subpaths_tagged(5f32.to_radians(), f32::INFINITY, 2, &ctx)
+    .unwrap();
+  assert!(!sampled[0].closed);
+  assert!(sampled[0].points.iter().any(|p| p.y > 0.99));
+  assert!(sampled[0].points.iter().any(|p| p.y < -0.99));
+  assert_eq!(
+    *sampled[0].points.last().unwrap(),
+    inflection.eval_at(1., &ctx).unwrap()
+  );
+  let sagged = circle
+    .sample_subpaths_flat(180f32.to_radians(), 0.0001, 8, &ctx)
+    .unwrap();
+  assert!(
+    sagged[0].0.len() > 100,
+    "sagitta must also drive lazy refinement"
+  );
+}
+
+#[test]
+fn lazy_lerp_preserves_dense_structural_joints_without_promoting_them_to_creases() {
+  use super::lazy::LerpPath;
+  let ctx = EvalCtx::default();
+  let polygon = |n: usize| {
+    let points = (0..n)
+      .map(|i| {
+        let theta = i as f32 / n as f32 * std::f32::consts::TAU;
+        let r = if i % 2 == 0 { 1. } else { 0.9 };
+        v(theta.cos() * r, theta.sin() * r)
+      })
+      .collect();
+    let flags = (0..n).map(|i| i % 17 == 0).collect();
+    rc(Path::from_polylines(
+      vec![(points, true)],
+      Some(vec![flags]),
+    ))
+  };
+  let a = polygon(257);
+  let b = polygon(193);
+  let p = rc(Path::lazy(Rc::new(LerpPath::new(a, b, 0.37, 64))));
+  let sampled = p
+    .sample_subpaths_tagged(5f32.to_radians(), f32::INFINITY, 8, &ctx)
+    .unwrap();
+  assert!(sampled[0].points.len() > 400);
+  assert!(sampled[0].anchors.iter().filter(|&&a| a).count() < 40);
+  let denser_seeds = p
+    .sample_subpaths_tagged(1f32.to_radians(), f32::INFINITY, 4096, &ctx)
+    .unwrap();
+  assert_eq!(
+    sampled[0].points, denser_seeds[0].points,
+    "piecewise-linear interpolation is resolved by its joints, independently of probe density"
+  );
+  for t in p.sampling_t_values() {
+    let expected = p.eval_at(t, &ctx).unwrap();
+    assert!(sampled[0].points.iter().any(|&v| close(v, expected, 1e-6)));
+  }
+  for t in p.critical_t_values() {
+    let expected = p.eval_at(t, &ctx).unwrap();
+    assert!(sampled[0]
+      .points
+      .iter()
+      .zip(&sampled[0].anchors)
+      .any(|(&v, &a)| a && close(v, expected, 1e-6)));
+  }
+}
+
+#[test]
+fn discretization_retains_tags_through_mixed_groups_and_repeated_materialization() {
+  let ctx = parse_and_eval_program(
+    r#"
+    a = circle(v2(0), 2)
+    b = path() | move(0,0) | line(2,0) | line(0.73,1) | close
+    p = path([discretize_path(a), lerp_paths(b,b,0.5)],fill_rule="evenodd") | reverse | scale(2,3)
+    once = discretize_path(p, sample_count=8)
+    twice = discretize_path(once)
+  "#,
+  )
+  .unwrap();
+  let once = ctx.get_global("once").unwrap().as_path().unwrap().clone();
+  let twice = ctx.get_global("twice").unwrap().as_path().unwrap().clone();
+  assert_eq!(once.leaves().len(), 2);
+  assert_eq!(once.fill_rule, Some(super::FillRule::EvenOdd));
+  assert_eq!(twice.fill_rule, once.fill_rule);
+  assert_eq!(once.critical_t_values(), twice.critical_t_values());
+  for (a, b) in once.leaves().iter().zip(twice.leaves()) {
+    assert_eq!(a.anchors.as_slice(), b.anchors.as_slice());
+    assert!(a.anchors.iter().filter(|&&flag| flag).count() <= 3);
+  }
+}
+
+#[test]
+fn lazy_materialization_obeys_global_angle_and_override() {
+  let ctx = parse_and_eval_program(
+    r#"
+    set_curve_angle_threshold(15)
+    p = path(|t| v2(cos(t*pi*2), sin(t*pi*2)))
+    coarse = discretize_path(p, sample_count=8)
+    fine = discretize_path(p, sample_count=8, curve_angle_degrees=1)
+  "#,
+  )
+  .unwrap();
+  let coarse = ctx.get_global("coarse").unwrap().as_path().unwrap().clone();
+  let fine = ctx.get_global("fine").unwrap().as_path().unwrap().clone();
+  assert!(fine.leaves()[0].segments.len() > coarse.leaves()[0].segments.len() * 4);
+}
+
+#[test]
+fn lazy_materialization_rejects_nonfinite_geometry() {
+  let ctx = EvalCtx::default();
+  let p = closure_path(&ctx, r#"|t| vec2(t, sqrt(-1))"#);
+  assert!(p.sample_subpaths(0.1, 8, &ctx).is_err());
+}
+
+#[test]
+fn lazy_sampling_respects_transformed_groups_trimmed_joints_and_mesh_budgets() {
+  use super::lazy::LerpPath;
+  let ctx = EvalCtx::default();
+  let ellipse = closure_path(&ctx, r#"|t| vec2(cos(t*pi*2),sin(t*pi*2))"#);
+  let scale = Matrix3::new_nonuniform_scaling(&v(50., 1.));
+  let direct = ellipse
+    .transformed(&scale)
+    .sample_subpaths(0.05, 8, &ctx)
+    .unwrap();
+  let group = Path::group_items(vec![ellipse.clone(), square()], None, &ctx)
+    .unwrap()
+    .transformed(&scale);
+  let grouped = group.sample_subpaths(0.05, 8, &ctx).unwrap();
+  assert_eq!(
+    direct[0].0, grouped[0].0,
+    "group transform must not weaken the angle tolerance"
+  );
+  let budgeted = ellipse
+    .sample_subpaths_with_limit(0.01, Some(20), &ctx)
+    .unwrap();
+  assert_eq!(budgeted[0].0.len(), 20);
+  let p = rc(Path::lazy(Rc::new(LerpPath::new(
+    square(),
+    square(),
+    0.5,
+    64,
+  ))));
+  let trimmed = rc(p.trimmed(0.125, 0.875)).reversed().transformed(&scale);
+  assert!(trimmed.is_piecewise_linear());
+  let sampled = trimmed
+    .sample_subpaths_tagged(0.1, f32::INFINITY, 2, &ctx)
+    .unwrap();
+  assert!(!sampled[0].closed);
+  for t in trimmed.critical_t_values() {
+    let point = trimmed.eval_at(t, &ctx).unwrap();
+    assert!(sampled[0]
+      .points
+      .iter()
+      .zip(&sampled[0].anchors)
+      .any(|(&p, &a)| a && close(p, point, 1e-6)));
+  }
+}
+
+#[test]
 fn pen_move_line_close() {
   let p = square();
   let leaves = p.leaves();

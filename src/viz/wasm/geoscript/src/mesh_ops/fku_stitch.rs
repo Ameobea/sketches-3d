@@ -17,7 +17,6 @@
 
 use std::cmp::Ordering;
 
-use bitvec::prelude::*;
 use mesh::linked_mesh::Vec3;
 use wide::f32x4;
 
@@ -30,16 +29,21 @@ pub const MAX_DP_STITCH_RESOLUTION: usize = 20_000;
 const AREA_WEIGHT: f32 = 0.85;
 const EDGE_LEN_WEIGHT: f32 = 1.;
 
-/// Weight for the t-value difference penalty. This encourages stitching together vertices with
-/// similar t-values along the spine. This discourages large fans from getting created when not
-/// necessary, which helps avoid large jumps in dihedral angles between triangles which can cause
-/// shading artifacts.
+/// Correspondence prior between normalized profile parameters (after ring alignment), not
+/// positions along the spine. This also discourages some large fans, but is neither a fan-size
+/// bound nor a guarantee that corresponding creases connect. See scripts/fku-audit/DT-WEIGHT.md
+/// for the controlled weight sweep; reducing this can improve triangle shape while losing folds.
 const DT_WEIGHT: f32 = 2.5;
 
-/// Cost multiplier applied when both endpoints of the connecting edge are critical points.
+/// Minimum cost multiplier applied when both endpoints have full crease strength.
 /// This biases the stitching to connect critical-to-critical vertices (e.g. sharp seam points)
 /// rather than taking shortcuts across seams.
 const CRITICAL_PAIR_MULTIPLIER: f32 = 0.5;
+
+#[inline]
+fn critical_multiplier(strength: f32) -> f32 {
+  1. - (1. - CRITICAL_PAIR_MULTIPLIER) * strength
+}
 
 /// Cost function for DP stitching.
 ///
@@ -49,9 +53,8 @@ const CRITICAL_PAIR_MULTIPLIER: f32 = 0.5;
 ///   characteristic size of the ring pair (e.g. average radius).
 /// - `t2`, `t3`: Parametric t-values for `p2` and `p3` respectively. When not available, callers
 ///   should pass 0.0 for both (making the dt term zero).
-/// - `both_critical`: When true, both `p2` and `p3` are critical points (e.g. sharp seam vertices).
-///   The cost is multiplied by `CRITICAL_PAIR_MULTIPLIER` to bias stitching towards connecting
-///   critical vertices to each other.
+/// - `pair_strength`: Minimum of the two endpoint crease strengths, in [0, 1]. Zero disables the
+///   attraction; one gives the original `CRITICAL_PAIR_MULTIPLIER` discount.
 #[inline]
 pub fn dp_stitch_cost(
   p1: Vec3,
@@ -61,7 +64,7 @@ pub fn dp_stitch_cost(
   inv_scale_sq: f32,
   t2: f32,
   t3: f32,
-  both_critical: bool,
+  pair_strength: f32,
 ) -> f32 {
   let edge1 = p2 - p1;
   let edge2 = p3 - p1;
@@ -79,11 +82,7 @@ pub fn dp_stitch_cost(
   let cost =
     AREA_WEIGHT * area * inv_scale_sq + EDGE_LEN_WEIGHT * edge_len * inv_scale + DT_WEIGHT * dt;
 
-  if both_critical {
-    cost * CRITICAL_PAIR_MULTIPLIER
-  } else {
-    cost
-  }
+  cost * critical_multiplier(pair_strength)
 }
 
 /// Computes the average distance of a set of points from their centroid.
@@ -155,12 +154,12 @@ struct SoaRing {
   y: Vec<f32>,
   z: Vec<f32>,
   t: Vec<f32>,
-  /// `CRITICAL_PAIR_MULTIPLIER` at critical vertices, `1.` elsewhere.
+  /// Per-vertex multiplier, from `CRITICAL_PAIR_MULTIPLIER` (full strength) to `1.` (smooth).
   crit_mul: Vec<f32>,
 }
 
 impl SoaRing {
-  fn fill(&mut self, pts: &[Vec3], ts: Option<&[f32]>, crit: Option<&BitSlice>, wrap: bool) {
+  fn fill(&mut self, pts: &[Vec3], ts: Option<&[f32]>, crit: Option<&[f32]>, wrap: bool) {
     let n = pts.len() + wrap as usize;
     let cap = n.next_multiple_of(4) + 4;
     for v in [
@@ -181,11 +180,9 @@ impl SoaRing {
       self.y.push(p.y);
       self.z.push(p.z);
       self.t.push(ts.map_or(0., |ts| ts[src]));
-      self.crit_mul.push(if crit.is_some_and(|c| c[src]) {
-        CRITICAL_PAIR_MULTIPLIER
-      } else {
-        1.
-      });
+      self
+        .crit_mul
+        .push(critical_multiplier(crit.map_or(0., |c| c[src])));
     }
 
     for v in [&mut self.x, &mut self.y, &mut self.z, &mut self.t] {
@@ -220,6 +217,7 @@ fn fill_row_costs<const CRIT: bool>(
   ap: Vec3,
   ac: Vec3,
   ta: f32,
+  a_crit_mul: f32,
   ka: f32,
   ke: f32,
   ca: &mut [f32],
@@ -251,7 +249,8 @@ fn fill_row_costs<const CRIT: bool>(
     let area_b = cross_norm4(eb, (acv.0 - prev.0, acv.1 - prev.1, acv.2 - prev.2));
 
     let mul = if CRIT {
-      load4(&b.crit_mul, i + 1)
+      // Larger multiplier = weaker endpoint. A sharp-to-flat edge gets no attraction.
+      load4(&b.crit_mul, i + 1).max(f32x4::splat(a_crit_mul))
     } else {
       f32x4::splat(1.)
     };
@@ -283,9 +282,18 @@ thread_local! {
 
 /// Number of evenly-spaced arc-length samples used during ring alignment cross-correlation.
 ///
-/// K=64 captures enough geometric structure (corners, curves) to distinguish orientations
-/// without being expensive. Cross-correlation is O(K²) = ~4096 operations.
+/// The coarse search locates a promising cyclic phase without an expensive dense global scan.
 const ALIGNMENT_RESAMPLE_K: usize = 64;
+
+/// Refine within one coarse step on either side of the winner, at 1/512-turn spacing.
+/// Dense virtual probes also keep fine contour detail in the local comparison. This costs
+/// 17 * 512 point comparisons, rather than the 512² comparisons of a dense global search.
+const ALIGNMENT_REFINE_FACTOR: usize = 8;
+
+// Keep local refinement as a comparison control, not the production default. A geometrically
+// better phase can worsen the subsequent t-correspondence prior when the ring is rebased.
+// See scripts/fku-audit/CANDIDATE-TRIALS.md. This constant leaves no runtime branch or API knob.
+const REFINE_RING_ALIGNMENT: bool = false;
 
 /// Computes cumulative arc lengths for a closed ring.
 ///
@@ -352,7 +360,15 @@ fn resample_ring(pts: &[Vec3], count: usize) -> Vec<Vec3> {
 /// 2. Try all K cyclic shifts of the resampled B ring; pick the shift that minimizes the sum of
 ///    squared distances to the resampled A ring.
 /// 3. Map the winning normalized shift back to the nearest actual vertex index in pts_b.
+///
+/// This is a cyclic index alignment, not a spatial rotation or a winding reversal. The private
+/// comparison implementation also supports local refinement, but production retains coarse-only
+/// alignment: a changed cut can change the rebased parameters used by the subsequent DP cost.
 pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
+  find_ring_alignment::<REFINE_RING_ALIGNMENT>(pts_a, pts_b)
+}
+
+fn find_ring_alignment<const REFINE: bool>(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
   if pts_a.is_empty() || pts_b.is_empty() {
     return 0;
   }
@@ -375,9 +391,37 @@ pub fn find_best_ring_alignment(pts_a: &[Vec3], pts_b: &[Vec3]) -> usize {
     }
   }
 
-  // Convert the winning normalized shift (best_shift / K) to the nearest actual
+  // Re-evaluate the center on the dense probes as well: coarse and fine error sums are not
+  // comparable. Include both neighboring coarse positions because extra detail can move the
+  // minimum across the midpoint of a coarse bin. Prefer the center / smaller adjustment on ties.
+  let best_t = if REFINE {
+    let fine_k = k * ALIGNMENT_REFINE_FACTOR;
+    let fine_a = resample_ring(pts_a, fine_k);
+    let fine_b = resample_ring(pts_b, fine_k);
+    let score = |shift: usize| {
+      (0..fine_k)
+        .map(|i| (fine_a[i] - fine_b[(i + shift) % fine_k]).norm_squared())
+        .sum::<f32>()
+    };
+    let center = best_shift * ALIGNMENT_REFINE_FACTOR;
+    let mut refined_shift = center;
+    let mut refined_error = score(center);
+    for step in 1..=ALIGNMENT_REFINE_FACTOR {
+      for shift in [(center + fine_k - step) % fine_k, (center + step) % fine_k] {
+        let error = score(shift);
+        if error < refined_error {
+          refined_error = error;
+          refined_shift = shift;
+        }
+      }
+    }
+
+    refined_shift as f32 / fine_k as f32
+  } else {
+    best_shift as f32 / k as f32
+  };
+  // Convert the winning normalized shift to the nearest actual
   // vertex index in pts_b using its arc-length parameterization.
-  let best_t = best_shift as f32 / k as f32;
   let cum_b = cumulative_arc_lengths(pts_b);
   let total_len_b = *cum_b.last().unwrap();
 
@@ -431,8 +475,10 @@ pub struct Rings<'a> {
   pub b: &'a [Vec3],
   pub ta: Option<&'a [f32]>,
   pub tb: Option<&'a [f32]>,
-  pub crit_a: Option<&'a BitSlice>,
-  pub crit_b: Option<&'a BitSlice>,
+  /// Per-vertex crease strengths in [0, 1]; None is all zero. Binary values reproduce the
+  /// original critical-point flags. These are preferences, not feature correspondences.
+  pub crit_a: Option<&'a [f32]>,
+  pub crit_b: Option<&'a [f32]>,
   pub inv_scale: f32,
   pub inv_scale_sq: f32,
 }
@@ -452,19 +498,20 @@ fn coarse_anchors<const CLOSED: bool>(r: Rings, table_n: usize, table_m: usize) 
   let (mut ca_pts, mut cb_pts) = (subsample(pts_a, ka), subsample(pts_b, kb));
   let cta = r.ta.map(|t| subsample(t, ka));
   let ctb = r.tb.map(|t| subsample(t, kb));
-  // Flags are OR-ed over each bucket rather than point-sampled, or the seam vertices
-  // `CRITICAL_PAIR_MULTIPLIER` exists to capture would mostly be dropped.  The sampled position
-  // moves to the flagged vertex too, so a coarse point's flag and position describe one vertex.
-  let sub_crit = |pts: &mut [Vec3], src: &[Vec3], c: Option<&BitSlice>| {
+  // Preserve the strongest crease in each bucket. With binary strengths this is the old OR
+  // rule, including its first-in-bucket tie break and position choice.
+  let sub_crit = |pts: &mut [Vec3], src: &[Vec3], c: Option<&[f32]>| {
     c.map(|c| {
       let k = pts.len();
-      let mut out = bitvec![0; k];
+      let mut out = vec![0.; k];
       for i in 0..k {
         let lo = i * c.len() / k;
         let hi = ((i + 1) * c.len() / k).max(lo + 1).min(c.len());
-        if let Some(ix) = (lo..hi).find(|&j| c[j]) {
-          out.set(i, true);
-          pts[i] = src[ix];
+        for ix in lo..hi {
+          if c[ix] > out[i] {
+            out[i] = c[ix];
+            pts[i] = src[ix];
+          }
         }
       }
       out
@@ -597,8 +644,8 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
 
   let get_a = |i: usize| -> Vec3 { pts_a[if CLOSED && i == n { 0 } else { i }] };
   let get_ta = |i: usize| -> f32 { ts_a.map_or(0., |ts| ts[if CLOSED && i == n { 0 } else { i }]) };
-  let is_crit_a =
-    |i: usize| -> bool { crit_a.is_some_and(|c| c[if CLOSED && i == n { 0 } else { i }]) };
+  let a_crit_mul =
+    |i: usize| critical_multiplier(crit_a.map_or(0., |c| c[if CLOSED && i == n { 0 } else { i }]));
   let bounds = |i: usize| -> (usize, usize) {
     band.map_or((0, table_m), |b| (b[i].0 as usize, b[i].1 as usize))
   };
@@ -646,7 +693,7 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
 
     // Row 0 doubles as the i=1 row's B-advance costs: both are the triangle (B[j-2], B[j-1], A[0]).
     // The A-advance half is discarded here; row 1 has no A-advance cost at all.
-    let row0 = if is_crit_a(0) {
+    let row0 = if a_crit_mul(0) < 1. {
       fill_row_costs::<true>
     } else {
       fill_row_costs::<false>
@@ -657,6 +704,7 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
       a0,
       a0,
       get_ta(0),
+      a_crit_mul(0),
       ka,
       ke,
       &mut ca[2..pad + 2],
@@ -700,8 +748,8 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
         ca[jstart..=hi].fill(0.);
       } else {
         let ap = get_a(i - 2);
-        let crit = is_crit_a(i - 1);
-        let fill = if crit {
+        let crit_mul = a_crit_mul(i - 1);
+        let fill = if crit_mul < 1. {
           fill_row_costs::<true>
         } else {
           fill_row_costs::<false>
@@ -712,6 +760,7 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
           ap,
           ac,
           ta,
+          crit_mul,
           ka,
           ke,
           &mut ca[k0 + 2..k1 + 2],
@@ -719,7 +768,7 @@ fn solve_banded<const CLOSED: bool>(r: Rings, band: Option<&Band>) -> Vec<(usize
         );
         if jstart == 1 {
           let c = cost_advance_a_at_b0(b, ap, ac, ta, ka, ke);
-          ca[1] = if crit { c * b.crit_mul[0] } else { c };
+          ca[1] = c * b.crit_mul[0].max(crit_mul);
         }
         // Column 0's step closes the same triangle as column 1's A-advance, so it reuses that
         // value rather than re-deriving it and rounding differently.
@@ -876,8 +925,34 @@ pub fn dp_stitch_presampled(
   pts_b: &[Vec3],
   ts_a: Option<&[f32]>,
   ts_b: Option<&[f32]>,
-  crit_a: Option<&BitSlice>,
-  crit_b: Option<&BitSlice>,
+  crit_a: Option<&[f32]>,
+  crit_b: Option<&[f32]>,
+  ring_a_base_idx: usize,
+  ring_b_base_idx: usize,
+  closed: bool,
+  out_indices: &mut Vec<u32>,
+) {
+  dp_stitch_presampled_impl::<REFINE_RING_ALIGNMENT>(
+    pts_a,
+    pts_b,
+    ts_a,
+    ts_b,
+    crit_a,
+    crit_b,
+    ring_a_base_idx,
+    ring_b_base_idx,
+    closed,
+    out_indices,
+  );
+}
+
+fn dp_stitch_presampled_impl<const REFINE: bool>(
+  pts_a: &[Vec3],
+  pts_b: &[Vec3],
+  ts_a: Option<&[f32]>,
+  ts_b: Option<&[f32]>,
+  crit_a: Option<&[f32]>,
+  crit_b: Option<&[f32]>,
   ring_a_base_idx: usize,
   ring_b_base_idx: usize,
   closed: bool,
@@ -898,7 +973,7 @@ pub fn dp_stitch_presampled(
 
   // Find best alignment for ring B (only matters for closed rings, but harmless for open)
   let b_offset = if closed {
-    find_best_ring_alignment(pts_a, pts_b)
+    find_ring_alignment::<REFINE>(pts_a, pts_b)
   } else {
     0
   };
@@ -927,17 +1002,13 @@ pub fn dp_stitch_presampled(
     }
   });
 
-  // Pre-rotate critical mask for ring B to match the rotated positions/t-values.
+  // Pre-rotate crease strengths for ring B to match the rotated positions/t-values.
   let rotated_crit_b = crit_b.map(|c| {
     let m = c.len();
     if b_offset == 0 || m == 0 {
-      c.to_bitvec()
+      c.to_vec()
     } else {
-      let mut rotated = bitvec![0; m];
-      for i in 0..m {
-        rotated.set(i, c[(i + b_offset) % m]);
-      }
-      rotated
+      (0..m).map(|i| c[(i + b_offset) % m]).collect()
     }
   });
 
@@ -1086,8 +1157,72 @@ pub fn should_use_fku(enable_fku: bool, count_a: usize, count_b: usize) -> bool 
 }
 
 #[cfg(test)]
+#[path = "fku_stability_audit.rs"]
+mod stability_audit;
+
+#[cfg(test)]
 mod tests {
   use super::*;
+
+  /// Exercise fractional strengths against the scalar objective, including both advance
+  /// directions, open/closed padding, no-strength rows, and the scalar B0 boundary column.
+  #[test]
+  fn strength_aware_simd_matches_scalar_cost() {
+    let a = gen_ring(17, 7, 2., 1.2, 0., 0.);
+    let b = gen_ring(83, 9, 3., 0.9, 0.4, 0.3);
+    let ts: Vec<_> = (0..b.len()).map(|i| i as f32 / b.len() as f32).collect();
+    let strengths = [0.4, 0.17, 1., 0.8, 0., 0.33, 1., 0.01, 0.4];
+    let (inv, inv_sq) = (0.7, 0.49);
+    let (ka, ke) = (AREA_WEIGHT * 0.5 * inv_sq, EDGE_LEN_WEIGHT * inv);
+    for closed in [false, true] {
+      let mut soa = SoaRing::default();
+      soa.fill(&b, Some(&ts), Some(&strengths), closed);
+      let count = b.len() + closed as usize;
+      let pad = count.next_multiple_of(4);
+      for sa in [0., 0.13, 0.64, 1.] {
+        let mut ca = vec![0.; pad];
+        let mut cb = vec![0.; pad];
+        let fill = if sa > 0. {
+          fill_row_costs::<true>
+        } else {
+          fill_row_costs::<false>
+        };
+        fill(
+          &soa,
+          0,
+          a[0],
+          a[1],
+          0.8,
+          critical_multiplier(sa),
+          ka,
+          ke,
+          &mut ca,
+          &mut cb,
+        );
+        for j in 1..count {
+          let cur = j % b.len();
+          let pair = sa.min(strengths[cur]);
+          let expected_a = dp_stitch_cost(a[0], a[1], b[cur], inv, inv_sq, 0.8, ts[cur], pair);
+          let expected_b = dp_stitch_cost(b[j - 1], b[cur], a[1], inv, inv_sq, ts[cur], 0.8, pair);
+          assert!((ca[j - 1] - expected_a).abs() < 1e-5);
+          assert!((cb[j - 1] - expected_b).abs() < 1e-5);
+        }
+        let boundary = cost_advance_a_at_b0(&soa, a[0], a[1], 0.8, ka, ke)
+          * soa.crit_mul[0].max(critical_multiplier(sa));
+        let expected = dp_stitch_cost(
+          a[0],
+          a[1],
+          b[0],
+          inv,
+          inv_sq,
+          0.8,
+          ts[0],
+          sa.min(strengths[0]),
+        );
+        assert!((boundary - expected).abs() < 1e-5);
+      }
+    }
+  }
 
   /// Re-evaluates the DP objective for a produced move sequence, independent of how the solver
   /// found it.
@@ -1098,8 +1233,8 @@ mod tests {
     pts_b: &[Vec3],
     ts_a: Option<&[f32]>,
     ts_b: Option<&[f32]>,
-    crit_a: Option<&BitSlice>,
-    crit_b: Option<&BitSlice>,
+    crit_a: Option<&[f32]>,
+    crit_b: Option<&[f32]>,
     closed: bool,
     inv_scale: f32,
     inv_scale_sq: f32,
@@ -1109,8 +1244,8 @@ mod tests {
     let wrap_b = |j: usize| if closed && j == m { 0 } else { j };
     let ta = |i: usize| ts_a.map_or(0., |t| t[wrap_a(i)]);
     let tb = |j: usize| ts_b.map_or(0., |t| t[wrap_b(j)]);
-    let ca = |i: usize| crit_a.is_some_and(|c| c[wrap_a(i)]);
-    let cb = |j: usize| crit_b.is_some_and(|c| c[wrap_b(j)]);
+    let ca = |i: usize| crit_a.map_or(0., |c| c[wrap_a(i)]);
+    let cb = |j: usize| crit_b.map_or(0., |c| c[wrap_b(j)]);
     let e0 = EDGE_LEN_WEIGHT * (pts_a[0] - pts_b[0]).norm() * inv_scale;
 
     let mut total = 0f64;
@@ -1133,7 +1268,7 @@ mod tests {
             inv_scale_sq,
             ta(i - 1),
             tb(bj),
-            ca(i - 1) && cb(bj),
+            ca(i - 1).min(cb(bj)),
           )
         }
         DpMove::AdvanceB if j == 1 => {
@@ -1153,7 +1288,7 @@ mod tests {
             inv_scale_sq,
             tb(j - 1),
             ta(ai),
-            cb(j - 1) && ca(ai),
+            cb(j - 1).min(ca(ai)),
           )
         }
       };
@@ -1218,6 +1353,80 @@ mod tests {
     let offset = find_best_ring_alignment(&pts_a, &pts_b);
     // B is rotated by 2 positions from A; arc-length cross-correlation should recover this
     assert_eq!(offset, 2);
+  }
+
+  #[test]
+  fn refined_alignment_preserves_sub_bin_correspondence_through_stitching() {
+    // A shift of three vertices is less than half of a 64-step bin. Both directions must
+    // work, including refinement across phase zero. The coarse alignment picks a nearby but
+    // incorrect cut and consequently re-phases the DP's parameter penalty incorrectly.
+    let n = 450;
+    let a: Vec<_> = (0..n)
+      .map(|i| {
+        let angle = i as f32 * std::f32::consts::TAU / n as f32;
+        Vec3::new(angle.cos(), angle.sin(), 0.)
+      })
+      .collect();
+    let ts: Vec<_> = (0..n).map(|i| i as f32 / n as f32).collect();
+    let strengths = crit_mask(n, 37);
+    for shift in [0, 1, 3, n / 3 + 3, n - 3, n - 1] {
+      let b: Vec<_> = (0..n)
+        .map(|i| a[(i + shift) % n] + Vec3::new(0., 0., 0.05))
+        .collect();
+      let cb: Vec<_> = (0..n).map(|i| strengths[(i + shift) % n]).collect();
+      let offset = (n - shift) % n;
+      assert_eq!(find_ring_alignment::<true>(&a, &b), offset, "shift {shift}");
+      let mut indices = Vec::new();
+      dp_stitch_presampled_impl::<true>(
+        &a,
+        &b,
+        Some(&ts),
+        Some(&ts),
+        Some(&strengths),
+        Some(&cb),
+        0,
+        n,
+        true,
+        &mut indices,
+      );
+      assert_eq!(indices.len(), 6 * n);
+      let mut edges = std::collections::HashMap::new();
+      for tri in indices.chunks_exact(3) {
+        for j in 0..3 {
+          let (a, b) = (tri[j], tri[(j + 1) % 3]);
+          *edges.entry((a.min(b), a.max(b))).or_insert(0) += 1;
+        }
+      }
+      for i in 0..n {
+        let key = (i as u32, (n + (i + offset) % n) as u32);
+        assert_eq!(edges.get(&key), Some(&2), "shift {shift}, connection {i}");
+      }
+      assert_eq!(edges.values().filter(|&&n| n == 1).count(), 2 * n);
+      assert!(edges.values().all(|&n| n <= 2));
+    }
+  }
+
+  #[test]
+  fn refined_alignment_handles_unequal_nonuniform_sampling() {
+    // Same asymmetric polygon, but B has additional collinear samples and an arbitrary
+    // starting vertex. Alignment must use arc length, not scaled vertex indices.
+    let mut a = gen_ring(19, 193, 3., 1., 0., 0.);
+    a.iter_mut().for_each(|p| p.z = 0.);
+    let mut dense_b = Vec::new();
+    for i in 0..a.len() {
+      dense_b.push(a[i] + Vec3::new(0., 0., 0.1));
+      if i % 3 == 1 {
+        dense_b.push(a[i].lerp(&a[(i + 1) % a.len()], 0.5) + Vec3::new(0., 0., 0.1));
+      }
+    }
+    for shift in [0, 1, 3, 97, dense_b.len() - 1] {
+      let b = rotate_ring(&dense_b, shift);
+      assert_eq!(
+        find_ring_alignment::<true>(&a, &b),
+        (b.len() - shift) % b.len(),
+        "shift {shift}"
+      );
+    }
   }
 
   #[test]
@@ -1287,10 +1496,10 @@ mod tests {
   }
 
   /// Marks every `stride`-th vertex critical, the shape `snap_critical_points` produces.
-  fn crit_mask(n: usize, stride: usize) -> BitVec {
-    let mut m = bitvec![0; n];
+  fn crit_mask(n: usize, stride: usize) -> Vec<f32> {
+    let mut m = vec![0.; n];
     for i in (0..n).step_by(stride) {
-      m.set(i, true);
+      m[i] = 1.;
     }
     m
   }
@@ -1300,8 +1509,8 @@ mod tests {
   fn banded_vs_exact<const CLOSED: bool>(
     pts_a: &[Vec3],
     pts_b: &[Vec3],
-    crit_a: Option<&BitSlice>,
-    crit_b_unrotated: Option<&BitSlice>,
+    crit_a: Option<&[f32]>,
+    crit_b_unrotated: Option<&[f32]>,
   ) -> f64 {
     let scale = ((ring_average_radius(pts_a) + ring_average_radius(pts_b)) * 0.5).max(1e-6);
     let (inv, inv_sq) = (1. / scale, 1. / (scale * scale));
@@ -1330,13 +1539,7 @@ mod tests {
         }
       })
       .collect();
-    let crit_b = crit_b_unrotated.map(|c| {
-      let mut r = bitvec![0; m];
-      for i in 0..m {
-        r.set(i, c[(i + offset) % m]);
-      }
-      r
-    });
+    let crit_b = crit_b_unrotated.map(|c| (0..m).map(|i| c[(i + offset) % m]).collect::<Vec<_>>());
 
     let rings = Rings {
       a: pts_a,
@@ -1482,6 +1685,23 @@ mod tests {
       assert!(
         (1.0 - 1e-6..1.005).contains(&ratio),
         "case {case} ({na}x{nb}, crit stride {sa}/{sb}, closed={closed}): ratio {ratio:.5}"
+      );
+    }
+  }
+
+  #[test]
+  fn banded_solve_with_fractional_strengths() {
+    let a = gen_ring(41, 400, 3., 1., 0., 0.);
+    let b = gen_ring(141, 811, 3., 1.25, 0.6, 0.9);
+    let ca: Vec<_> = (0..a.len()).map(|i| (i % 7) as f32 / 6.).collect();
+    let cb: Vec<_> = (0..b.len()).map(|i| (i % 11) as f32 / 10.).collect();
+    for ratio in [
+      banded_vs_exact::<true>(&a, &b, Some(&ca), Some(&cb)),
+      banded_vs_exact::<false>(&a, &b, Some(&ca), Some(&cb)),
+    ] {
+      assert!(
+        (1.0 - 1e-6..1.005).contains(&ratio),
+        "fractional strength cost ratio {ratio}"
       );
     }
   }

@@ -11,6 +11,13 @@ pub(crate) trait AbstractPath {
   fn eval_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
   /// Local `t`, sorted, within `[0, 1]`; empty when nothing is known.
   fn critical_t_values(&self) -> Vec<f32>;
+  /// Known piece boundaries used to seed adaptive materialization, not crease annotations.
+  fn sampling_t_values(&self) -> Vec<f32> {
+    self.critical_t_values()
+  }
+  fn is_piecewise_linear(&self) -> bool {
+    false
+  }
   fn topology(&self) -> Option<SubpathTopology> {
     None
   }
@@ -109,6 +116,25 @@ impl AbstractPath for LerpPath {
     self.merged_critical.clone()
   }
 
+  fn sampling_t_values(&self) -> Vec<f32> {
+    if self.mix <= 0. {
+      return self.a.sampling_t_values();
+    }
+    if self.mix >= 1. {
+      return self.b.sampling_t_values();
+    }
+    let mut ts = self.a.sampling_t_values();
+    ts.extend(self.b.sampling_t_values());
+    ts.sort_unstable_by(f32::total_cmp);
+    ts.dedup();
+    ts
+  }
+
+  fn is_piecewise_linear(&self) -> bool {
+    (self.mix >= 1. || self.a.is_piecewise_linear())
+      && (self.mix <= 0. || self.b.is_piecewise_linear())
+  }
+
   fn children(&self) -> Vec<&Rc<Path>> {
     vec![&self.a, &self.b]
   }
@@ -136,6 +162,16 @@ impl AbstractPath for CatmullRom2D {
 
   fn critical_t_values(&self) -> Vec<f32> {
     vec![0.0, 1.0]
+  }
+
+  fn sampling_t_values(&self) -> Vec<f32> {
+    let n = if self.closed {
+      self.points.len()
+    } else {
+      self.points.len().saturating_sub(1)
+    }
+    .max(1);
+    (0..=n).map(|i| i as f32 / n as f32).collect()
   }
 
   fn topology(&self) -> Option<SubpathTopology> {
@@ -193,6 +229,20 @@ impl AbstractPath for Trimmed {
 
   fn critical_t_values(&self) -> Vec<f32> {
     self.critical.clone()
+  }
+
+  fn sampling_t_values(&self) -> Vec<f32> {
+    self
+      .inner
+      .sampling_t_values()
+      .into_iter()
+      .filter(|&t| t >= self.start_t && t <= self.start_t + self.span)
+      .map(|t| ((t - self.start_t) / self.span).clamp(0., 1.))
+      .collect()
+  }
+
+  fn is_piecewise_linear(&self) -> bool {
+    self.inner.is_piecewise_linear()
   }
 
   fn children(&self) -> Vec<&Rc<Path>> {
