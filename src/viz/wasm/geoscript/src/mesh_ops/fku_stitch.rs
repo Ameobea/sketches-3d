@@ -31,8 +31,8 @@ const EDGE_LEN_WEIGHT: f32 = 1.;
 
 /// Correspondence prior between normalized profile parameters (after ring alignment), not
 /// positions along the spine. This also discourages some large fans, but is neither a fan-size
-/// bound nor a guarantee that corresponding creases connect. See scripts/fku-audit/DT-WEIGHT.md
-/// for the controlled weight sweep; reducing this can improve triangle shape while losing folds.
+/// bound nor a guarantee that corresponding creases connect. Reducing this can improve triangle
+/// shape while losing folds; see FKU-EXPERIMENTS.md in the repository root.
 const DT_WEIGHT: f32 = 2.5;
 
 /// Minimum cost multiplier applied when both endpoints have full crease strength.
@@ -292,7 +292,8 @@ const ALIGNMENT_REFINE_FACTOR: usize = 8;
 
 // Keep local refinement as a comparison control, not the production default. A geometrically
 // better phase can worsen the subsequent t-correspondence prior when the ring is rebased.
-// See scripts/fku-audit/CANDIDATE-TRIALS.md. This constant leaves no runtime branch or API knob.
+// See FKU-EXPERIMENTS.md in the repository root.
+// This constant leaves no runtime branch or API knob.
 const REFINE_RING_ALIGNMENT: bool = false;
 
 /// Computes cumulative arc lengths for a closed ring.
@@ -1155,10 +1156,6 @@ pub fn should_use_fku(enable_fku: bool, count_a: usize, count_b: usize) -> bool 
 
   true
 }
-
-#[cfg(test)]
-#[path = "fku_stability_audit.rs"]
-mod stability_audit;
 
 #[cfg(test)]
 mod tests {
