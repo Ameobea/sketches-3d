@@ -1,6 +1,7 @@
 use geoscript::{
   builtins::fn_defs::{fn_sigs, ArgDef, DefaultValue, FnDef, FnSignature},
-  ty::PartialApplication,
+  call_binding::{bind_signature, ArgumentSource},
+  ty::{AbstractType, PartialApplication},
   ArgType, EvalCtx, Sym, Value,
 };
 use nanoserde::SerJson;
@@ -122,36 +123,27 @@ fn classify_sig_for_paf<'a>(
   sig: &'a FnSignature,
   paf: &PartialApplication,
 ) -> Option<(Vec<&'a ArgDef>, Vec<&'a ArgDef>)> {
-  if paf.bound_args.len() > sig.arg_defs.len() {
-    return None;
-  }
-  for (i, ty) in paf.bound_args.iter().enumerate() {
-    if sig.arg_defs[i].valid_types & ty.as_bitflags() == 0 {
-      return None;
-    }
-  }
-  for (k, kty) in &paf.bound_kwargs {
-    let arg_def = sig.arg_defs.iter().find(|d| d.interned_name == *k);
-    match arg_def {
-      Some(d) if d.valid_types & kty.as_bitflags() != 0 => {}
-      _ => return None,
-    }
-  }
-
-  let mut bound: Vec<&ArgDef> = Vec::new();
-  let mut remaining: Vec<&ArgDef> = Vec::new();
-  for (i, def) in sig.arg_defs.iter().enumerate() {
-    let bound_by_pos = i < paf.bound_args.len();
-    let bound_by_kw = paf
-      .bound_kwargs
-      .iter()
-      .any(|(k, _)| *k == def.interned_name);
-    if bound_by_pos || bound_by_kw {
-      bound.push(def);
-    } else {
-      remaining.push(def);
-    }
-  }
+  let mut bound = Vec::new();
+  let mut remaining = Vec::new();
+  bind_signature(
+    sig,
+    paf.bound_args.len(),
+    |ix| paf.bound_args[ix].possible_type_flags(),
+    paf.bound_kwargs.iter().map(|(name, _)| *name),
+    |name| {
+      paf
+        .bound_kwargs
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, ty)| ty.possible_type_flags())
+    },
+    false,
+    false,
+    |ix, source| match source {
+      ArgumentSource::Positional(_) | ArgumentSource::Keyword(..) => bound.push(&sig.arg_defs[ix]),
+      ArgumentSource::Default | ArgumentSource::Missing => remaining.push(&sig.arg_defs[ix]),
+    },
+  )?;
   Some((bound, remaining))
 }
 
@@ -167,10 +159,17 @@ fn format_arg_oneliner(arg: &ArgDef) -> String {
 /// name, which args have been bound, and which signatures the call could still complete into
 /// (each with its remaining params).
 pub fn format_partial_application(paf: &PartialApplication, ctx: &EvalCtx) -> String {
+  let AbstractType::Builtin(name) = &*paf.target else {
+    let remaining = geoscript::call_infer::remaining_closure(paf)
+      .map(AbstractType::Callable)
+      .and_then(|ty| ty.display_str())
+      .unwrap_or_else(|| "callable".to_owned());
+    return format!("(partial application)\nRemaining: {remaining}");
+  };
   let mut parts = Vec::new();
-  parts.push(format!("(partial application of `{}`)", paf.name));
+  parts.push(format!("(partial application of `{}`)", name));
 
-  if let Some(def) = fn_sigs().get(paf.name.as_str()) {
+  if let Some(def) = fn_sigs().get(name.as_str()) {
     if !def.module.is_empty() {
       parts.push(format!("Module: {}", def.module));
     }
@@ -183,7 +182,7 @@ pub fn format_partial_application(paf: &PartialApplication, ctx: &EvalCtx) -> St
       paf
         .bound_args
         .iter()
-        .map(|t| format!("`{}`", t.as_str()))
+        .map(|t| format!("`{}`", t.display_str().unwrap_or_else(|| "?".to_owned())))
         .collect::<Vec<_>>()
         .join(", "),
     )
@@ -197,7 +196,10 @@ pub fn format_partial_application(paf: &PartialApplication, ctx: &EvalCtx) -> St
         .iter()
         .map(|(sym, t)| {
           let name = resolve_sym(ctx, *sym);
-          format!("{name}=`{}`", t.as_str())
+          format!(
+            "{name}=`{}`",
+            t.display_str().unwrap_or_else(|| "?".to_owned())
+          )
         })
         .collect::<Vec<_>>()
         .join(", "),
@@ -215,7 +217,7 @@ pub fn format_partial_application(paf: &PartialApplication, ctx: &EvalCtx) -> St
   }
 
   // Find which signatures still accept the bound args.  Show remaining params for each.
-  let Some(def) = fn_sigs().get(paf.name.as_str()) else {
+  let Some(def) = fn_sigs().get(name.as_str()) else {
     return parts.join("\n");
   };
 

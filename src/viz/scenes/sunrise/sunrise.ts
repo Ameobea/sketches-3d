@@ -11,17 +11,10 @@ import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/ma
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
-import { getPlayerColliderCenterToFeetOffset } from 'src/viz/physicsConfig';
-import { buildRobotCharacter } from './robotCharacter';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
-  const playerHeight = 5 * (4 / 5);
-  const playerRadius = 1.5 * (4 / 5);
-  const playerMesh = buildRobotCharacter(viz, {
-    colliderHeight: playerHeight + 2 * playerRadius,
-    centerToFeetOffset: getPlayerColliderCenterToFeetOffset('capsule', playerHeight, playerRadius),
-    minWalkCycleSeconds: 0.2,
-  });
+  const playerHeight = 5;
+  const playerRadius = 1.5;
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
@@ -54,7 +47,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
       },
       player: {
         playerColliderShape: 'capsule',
-        mesh: playerMesh,
+        character: { facing: 'camera' },
         colliderSize: { height: playerHeight, radius: playerRadius },
         playerShadow: { radius: playerRadius, intensity: 0.85 },
         moveSpeed: { onGround: 18.9, inAir: 21.6 },

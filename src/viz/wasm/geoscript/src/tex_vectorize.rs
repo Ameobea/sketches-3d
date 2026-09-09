@@ -1596,7 +1596,7 @@ impl<'a> Compiler<'a> {
     }
     prefilter(inner, None)?;
     for param in inner.params.iter() {
-      if !matches!(param.ident, crate::ast::DestructurePattern::Ident(_)) {
+      if !matches!(param.ident, crate::ast::DestructurePattern::Ident(_, _)) {
         return bail("destructuring param on inlined closure", loc);
       }
     }
@@ -1661,7 +1661,7 @@ impl<'a> Compiler<'a> {
     let mut pos_ix = 0usize;
     for (param_ix, param) in inner.params.iter().enumerate() {
       let slot = meta.param_slots[param_ix];
-      let crate::ast::DestructurePattern::Ident(param_name) = &param.ident else {
+      let crate::ast::DestructurePattern::Ident(param_name, _) = &param.ident else {
         unreachable!("checked above");
       };
       let bound = if let Some(v) = kwargs.get(param_name) {
@@ -1772,7 +1772,7 @@ impl<'a> Compiler<'a> {
     }
     let mut pos = 0usize;
     for (i, param) in params.iter().enumerate() {
-      let DestructurePattern::Ident(name) = &param.ident else {
+      let DestructurePattern::Ident(name, _) = &param.ident else {
         return bail("destructuring param on inlined closure", loc);
       };
       let slot = base as u16 + meta.param_slots[i];
@@ -4619,7 +4619,7 @@ fn compile(
   let (xy_from, max_params) = (kind.n_inputs() + 1, kind.n_inputs() + 3);
   prefilter(closure, Some(xy_from))?;
   for param in closure.params.iter() {
-    if !matches!(param.ident, crate::ast::DestructurePattern::Ident(_)) {
+    if !matches!(param.ident, crate::ast::DestructurePattern::Ident(_, _)) {
       return bail("destructuring closure param", SourceLoc::default());
     }
   }

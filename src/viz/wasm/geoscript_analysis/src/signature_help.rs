@@ -54,14 +54,21 @@ pub(crate) fn signature_help(
             .with_resolved(def.name, |s| s == call.fn_name)
             .unwrap_or(false)
         })
-        .map(|def| def.loc)
+        .map(|def| def.id)
     })
   };
 
   let (docs, matched_sig) = match shadowing_def {
-    Some(def_loc) => {
-      let AbstractType::Callable(callable) = analysis.as_ref()?.def_types.get(&def_loc)? else {
-        return None;
+    Some(id) => {
+      let ty = &analysis.as_ref()?.definition(id).ty;
+      let remaining;
+      let callable = match ty {
+        AbstractType::Callable(callable) => callable,
+        AbstractType::PartiallyApplied(paf) => {
+          remaining = geoscript::call_infer::remaining_closure(paf)?;
+          &remaining
+        }
+        _ => return None,
       };
       let display = |ty: &AbstractType| ty.display_str().unwrap_or_else(|| "?".to_owned());
       let docs = BuiltinDocs {
@@ -74,7 +81,7 @@ pub(crate) fn signature_help(
             .map(|p| ParamDocs {
               name: p.name.clone().unwrap_or_else(|| "_".to_owned()),
               ty: display(&p.ty),
-              default: None,
+              default: p.has_default.then(|| "…".to_owned()),
               description: String::new(),
             })
             .collect(),

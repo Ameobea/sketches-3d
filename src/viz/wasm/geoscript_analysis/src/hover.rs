@@ -66,7 +66,6 @@ pub(crate) fn hover(
 ) -> Option<HoverInfo> {
   let program = parse_lenient(&ctx.eval_ctx, src, include_prelude, ambient_src)?;
   let analysis = Analysis::build(&ctx.eval_ctx, &program);
-  let def_types = &analysis.def_types;
   let resolve = |sym| {
     ctx
       .eval_ctx
@@ -77,8 +76,7 @@ pub(crate) fn hover(
   for def in analysis.all_defs() {
     let (line, col) = ctx.eval_ctx.resolve_loc(def.loc);
     let name = resolve(def.name)?;
-    // Not `ident_end_col`: a def's name always matches the source, and destructured bindings
-    // record the RHS position, where probing would stretch the range over the whole RHS.
+    // Each binding carries the location of its own identifier.
     let end_col = col + name.len() as u32;
 
     if line == target_line && target_col >= col && target_col < end_col {
@@ -87,7 +85,7 @@ pub(crate) fn hover(
         SymbolKind::ClosureParam => "parameter",
         SymbolKind::Import => "import",
       };
-      let content = describe_binding(kind, &name, def_types.get(&def.loc), ctx);
+      let content = describe_binding(kind, &name, Some(&def.ty), ctx);
       return Some(plain(content, line, col, end_col));
     }
   }
@@ -104,17 +102,19 @@ pub(crate) fn hover(
     let end_col = source_scan::ident_end_col(src, line, col, name.len() as u32);
 
     if target_col < end_col {
-      if !call_info.is_shadowed {
-        if let Some((real_name, fn_def)) = ctx.lookup_builtin(&name) {
-          return Some(builtin(
-            real_name,
-            fn_def,
-            call_info.matched_sig_ix,
-            line,
-            col,
-            end_col,
-          ));
-        }
+      if call_info.is_shadowed {
+        // Local calls have references too; use their binding's type below.
+        continue;
+      }
+      if let Some((real_name, fn_def)) = ctx.lookup_builtin(&name) {
+        return Some(builtin(
+          real_name,
+          fn_def,
+          call_info.matched_sig_ix,
+          line,
+          col,
+          end_col,
+        ));
       }
       return Some(plain(format!("(function) {name}"), line, col, end_col));
     }
@@ -135,9 +135,7 @@ pub(crate) fn hover(
           return Some(builtin(real_name, fn_def, None, line, col, end_col));
         }
       }
-      let ty = sym_ref
-        .resolved_def
-        .and_then(|def_loc| def_types.get(&def_loc));
+      let ty = sym_ref.resolved_def.map(|id| &analysis.definition(id).ty);
       return Some(plain(
         describe_binding("variable", &name, ty, ctx),
         line,

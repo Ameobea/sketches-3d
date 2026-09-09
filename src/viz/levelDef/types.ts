@@ -990,6 +990,14 @@ const EnvironmentDefRawSchema = z.discriminatedUnion('kind', [
   EquirectEnvironmentDefSchema,
 ]);
 
+/** The player's character: an asset that renders its mesh(es) plus one polyline per bone chain. */
+export const CharacterDefSchema = z.object({
+  asset: z.string(),
+  /** Level material for every character mesh; composition assets fall back to their own `materialMap`. */
+  material: z.string().optional(),
+});
+export type CharacterDef = z.infer<typeof CharacterDefSchema>;
+
 export const LevelDefSchema = z
   .object({
     $schema: z.string().optional(),
@@ -1004,6 +1012,7 @@ export const LevelDefSchema = z
     /** Scene-wide image-based lighting (IBL) + optional matching background. */
     environment: EnvironmentDefSchema.optional(),
     physics: ScenePhysicsDefSchema.optional(),
+    character: CharacterDefSchema.optional(),
     generators: GeneratorsRecordSchema.optional(),
     audio: AudioDefSchema.optional(),
   })
@@ -1011,6 +1020,21 @@ export const LevelDefSchema = z
     const assetKeys = new Set(Object.keys(def.assets));
     const matKeys = new Set(Object.keys(def.materials ?? {}));
     const texKeys = new Set(Object.keys(def.textures ?? {}));
+
+    if (def.character && !assetKeys.has(def.character.asset)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['character', 'asset'],
+        message: `Unknown asset "${def.character.asset}". Available: ${[...assetKeys].join(', ') || '(none)'}`,
+      });
+    }
+    if (def.character?.material !== undefined && !matKeys.has(def.character.material)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['character', 'material'],
+        message: `Unknown material "${def.character.material}". Available: ${[...matKeys].join(', ') || '(none)'}`,
+      });
+    }
 
     // Each object's asset and material must reference existing registry entries
     const allObjectDefs = collectObjectDefs(def.objects, ['objects']);
@@ -1115,6 +1139,7 @@ export const LevelDefRawSchema = z.object({
   lights: z.array(LightDefRawSchema).optional(),
   environment: EnvironmentDefRawSchema.optional(),
   physics: ScenePhysicsDefSchema.optional(),
+  character: CharacterDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
   audio: AudioDefSchema.optional(),
 });

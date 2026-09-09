@@ -767,7 +767,7 @@ fn hash_type_name(type_name: ArgType, hasher: &mut SipHasher) {
 fn hash_destructure_pattern(pattern: &DestructurePattern, hasher: &mut SipHasher) -> Option<()> {
   std::mem::discriminant(pattern).hash(hasher);
   match pattern {
-    DestructurePattern::Ident(ident) => {
+    DestructurePattern::Ident(ident, _) => {
       ident.hash(hasher);
       Some(())
     }

@@ -10,8 +10,12 @@ use nanoserde::SerJson;
 
 mod analysis;
 mod completions;
+#[cfg(test)]
+mod correctness_tests;
 mod diagnostics;
 mod format;
+#[cfg(test)]
+mod foundation_tests;
 mod goto;
 mod hover;
 mod pipeline_help;
@@ -23,7 +27,7 @@ mod source_scan;
 pub use analysis::Analysis;
 pub use format::{BuiltinDocs, ParamDocs, SignatureDocs};
 pub use rewrite_inputs::{rewrite_input_defaults, InputDefaultRequest, RewriteResult, SourceEdit};
-pub use scope::{SymbolDef, SymbolKind, SymbolRef};
+pub use scope::{DefinitionId, SymbolDef, SymbolKind, SymbolRef};
 pub use signature_help::SignatureHelp;
 
 /// Severity of a diagnostic message.
@@ -1564,7 +1568,7 @@ my_fn = |x: int|: int {
   #[test]
   fn test_destructure_def_hover_does_not_swallow_rhs() {
     let ctx = AnalysisCtx::new();
-    // destructured bindings record the RHS position, so their range must stay name-width
+    // A destructured definition must not mask a reference anywhere on its RHS.
     let src = "some_long_binding_name = [1, 2]\n[a, b] = some_long_binding_name\n";
     let hover = ctx
       .hover(src, 2, 20, false, "")

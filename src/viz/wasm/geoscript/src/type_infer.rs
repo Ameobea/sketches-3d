@@ -2,8 +2,9 @@
 //! walker.  Produces an [`AbstractType`] for any expression in a given [`TypeEnv`].
 //!
 //! This module is pure — no diagnostics, no symbol-reference recording.  Callers layer their
-//! own concerns (ref tracking, diagnostics, function-call recording) on top by consulting the
-//! [`resolve_builtin_call`] / [`resolve_paf_call`] helpers alongside their own walk.
+//! own concerns (ref tracking, diagnostics, function-call recording) on top by consulting
+//! [`crate::call_infer::resolve_call`] / [`crate::call_infer::resolve_pipeline`] alongside
+//! their own walk.
 
 use fxhash::FxHashMap;
 
@@ -13,12 +14,12 @@ use crate::{
     Expr, FunctionCall, FunctionCallTarget, MapLiteralEntry, ScopeTracker, Statement, TrackedValue,
   },
   builtins::{
-    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, DefaultValue, FnSignature},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     FUNCTION_ALIASES,
   },
-  match_binop_by_arg_types, match_signature_by_arg_types, match_unop_by_arg_types,
+  match_binop_by_arg_types, match_unop_by_arg_types,
   resolve::resolve_global,
-  ty::{merge_types, AbstractType, CallableParam, CallableType, PartialApplication},
+  ty::{merge_types, AbstractType, CallableParam, CallableType},
   ArgType, EvalCtx, Sym,
 };
 
@@ -69,7 +70,7 @@ impl<'a> TypeEnv<'a> {
     while let Some(frame) = cur {
       if let Some(val) = frame.vars.get(&name) {
         return Some(match val {
-          TrackedValue::Const(v) => AbstractType::Concrete(v.get_type()),
+          TrackedValue::Const(v) => value_type(self.ctx, v),
           TrackedValue::Arg | TrackedValue::Dyn => frame
             .types
             .get(&name)
@@ -113,398 +114,27 @@ impl<'a> TypeEnv<'a> {
   }
 }
 
-/// Result of trying to resolve a builtin or PAF call against a signature list.
-///
-/// Exposes enough structure for callers (especially the analysis walker) to emit diagnostics
-/// on `NoMatch` or record a matched signature index for per-call hover.
-pub enum CallResolution {
-  /// Call fully matches a specific signature.
-  Matched {
-    return_ty: AbstractType,
-    def_ix: usize,
-  },
-  /// All arg types concrete, but no signature matches yet — could be completed with more args.
-  /// Callers may wrap this back into an [`AbstractType::PartiallyApplied`].
-  PartiallyApplied {
-    canonical_name: String,
-    bound_args: Vec<ArgType>,
-    bound_kwargs: Vec<(Sym, ArgType)>,
-  },
-  /// All arg types concrete, no signature matches, and not a valid prefix.  A genuine error.
-  NoMatch {
-    canonical_name: String,
-    concrete_args: Vec<ArgType>,
-    concrete_kwargs: Vec<(Sym, ArgType)>,
-  },
-  /// Name is not a known builtin (after alias resolution).
-  NotBuiltin,
-  /// At least one arg type is non-concrete (Union / PAF / Callable / Unknown) — can't decide.
-  Indeterminate,
-}
-
-impl CallResolution {
-  /// Collapse a resolution into an abstract type as seen by a caller that doesn't care about
-  /// the detailed matching info.  `Matched` → its return type, `PartiallyApplied` → a
-  /// `PartiallyApplied` type, everything else → Unknown.
-  pub fn into_abstract_type(self) -> AbstractType {
-    match self {
-      CallResolution::Matched { return_ty, .. } => return_ty,
-      CallResolution::PartiallyApplied {
-        canonical_name,
-        bound_args,
-        bound_kwargs,
-      } => AbstractType::PartiallyApplied(PartialApplication {
-        name: canonical_name,
-        bound_args,
-        bound_kwargs,
-      }),
-      _ => AbstractType::Unknown,
-    }
-  }
-}
-
-/// Attempt to resolve a builtin function call from its name Sym and fully-typed args.
-pub fn resolve_builtin_call(
-  ctx: &EvalCtx,
-  name: Sym,
-  arg_types: &[AbstractType],
-  kwarg_types: &[(Sym, AbstractType)],
-) -> CallResolution {
-  let Some(name_str) = ctx
-    .interned_symbols
-    .with_resolved(name, |s| s.strip_prefix('@').unwrap_or(s).to_owned())
-  else {
-    return CallResolution::NotBuiltin;
-  };
-  let (canonical_name, sigs) = if let Some(def) = fn_sigs().get(&name_str) {
-    (name_str.clone(), def.signatures)
-  } else if let Some(&real_name) = FUNCTION_ALIASES.get(name_str.as_str()) {
-    if let Some(def) = fn_sigs().get(real_name) {
-      (real_name.to_string(), def.signatures)
-    } else {
-      return CallResolution::NotBuiltin;
-    }
-  } else {
-    return CallResolution::NotBuiltin;
-  };
-
-  resolve_against_sigs(canonical_name, sigs, arg_types, kwarg_types)
-}
-
-/// Attempt to resolve a call into an existing partial application: combine bound args with
-/// new ones and re-match.
-pub fn resolve_paf_call(
-  paf: &PartialApplication,
-  new_pos: &[AbstractType],
-  new_kwargs: &[(Sym, AbstractType)],
-) -> CallResolution {
-  let mut new_pos_concrete: Vec<ArgType> = Vec::with_capacity(new_pos.len());
-  for ty in new_pos {
-    match ty.as_single_arg_type() {
-      Some(t) => new_pos_concrete.push(t),
-      None => return CallResolution::Indeterminate,
-    }
-  }
-  let mut new_kw_concrete: Vec<(Sym, ArgType)> = Vec::with_capacity(new_kwargs.len());
-  for (sym, ty) in new_kwargs {
-    match ty.as_single_arg_type() {
-      Some(t) => new_kw_concrete.push((*sym, t)),
-      None => return CallResolution::Indeterminate,
-    }
-  }
-
-  let Some(def) = fn_sigs().get(paf.name.as_str()) else {
-    return CallResolution::NotBuiltin;
-  };
-  let sigs = def.signatures;
-
-  let mut combined_pos = paf.bound_args.clone();
-  combined_pos.extend(new_pos_concrete);
-  let mut combined_kw = paf.bound_kwargs.clone();
-  combined_kw.extend(new_kw_concrete);
-
-  match match_signature_by_arg_types(sigs, &combined_pos, &combined_kw) {
-    Some(sig_match) => CallResolution::Matched {
-      return_ty: AbstractType::from_return_type(sig_match.return_type),
-      def_ix: sig_match.def_ix,
-    },
-    None => {
-      if is_valid_partial_prefix(sigs, &combined_pos, &combined_kw) {
-        CallResolution::PartiallyApplied {
-          canonical_name: paf.name.clone(),
-          bound_args: combined_pos,
-          bound_kwargs: combined_kw,
-        }
-      } else {
-        CallResolution::NoMatch {
-          canonical_name: paf.name.clone(),
-          concrete_args: combined_pos,
-          concrete_kwargs: combined_kw,
-        }
-      }
-    }
-  }
-}
-
-fn resolve_against_sigs(
-  canonical_name: String,
-  sigs: &'static [FnSignature],
-  arg_types: &[AbstractType],
-  kwarg_types: &[(Sym, AbstractType)],
-) -> CallResolution {
-  let mut concrete_args: Vec<ArgType> = Vec::with_capacity(arg_types.len());
-  for ty in arg_types {
-    match ty.as_single_arg_type() {
-      Some(t) => concrete_args.push(t),
-      None => return CallResolution::Indeterminate,
-    }
-  }
-  let mut concrete_kwargs: Vec<(Sym, ArgType)> = Vec::with_capacity(kwarg_types.len());
-  for (sym, ty) in kwarg_types {
-    match ty.as_single_arg_type() {
-      Some(t) => concrete_kwargs.push((*sym, t)),
-      None => return CallResolution::Indeterminate,
-    }
-  }
-
-  match match_signature_by_arg_types(sigs, &concrete_args, &concrete_kwargs) {
-    Some(sig_match) => CallResolution::Matched {
-      return_ty: AbstractType::from_return_type(sig_match.return_type),
-      def_ix: sig_match.def_ix,
-    },
-    None => {
-      if is_valid_partial_prefix(sigs, &concrete_args, &concrete_kwargs) {
-        CallResolution::PartiallyApplied {
-          canonical_name,
-          bound_args: concrete_args,
-          bound_kwargs: concrete_kwargs,
-        }
-      } else {
-        CallResolution::NoMatch {
-          canonical_name,
-          concrete_args,
-          concrete_kwargs,
-        }
-      }
-    }
-  }
-}
-
-/// True if the provided positional + kwarg types match some signature's *prefix* — i.e. the
-/// call could become complete by providing more args (partial application).
-pub fn is_valid_partial_prefix(
-  sigs: &'static [FnSignature],
-  positional: &[ArgType],
-  kwargs: &[(Sym, ArgType)],
-) -> bool {
-  // Dynamic signatures (empty first arg name) accept anything; treat as always-valid prefix.
-  if let Some(sig) = sigs.first() {
-    if let Some(d) = sig.arg_defs.first() {
-      if d.name.is_empty() {
-        return true;
-      }
-    }
-  }
-
-  for sig in sigs {
-    if positional.len() > sig.arg_defs.len() {
-      continue;
-    }
-    let mut ok = true;
-    for (i, ty) in positional.iter().enumerate() {
-      if sig.arg_defs[i].valid_types & ty.as_bitflags() == 0 {
-        ok = false;
-        break;
-      }
-    }
-    if !ok {
-      continue;
-    }
-    for (k, kty) in kwargs {
-      let arg_def = sig.arg_defs.iter().find(|d| d.interned_name == *k);
-      match arg_def {
-        Some(d) if d.valid_types & kty.as_bitflags() != 0 => {}
-        _ => {
-          ok = false;
-          break;
-        }
-      }
-    }
-    if ok {
-      return true;
-    }
-  }
-  false
-}
-
-/// How a standalone builtin call `f(args)` resolves, used to model the pipeline operator `lhs |
-/// rhs`.
-///
-/// The runtime evaluates `rhs` to a value *before* deciding how `|` behaves: when `f(args)` is a
-/// partial application or a complete higher-order call returns a callable, the pipeline invokes
-/// it with `lhs`; when a complete call returns a non-callable value, `|` degrades to
-/// `bit_or(lhs, value)`. Non-concrete arg types act as wildcards so e.g. `v3(x, y, 10)` with
-/// unknown `x`/`y` still classifies as a complete `vec3`.
-pub enum PipeRhsKind {
-  /// `f(args)` fully binds a signature, with this return type and matched definition index. The
-  /// return type may itself be callable.
-  Complete { ty: AbstractType, def_ix: usize },
-  /// No signature fully binds but the args are a valid prefix → a callable to pipe into.
-  Partial,
-  /// Concrete args fit no signature, neither complete nor as a prefix → the call itself is
-  /// invalid.
-  NoMatch,
-  /// Not a resolvable builtin, or it has dynamic signatures we can't reason about.
-  Indeterminate,
-}
-
-/// True if an abstract arg type is compatible with a parameter's `valid_types` bitflags.  A non-
-/// concrete type (Union / partial application / Unknown) fits any param when `require_concrete` is
-/// false (wildcard), but fits none when true (we can't prove a match).
-fn arg_ty_fits(valid_types: u32, ty: &AbstractType, require_concrete: bool) -> bool {
-  match ty.as_single_arg_type() {
-    Some(c) => valid_types & c.as_bitflags() != 0,
-    None => !require_concrete,
-  }
-}
-
-/// Whether `sig` is fully satisfied by the given args (all required params bound, types
-/// compatible) — i.e. the call would produce a concrete value rather than a partial application.
-/// With `require_concrete`, a wildcard arg is *not* allowed to satisfy a param, so this reports
-/// only binds the runtime would definitely make regardless of what the wildcards resolve to.
-fn sig_fully_binds(
-  sig: &FnSignature,
-  positional: &[AbstractType],
-  kwargs: &[(Sym, AbstractType)],
-  require_concrete: bool,
-) -> bool {
-  for (kw, _) in kwargs {
-    if !sig.arg_defs.iter().any(|d| d.interned_name == *kw) {
-      return false;
-    }
-  }
-  let mut pos_ix = 0;
-  for arg_def in sig.arg_defs {
-    if let Some((_, ty)) = kwargs.iter().find(|(s, _)| *s == arg_def.interned_name) {
-      if !arg_ty_fits(arg_def.valid_types, ty, require_concrete) {
-        return false;
-      }
-    } else if pos_ix < positional.len() {
-      if !arg_ty_fits(arg_def.valid_types, &positional[pos_ix], require_concrete) {
-        return false;
-      }
-      pos_ix += 1;
-    } else if matches!(arg_def.default_value, DefaultValue::Required) {
-      return false;
-    }
-  }
-  true
-}
-
-/// Whether the given args are a valid *prefix* of `sig` (could be completed by supplying more) —
-/// i.e. the call would yield a partial application.
-fn sig_valid_prefix(
-  sig: &FnSignature,
-  positional: &[AbstractType],
-  kwargs: &[(Sym, AbstractType)],
-) -> bool {
-  if positional.len() > sig.arg_defs.len() {
-    return false;
-  }
-  for (i, ty) in positional.iter().enumerate() {
-    if !arg_ty_fits(sig.arg_defs[i].valid_types, ty, false) {
-      return false;
-    }
-  }
-  for (kw, kty) in kwargs {
-    match sig.arg_defs.iter().find(|d| d.interned_name == *kw) {
-      Some(d) if arg_ty_fits(d.valid_types, kty, false) => {}
-      _ => return false,
-    }
-  }
-  true
-}
-
-/// Classify the rhs of a pipeline when it's a written-out call `f(args)`, mirroring the runtime's
-/// complete-vs-partial decision (see [`PipeRhsKind`]).  The runtime prefers a complete signature
-/// match, falling back to a partial application only when no signature fully binds.
-pub fn classify_pipe_rhs_call(
-  ctx: &EvalCtx,
-  name: Sym,
-  arg_types: &[AbstractType],
-  kwarg_types: &[(Sym, AbstractType)],
-) -> PipeRhsKind {
-  let Some(name_str) = ctx.interned_symbols.with_resolved(name, |s| s.to_string()) else {
-    return PipeRhsKind::Indeterminate;
-  };
-  let sigs = if let Some(def) = fn_sigs().get(name_str.as_str()) {
-    def.signatures
-  } else if let Some(&real) = FUNCTION_ALIASES.get(name_str.as_str()) {
-    match fn_sigs().get(real) {
-      Some(def) => def.signatures,
-      None => return PipeRhsKind::Indeterminate,
-    }
-  } else {
-    return PipeRhsKind::Indeterminate;
-  };
-
-  // Dynamic signatures (empty first arg name) accept anything — can't reason about completeness.
-  if sigs
-    .first()
-    .and_then(|s| s.arg_defs.first())
-    .map_or(true, |d| d.name.is_empty())
-  {
-    return PipeRhsKind::Indeterminate;
-  }
-
-  // A signature bound entirely by concrete args is authoritative: the runtime produces its
-  // declared return type here regardless of any longer overload.
-  for (def_ix, sig) in sigs.iter().enumerate() {
-    if sig_fully_binds(sig, arg_types, kwarg_types, true) {
-      return PipeRhsKind::Complete {
-        ty: AbstractType::from_return_type(sig.return_type),
-        def_ix,
-      };
-    }
-  }
-  // The pipe appends `lhs` as one more positional arg.  When some overload accepts the current
-  // args as a prefix with a still-unbound param (room for that piped arg), the rhs is a partial
-  // application to pipe into — even if a shorter overload would *wildcard*-bind.  Mirrors the
-  // runtime, which with concrete arg types leaves the longer overload partially applied.
-  if !arg_types.is_empty() || !kwarg_types.is_empty() {
-    for sig in sigs {
-      if sig_valid_prefix(sig, arg_types, kwarg_types)
-        && !sig_fully_binds(sig, arg_types, kwarg_types, false)
-      {
-        return PipeRhsKind::Partial;
-      }
-    }
-  }
-  // No pipe-fillable overload — fall back to a wildcard-permissive full bind.
-  for (def_ix, sig) in sigs.iter().enumerate() {
-    if sig_fully_binds(sig, arg_types, kwarg_types, false) {
-      return PipeRhsKind::Complete {
-        ty: AbstractType::from_return_type(sig.return_type),
-        def_ix,
-      };
-    }
-  }
-  PipeRhsKind::NoMatch
-}
+use crate::call_infer::{
+  builtin_type, callable_param, resolve_call, resolve_literal_call, resolve_pipeline, value_type,
+  CallResolution,
+};
 
 /// Infer the abstract type of an expression in the given environment.  Mutates `env`
 /// transiently for blocks / closures but restores it before returning.
 pub fn infer_expr(ctx: &EvalCtx, env: &mut TypeEnv, expr: &Expr) -> AbstractType {
   match expr {
-    Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
+    Expr::Literal { value, .. } => value_type(ctx, value),
 
     Expr::Ident { name, .. } => match env.lookup(*name) {
       Some(ty) => ty,
-      None => ctx
-        .interned_symbols
-        .with_resolved(*name, |s| s.strip_prefix('@').and_then(resolve_global))
-        .flatten()
-        .map(|v| AbstractType::Concrete(v.get_type()))
+      None => builtin_type(ctx, *name)
+        .or_else(|| {
+          ctx
+            .interned_symbols
+            .with_resolved(*name, |s| s.strip_prefix('@').and_then(resolve_global))
+            .flatten()
+            .map(|v| value_type(ctx, &v))
+        })
         .unwrap_or(AbstractType::Unknown),
     },
 
@@ -699,22 +329,6 @@ pub fn infer_map_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) ->
   }
 }
 
-/// Result type of `lhs | rhs` when `rhs` is not callable: `|` falls through from pipeline to
-/// `bit_or` — a boolean union for meshes, a bitwise-or for ints.
-pub fn infer_bitor_op_result_type(lhs_ty: &AbstractType, rhs_ty: &AbstractType) -> AbstractType {
-  let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type())
-  else {
-    return AbstractType::Unknown;
-  };
-  let Some(entry_ix) = get_builtin_fn_sig_entry_ix("bit_or") else {
-    return AbstractType::Unknown;
-  };
-  match match_binop_by_arg_types(entry_ix, lhs_c, rhs_c) {
-    Some((_def_ix, rt)) => AbstractType::from_return_type(rt),
-    None => AbstractType::Unknown,
-  }
-}
-
 /// Return type of a builtin (resolving aliases), merged across its signatures — a `Union` when
 /// they disagree, so an ambiguous reducer stays permissive rather than falsely concrete.
 pub fn builtin_fn_return_type(name: &str) -> AbstractType {
@@ -738,7 +352,8 @@ pub fn builtin_fn_return_type(name: &str) -> AbstractType {
 fn reducer_result_type(reducer_ty: &AbstractType, bare_builtin_name: Option<&str>) -> AbstractType {
   match reducer_ty {
     AbstractType::Callable(ct) => (*ct.return_type).clone(),
-    AbstractType::PartiallyApplied(paf) => builtin_fn_return_type(&paf.name),
+    AbstractType::Builtin(name) => builtin_fn_return_type(name),
+    AbstractType::PartiallyApplied(paf) => reducer_result_type(&paf.target, None),
     _ => match bare_builtin_name {
       Some(name) => builtin_fn_return_type(name),
       None => AbstractType::Unknown,
@@ -836,100 +451,83 @@ fn infer_binop(
 
 fn infer_pipeline(ctx: &EvalCtx, env: &mut TypeEnv, lhs: &Expr, rhs: &Expr) -> AbstractType {
   let lhs_ty = infer_expr(ctx, env, lhs);
-
-  match rhs {
+  let rhs_ty = infer_expr(ctx, env, rhs);
+  let resolution = match rhs {
     Expr::Call { call, .. } => {
-      let arg_types: Vec<AbstractType> =
-        call.args.iter().map(|a| infer_expr(ctx, env, a)).collect();
-      let kwarg_types: Vec<(Sym, AbstractType)> = call
-        .kwargs
-        .iter()
-        .map(|(&sym, e)| (sym, infer_expr(ctx, env, e)))
-        .collect();
-
-      if let FunctionCallTarget::Name(name) = &call.target {
-        // Pipeline semantics: `lhs | f(a, b)` → `f(a, b, lhs)`.
-        let mut piped: Vec<AbstractType> = Vec::with_capacity(arg_types.len() + 1);
-        piped.extend(arg_types);
-        piped.push(lhs_ty);
-
-        if env.contains(*name) {
-          match env.lookup(*name) {
-            Some(AbstractType::PartiallyApplied(paf)) => {
-              resolve_paf_call(&paf, &piped, &kwarg_types).into_abstract_type()
-            }
-            Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-            Some(AbstractType::Concrete(ArgType::Path)) => AbstractType::Concrete(ArgType::Vec2),
-            _ => AbstractType::Unknown,
-          }
-        } else {
-          let resolved =
-            resolve_builtin_call(ctx, *name, &piped, &kwarg_types).into_abstract_type();
-          infer_reduce_fold_result(ctx, call, &piped, piped.len(), |s| env.contains(s))
-            .unwrap_or(resolved)
-        }
-      } else {
-        AbstractType::Unknown
-      }
+      resolve_pipeline_call(ctx, call, &lhs_ty, &rhs_ty, |name| env.contains(name))
     }
-    Expr::Ident { name, .. } => {
-      if env.contains(*name) {
-        match env.lookup(*name) {
-          Some(AbstractType::PartiallyApplied(paf)) => {
-            resolve_paf_call(&paf, &[lhs_ty], &[]).into_abstract_type()
-          }
-          Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-          Some(other) => infer_bitor_op_result_type(&lhs_ty, &other),
-          None => AbstractType::Unknown,
-        }
-      } else {
-        resolve_builtin_call(ctx, *name, &[lhs_ty], &[]).into_abstract_type()
-      }
-    }
-    Expr::Literal {
-      value: crate::Value::Callable(callable),
-      ..
-    } => callable
-      .get_return_type_hint()
-      .map(AbstractType::Concrete)
-      .unwrap_or(AbstractType::Unknown),
-    _ => {
-      let rhs_ty = infer_expr(ctx, env, rhs);
-      infer_bitor_op_result_type(&lhs_ty, &rhs_ty)
+    _ => resolve_pipeline(ctx, &lhs_ty, &rhs_ty),
+  };
+  resolution.into_abstract_type()
+}
+
+/// Piping into a partially applied builtin completes the call, so its reducer refinement applies.
+pub fn resolve_pipeline_call(
+  ctx: &EvalCtx,
+  call: &FunctionCall,
+  lhs: &AbstractType,
+  rhs: &AbstractType,
+  is_local: impl Fn(Sym) -> bool,
+) -> CallResolution {
+  let mut resolution = resolve_pipeline(ctx, lhs, rhs);
+  if let AbstractType::PartiallyApplied(paf) = rhs {
+    let mut args = paf.bound_args.clone();
+    args.push(lhs.clone());
+    refine_reduce_call(ctx, call, &paf.target, &args, is_local, &mut resolution);
+  }
+  resolution
+}
+
+/// Replaces an `Unknown` return of a builtin `reduce`/`fold` call with the reducer's own.
+pub fn refine_reduce_call(
+  ctx: &EvalCtx,
+  call: &FunctionCall,
+  target: &AbstractType,
+  args: &[AbstractType],
+  is_local: impl Fn(Sym) -> bool,
+  resolution: &mut CallResolution,
+) {
+  if resolution.error.is_none()
+    && matches!(resolution.return_ty, AbstractType::Unknown)
+    && matches!(target, AbstractType::Builtin(_))
+  {
+    if let Some(ty) = infer_reduce_fold_result(ctx, call, args, args.len(), is_local) {
+      resolution.return_ty = ty;
     }
   }
 }
 
 fn infer_call_expr(ctx: &EvalCtx, env: &mut TypeEnv, call: &FunctionCall) -> AbstractType {
-  let arg_types: Vec<AbstractType> = call.args.iter().map(|a| infer_expr(ctx, env, a)).collect();
-  let kwarg_types: Vec<(Sym, AbstractType)> = call
+  let args: Vec<_> = call
+    .args
+    .iter()
+    .map(|arg| infer_expr(ctx, env, arg))
+    .collect();
+  let kwargs: Vec<_> = call
     .kwargs
     .iter()
-    .map(|(&sym, e)| (sym, infer_expr(ctx, env, e)))
+    .map(|(name, expr)| (*name, infer_expr(ctx, env, expr)))
     .collect();
-
   match &call.target {
     FunctionCallTarget::Name(name) => {
-      if env.contains(*name) {
-        match env.lookup(*name) {
-          Some(AbstractType::PartiallyApplied(paf)) => {
-            resolve_paf_call(&paf, &arg_types, &kwarg_types).into_abstract_type()
-          }
-          Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-          Some(AbstractType::Concrete(ArgType::Path)) => AbstractType::Concrete(ArgType::Vec2),
-          _ => AbstractType::Unknown,
-        }
-      } else {
-        let resolved =
-          resolve_builtin_call(ctx, *name, &arg_types, &kwarg_types).into_abstract_type();
-        infer_reduce_fold_result(ctx, call, &arg_types, call.args.len(), |s| env.contains(s))
-          .unwrap_or(resolved)
-      }
+      let target = env
+        .lookup(*name)
+        .or_else(|| builtin_type(ctx, *name))
+        .unwrap_or(AbstractType::Unknown);
+      let mut resolution = resolve_call(ctx, &target, &args, &kwargs);
+      refine_reduce_call(
+        ctx,
+        call,
+        &target,
+        &args,
+        |name| env.contains(name),
+        &mut resolution,
+      );
+      resolution.into_abstract_type()
     }
-    FunctionCallTarget::Literal(callable) => callable
-      .get_return_type_hint()
-      .map(AbstractType::Concrete)
-      .unwrap_or(AbstractType::Unknown),
+    FunctionCallTarget::Literal(callable) => {
+      resolve_literal_call(ctx, callable, &args, &kwargs).into_abstract_type()
+    }
   }
 }
 
@@ -940,24 +538,25 @@ fn infer_closure(
   body: &ClosureBody,
   return_type_hint: Option<ArgType>,
 ) -> AbstractType {
-  env.push_scope();
-  let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
+  // The resolver binds defaults in the captured environment, before parameters enter scope.
   for param in params {
-    let ty = match &param.type_hint {
-      Some(hint) => AbstractType::Concrete(*hint),
-      None => AbstractType::Unknown,
-    };
-    let name = first_ident_name(&param.ident, ctx);
-    callable_params.push(CallableParam {
-      name,
-      ty: ty.clone(),
-    });
-    param
-      .ident
-      .visit_idents(&mut |sym| env.define(sym, ty.clone()));
     if let Some(default) = &param.default_val {
       infer_expr(ctx, env, default);
     }
+  }
+  env.push_scope();
+  let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
+  for param in params {
+    let inferred_param = callable_param(ctx, param);
+    let ty = inferred_param.ty.clone();
+    callable_params.push(inferred_param);
+    let binding_ty = match param.ident {
+      crate::ast::DestructurePattern::Ident(..) => ty,
+      _ => AbstractType::Unknown,
+    };
+    param
+      .ident
+      .visit_idents(&mut |sym| env.define(sym, binding_ty.clone()));
   }
 
   let implicit_return = infer_statement_list(ctx, env, &body.0);
@@ -972,14 +571,6 @@ fn infer_closure(
     params: callable_params,
     return_type: Box::new(return_ty),
   })
-}
-
-fn first_ident_name(pat: &crate::ast::DestructurePattern, ctx: &EvalCtx) -> Option<String> {
-  if let crate::ast::DestructurePattern::Ident(sym) = pat {
-    ctx.interned_symbols.with_resolved(*sym, |s| s.to_string())
-  } else {
-    None
-  }
 }
 
 #[cfg(test)]

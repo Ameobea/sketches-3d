@@ -37,6 +37,7 @@ import { TEXTURE_SLOTS, isGeotoyProcTexture } from './types';
 import type { ContactRegion } from '../collision';
 import { buildCompositionRunInputs, normalizeCompositionRunOutputs } from './compositionRun';
 import { createGeneratedTexture } from 'src/geotoy/modules/proceduralTextures';
+import type { CharacterAssetResult } from 'src/viz/character/types';
 import { injectInputs, warnUnmatchedInputs } from './inputInjection';
 import { canonicalizeInputs, djb2Hash, expandParamVariants, type InputsJson } from './paramVariants';
 import {
@@ -106,6 +107,8 @@ export interface LevelLoadHandle {
   nodeById: Map<string, LevelSceneNode>;
   /** Resolves with all LevelObjects carrying `parkour` metadata. */
   parkourObjects: Promise<LevelObject[]>;
+  /** The level def's `character` asset once it has run; `null` when the level has none. */
+  character: Promise<CharacterAssetResult> | null;
   /**
    * Resolves (after `complete`) with every mesh whose material has `emissiveBypass: true`; these
    * are auto-added to `viz.postprocessingController.emissiveBypassPass` when one is present.
@@ -272,6 +275,18 @@ export const BAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | apply_t
 /** Leaves the root transform on `obj.transform`. Use when the consumer wants it separable (e.g. editor gizmo). */
 export const UNBAKED_RENDER_WRAPPER = 'import { mesh } from "code"\nmesh | render';
 
+/** Character assets also export `bones`, a seq of 3D point seqs rendered as one path per chain. */
+const CHARACTER_RENDER_WRAPPER =
+  'import { mesh, bones } from "code"\nmesh | apply_transforms | render\nrender(bones)';
+
+interface CharacterSink {
+  id: string;
+  resolve: (result: CharacterAssetResult) => void;
+}
+
+const chainsFromRunObjects = (objects: GeneratedObject[]): Float32Array[] =>
+  objects.filter(o => o.type === 'path').map(o => o.geometry.attributes.position.array as Float32Array);
+
 /** The run inputs for a composition asset's mesh-tab bake (shared with the editor's variant rebaker). */
 export const buildCompositionAssetRunInputs = (
   def: GeotoyCompositionAssetDef,
@@ -401,7 +416,8 @@ const resolveScriptAssets = async (
   providedExecutor?: GeoscriptExecutor,
   variantIds?: ReadonlySet<string>,
   controlsOut?: Map<string, RenderedControl[]>,
-  gizmosOut?: Map<string, RenderedGizmo[]>
+  gizmosOut?: Map<string, RenderedGizmo[]>,
+  character?: CharacterSink & { materialName?: string }
 ): Promise<void> => {
   const scriptIds = sortedIds.filter(id => assets[id].type === 'geoscript' || assets[id].type === 'csg');
   if (scriptIds.length === 0) {
@@ -429,7 +445,7 @@ const resolveScriptAssets = async (
     return {
       id,
       modules,
-      code: BAKED_RENDER_WRAPPER,
+      code: id === character?.id ? CHARACTER_RENDER_WRAPPER : BAKED_RENDER_WRAPPER,
       includePrelude,
       asyncDeps,
       deps: [],
@@ -452,7 +468,20 @@ const resolveScriptAssets = async (
       if (gdef.type === 'geoscript') warnUnmatchedInputs(id, gdef.inputs, res.controls, res.gizmos);
       if (controlsOut && res.controls.length > 0) controlsOut.set(id, res.controls);
       if (gizmosOut && res.gizmos.length > 0) gizmosOut.set(id, res.gizmos);
-      const prototype = extractPrototype(res.objects);
+      const isCharacter = id === character?.id;
+      if (isCharacter) {
+        character.resolve({
+          meshes: meshesFromRunObjects(res.objects, LEVEL_PLACEHOLDER_MAT).map(mesh => ({
+            mesh,
+            materialName: character.materialName,
+          })),
+          chains: chainsFromRunObjects(res.objects),
+        });
+      }
+      // a character may render several meshes; only a lone one doubles as a placeable prototype
+      const prototype = isCharacter
+        ? (meshesFromRunObjects(res.objects, LEVEL_PLACEHOLDER_MAT)[0] ?? null)
+        : extractPrototype(res.objects);
       if (!prototype) {
         console.warn(`[levelDef] Asset "${id}" produced no meshes`);
         return;
@@ -552,7 +581,20 @@ export const loadLevelDef = (
   // Warn about orphaned assets — assets that are defined but never referenced by any object
   // (directly or transitively through CSG). In dev, still resolve them so the level editor
   // can spawn new objects that reference assets not yet used in the scene.
-  const reachableAssets = computeReachableAssets(assetDefs, assetToObjDefs.keys());
+  const characterDef = levelDef.character;
+  let resolveCharacter: ((result: CharacterAssetResult) => void) | null = null;
+  const characterPromise = characterDef
+    ? new Promise<CharacterAssetResult>(resolve => {
+        resolveCharacter = resolve;
+      })
+    : null;
+  const characterSink: (CharacterSink & { materialName?: string }) | undefined = characterDef
+    ? { id: characterDef.asset, materialName: characterDef.material, resolve: r => resolveCharacter!(r) }
+    : undefined;
+  const reachableAssets = computeReachableAssets(assetDefs, [
+    ...assetToObjDefs.keys(),
+    ...(characterDef ? [characterDef.asset] : []),
+  ]);
   if (dev) {
     for (const id of Object.keys(levelDef.assets)) {
       if (!reachableAssets.has(id) && !paramVariants.variantsByBase.has(id)) {
@@ -1117,6 +1159,21 @@ export const loadLevelDef = (
             const baked = bakeCompositionMeshes(def.tree, res.objects, treeId);
             compositionBaked.set(id, baked);
             if (baked.length === 0) console.warn(`[levelDef] composition asset "${id}" produced no meshes`);
+            if (characterSink && id === characterSink.id) {
+              const materialOverride = { material: characterDef?.material } as ObjectDef;
+              characterSink.resolve({
+                meshes: baked.map(bm => {
+                  const mesh = new THREE.Mesh(bm.geometry, LEVEL_PLACEHOLDER_MAT);
+                  mesh.applyMatrix4(bm.matrix);
+                  return {
+                    mesh,
+                    materialName: resolveChildMaterial(def, materialOverride, bm.materialName, id),
+                  };
+                }),
+                // bone chains are taken as rendered; author them in the composition's root space
+                chains: chainsFromRunObjects(res.objects),
+              });
+            }
             // First successful run (base or variant) supplies the asset's procedural textures.
             const baseId = variantBase.get(id) ?? id;
             consumeRunTextures(res.objects, d => d.asset === baseId, `composition asset "${id}"`);
@@ -1331,7 +1388,8 @@ export const loadLevelDef = (
     sharedExecutor,
     paramVariants.variantIds,
     assetControls,
-    assetGizmos
+    assetGizmos,
+    characterSink
   );
 
   // Composition jobs share the worker ctx with script assets, so run them after the script
@@ -1718,6 +1776,7 @@ export const loadLevelDef = (
     nodeById,
     lights: levelLights,
     parkourObjects: parkourObjectsPromise,
+    character: characterPromise,
     emissiveBypassMeshes: emissiveBypassMeshesPromise,
     setMaterialFactories,
     setSceneRuntime,

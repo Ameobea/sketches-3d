@@ -556,7 +556,7 @@ impl<'a> DerivCtx<'a> {
     }
     let mut bindings = Vec::with_capacity(args.len());
     for (param, arg) in closure.params.iter().zip(args) {
-      let DestructurePattern::Ident(sym) = &param.ident else {
+      let DestructurePattern::Ident(sym, _) = &param.ident else {
         return Err(self.err(
           "autodiff: destructured parameters in an inlined closure are not supported",
           loc,
@@ -1606,7 +1606,7 @@ pub(crate) fn build_directional_derivative(
       "autodiff: `deriv` requires a closure with at least one parameter",
     ));
   };
-  let DestructurePattern::Ident(param_sym) = &param.ident else {
+  let DestructurePattern::Ident(param_sym, _) = &param.ident else {
     return Err(ErrorStack::new(
       "autodiff: `deriv` requires a closure whose first parameter is a named (non-destructured) \
        parameter",
@@ -1642,7 +1642,7 @@ pub(crate) fn build_directional_derivative(
   // Trailing params pass through untouched: constant w.r.t. the differentiated parameter, but
   // supplied per call rather than baked in, so a `grad` hoisted out of a loop stays valid.
   for extra in &input.params[1..] {
-    let DestructurePattern::Ident(sym) = &extra.ident else {
+    let DestructurePattern::Ident(sym, _) = &extra.ident else {
       return Err(ErrorStack::new(
         "autodiff: pass-through parameters of a differentiated closure must be plain names",
       ));
@@ -1715,7 +1715,7 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
       "autodiff: `grad` requires a closure with at least one parameter",
     ));
   };
-  let DestructurePattern::Ident(_) = &param.ident else {
+  let DestructurePattern::Ident(_, _) = &param.ident else {
     return Err(ErrorStack::new(
       "autodiff: `grad` requires a closure whose first parameter is a named (non-destructured) \
        parameter",
@@ -1762,7 +1762,7 @@ pub(crate) fn build_gradient(ctx: &EvalCtx, input: &Closure) -> Result<Value, Er
       .params
       .iter()
       .map(|p| match &p.ident {
-        DestructurePattern::Ident(sym) => Ok(Expr::Ident {
+        DestructurePattern::Ident(sym, _) => Ok(Expr::Ident {
           res: VarRes::Unresolved,
           name: *sym,
           loc: SourceLoc::default(),

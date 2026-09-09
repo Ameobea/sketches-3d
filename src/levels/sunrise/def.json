@@ -102,6 +102,9 @@
       }
     }
   },
+  "character": {
+    "asset": "robot"
+  },
   "assets": {
     "box": {
       "type": "geoscript",
@@ -174,6 +177,11 @@
         ]
       },
       "_meta": { "runtimeMs": 15.5, "count": 5, "codeHash": "20eb4aaa", "asyncDeps": [ "cgal" ] }
+    },
+    "robot": {
+      "type": "geoscript",
+      "file": "geo/robot.geo",
+      "_meta": { "runtimeMs": 22.5, "count": 3, "codeHash": "b79e9b4", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [

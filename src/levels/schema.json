@@ -5183,6 +5183,21 @@
       },
       "additionalProperties": false
     },
+    "character": {
+      "type": "object",
+      "properties": {
+        "asset": {
+          "type": "string"
+        },
+        "material": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "asset"
+      ],
+      "additionalProperties": false
+    },
     "generators": {
       "type": "object",
       "propertyNames": {

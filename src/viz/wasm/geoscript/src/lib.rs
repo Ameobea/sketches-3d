@@ -45,7 +45,7 @@ use crate::{
     TopLevelStatement, VarRes,
   },
   builtins::{
-    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, DefaultValue, FnDef, FnSignature},
+    fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix, ArgDef, FnDef, FnSignature},
     resolve_builtin_impl,
   },
   lights::Light,
@@ -62,6 +62,8 @@ pub mod aligned_alloc;
 pub mod ast;
 pub mod autodiff;
 pub mod builtins;
+pub mod call_binding;
+pub mod call_infer;
 pub mod color;
 pub mod desugar;
 pub mod dmath;
@@ -2017,6 +2019,10 @@ const EMPTY_ARGS: &'static Vec<Value> = unsafe { std::mem::transmute(&EMPTY_ARGS
 const EMPTY_KWARGS: &'static FxHashMap<Sym, Value> =
   unsafe { std::mem::transmute(&EMPTY_KWARGS_INNER) };
 
+use call_binding::{
+  arg_ref, bind_signature, max_positional_capacity, ArgumentBinder, ArgumentSource,
+};
+
 pub(crate) fn get_args(
   ctx: &EvalCtx,
   fn_name: &str,
@@ -2051,86 +2057,28 @@ pub(crate) fn get_args(
     }
   }
 
+  let mut valid_partial = false;
   let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
-  let mut valid_partial: bool = false;
-  let any_args_provided = !args.is_empty() || !kwargs.is_empty();
-  // Excess positionals are tolerated only when no signature could consume them all
-  // (counting only arg slots not already bound by a provided kwarg): combinators pass
-  // `(val, index)` to callbacks that are free to ignore the index, same as closures
-  // ignore extra args. Otherwise a sig must consume every positional so a shorter
-  // overload can't silently swallow a longer, mistyped call.
-  let max_positional_capacity = defs
-    .iter()
-    .filter(|def| {
-      kwargs
-        .keys()
-        .all(|key| def.arg_defs.iter().any(|arg| arg.interned_name == *key))
-    })
-    .map(|def| {
-      def
-        .arg_defs
-        .iter()
-        .filter(|arg| !kwargs.contains_key(&arg.interned_name))
-        .count()
-    })
-    .max()
-    .unwrap_or(0);
-  let allow_excess_args = args.len() > max_positional_capacity;
-  'def: for (def_ix, def) in defs.iter().enumerate() {
-    // if a kwarg was passed which isn't defined in this function signature, skip
-    for &kwarg_key in kwargs.keys() {
-      if def
-        .arg_defs
-        .iter()
-        .all(|def| def.interned_name != kwarg_key)
-      {
-        continue 'def;
-      }
-    }
-
-    let mut pos_arg_ix = 0;
+  let allow_excess = args.len() > max_positional_capacity(defs, kwargs.keys().copied());
+  for (def_ix, def) in defs.iter().enumerate() {
     arg_refs.clear();
-    'arg: for ArgDef {
-      default_value,
-      description: _,
-      name: _,
-      interned_name: kwarg_sym,
-      valid_types,
-    } in def.arg_defs
-    {
-      let (arg, arg_ref) = if let Some(kwarg) = kwargs.get(kwarg_sym) {
-        (kwarg, ArgRef::Keyword(*kwarg_sym))
-      } else if pos_arg_ix < args.len() {
-        let arg = &args[pos_arg_ix];
-        let arg_ref = ArgRef::Positional(pos_arg_ix);
-        pos_arg_ix += 1;
-        (arg, arg_ref)
-      } else {
-        if let DefaultValue::Optional(get_default) = default_value {
-          arg_refs.push(ArgRef::Default(get_default()));
-          continue 'arg;
-        } else {
-          // If any required argument is missing, mark as partial if any args/kwargs were provided
-          if any_args_provided {
-            valid_partial = true;
-          }
-          continue 'def;
-        }
-      };
-
-      if !ArgType::any_valid(*valid_types, arg) {
-        continue 'def;
-      }
-
-      arg_refs.push(arg_ref);
+    let Some(binding) = bind_signature(
+      def,
+      args.len(),
+      |ix| args[ix].as_bitflags(),
+      kwargs.keys().copied(),
+      |name| kwargs.get(&name).map(Value::as_bitflags),
+      allow_excess,
+      true,
+      |ix, source| arg_refs.push(arg_ref(def, ix, source)),
+    ) else {
+      continue;
+    };
+    if binding.partial {
+      valid_partial = true;
+    } else {
+      return Ok(GetArgsOutput::Valid { def_ix, arg_refs });
     }
-
-    if !allow_excess_args && pos_arg_ix != args.len() {
-      continue 'def;
-    }
-
-    // valid args found for the whole def, so the function call is valid
-    return Ok(GetArgsOutput::Valid { def_ix, arg_refs });
   }
 
   if valid_partial {
@@ -2217,80 +2165,40 @@ pub fn match_signature_by_arg_types(
     }
   }
 
+  let allow_excess = positional_types.len()
+    > max_positional_capacity(sigs, kwarg_types.iter().map(|(name, _)| *name));
   let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
-  // mirrors `get_args`' excess-positional rule; the two must agree
-  let max_positional_capacity = sigs
-    .iter()
-    .filter(|sig| {
-      kwarg_types
-        .iter()
-        .all(|(key, _)| sig.arg_defs.iter().any(|arg| arg.interned_name == *key))
-    })
-    .map(|sig| {
-      sig
-        .arg_defs
-        .iter()
-        .filter(|arg| !kwarg_types.iter().any(|(sym, _)| *sym == arg.interned_name))
-        .count()
-    })
-    .max()
-    .unwrap_or(0);
-  let allow_excess_args = positional_types.len() > max_positional_capacity;
-
-  'sig: for (sig_ix, sig) in sigs.iter().enumerate() {
-    // Skip sigs that don't recognize a provided kwarg
-    for &(kwarg_sym, _) in kwarg_types {
-      if sig
-        .arg_defs
-        .iter()
-        .all(|def| def.interned_name != kwarg_sym)
-      {
-        continue 'sig;
-      }
-    }
-
-    let mut pos_ix = 0;
-    let mut all_matched = true;
+  for (sig_ix, sig) in sigs.iter().enumerate() {
     arg_refs.clear();
-
-    for arg_def in sig.arg_defs {
-      // Check kwargs first, then positional, then default
-      if let Some(&(kwarg_sym, ty)) = kwarg_types
-        .iter()
-        .find(|(sym, _)| *sym == arg_def.interned_name)
-      {
-        if !arg_type_covered(ty.as_bitflags(), arg_def.valid_types) {
-          continue 'sig;
-        }
-        arg_refs.push(ArgRef::Keyword(kwarg_sym));
-      } else if pos_ix < positional_types.len() {
-        let ty = positional_types[pos_ix];
-        if !arg_type_covered(ty.as_bitflags(), arg_def.valid_types) {
-          continue 'sig;
-        }
-        arg_refs.push(ArgRef::Positional(pos_ix));
-        pos_ix += 1;
-      } else {
-        match &arg_def.default_value {
-          DefaultValue::Required => {
-            // Missing required arg — could be partial application
-            all_matched = false;
-            break;
-          }
-          DefaultValue::Optional(get_default) => {
-            arg_refs.push(ArgRef::Default(get_default()));
-          }
-        }
-      }
+    let Some(binding) = bind_signature(
+      sig,
+      positional_types.len(),
+      |ix| positional_types[ix].as_bitflags(),
+      kwarg_types.iter().map(|(name, _)| *name),
+      |name| {
+        kwarg_types
+          .iter()
+          .find(|(key, _)| *key == name)
+          .map(|(_, ty)| ty.as_bitflags())
+      },
+      allow_excess,
+      true,
+      |ix, source| arg_refs.push(arg_ref(sig, ix, source)),
+    ) else {
+      continue;
+    };
+    if binding.partial {
+      continue;
     }
-
-    if all_matched && (allow_excess_args || pos_ix == positional_types.len()) {
-      return Some(SignatureTypeMatch {
-        def_ix: sig_ix,
-        arg_refs: arg_refs.clone(),
-        return_type: sig.return_type,
-      });
+    // An earlier possible complete match prevents proving that a later overload is selected.
+    if !binding.certain {
+      return None;
     }
+    return Some(SignatureTypeMatch {
+      def_ix: sig_ix,
+      arg_refs,
+      return_type: sig.return_type,
+    });
   }
 
   None
@@ -3758,49 +3666,45 @@ impl EvalCtx {
     };
     let env = &frame;
 
-    let mut pos_arg_ix = 0usize;
+    let mut binder = ArgumentBinder::new(args.len(), |name| kwargs.get(&name));
     let mut any_args_valid = false;
     let mut invalid_arg_ix = None;
     for (param_ix, param) in closure.params.iter().enumerate() {
       let slot_start = meta.param_slots[param_ix] as usize;
-      // kwargs can only address simple ident params; patterns bind positionally
-      if let DestructurePattern::Ident(param_name) = &param.ident {
-        if let Some(kwarg) = kwargs.get(param_name) {
-          if let Some(type_hint) = param.type_hint {
-            type_hint.validate_val(kwarg).map_err(|err| {
-              self.with_resolved_sym(*param_name, |name| {
-                err.wrap(format!("Type error for closure kwarg `{name}`"))
-              })
+      let name = match param.ident {
+        DestructurePattern::Ident(name, _) => Some(name),
+        _ => None,
+      };
+      let source = binder.next(name, param.default_val.is_some());
+      let val = match source {
+        ArgumentSource::Positional(_) | ArgumentSource::Keyword(..) => {
+          let arg = match source {
+            ArgumentSource::Keyword(_, arg) => arg,
+            ArgumentSource::Positional(ix) => &args[ix],
+            _ => unreachable!(),
+          };
+          if let Some(hint) = param.type_hint {
+            hint.validate_val(arg).map_err(|err| {
+              let label = match source {
+                ArgumentSource::Keyword(name, _) => {
+                  self.with_resolved_sym(name, |name| format!("closure kwarg `{name}`"))
+                }
+                _ => format!("positional closure arg `{:?}`", param.ident.debug(self)),
+              };
+              err.wrap(format!("Type error for {label}"))
             })?;
           }
           any_args_valid = true;
-          slots.borrow_mut()[slot_start] = kwarg.clone();
+          arg.clone()
+        }
+        ArgumentSource::Default => self.eval_expr_env(param.default_val.as_ref().unwrap(), env)?,
+        ArgumentSource::Missing => {
+          invalid_arg_ix.get_or_insert(param_ix);
           continue;
         }
-      }
-      let val = if pos_arg_ix < args.len() {
-        let pos_arg = &args[pos_arg_ix];
-        pos_arg_ix += 1;
-        if let Some(type_hint) = param.type_hint {
-          type_hint.validate_val(pos_arg).map_err(|err| {
-            err.wrap(format!(
-              "Type error for positional closure arg `{:?}`",
-              param.ident.debug(self)
-            ))
-          })?;
-        }
-        any_args_valid = true;
-        pos_arg.clone()
-      } else if let Some(default_expr) = &param.default_val {
-        self.eval_expr_env(default_expr, env)?
-      } else {
-        if invalid_arg_ix.is_none() {
-          invalid_arg_ix = Some(param_ix);
-        }
-        continue;
       };
       match &param.ident {
-        DestructurePattern::Ident(_) => slots.borrow_mut()[slot_start] = val,
+        DestructurePattern::Ident(_, _) => slots.borrow_mut()[slot_start] = val,
         pattern => {
           let mut ix = 0usize;
           pattern.visit_assignments(self, val, &mut |_name, v| {

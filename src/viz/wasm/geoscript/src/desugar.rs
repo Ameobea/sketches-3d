@@ -521,7 +521,7 @@ fn rename_stmt(s: &mut Statement, from: Sym, to: Sym) {
 
 fn rename_pattern(p: &mut DestructurePattern, from: Sym, to: Sym) {
   match p {
-    DestructurePattern::Ident(s) => {
+    DestructurePattern::Ident(s, _) => {
       if *s == from {
         *s = to;
       }

@@ -1,15 +1,12 @@
 use crate::{ArgType, Sym};
 
-/// A partial application of a builtin function: bound positional and keyword args, plus the
-/// canonical builtin name needed to look up the underlying signature list.
+/// A callable with captured arguments. Reapplication appends positional arguments and replaces
+/// captured keyword arguments by name, matching runtime partial application.
 #[derive(Clone, Debug)]
 pub struct PartialApplication {
-  /// Canonical builtin name (aliases already resolved).
-  pub name: String,
-  /// Positional args already bound, in order.
-  pub bound_args: Vec<ArgType>,
-  /// Keyword args already bound (interned name → type).
-  pub bound_kwargs: Vec<(Sym, ArgType)>,
+  pub target: Box<AbstractType>,
+  pub bound_args: Vec<AbstractType>,
+  pub bound_kwargs: Vec<(Sym, AbstractType)>,
 }
 
 /// One parameter of a user-defined callable (typically a closure).  Captures the declared
@@ -17,11 +14,12 @@ pub struct PartialApplication {
 #[derive(Clone, Debug)]
 pub struct CallableParam {
   pub name: Option<String>,
+  pub symbol: Option<Sym>,
+  pub has_default: bool,
   pub ty: AbstractType,
 }
 
-/// The type of a user-defined callable (e.g. a closure).  Separate from `PartialApplication`
-/// because a closure has fully-known param & return types, not a bound-prefix-of-builtin shape.
+/// Parameter shape and available return information for a user-defined closure.
 #[derive(Clone, Debug)]
 pub struct CallableType {
   pub params: Vec<CallableParam>,
@@ -35,37 +33,55 @@ pub enum AbstractType {
   Concrete(ArgType),
   /// A union of possible types (e.g. Float | Int for a function that returns either)
   Union(Vec<ArgType>),
-  /// A partial application of a builtin function — calling/piping into it appends new args
+  /// A builtin reference retaining its canonical name and overloads.
+  Builtin(String),
+  /// A partial application — calling/piping into it appends new args
   /// to the bound set and re-resolves against the underlying signatures.
   PartiallyApplied(PartialApplication),
   /// A user-defined callable (closure) with known param and return types.
   Callable(CallableType),
+  /// A host callable with a return contract but no statically described parameter list.
+  OpaqueCallable(Box<AbstractType>),
   /// Type cannot be determined
   Unknown,
 }
 
 impl AbstractType {
-  /// Build an AbstractType from a `FnSignature.return_type` slice.
-  pub fn from_return_type(rt: &[ArgType]) -> Self {
-    // Filter out `Any` since it carries no useful type information
-    let filtered: Vec<ArgType> = rt
-      .iter()
-      .copied()
-      .filter(|t| !matches!(t, ArgType::Any))
-      .collect();
-    match filtered.len() {
-      0 => AbstractType::Unknown,
-      1 => AbstractType::Concrete(filtered[0]),
-      _ => AbstractType::Union(filtered),
+  /// Runtime type possibilities, including aggregate tags such as `num`. This is a set of
+  /// candidates, not proof that any particular overload applies.
+  pub fn possible_type_flags(&self) -> u32 {
+    match self {
+      Self::Concrete(ty) => ty.as_bitflags(),
+      Self::Union(types) => types.iter().fold(0, |flags, ty| flags | ty.as_bitflags()),
+      Self::Callable(_)
+      | Self::PartiallyApplied(_)
+      | Self::Builtin(_)
+      | Self::OpaqueCallable(_) => ArgType::Callable.as_bitflags(),
+      Self::Unknown => ArgType::Any.as_bitflags(),
     }
   }
 
-  /// Extract a single concrete ArgType, or None for Union/Unknown/PartiallyApplied.
+  /// Build an AbstractType from a `FnSignature.return_type` slice.
+  pub fn from_return_type(rt: &[ArgType]) -> Self {
+    if rt.iter().any(|ty| matches!(ty, ArgType::Any)) {
+      return Self::Unknown;
+    }
+    match rt.len() {
+      0 => AbstractType::Unknown,
+      1 => AbstractType::Concrete(rt[0]),
+      _ => AbstractType::Union(rt.to_vec()),
+    }
+  }
+
+  /// Extract a single runtime tag, or None for Union/Unknown.
   /// Callable values report as `ArgType::Callable` so they satisfy callable-typed param slots.
   pub fn as_single_arg_type(&self) -> Option<ArgType> {
     match self {
       AbstractType::Concrete(t) => Some(*t),
-      AbstractType::Callable(_) => Some(ArgType::Callable),
+      AbstractType::Callable(_)
+      | AbstractType::PartiallyApplied(_)
+      | AbstractType::Builtin(_)
+      | AbstractType::OpaqueCallable(_) => Some(ArgType::Callable),
       _ => None,
     }
   }
@@ -79,14 +95,25 @@ impl AbstractType {
         let parts: Vec<&str> = types.iter().map(ArgType::as_str).collect();
         Some(parts.join(" | "))
       }
+      AbstractType::Builtin(name) => Some(format!("builtin {name}")),
+      AbstractType::OpaqueCallable(return_ty) => Some(format!(
+        "fn(…) → {}",
+        return_ty.display_str().unwrap_or_else(|| "?".to_owned())
+      )),
       AbstractType::PartiallyApplied(paf) => {
         let bound = paf
           .bound_args
           .iter()
-          .map(|t| t.as_str())
+          .map(|t| t.display_str().unwrap_or_else(|| "?".to_owned()))
           .collect::<Vec<_>>()
           .join(", ");
-        Some(format!("partial {}({bound})", paf.name))
+        Some(format!(
+          "partial {}({bound})",
+          paf
+            .target
+            .display_str()
+            .unwrap_or_else(|| "callable".to_owned())
+        ))
       }
       AbstractType::Callable(ct) => {
         let params: Vec<String> = ct
@@ -95,7 +122,7 @@ impl AbstractType {
           .map(|p| {
             let ty = p.ty.display_str().unwrap_or_else(|| "?".to_string());
             match &p.name {
-              Some(n) => format!("{n}: {ty}"),
+              Some(n) => format!("{n}{}: {ty}", if p.has_default { "?" } else { "" }),
               None => ty,
             }
           })
@@ -120,8 +147,7 @@ impl AbstractType {
 /// - Concrete + different Concrete → Union of both.
 /// - Union + Concrete → Union with the Concrete added (dedup).
 /// - Union + Union → Union of both (dedup).
-/// - Callable/PartiallyApplied merged with anything else collapses to Concrete(Callable) or Unknown
-///   (we don't support rich unions over structured types).
+/// - Structured callable types lose signature details when joined, retaining the callable tag.
 pub fn merge_types(a: &AbstractType, b: &AbstractType) -> AbstractType {
   /// ArgType doesn't impl PartialEq, but its bitflag is unique per variant.
   fn same(x: ArgType, y: ArgType) -> bool {
@@ -158,10 +184,20 @@ pub fn merge_types(a: &AbstractType, b: &AbstractType) -> AbstractType {
         _ => AbstractType::Union(combined),
       }
     }
-    // For structured types, fall back: if both callable, keep callable flavor; else Unknown.
-    (AbstractType::Callable(_), AbstractType::Callable(_)) => {
-      AbstractType::Concrete(ArgType::Callable)
-    }
-    _ => AbstractType::Unknown,
+    // Structured callable unions retain the runtime callable tag; their signatures are unknown.
+    (
+      AbstractType::Builtin(_)
+      | AbstractType::Callable(_)
+      | AbstractType::PartiallyApplied(_)
+      | AbstractType::OpaqueCallable(_),
+      other,
+    ) => merge_types(&AbstractType::Concrete(ArgType::Callable), other),
+    (
+      other,
+      AbstractType::Builtin(_)
+      | AbstractType::Callable(_)
+      | AbstractType::PartiallyApplied(_)
+      | AbstractType::OpaqueCallable(_),
+    ) => merge_types(other, &AbstractType::Concrete(ArgType::Callable)),
   }
 }

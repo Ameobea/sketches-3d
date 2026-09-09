@@ -104,7 +104,8 @@ impl ArgType {
 
 #[derive(Clone, Debug)]
 pub enum DestructurePattern {
-  Ident(Sym),
+  /// Identifier and its original source location; locations do not affect execution or hashing.
+  Ident(Sym, SourceLoc),
   Array(Vec<DestructurePattern>),
   Map(FxHashMap<Sym, DestructurePattern>),
 }
@@ -113,7 +114,7 @@ impl DestructurePattern {
   #[cold]
   pub fn debug(&self, ctx: &EvalCtx) -> String {
     match self {
-      DestructurePattern::Ident(id) => ctx.with_resolved_sym(*id, |name| name.to_string()),
+      DestructurePattern::Ident(id, _) => ctx.with_resolved_sym(*id, |name| name.to_string()),
       DestructurePattern::Array(items) => {
         let item_strs: Vec<String> = items.iter().map(|item| item.debug(ctx)).collect();
         format!("[{}]", item_strs.join(", "))
@@ -130,7 +131,7 @@ impl DestructurePattern {
 
   pub fn iter_idents<'a>(&'a self) -> Box<dyn Iterator<Item = Sym> + 'a> {
     match self {
-      DestructurePattern::Ident(id) => Box::new(std::iter::once(*id)),
+      DestructurePattern::Ident(id, _) => Box::new(std::iter::once(*id)),
       DestructurePattern::Array(items) => {
         Box::new(items.iter().flat_map(DestructurePattern::iter_idents))
       }
@@ -141,18 +142,22 @@ impl DestructurePattern {
   }
 
   pub fn visit_idents(&self, cb: &mut impl FnMut(Sym)) {
+    self.visit_ident_locs(&mut |sym, _| cb(sym));
+  }
+
+  pub fn visit_ident_locs(&self, cb: &mut impl FnMut(Sym, SourceLoc)) {
     match self {
-      DestructurePattern::Ident(ident) => {
-        cb(*ident);
+      DestructurePattern::Ident(ident, loc) => {
+        cb(*ident, *loc);
       }
       DestructurePattern::Array(destructure_patterns) => {
         for pat in destructure_patterns {
-          pat.visit_idents(cb);
+          pat.visit_ident_locs(cb);
         }
       }
       DestructurePattern::Map(pat) => {
         for v in pat.values() {
-          v.visit_idents(cb);
+          v.visit_ident_locs(cb);
         }
       }
     }
@@ -167,7 +172,7 @@ impl DestructurePattern {
     cb: &mut impl FnMut(Sym, Value) -> Result<(), ErrorStack>,
   ) -> Result<(), ErrorStack> {
     match self {
-      DestructurePattern::Ident(ident) => {
+      DestructurePattern::Ident(ident, _) => {
         cb(*ident, rhs)?;
         Ok(())
       }
@@ -1767,6 +1772,7 @@ fn parse_destructure_pattern(
   match pair.as_rule() {
     Rule::ident => Ok(DestructurePattern::Ident(
       ctx.interned_symbols.intern(pair.as_str()),
+      ctx.add_source_loc(line, col),
     )),
     Rule::array_destructure => parse_array_destructure(ctx, pair),
     Rule::map_destructure => parse_map_destructure(ctx, pair),
@@ -1802,7 +1808,8 @@ fn parse_map_destructure(ctx: &EvalCtx, lhs: Pair<Rule>) -> Result<DestructurePa
       match inner.as_rule() {
         Rule::ident => {
           let key = ctx.interned_symbols.intern(inner.as_str());
-          let pat = DestructurePattern::Ident(key);
+          let (line, col) = inner.line_col();
+          let pat = DestructurePattern::Ident(key, ctx.add_source_loc(line, col));
           Ok((key, pat))
         }
         Rule::map_destructure_kv => {
@@ -2341,7 +2348,7 @@ pub(crate) fn bind_closure_params_into_scope(scope: &mut ScopeTracker, params: &
   for param in params {
     for ident in param.ident.iter_idents() {
       let ty_hint = match param.ident {
-        DestructurePattern::Ident(_) => param.type_hint,
+        DestructurePattern::Ident(_, _) => param.type_hint,
         DestructurePattern::Map(_) | DestructurePattern::Array(_) => None,
       };
       match ty_hint {

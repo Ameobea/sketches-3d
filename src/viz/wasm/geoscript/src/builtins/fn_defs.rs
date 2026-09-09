@@ -9387,7 +9387,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Subdivides a mesh by a plane, splitting all edges and faces that intersect the plane.",
-        return_type: &[ArgType::Sequence],
+        return_type: &[ArgType::Mesh],
       },
       FnSignature {
         arg_defs: &[
@@ -9414,7 +9414,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           },
         ],
         description: "Subdivides a mesh by a sequence of planes, splitting all edges and faces that intersect any of the planes.  This is more efficient than repeatedly subdividing by a single plane multiple times.",
-        return_type: &[ArgType::Sequence],
+        return_type: &[ArgType::Mesh],
       },
     ],
   },

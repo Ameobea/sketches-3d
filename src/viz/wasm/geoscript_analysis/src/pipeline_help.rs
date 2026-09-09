@@ -6,9 +6,10 @@
 //! separate from the parameters the pipe supplies in the expression as currently written.
 
 use geoscript::{
-  builtins::fn_defs::{DefaultValue, FnSignature},
+  builtins::fn_defs::FnSignature,
+  call_binding::{bind_signature, ArgumentSource},
   ty::AbstractType,
-  ArgType, Sym,
+  Sym,
 };
 use nanoserde::SerJson;
 
@@ -40,58 +41,41 @@ struct Binding {
   certain: bool,
 }
 
-fn type_flags(ty: &AbstractType) -> u32 {
-  match ty {
-    AbstractType::Concrete(ty) => ty.as_bitflags(),
-    AbstractType::Union(types) => types.iter().fold(0, |flags, ty| flags | ty.as_bitflags()),
-    AbstractType::Callable(_) | AbstractType::PartiallyApplied(_) => {
-      ArgType::Callable.as_bitflags()
-    }
-    AbstractType::Unknown => ArgType::Any.as_bitflags(),
-  }
-}
-
-/// Replay the runtime's keyword-first, positional-second, default-last binding order. Missing
-/// required parameters are allowed for possible future edits; incompatible known types aren't.
+/// Missing required parameters are allowed for possible future edits; incompatible known types
+/// aren't. Excess positionals, tolerated at runtime for callbacks, identify no parameter worth
+/// suggesting.
 fn bind(
   sig: &FnSignature,
   args: &[AbstractType],
   kwargs: &[(Sym, AbstractType)],
 ) -> Option<Binding> {
-  if kwargs
-    .iter()
-    .any(|(name, _)| !sig.arg_defs.iter().any(|p| p.interned_name == *name))
-  {
-    return None;
-  }
-  let mut binding = Binding {
-    positional: Vec::new(),
-    free: Vec::new(),
-    complete: true,
-    certain: true,
-  };
-  for (ix, param) in sig.arg_defs.iter().enumerate() {
-    let ty = if let Some((_, ty)) = kwargs.iter().find(|(name, _)| *name == param.interned_name) {
-      ty
-    } else if let Some(ty) = args.get(binding.positional.len()) {
-      binding.positional.push(ix);
-      ty
-    } else {
-      binding.free.push(ix);
-      if matches!(param.default_value, DefaultValue::Required) {
-        binding.complete = false;
-      }
-      continue;
-    };
-    let flags = type_flags(ty);
-    if flags & param.valid_types == 0 {
-      return None;
-    }
-    binding.certain &= flags & !param.valid_types == 0;
-  }
-  // Extra arguments are sometimes ignored at runtime for callbacks. They don't identify a
-  // useful parameter to suggest in the editor.
-  (binding.positional.len() == args.len()).then_some(binding)
+  let mut positional = Vec::new();
+  let mut free = Vec::new();
+  let binding = bind_signature(
+    sig,
+    args.len(),
+    |ix| args[ix].possible_type_flags(),
+    kwargs.iter().map(|(name, _)| *name),
+    |name| {
+      kwargs
+        .iter()
+        .find(|(key, _)| *key == name)
+        .map(|(_, ty)| ty.possible_type_flags())
+    },
+    false,
+    false,
+    |ix, source| match source {
+      ArgumentSource::Positional(_) => positional.push(ix),
+      ArgumentSource::Keyword(..) => {}
+      ArgumentSource::Default | ArgumentSource::Missing => free.push(ix),
+    },
+  )?;
+  Some(Binding {
+    positional,
+    free,
+    complete: !binding.partial,
+    certain: binding.certain,
+  })
 }
 
 #[derive(Clone, Copy)]

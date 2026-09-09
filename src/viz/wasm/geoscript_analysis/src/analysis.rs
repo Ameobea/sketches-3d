@@ -10,17 +10,20 @@ use geoscript::{
     fn_defs::{fn_sigs, get_builtin_fn_sig_entry_ix},
     FUNCTION_ALIASES,
   },
-  match_binop_by_arg_types, match_unop_by_arg_types,
-  ty::{merge_types, AbstractType, CallableParam, CallableType, PartialApplication},
-  type_infer::{
-    classify_pipe_rhs_call, infer_bitor_op_result_type, infer_map_op_result_type,
-    infer_reduce_fold_result, resolve_builtin_call, resolve_paf_call, CallResolution, PipeRhsKind,
+  call_infer::{
+    builtin_type, callable_param, resolve_call, resolve_literal_call, resolve_pipeline, value_type,
+    CallResolution,
   },
-  ArgType, Callable, EvalCtx, Program, Sym, Value,
+  match_binop_by_arg_types, match_unop_by_arg_types,
+  ty::{merge_types, AbstractType, CallableParam, CallableType},
+  type_infer::{infer_map_op_result_type, refine_reduce_call, resolve_pipeline_call},
+  ArgType, EvalCtx, Program, Sym, Value,
 };
 
 use crate::{
-  scope::{FunctionCallInfo, PipelineInput, SourceRange, SymbolDef, SymbolKind, SymbolRef},
+  scope::{
+    DefinitionId, FunctionCallInfo, PipelineInput, SourceRange, SymbolDef, SymbolKind, SymbolRef,
+  },
   AnalysisDiagnostic, DiagnosticSeverity,
 };
 
@@ -42,8 +45,6 @@ pub struct Analysis {
   refs: Vec<SymbolRef>,
   pub unresolved_refs: Vec<SymbolRef>,
   pub function_calls: Vec<FunctionCallInfo>,
-  /// Inferred type at each definition site, keyed by the definition's SourceLoc.
-  pub def_types: FxHashMap<SourceLoc, AbstractType>,
   /// Diagnostics emitted during the walk (type-hint mismatches, type errors at known
   /// builtin call sites).  The diagnostics module merges these with its own checks.
   pub diagnostics: Vec<AnalysisDiagnostic>,
@@ -52,6 +53,10 @@ pub struct Analysis {
 impl Analysis {
   pub fn all_defs(&self) -> &[SymbolDef] {
     &self.defs
+  }
+
+  pub fn definition(&self, id: DefinitionId) -> &SymbolDef {
+    &self.defs[id.0]
   }
 
   pub fn all_refs(&self) -> &[SymbolRef] {
@@ -80,13 +85,12 @@ impl Analysis {
       {
         continue;
       }
-      // A location of (0, 0) means "no position" (imports, prelude) — always in scope.
+      // A location of (0, 0) means "no user position" (prelude/ambient) — always in scope.
       let (line, col) = ctx.resolve_loc(def.loc);
       if (line, col) != (0, 0) && (line, col) > (target_line, target_col) {
         continue;
       }
-      // An assignment's own def is pushed after its RHS is walked, so walk order alone would let
-      // an outer binding overwrite the inner one shadowing it; depth breaks the tie.
+      // The innermost scope wins; later definitions in that scope replace earlier ones.
       match by_name.entry(def.name) {
         Entry::Occupied(mut e) => {
           if def.scope_depth >= e.get().scope_depth {
@@ -110,15 +114,18 @@ impl Analysis {
       refs: walker.refs,
       unresolved_refs: walker.unresolved_refs,
       function_calls: walker.function_calls,
-      def_types: walker.def_types,
       diagnostics: walker.diagnostics,
     }
   }
 }
 
+struct ScopeBinding {
+  ty: AbstractType,
+  definition: Option<DefinitionId>,
+}
+
 struct ScopeFrame {
-  /// Symbols defined in this frame and their inferred types.
-  types: FxHashMap<Sym, AbstractType>,
+  bindings: FxHashMap<Sym, ScopeBinding>,
   depth: u32,
   /// Source extent of the block/closure that opened this frame; `None` for the top level.
   range: Option<SourceRange>,
@@ -131,7 +138,6 @@ struct AnalysisWalker<'a> {
   refs: Vec<SymbolRef>,
   unresolved_refs: Vec<SymbolRef>,
   function_calls: Vec<FunctionCallInfo>,
-  def_types: FxHashMap<SourceLoc, AbstractType>,
   diagnostics: Vec<AnalysisDiagnostic>,
   builtin_syms: FxHashSet<Sym>,
   /// Stack of in-progress closure bodies; populated while walking a closure body and read by
@@ -143,7 +149,7 @@ struct AnalysisWalker<'a> {
   /// Set just before walking a `name = |..| { .. }` binding's RHS so the closure can make its
   /// own name visible inside its body for recursive calls, mirroring the resolver's self-name
   /// handling.
-  pending_recursive_binding: Option<Sym>,
+  pending_recursive_binding: Option<(Sym, DefinitionId)>,
 }
 
 impl<'a> AnalysisWalker<'a> {
@@ -165,14 +171,20 @@ impl<'a> AnalysisWalker<'a> {
     for (name, val) in geoscript::get_default_globals() {
       let ty = AbstractType::Concrete(val.get_type());
       for name in [name.to_owned(), format!("@{name}")] {
-        initial_types.insert(ctx.interned_symbols.intern(&name), ty.clone());
+        initial_types.insert(
+          ctx.interned_symbols.intern(&name),
+          ScopeBinding {
+            ty: ty.clone(),
+            definition: None,
+          },
+        );
       }
     }
 
     AnalysisWalker {
       ctx,
       scope_stack: vec![ScopeFrame {
-        types: initial_types,
+        bindings: initial_types,
         depth: 0,
         range: None,
       }],
@@ -180,7 +192,6 @@ impl<'a> AnalysisWalker<'a> {
       refs: Vec::new(),
       unresolved_refs: Vec::new(),
       function_calls: Vec::new(),
-      def_types: FxHashMap::default(),
       diagnostics: Vec::new(),
       builtin_syms,
       closure_return_stack: Vec::new(),
@@ -196,7 +207,7 @@ impl<'a> AnalysisWalker<'a> {
   fn push_scope(&mut self, start: SourceLoc, end: SourceLoc) {
     let depth = self.current_depth() + 1;
     self.scope_stack.push(ScopeFrame {
-      types: FxHashMap::default(),
+      bindings: FxHashMap::default(),
       depth,
       range: self.resolve_range(start, end),
     });
@@ -223,51 +234,65 @@ impl<'a> AnalysisWalker<'a> {
     self.scope_stack.pop();
   }
 
-  fn define_symbol(&mut self, name: Sym, loc: SourceLoc, kind: SymbolKind, ty: AbstractType) {
-    if let Some(frame) = self.scope_stack.last_mut() {
-      frame.types.insert(name, ty.clone());
-    }
-    // Desugaring temporaries are bound in scope so references to them resolve, but they were
-    // never written by the user and must not surface as definitions.
+  fn record_definition(
+    &mut self,
+    name: Sym,
+    loc: SourceLoc,
+    kind: SymbolKind,
+  ) -> Option<DefinitionId> {
     if self.ctx.interned_symbols.is_synthetic(name) {
-      return;
+      return None;
     }
+    let id = DefinitionId(self.defs.len());
     self.defs.push(SymbolDef {
+      id,
       name,
       loc,
+      ty: AbstractType::Unknown,
       kind,
       scope_depth: self.current_depth(),
       scope_range: self.scope_stack.last().and_then(|f| f.range),
     });
-    if loc != SourceLoc::default() {
-      self.def_types.insert(loc, ty);
+    Some(id)
+  }
+
+  fn bind_symbol(&mut self, name: Sym, definition: Option<DefinitionId>, ty: AbstractType) {
+    if let Some(id) = definition {
+      self.defs[id.0].ty = ty.clone();
     }
+    self
+      .scope_stack
+      .last_mut()
+      .unwrap()
+      .bindings
+      .insert(name, ScopeBinding { ty, definition });
+  }
+
+  fn define_symbol(&mut self, name: Sym, loc: SourceLoc, kind: SymbolKind, ty: AbstractType) {
+    let definition = self.record_definition(name, loc, kind);
+    self.bind_symbol(name, definition, ty);
+  }
+
+  fn lookup_binding(&self, name: Sym) -> Option<&ScopeBinding> {
+    self
+      .scope_stack
+      .iter()
+      .rev()
+      .find_map(|frame| frame.bindings.get(&name))
   }
 
   fn lookup_type(&self, name: Sym) -> Option<&AbstractType> {
-    for frame in self.scope_stack.iter().rev() {
-      if let Some(ty) = frame.types.get(&name) {
-        return Some(ty);
-      }
-    }
-    None
+    self.lookup_binding(name).map(|binding| &binding.ty)
   }
 
   fn is_defined(&self, name: Sym) -> bool {
-    self.scope_stack.iter().any(|f| f.types.contains_key(&name))
-  }
-
-  fn find_def_loc(&self, name: Sym) -> Option<SourceLoc> {
-    for def in self.defs.iter().rev() {
-      if def.name == name {
-        return Some(def.loc);
-      }
-    }
-    None
+    self.lookup_binding(name).is_some()
   }
 
   fn reference_symbol(&mut self, name: Sym, loc: SourceLoc) {
-    let resolved_def = self.find_def_loc(name);
+    let resolved_def = self
+      .lookup_binding(name)
+      .and_then(|binding| binding.definition);
     let is_defined = self.is_defined(name);
     let is_builtin = self.builtin_syms.contains(&name);
 
@@ -290,13 +315,16 @@ impl<'a> AnalysisWalker<'a> {
     }
   }
 
-  /// Walk a `name = expr` binding's RHS.  When the RHS is a closure literal, arm it so the
-  /// closure makes its own name visible inside its body for recursive calls (as the runtime does).
-  fn walk_binding_value(&mut self, name: Sym, expr: &Expr) -> AbstractType {
+  /// Reserve the definition before walking its value, but only enter it in scope afterward.
+  /// A closure can refer to its own reserved definition while its body is being analyzed.
+  fn walk_binding(&mut self, name: Sym, loc: SourceLoc, expr: &Expr, type_hint: Option<&ArgType>) {
+    let definition = self.record_definition(name, loc, SymbolKind::Variable);
     if matches!(expr, Expr::Closure { .. }) {
-      self.pending_recursive_binding = Some(name);
+      self.pending_recursive_binding = definition.map(|id| (name, id));
     }
-    self.walk_expr(expr)
+    let inferred = self.walk_expr(expr);
+    let ty = self.resolve_with_hint(type_hint, &inferred, expr.loc(), &name);
+    self.bind_symbol(name, definition, ty);
   }
 
   fn walk_top_level_statement(&mut self, stmt: &TopLevelStatement) {
@@ -309,17 +337,10 @@ impl<'a> AnalysisWalker<'a> {
         type_hint,
         ..
       } => {
-        let inferred = self.walk_binding_value(*name, expr);
-        let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
-        self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
+        self.walk_binding(*name, *name_loc, expr, type_hint.as_ref());
       }
       TopLevelStatement::Import { bindings, .. } => {
-        self.define_destructure_pattern(
-          bindings,
-          SourceLoc::default(),
-          SymbolKind::Import,
-          AbstractType::Unknown,
-        );
+        self.define_destructure_pattern(bindings, SymbolKind::Import, AbstractType::Unknown);
       }
     }
   }
@@ -333,18 +354,11 @@ impl<'a> AnalysisWalker<'a> {
         type_hint,
         ..
       } => {
-        let inferred = self.walk_binding_value(*name, expr);
-        let ty = self.resolve_with_hint(type_hint.as_ref(), &inferred, expr.loc(), name);
-        self.define_symbol(*name, *name_loc, SymbolKind::Variable, ty);
+        self.walk_binding(*name, *name_loc, expr, type_hint.as_ref());
       }
       Statement::DestructureAssignment { lhs, rhs, .. } => {
         self.walk_expr(rhs);
-        self.define_destructure_pattern(
-          lhs,
-          rhs.loc(),
-          SymbolKind::Variable,
-          AbstractType::Unknown,
-        );
+        self.define_destructure_pattern(lhs, SymbolKind::Variable, AbstractType::Unknown);
       }
       Statement::Expr(expr) => {
         self.walk_expr(expr);
@@ -424,11 +438,10 @@ impl<'a> AnalysisWalker<'a> {
   fn define_destructure_pattern(
     &mut self,
     pattern: &DestructurePattern,
-    loc: SourceLoc,
     kind: SymbolKind,
     ty: AbstractType,
   ) {
-    pattern.visit_idents(&mut |sym| {
+    pattern.visit_ident_locs(&mut |sym, loc| {
       self.define_symbol(sym, loc, kind, ty.clone());
     });
   }
@@ -476,12 +489,13 @@ impl<'a> AnalysisWalker<'a> {
   /// Walk an expression, returning its inferred abstract type.
   fn walk_expr(&mut self, expr: &Expr) -> AbstractType {
     match expr {
-      Expr::Literal { value, .. } => AbstractType::Concrete(value.get_type()),
+      Expr::Literal { value, .. } => value_type(self.ctx, value),
       Expr::Ident { name, loc, .. } => {
         self.reference_symbol(*name, *loc);
         self
           .lookup_type(*name)
           .cloned()
+          .or_else(|| builtin_type(self.ctx, *name))
           .unwrap_or(AbstractType::Unknown)
       }
       Expr::Call { call, loc } => self.walk_function_call(call, *loc),
@@ -547,31 +561,35 @@ impl<'a> AnalysisWalker<'a> {
         ..
       } => {
         let recursive_binding = self.pending_recursive_binding.take();
-        self.push_scope(*loc, *end_loc);
-        let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
+        // Defaults resolve against captures, before any parameter bindings exist.
         for param in params.iter() {
-          let ty = match &param.type_hint {
-            Some(hint) => AbstractType::Concrete(*hint),
-            None => AbstractType::Unknown,
-          };
-          let name = first_ident_name(&param.ident, self.ctx);
-          callable_params.push(CallableParam {
-            name,
-            ty: ty.clone(),
-          });
-          self.define_destructure_pattern(&param.ident, *loc, SymbolKind::ClosureParam, ty);
           if let Some(default) = &param.default_val {
             self.walk_expr(default);
           }
         }
+        self.push_scope(*loc, *end_loc);
+        let mut callable_params: Vec<CallableParam> = Vec::with_capacity(params.len());
+        for param in params.iter() {
+          let inferred_param = callable_param(self.ctx, param);
+          let ty = inferred_param.ty.clone();
+          callable_params.push(inferred_param);
+          let binding_ty = match param.ident {
+            DestructurePattern::Ident(..) => ty,
+            _ => AbstractType::Unknown,
+          };
+          self.define_destructure_pattern(&param.ident, SymbolKind::ClosureParam, binding_ty);
+        }
 
-        if let Some(bind_name) = recursive_binding {
+        if let Some((bind_name, definition)) = recursive_binding {
           let self_ty = AbstractType::Callable(CallableType {
             params: callable_params.clone(),
             return_type: Box::new(AbstractType::Unknown),
           });
           if let Some(frame) = self.scope_stack.last_mut() {
-            frame.types.insert(bind_name, self_ty);
+            frame.bindings.entry(bind_name).or_insert(ScopeBinding {
+              ty: self_ty,
+              definition: Some(definition),
+            });
           }
         }
 
@@ -623,16 +641,14 @@ impl<'a> AnalysisWalker<'a> {
         let return_ty = if let Some(declared) = declared_arg {
           AbstractType::Concrete(declared)
         } else {
+          let mut exits = closure_ctx.exit_types.into_iter();
           let mut acc = if implicit_is_unreachable {
-            AbstractType::Unknown
+            exits.next().unwrap_or(AbstractType::Unknown)
           } else {
             implicit_return
           };
-          for t in &closure_ctx.exit_types {
-            acc = match &acc {
-              AbstractType::Unknown => t.clone(),
-              _ => merge_types(&acc, t),
-            };
+          for t in exits {
+            acc = merge_types(&acc, &t);
           }
           acc
         };
@@ -753,279 +769,141 @@ impl<'a> AnalysisWalker<'a> {
     }
   }
 
-  /// Pipeline operator `lhs | rhs`.  At runtime the rhs is evaluated to a value first: a callable
-  /// (closure / partial application) is invoked with lhs appended, otherwise `|` degrades to
-  /// `bit_or(lhs, rhs)`.  We mirror that here — `lhs | f(args)` is a call append only when
-  /// `f(args)` is a partial application; a fully-applied `f(args)` makes it a `bit_or` instead.
+  fn call_target_type(&self, name: Sym) -> AbstractType {
+    self
+      .lookup_type(name)
+      .cloned()
+      .or_else(|| builtin_type(self.ctx, name))
+      .unwrap_or(AbstractType::Unknown)
+  }
+
+  fn record_call_resolution(
+    &mut self,
+    resolution: CallResolution,
+    loc: SourceLoc,
+    width: u32,
+  ) -> (AbstractType, Option<usize>) {
+    if let Some(message) = resolution.error {
+      let (line, col) = self.ctx.resolve_loc(loc);
+      if (line, col) != (0, 0) {
+        self.diagnostics.push(AnalysisDiagnostic {
+          start_line: line,
+          start_col: col,
+          end_line: line,
+          end_col: col + width.max(1),
+          severity: DiagnosticSeverity::Error,
+          message,
+        });
+      }
+    }
+    (resolution.return_ty, resolution.matched_signature)
+  }
+
   fn walk_pipeline(&mut self, lhs: &Expr, rhs: &Expr) -> AbstractType {
     let lhs_ty = self.walk_expr(lhs);
-
-    match rhs {
-      Expr::Call { call, loc } => {
-        let arg_types: Vec<AbstractType> = call.args.iter().map(|a| self.walk_expr(a)).collect();
-        let kwarg_types: Vec<(Sym, AbstractType)> = call
-          .kwargs
-          .iter()
-          .map(|(&sym, expr)| (sym, self.walk_expr(expr)))
-          .collect();
-
-        if let FunctionCallTarget::Name(name) = &call.target {
-          let is_shadowed = self.is_defined(*name);
-          if !is_shadowed {
-            self.reference_symbol(*name, *loc);
-          }
-
-          let (return_ty, matched_sig_ix) = self.walk_pipeline_call(
-            *name,
-            is_shadowed,
-            call,
-            &arg_types,
-            &kwarg_types,
-            lhs_ty.clone(),
-            *loc,
-          );
-
-          self.function_calls.push(FunctionCallInfo {
-            name: *name,
-            loc: *loc,
-            arg_count: call.args.len(),
-            kwarg_count: call.kwargs.len(),
-            kwarg_names: call.kwargs.keys().copied().collect(),
-            is_shadowed,
-            matched_sig_ix,
-            arg_types,
-            kwarg_types,
-            arg_is_ident: call
-              .args
-              .iter()
-              .map(|arg| matches!(arg, Expr::Ident { .. }))
-              .collect(),
-            pipeline: Some(PipelineInput {
-              ty: lhs_ty,
-              label: match lhs {
-                Expr::Ident { name, .. } => self
-                  .ctx
-                  .interned_symbols
-                  .with_resolved(*name, str::to_owned)
-                  .unwrap_or_else(|| "expression".to_owned()),
-                Expr::Literal {
-                  value: Value::Int(value),
-                  ..
-                } => value.to_string(),
-                Expr::Literal {
-                  value: Value::Float(value),
-                  ..
-                } => value.to_string(),
-                _ => "expression".to_owned(),
-              },
-            }),
-          });
-
-          return return_ty;
-        }
-
-        AbstractType::Unknown
-      }
-      Expr::Ident { name, loc, .. } => {
-        self.reference_symbol(*name, *loc);
-        // Treat `lhs | name` as `name(lhs)` for PAFs, typed closure vars, or unshadowed builtins.
-        match self.lookup_type(*name).cloned() {
-          Some(AbstractType::PartiallyApplied(paf)) => {
-            self.resolve_paf_call_with_diagnostics(&paf, &[lhs_ty], &[], *loc)
-          }
-          Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-          Some(other) => infer_bitor_op_result_type(&lhs_ty, &other),
-          None if self.builtin_syms.contains(name) => {
-            self
-              .resolve_builtin_call_with_diagnostics(*name, &[lhs_ty], &[], *loc)
-              .0
-          }
-          None => AbstractType::Unknown,
-        }
-      }
-      _ => {
-        let rhs_ty = self.walk_expr(rhs);
-        infer_bitor_op_result_type(&lhs_ty, &rhs_ty)
-      }
-    }
-  }
-
-  /// Resolve `lhs | f(args)` where the rhs is a written-out call.  Returns the pipeline result
-  /// type and the matched signature index (for hover).  Mirrors the runtime: a partial-application
-  /// rhs or a fully-applied call returning a callable is invoked with `lhs`; a fully-applied
-  /// non-callable rhs degrades the `|` to `bit_or`.
-  fn walk_pipeline_call(
-    &mut self,
-    name: Sym,
-    is_shadowed: bool,
-    call: &FunctionCall,
-    arg_types: &[AbstractType],
-    kwarg_types: &[(Sym, AbstractType)],
-    lhs_ty: AbstractType,
-    loc: SourceLoc,
-  ) -> (AbstractType, Option<usize>) {
-    if is_shadowed {
-      // Shadowing local — invoke it with lhs appended, resolving as a PAF or typed callable.
-      let mut piped: Vec<AbstractType> = arg_types.to_vec();
-      piped.push(lhs_ty);
-      let return_ty = match self.lookup_type(name).cloned() {
-        Some(AbstractType::PartiallyApplied(paf)) => {
-          self.resolve_paf_call_with_diagnostics(&paf, &piped, kwarg_types, loc)
-        }
-        Some(AbstractType::Callable(ct)) => (*ct.return_type).clone(),
-        _ => AbstractType::Unknown,
-      };
-      return (return_ty, None);
-    }
-
-    match classify_pipe_rhs_call(self.ctx, name, arg_types, kwarg_types) {
-      PipeRhsKind::Complete { ty: rhs_ty, def_ix } => {
-        // A fully-applied higher-order function still produces a callable that the pipeline
-        // invokes. Builtin signatures do not currently describe that callable's return type.
-        if matches!(rhs_ty.as_single_arg_type(), Some(ArgType::Callable)) {
-          return (AbstractType::Unknown, Some(def_ix));
-        }
-
-        // `f(args)` is fully applied to a non-callable value; `|` is a `bit_or(lhs, value)`.
-        let result = self.infer_pipeline_bitor(&lhs_ty, &rhs_ty, name, loc);
-        (result, Some(def_ix))
-      }
-      PipeRhsKind::Partial => {
-        // `f(args)` is a callable → invoke it with lhs appended.
-        let mut piped: Vec<AbstractType> = arg_types.to_vec();
-        piped.push(lhs_ty);
-        let (return_ty, matched_sig_ix) =
-          self.resolve_builtin_call_with_diagnostics(name, &piped, kwarg_types, loc);
-        let return_ty =
-          infer_reduce_fold_result(self.ctx, call, &piped, piped.len(), |s| self.is_defined(s))
-            .unwrap_or(return_ty);
-        (return_ty, matched_sig_ix)
-      }
-      PipeRhsKind::NoMatch | PipeRhsKind::Indeterminate => {
-        // The rhs call itself is invalid or unreasonable — resolve it standalone so any
-        // no-overload diagnostic anchors on the call, and give up on the pipeline result type.
-        let (_, matched_sig_ix) =
-          self.resolve_builtin_call_with_diagnostics(name, arg_types, kwarg_types, loc);
-        (AbstractType::Unknown, matched_sig_ix)
-      }
-    }
-  }
-
-  /// Result type of `lhs | rhs` when the rhs reduces to a concrete (non-callable) value, where `|`
-  /// degrades to `bit_or`.  Emits a no-overload diagnostic (anchored on the rhs callee `name`) when
-  /// both sides are concrete but no `bit_or` overload accepts them.
-  fn infer_pipeline_bitor(
-    &mut self,
-    lhs_ty: &AbstractType,
-    rhs_ty: &AbstractType,
-    name: Sym,
-    loc: SourceLoc,
-  ) -> AbstractType {
-    let result = infer_bitor_op_result_type(lhs_ty, rhs_ty);
-    if !matches!(result, AbstractType::Unknown) {
-      return result;
-    }
-    let (Some(lhs_c), Some(rhs_c)) = (lhs_ty.as_single_arg_type(), rhs_ty.as_single_arg_type())
-    else {
-      return AbstractType::Unknown;
+    let Expr::Call { call, loc } = rhs else {
+      let rhs_ty = self.walk_expr(rhs);
+      let resolution = resolve_pipeline(self.ctx, &lhs_ty, &rhs_ty);
+      return self.record_call_resolution(resolution, rhs.loc(), 1).0;
     };
-    let (line, col) = self.ctx.resolve_loc(loc);
-    if line == 0 && col == 0 {
-      return AbstractType::Unknown;
-    }
-    let name_str = self
-      .ctx
-      .interned_symbols
-      .with_resolved(name, |s| s.to_string())
-      .unwrap_or_default();
-    self.diagnostics.push(AnalysisDiagnostic {
-      start_line: line,
-      start_col: col,
-      end_line: line,
-      end_col: col + name_str.len().max(1) as u32,
-      severity: DiagnosticSeverity::Error,
-      message: format!(
-        "no valid `|` operation: `{name_str}` is fully applied (not a callable to pipe into), and \
-         `bit_or` has no overload for ({}, {})",
-        lhs_c.as_str(),
-        rhs_c.as_str()
-      ),
-    });
-    AbstractType::Unknown
+    self.walk_call(call, *loc, Some((lhs_ty, lhs)))
   }
 
   fn walk_function_call(&mut self, call: &FunctionCall, loc: SourceLoc) -> AbstractType {
-    let arg_types: Vec<AbstractType> = call.args.iter().map(|a| self.walk_expr(a)).collect();
-    let kwarg_types: Vec<(Sym, AbstractType)> = call
+    self.walk_call(call, loc, None)
+  }
+
+  /// Record editor facts once; all application and RHS-first pipeline semantics live in core.
+  fn walk_call(
+    &mut self,
+    call: &FunctionCall,
+    loc: SourceLoc,
+    pipeline: Option<(AbstractType, &Expr)>,
+  ) -> AbstractType {
+    let arg_types: Vec<_> = call.args.iter().map(|arg| self.walk_expr(arg)).collect();
+    let kwarg_types: Vec<_> = call
       .kwargs
       .iter()
-      .map(|(&sym, expr)| (sym, self.walk_expr(expr)))
+      .map(|(name, expr)| (*name, self.walk_expr(expr)))
       .collect();
-
-    match &call.target {
+    let (target, mut resolution, name, is_shadowed) = match &call.target {
       FunctionCallTarget::Name(name) => {
-        let is_shadowed = self.is_defined(*name);
-        if !is_shadowed {
-          self.reference_symbol(*name, loc);
-        }
-
-        let (return_ty, matched_sig_ix) = if is_shadowed {
-          // Shadowing local — try resolving as a PAF or typed-callable user var.
-          let var_ty = self.lookup_type(*name).cloned();
-          match var_ty {
-            Some(AbstractType::PartiallyApplied(paf)) => (
-              self.resolve_paf_call_with_diagnostics(&paf, &arg_types, &kwarg_types, loc),
-              None,
-            ),
-            Some(AbstractType::Callable(ct)) => ((*ct.return_type).clone(), None),
-            _ => (AbstractType::Unknown, None),
-          }
-        } else {
-          self.resolve_builtin_call_with_diagnostics(*name, &arg_types, &kwarg_types, loc)
-        };
-
-        let return_ty = if is_shadowed {
-          return_ty
-        } else {
-          infer_reduce_fold_result(self.ctx, call, &arg_types, call.args.len(), |s| {
-            self.is_defined(s)
-          })
-          .unwrap_or(return_ty)
-        };
-
-        self.function_calls.push(FunctionCallInfo {
-          name: *name,
-          loc,
-          arg_count: call.args.len(),
-          kwarg_count: call.kwargs.len(),
-          kwarg_names: call.kwargs.keys().copied().collect(),
-          is_shadowed,
-          matched_sig_ix,
-          arg_types,
-          kwarg_types,
-          arg_is_ident: call
-            .args
-            .iter()
-            .map(|arg| matches!(arg, Expr::Ident { .. }))
-            .collect(),
-          pipeline: None,
-        });
-
-        return_ty
+        self.reference_symbol(*name, loc);
+        let target = self.call_target_type(*name);
+        let resolution = resolve_call(self.ctx, &target, &arg_types, &kwarg_types);
+        (target, resolution, Some(*name), self.is_defined(*name))
       }
-      // Builtins the desugar/optimizer already resolved to a literal callable still deserve a
-      // real overload match — `get_return_type_hint` can't give one, since it has no arg types.
-      FunctionCallTarget::Literal(callable) => match &**callable {
-        Callable::Builtin { fn_entry_ix, .. } => {
-          let name = self
-            .ctx
-            .interned_symbols
-            .intern(fn_sigs().entries[*fn_entry_ix].0);
-          resolve_builtin_call(self.ctx, name, &arg_types, &kwarg_types).into_abstract_type()
+      FunctionCallTarget::Literal(callable) => {
+        let resolution = resolve_literal_call(self.ctx, callable, &arg_types, &kwarg_types);
+        (AbstractType::Unknown, resolution, None, false)
+      }
+    };
+    refine_reduce_call(
+      self.ctx,
+      call,
+      &target,
+      &arg_types,
+      |name| self.is_defined(name),
+      &mut resolution,
+    );
+    let mut matched_sig_ix = resolution.matched_signature;
+    if let Some((lhs_ty, _)) = &pipeline {
+      if resolution.error.is_none() {
+        let rhs_ty = resolution.return_ty;
+        resolution = resolve_pipeline_call(self.ctx, call, lhs_ty, &rhs_ty, |name| {
+          self.is_defined(name)
+        });
+        if matches!(rhs_ty, AbstractType::PartiallyApplied(_)) {
+          matched_sig_ix = resolution.matched_signature;
         }
-        _ => AbstractType::Unknown,
-      },
+      }
     }
+    if let Some(name) = name {
+      self.function_calls.push(FunctionCallInfo {
+        name,
+        loc,
+        arg_count: call.args.len(),
+        kwarg_count: call.kwargs.len(),
+        kwarg_names: call.kwargs.keys().copied().collect(),
+        is_shadowed,
+        matched_sig_ix,
+        arg_types,
+        kwarg_types,
+        arg_is_ident: call
+          .args
+          .iter()
+          .map(|arg| matches!(arg, Expr::Ident { .. }))
+          .collect(),
+        pipeline: pipeline.map(|(ty, lhs)| PipelineInput {
+          ty,
+          label: match lhs {
+            Expr::Ident { name, .. } => self
+              .ctx
+              .interned_symbols
+              .with_resolved(*name, str::to_owned)
+              .unwrap_or_else(|| "expression".to_owned()),
+            Expr::Literal {
+              value: Value::Int(value),
+              ..
+            } => value.to_string(),
+            Expr::Literal {
+              value: Value::Float(value),
+              ..
+            } => value.to_string(),
+            _ => "expression".to_owned(),
+          },
+        }),
+      });
+    }
+    let width = name
+      .and_then(|name| {
+        self
+          .ctx
+          .interned_symbols
+          .with_resolved(name, |s| s.len() as u32)
+      })
+      .unwrap_or(1);
+    self.record_call_resolution(resolution, loc, width).0
   }
 
   /// Validate an exit type (explicit `return` or implicit trailing expression) against the
@@ -1072,107 +950,4 @@ impl<'a> AnalysisWalker<'a> {
       ),
     });
   }
-
-  /// Resolve a call into an existing partial application, delegating matching to the shared
-  /// `type_infer::resolve_paf_call`.  Emits a "no overload" diagnostic on `NoMatch`; otherwise
-  /// returns the resulting abstract type (resolved return type, refined PAF, or Unknown).
-  fn resolve_paf_call_with_diagnostics(
-    &mut self,
-    paf: &PartialApplication,
-    new_pos: &[AbstractType],
-    new_kwargs: &[(Sym, AbstractType)],
-    call_loc: SourceLoc,
-  ) -> AbstractType {
-    let resolution = resolve_paf_call(paf, new_pos, new_kwargs);
-    if let CallResolution::NoMatch {
-      canonical_name,
-      concrete_args,
-      concrete_kwargs,
-    } = &resolution
-    {
-      self.emit_no_overload_diagnostic(canonical_name, concrete_args, concrete_kwargs, call_loc);
-    }
-    resolution.into_abstract_type()
-  }
-
-  /// Resolve a builtin call via the shared `type_infer::resolve_builtin_call`, emitting a
-  /// diagnostic on `NoMatch` and extracting the matched signature index from `Matched`.
-  fn resolve_builtin_call_with_diagnostics(
-    &mut self,
-    name: Sym,
-    arg_types: &[AbstractType],
-    kwarg_types: &[(Sym, AbstractType)],
-    call_loc: SourceLoc,
-  ) -> (AbstractType, Option<usize>) {
-    if !self.builtin_syms.contains(&name) {
-      return (AbstractType::Unknown, None);
-    }
-
-    let resolution = resolve_builtin_call(self.ctx, name, arg_types, kwarg_types);
-    let matched_sig_ix = match &resolution {
-      CallResolution::Matched { def_ix, .. } => Some(*def_ix),
-      _ => None,
-    };
-    if let CallResolution::NoMatch {
-      canonical_name,
-      concrete_args,
-      concrete_kwargs,
-    } = &resolution
-    {
-      self.emit_no_overload_diagnostic(canonical_name, concrete_args, concrete_kwargs, call_loc);
-    }
-    (resolution.into_abstract_type(), matched_sig_ix)
-  }
-
-  fn emit_no_overload_diagnostic(
-    &mut self,
-    name: &str,
-    concrete_args: &[ArgType],
-    concrete_kwargs: &[(Sym, ArgType)],
-    call_loc: SourceLoc,
-  ) {
-    let (line, col) = self.ctx.resolve_loc(call_loc);
-    if line == 0 && col == 0 {
-      return;
-    }
-    self.diagnostics.push(AnalysisDiagnostic {
-      start_line: line,
-      start_col: col,
-      end_line: line,
-      end_col: col + name.len() as u32,
-      severity: DiagnosticSeverity::Error,
-      message: format_no_signature_match_msg(name, concrete_args, concrete_kwargs),
-    });
-  }
-}
-
-/// Extract the display name for a closure parameter from its destructure pattern — the single
-/// ident name when the pattern is just `Ident(sym)`, otherwise None (destructured patterns
-/// don't have one name we can surface on hover).
-fn first_ident_name(pat: &DestructurePattern, ctx: &EvalCtx) -> Option<String> {
-  if let DestructurePattern::Ident(sym) = pat {
-    ctx.interned_symbols.with_resolved(*sym, |s| s.to_string())
-  } else {
-    None
-  }
-}
-
-fn format_no_signature_match_msg(
-  name: &str,
-  positional: &[ArgType],
-  kwargs: &[(Sym, ArgType)],
-) -> String {
-  let pos_part: Vec<&str> = positional.iter().map(|t| t.as_str()).collect();
-  let kw_part: Vec<String> = kwargs
-    .iter()
-    .map(|(_, t)| format!("_={}", t.as_str()))
-    .collect();
-  let mut all = pos_part.join(", ");
-  if !kw_part.is_empty() {
-    if !all.is_empty() {
-      all.push_str(", ");
-    }
-    all.push_str(&kw_part.join(", "));
-  }
-  format!("no overload of `{name}` matches argument types ({all})")
 }

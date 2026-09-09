@@ -24,8 +24,11 @@ pub(crate) fn goto_definition(
     let end_col = source_scan::ident_end_col(src, line, col, name.len() as u32);
 
     if target_col < end_col {
-      if let Some(def_loc) = sym_ref.resolved_def {
-        let (def_line, def_col) = ctx.eval_ctx.resolve_loc(def_loc);
+      if let Some(id) = sym_ref.resolved_def {
+        let (def_line, def_col) = ctx.eval_ctx.resolve_loc(analysis.definition(id).loc);
+        if (def_line, def_col) == (0, 0) {
+          return None;
+        }
         return Some(DefinitionLocation {
           start_line: def_line,
           start_col: def_col,

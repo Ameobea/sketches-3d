@@ -25,11 +25,17 @@ impl SourceRange {
   }
 }
 
-/// A symbol definition found during analysis.
+/// Identity of a symbol definition within one analysis result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DefinitionId(pub(crate) usize);
+
+/// A definition's identity and source location are independent. IDs belong to one `Analysis`.
 #[derive(Clone, Debug)]
 pub struct SymbolDef {
+  pub id: DefinitionId,
   pub name: Sym,
   pub loc: SourceLoc,
+  pub ty: AbstractType,
   pub kind: SymbolKind,
   /// Scope depth where this was defined (0 = top-level).
   pub scope_depth: u32,
@@ -43,8 +49,8 @@ pub struct SymbolDef {
 pub struct SymbolRef {
   pub name: Sym,
   pub loc: SourceLoc,
-  /// The definition location this reference resolves to, if any.
-  pub resolved_def: Option<SourceLoc>,
+  /// The active lexical definition this reference resolves to, if any.
+  pub resolved_def: Option<DefinitionId>,
 }
 
 /// Information about a function call for argument checking.

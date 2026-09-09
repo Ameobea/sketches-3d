@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { VizStats } from './util/vizStats';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+
+import { setupPlayerCharacter } from './character/PlayerCharacter';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 
 import { initSentry } from 'src/sentry';
@@ -1457,6 +1459,11 @@ export const initViz = (
 
     if (sceneConf.player?.mesh) {
       viz.scene.add(sceneConf.player.mesh);
+    }
+    if (viz.levelLoadHandle?.character) {
+      setupPlayerCharacter(viz, viz.levelLoadHandle, sceneConf.player?.character ?? {}).catch(err =>
+        console.error('[character] failed to build the player character', err)
+      );
     }
 
     // Warm both shadow-side program variants up front for scenes that can enter third-person —

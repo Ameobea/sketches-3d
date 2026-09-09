@@ -5,6 +5,7 @@ import type { VizConfig } from '../conf';
 import type { DeepPartial } from '../util/util.ts';
 import type { TransparentWritable } from '../util/TransparentWritable.ts';
 import type { PlayerShadowParams } from '../shaders/customShader';
+import type { PlayerCharacterOpts } from '../character/PlayerCharacter';
 
 export interface SceneMetadata {
   title: string;
@@ -284,6 +285,11 @@ export interface SceneConfig {
      * usually needed in `firstPerson` view mode, but is useful for `top-down` mode.
      */
     mesh?: THREE.Object3D;
+    /**
+     * Facing and gait overrides for the skinned character built from the level def's
+     * `character` asset (built whenever the level declares one).
+     */
+    character?: PlayerCharacterOpts;
     /** Renders a circular shadow beneath the player on custom shader materials. */
     playerShadow?: PlayerShadowParams;
   };

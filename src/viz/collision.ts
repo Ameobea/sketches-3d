@@ -210,6 +210,8 @@ export class BulletPhysics {
   public playerStateGetters: FpPlayerStateGetters;
   public btvec3!: (x: number, y: number, z: number) => BtVec3;
   private jumpCbs: ((curTimeSeconds: number) => void)[] = [];
+  private landCbs: ((curTimeSeconds: number) => void)[] = [];
+  private teleportCbs: (() => void)[] = [];
   private dashCbs: ((curTimeSeconds: number) => void)[] = [];
   private isWalking = false;
   private boostActive = false;
@@ -967,6 +969,9 @@ export class BulletPhysics {
     if (!prevOnGround && nowOnGround) {
       const materialClass = newFloorEntity?.materialClass ?? MaterialClass.Default;
       this.viz.sfxManager.onPlayerLand(materialClass);
+      for (const cb of this.landCbs) {
+        cb(this.physicsElapsedTime);
+      }
     }
 
     return { nowOnGround };
@@ -1031,6 +1036,8 @@ export class BulletPhysics {
   };
 
   public registerJumpCb = (cb: (curTimeSeconds: number) => void) => this.jumpCbs.push(cb);
+  /** Fires per physics subtick on touching down, so landings inside a single frame aren't missed. */
+  public registerLandCb = (cb: (curTimeSeconds: number) => void) => this.landCbs.push(cb);
 
   public deregisterJumpCb = (cb: (curTimeSeconds: number) => void) => {
     const ix = this.jumpCbs.indexOf(cb);
@@ -1237,6 +1244,17 @@ export class BulletPhysics {
   };
 
   public getPhysicsTime = (): number => this.physicsElapsedTime;
+
+  /**
+   * World y of the closest static/default-filter surface below `(x, fromY, z)` within `maxDist`,
+   * ignoring the player's own collider; `null` on a miss.  Shares the controller's camera ray
+   * slot, so it clobbers the last-hit normal the camera controller reads; safe only because that
+   * read happens synchronously right after the camera's own cast.
+   */
+  public rayTestDown = (x: number, fromY: number, z: number, maxDist: number): number | null => {
+    const frac = this.playerController.cameraRayTest(this.collisionWorld, x, fromY, z, x, fromY - maxDist, z);
+    return frac < 1 ? fromY - frac * maxDist : null;
+  };
 
   public registerPhysicsTicker = (
     ticker: PhysicsTicker,
@@ -1553,7 +1571,13 @@ export class BulletPhysics {
     this.playerController.setExternalVelocity(this.btvec3(0, 0, 0));
     this.playerController.setVerticalVelocity(0);
     this.playerController.setOnGround(false);
+    for (const cb of this.teleportCbs) {
+      cb();
+    }
   };
+
+  /** Fires after every warp (respawn, `tp`, replay seek, checkpoint restart), the only non-physical move. */
+  public registerTeleportCb = (cb: () => void) => this.teleportCbs.push(cb);
 
   /**
    * Register a mesh for collision.
