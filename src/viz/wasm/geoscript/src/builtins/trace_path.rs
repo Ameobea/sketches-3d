@@ -11,7 +11,8 @@ pub(crate) use crate::path::segment::*;
 pub(crate) use crate::path::{DrawCommand, FillRule};
 
 use crate::{
-  path::Path, ArgRef, ArgType, Callable, DynamicCallable, ErrorStack, EvalCtx, Sym, Value, Vec2,
+  path::{Path, Subpath},
+  ArgRef, ArgType, Callable, DynamicCallable, ErrorStack, EvalCtx, Sequence, Sym, Value, Vec2,
 };
 
 const GUIDE_EPSILON: f32 = 1e-6;
@@ -291,46 +292,106 @@ pub(crate) fn sample_path_subpaths(
   Ok(out)
 }
 
-/// Builds tagged-dict `Value::Map` representations of every segment in a concrete path, in
-/// subpath order. Common fields: `type` (line/quad/cubic/arc), `start`, `end`, `length`,
-/// `subpath`, `closed`, `t_start`, `t_end` (subpath-local arc-length parameters in [0, 1]),
-/// `t_start_global`, `t_end_global` (across the full path). Curve variants add their control
-/// points / arc parameters.
-pub(crate) fn build_segment_dicts(path: &Path, fn_name: &str) -> Result<Vec<Value>, ErrorStack> {
-  if let Some(lazy) = path.first_lazy_name() {
-    return Err(ErrorStack::new(format!(
-      "`{fn_name}`: path has no draw commands (contains `{lazy}`); use `discretize_path` first"
-    )));
-  }
-  let leaves = path.leaves();
-  let global_total: f32 = leaves.iter().map(|sp| sp.total_length()).sum();
-  let mut out = Vec::with_capacity(leaves.iter().map(|sp| sp.segments.len()).sum());
-  let mut global_offset = 0.;
-  for (subpath_ix, sp) in leaves.iter().enumerate() {
-    let local_total = sp.total_length();
-    for (seg_ix, seg) in sp.segments.iter().enumerate() {
-      let local_prev = if seg_ix == 0 {
-        0.0
-      } else {
-        sp.cumulative_lengths[seg_ix - 1]
-      };
-      let local_curr = sp.cumulative_lengths[seg_ix];
-      let frac = |num: f32, den: f32, empty: f32| if den > 0.0 { num / den } else { empty };
-      out.push(segment_to_dict(
-        seg,
-        SegmentMeta {
-          subpath_ix,
-          closed: sp.closed,
-          t_start_local: frac(local_prev, local_total, 0.0),
-          t_end_local: frac(local_curr, local_total, 1.0),
-          t_start_global: frac(global_offset + local_prev, global_total, 0.0),
-          t_end_global: frac(global_offset + local_curr, global_total, 1.0),
-        },
-      ));
+/// `path_segments` output: one tagged-dict record per segment of a concrete path, in subpath
+/// order, built on demand so `len`/`first` don't materialize. Common fields: `type`
+/// (line/quad/cubic/arc), `start`, `end`, `length`, `subpath`, `closed`, `t_start`, `t_end`
+/// (subpath-local arc-length parameters in [0, 1]), `t_start_global`, `t_end_global` (across the
+/// full path). Curve variants add their control points / arc parameters.
+pub(crate) struct PathSegmentsSeq {
+  leaves: Rc<Vec<Subpath>>,
+  global_total: f32,
+  len: usize,
+}
+
+impl PathSegmentsSeq {
+  pub(crate) fn new(path: &Path, fn_name: &str) -> Result<Self, ErrorStack> {
+    if let Some(lazy) = path.first_lazy_name() {
+      return Err(ErrorStack::new(format!(
+        "`{fn_name}`: path has no draw commands (contains `{lazy}`); use `discretize_path` first"
+      )));
     }
-    global_offset += local_total;
+    let leaves: Vec<Subpath> = path.leaves().into_iter().cloned().collect();
+    Ok(Self {
+      global_total: leaves.iter().map(|sp| sp.total_length()).sum(),
+      len: leaves.iter().map(|sp| sp.segments.len()).sum(),
+      leaves: Rc::new(leaves),
+    })
   }
-  Ok(out)
+}
+
+impl std::fmt::Debug for PathSegmentsSeq {
+  #[cold]
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "PathSegmentsSeq({} segments)", self.len)
+  }
+}
+
+impl Sequence for PathSegmentsSeq {
+  fn consumption_deps(&self) -> Option<Vec<Value>> {
+    Some(Vec::new())
+  }
+
+  fn exact_len(&self) -> Option<usize> {
+    Some(self.len)
+  }
+
+  fn consume<'a>(
+    &self,
+    _ctx: &'a EvalCtx,
+  ) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>> + 'a> {
+    let leaves = Rc::clone(&self.leaves);
+    let global_total = self.global_total;
+    let mut global_offset = 0.;
+    Box::new((0..leaves.len()).flat_map(move |subpath_ix| {
+      let leaves = Rc::clone(&leaves);
+      let offset = global_offset;
+      global_offset += leaves[subpath_ix].total_length();
+      (0..leaves[subpath_ix].segments.len()).map(move |seg_ix| {
+        Ok(segment_dict(
+          &leaves[subpath_ix],
+          subpath_ix,
+          seg_ix,
+          offset,
+          global_total,
+        ))
+      })
+    }))
+  }
+}
+
+fn segment_dict(
+  sp: &Subpath,
+  subpath_ix: usize,
+  seg_ix: usize,
+  global_offset: f32,
+  global_total: f32,
+) -> Value {
+  let local_total = sp.total_length();
+  let local_prev = if seg_ix == 0 {
+    0.0
+  } else {
+    sp.cumulative_lengths[seg_ix - 1]
+  };
+  let local_curr = sp.cumulative_lengths[seg_ix];
+  let frac = |num: f32, den: f32, empty: f32| if den > 0.0 { num / den } else { empty };
+  segment_to_dict(
+    &sp.segments[seg_ix],
+    SegmentMeta {
+      subpath_ix,
+      closed: sp.closed,
+      t_start_local: frac(local_prev, local_total, 0.0),
+      t_end_local: frac(local_curr, local_total, 1.0),
+      t_start_global: frac(global_offset + local_prev, global_total, 0.0),
+      t_end_global: frac(global_offset + local_curr, global_total, 1.0),
+    },
+  )
+}
+
+#[cfg(test)]
+pub(crate) fn build_segment_dicts(path: &Path, fn_name: &str) -> Result<Vec<Value>, ErrorStack> {
+  PathSegmentsSeq::new(path, fn_name)?
+    .consume(&EvalCtx::default())
+    .collect()
 }
 
 struct SegmentMeta {
@@ -409,11 +470,12 @@ fn segment_to_dict(seg: &PathSegment, meta: SegmentMeta) -> Value {
     ("t_end_global", Value::Float(meta.t_end_global)),
   ]);
 
-  let mut map = ValueMap::default();
-  for (k, v) in entries {
-    map.insert(k.to_string(), v);
-  }
-  Value::Map(Rc::new(map))
+  Value::Map(Rc::new(ValueMap::from_unique_entries(
+    entries
+      .into_iter()
+      .map(|(k, v)| (k.to_string(), v))
+      .collect(),
+  )))
 }
 
 /// Polyline copy of `path`. Existing anchors are retained; refinement vertices stay smooth.
@@ -1890,5 +1952,29 @@ closed_flags = segs -> |s, _i| s.closed
       let rotation = m.get("x_axis_rotation").and_then(|v| v.as_float()).unwrap();
       assert!(rotation.abs() < 1e-3);
     }
+  }
+
+  #[test]
+  fn test_path_segments_is_lazy_but_sized() {
+    let src = r#"
+p = path() | move(0, 0) | line(1, 0) | line(1, 1) | close
+n = len(path_segments(p))
+first_type = first(path_segments(p)).type
+n_lens = len(path_segments(p) -> |s| s.length)
+n_range = len(0..7 -> |x| x * 2)
+n_take = len(take(3, skip(2, 0..10)))
+n_filter = len(filter(|x| x > 4, 0..10))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let int = |name: &str| ctx.get_global(name).unwrap().as_int().unwrap();
+    assert_eq!(int("n"), 3);
+    assert_eq!(
+      ctx.get_global("first_type").unwrap().as_str().unwrap(),
+      "line"
+    );
+    assert_eq!(int("n_lens"), 3);
+    assert_eq!(int("n_range"), 7);
+    assert_eq!(int("n_take"), 3);
+    assert_eq!(int("n_filter"), 5);
   }
 }

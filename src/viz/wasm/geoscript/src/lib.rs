@@ -284,6 +284,11 @@ pub trait Sequence: Any + Debug {
   /// means consumption is opaque (wraps an arbitrary iterator, etc.) and must be assumed
   /// effectful. Deliberately has no default impl so new sequence types have to declare.
   fn consumption_deps(&self) -> Option<Vec<Value>>;
+
+  /// Element count knowable without consuming, like `Iterator::size_hint` with equal bounds.
+  fn exact_len(&self) -> Option<usize> {
+    None
+  }
 }
 
 pub(crate) fn seq_as_eager<'a>(seq: &'a dyn Sequence) -> Option<&'a EagerSeq> {

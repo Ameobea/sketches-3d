@@ -19,7 +19,7 @@ use crate::{
   Vec2, EMPTY_KWARGS,
 };
 
-use super::adaptive_sampler::adaptive_sample_fallible;
+use super::adaptive_sampler::{adaptive_sample_batched, adaptive_sample_fallible};
 use super::fku_stitch::{
   dp_stitch_presampled, should_use_fku, snap_critical_points, stitch_apex_to_row,
   uniform_stitch_rows,
@@ -279,6 +279,16 @@ struct DynamicProfileData {
   /// One entry per profile subpath. A single-loop profile (the common case) has one; multi-subpath
   /// (disjoint or holed) profiles have several. Spans are in global t, closedness per subpath.
   loops: Vec<LoopSpec>,
+}
+
+impl DynamicProfileData {
+  fn original_t(&self, v: f32) -> f32 {
+    if self.rotation_offset != 0.0 {
+      (v + self.rotation_offset).rem_euclid(1.0)
+    } else {
+      v
+    }
+  }
 }
 
 struct RingContext {
@@ -599,17 +609,13 @@ fn sample_profile_offset(
   v: f32,
   v_ix: i64,
 ) -> Result<Vec2, ErrorStack> {
-  // If the critical points were rotated to align t=0 with a real feature, undo the rotation
-  // before calling the sampler so it receives t-values in its original parameterization.
-  let v = if ring.profile_data.rotation_offset != 0.0 {
-    (v + ring.profile_data.rotation_offset).rem_euclid(1.0)
-  } else {
-    v
-  };
   let offset_2d = ctx
     .invoke_callable(
       &ring.profile_data.sampler,
-      &[Value::Float(v), Value::Int(v_ix)],
+      &[
+        Value::Float(ring.profile_data.original_t(v)),
+        Value::Int(v_ix),
+      ],
       EMPTY_KWARGS,
     )
     .map_err(|err| err.wrap("Error calling user-provided sampler returned by `dynamic_profile`"))?;
@@ -797,10 +803,26 @@ fn sample_one_loop(
   };
 
   let mut samples = if use_adaptive {
-    adaptive_sample_fallible(
+    // A path profile is probed directly in bulk; only black-box samplers pay per-call dispatch.
+    let path = callable_path(&ring.profile_data.sampler);
+    adaptive_sample_batched(
       budget,
       &local_crit,
-      |t| sample_profile_offset(ctx, ring, to_global(t), -1),
+      |ts: &[f32]| match path {
+        Some(path) => {
+          let ts: Vec<f32> = ts
+            .iter()
+            .map(|&t| ring.profile_data.original_t(to_global(t)))
+            .collect();
+          path.eval_many(&ts, ctx).map_err(|err| {
+            err.wrap("Error calling user-provided sampler returned by `dynamic_profile`")
+          })
+        }
+        None => ts
+          .iter()
+          .map(|&t| sample_profile_offset(ctx, ring, to_global(t), -1))
+          .collect(),
+      },
       1e-5,
     )?
   } else {

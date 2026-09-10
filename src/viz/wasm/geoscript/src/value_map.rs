@@ -9,7 +9,7 @@ use crate::Value;
 
 type Big = im_rc::HashMap<String, Value, FxBuildHasher>;
 
-const SMALL_MAX: usize = 8;
+const SMALL_MAX: usize = 16;
 
 thread_local! {
   static POOL: im_rc::hashmap::HashMapPool<String, Value> =
@@ -69,6 +69,16 @@ impl ValueMap {
       }
       ValueMap::Big(m) => m.insert(key, val),
     }
+  }
+
+  /// Keys must be distinct.
+  pub fn from_unique_entries(entries: Vec<(String, Value)>) -> Self {
+    if entries.len() <= SMALL_MAX {
+      return ValueMap::Small(entries);
+    }
+    let mut big = POOL.with(|pool| Big::with_pool_hasher(pool, FxBuildHasher::default()));
+    big.extend(entries);
+    ValueMap::Big(big)
   }
 
   pub fn remove(&mut self, key: &str) -> Option<Value> {

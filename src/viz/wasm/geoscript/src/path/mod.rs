@@ -465,6 +465,44 @@ impl Path {
     })
   }
 
+  /// `eval_at` over many `t`s. Leaves reuse the previous point's segment as the search hint, so
+  /// monotone runs locate in O(1) instead of a binary search per point.
+  pub(crate) fn eval_many(&self, ts: &[f32], ctx: &EvalCtx) -> Result<Vec<Vec2>, ErrorStack> {
+    let local = |t: f32| {
+      let t = t.clamp(0., 1.);
+      if self.reverse {
+        1.0 - t
+      } else {
+        t
+      }
+    };
+    let mut out: Vec<Vec2> = match &self.kind {
+      PathKind::Subpath(sp) => {
+        if sp.is_degenerate() && !ts.is_empty() {
+          return Err(ErrorStack::new("empty path"));
+        }
+        let mut hint = 0;
+        ts.iter()
+          .map(|&t| sp.sample_t_hinted(local(t), &mut hint))
+          .collect()
+      }
+      PathKind::Group(g) => ts
+        .iter()
+        .map(|&t| g.eval_raw(local(t), ctx))
+        .collect::<Result<_, _>>()?,
+      PathKind::Abstract(a) => {
+        let ts: Vec<f32> = ts.iter().map(|&t| local(t)).collect();
+        a.eval_many_raw(&ts, ctx)?
+      }
+    };
+    if self.has_transform {
+      for p in &mut out {
+        *p = apply_transform_to_point(&self.transform, *p);
+      }
+    }
+    Ok(out)
+  }
+
   fn sampled_length(&self, ctx: &EvalCtx) -> Result<f32, ErrorStack> {
     let n = LAZY_LENGTH_SAMPLES;
     let mut prev = self.eval_at(0., ctx)?;

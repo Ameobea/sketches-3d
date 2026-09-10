@@ -263,7 +263,7 @@ pub(crate) fn analyze_span<P, E>(
   t_start: f32,
   t_end: f32,
   n_dense: usize,
-  sample_fn: &impl Fn(f32) -> Result<P, E>,
+  sample_many: &impl Fn(&[f32]) -> Result<Vec<P>, E>,
 ) -> Result<SpanData, E>
 where
   P: AdaptiveSamplePoint,
@@ -276,11 +276,7 @@ where
     .map(|i| t_start + span_len * (i as f32 / n_dense as f32))
     .collect();
 
-  // Evaluate the curve at every dense t-value.
-  let mut dense_pts: Vec<P> = Vec::with_capacity(n_pts);
-  for &t in &dense_ts {
-    dense_pts.push(sample_fn(t)?);
-  }
+  let dense_pts = sample_many(&dense_ts)?;
 
   // Chord deviations: forced to 0.0 at both span endpoints (hard boundaries) so that corner
   // curvature at t_start or t_end cannot bleed into this span's density field.
@@ -396,8 +392,10 @@ where
   let spans: Vec<SpanData> = span_samplers
     .iter()
     .map(|sample_fn| {
-      analyze_span::<P, std::convert::Infallible>(0.0, 1.0, n_dense, &|t| Ok(sample_fn(t)))
-        .expect("infallible sample_fn cannot fail")
+      analyze_span::<P, std::convert::Infallible>(0.0, 1.0, n_dense, &|ts: &[f32]| {
+        Ok(ts.iter().map(|&t| sample_fn(t)).collect())
+      })
+      .expect("infallible sample_fn cannot fail")
     })
     .collect();
 
@@ -451,6 +449,25 @@ pub fn adaptive_sample_fallible<P, E>(
   target_count: usize,
   initial_ts: &[f32],
   sample_fn: impl Fn(f32) -> Result<P, E>,
+  min_segment_length: f32,
+) -> Result<Vec<f32>, E>
+where
+  P: AdaptiveSamplePoint,
+{
+  adaptive_sample_batched(
+    target_count,
+    initial_ts,
+    |ts| ts.iter().map(|&t| sample_fn(t)).collect(),
+    min_segment_length,
+  )
+}
+
+/// `adaptive_sample_fallible` with the dense probes of each span requested as one batch, for
+/// samplers with a cheap bulk path (concrete paths).
+pub fn adaptive_sample_batched<P, E>(
+  target_count: usize,
+  initial_ts: &[f32],
+  sample_many: impl Fn(&[f32]) -> Result<Vec<P>, E>,
   min_segment_length: f32,
 ) -> Result<Vec<f32>, E>
 where
@@ -515,7 +532,7 @@ where
       boundaries[i],
       boundaries[i + 1],
       n_dense_per_span,
-      &sample_fn,
+      &sample_many,
     )?;
     spans.push(span);
   }

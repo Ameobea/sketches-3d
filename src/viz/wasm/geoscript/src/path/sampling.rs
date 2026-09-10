@@ -44,6 +44,27 @@ impl Sampler<'_> {
     Ok(p)
   }
 
+  fn eval_many(&mut self, ts: &[f32]) -> Result<Vec<Vec2>, ErrorStack> {
+    if self.evaluations + ts.len() > MAX_EVALUATIONS {
+      return Err(ErrorStack::new(
+        "Lazy path materialization exceeded its evaluation limit; increase curve_angle_degrees or \
+         simplify the input path",
+      ));
+    }
+    self.evaluations += ts.len();
+    let pts = self.path.eval_many(ts, self.ctx)?;
+    if let Some((t, _)) = ts
+      .iter()
+      .zip(&pts)
+      .find(|(_, p)| !p.iter().all(|v| v.is_finite()))
+    {
+      return Err(ErrorStack::new(format!(
+        "Lazy path materialization encountered a non-finite point at t={t}"
+      )));
+    }
+    Ok(pts)
+  }
+
   fn push(&mut self, p: Vec2, anchor: bool) {
     self.points.push(p);
     self.anchors.push(anchor);
@@ -171,7 +192,8 @@ pub(super) fn sample_lazy(
   };
   seeds.extend((0..=intervals).map(|i| (i as f32 / intervals as f32, false)));
   seeds.retain(|(t, _)| t.is_finite() && (0.0..=1.0).contains(t));
-  seeds.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+  // stable sort: the three inputs are each presorted, so driftsort just merges runs
+  seeds.sort_by(|a, b| a.0.total_cmp(&b.0));
   // Exact deduplication: even very close, explicitly distinct guide values must be sampled.
   seeds.dedup_by(|a, b| {
     if a.0 != b.0 {
@@ -181,19 +203,22 @@ pub(super) fn sample_lazy(
     true
   });
   sampler.push(first, seeds[0].1);
-  let mut p = first;
-  for pair in seeds.windows(2) {
-    let q = if pair[1].0 == 1. {
-      last
-    } else {
-      sampler.eval(pair[1].0)?
-    };
-    if linear {
-      sampler.push(q, pair[1].1);
-    } else {
-      sampler.refine(pair[0].0, pair[1].0, p, q, pair[1].1, 0)?;
+  if linear {
+    let ts: Vec<f32> = seeds[1..].iter().map(|s| s.0).collect();
+    for (q, s) in sampler.eval_many(&ts)?.into_iter().zip(&seeds[1..]) {
+      sampler.push(q, s.1);
     }
-    p = q;
+  } else {
+    let mut p = first;
+    for pair in seeds.windows(2) {
+      let q = if pair[1].0 == 1. {
+        last
+      } else {
+        sampler.eval(pair[1].0)?
+      };
+      sampler.refine(pair[0].0, pair[1].0, p, q, pair[1].1, 0)?;
+      p = q;
+    }
   }
   if closed && (first - last).norm() <= LAZY_CLOSED_EPSILON {
     sampler.points.pop();

@@ -51,6 +51,10 @@ impl Sequence for IntRange {
     Some(Vec::new())
   }
 
+  fn exact_len(&self) -> Option<usize> {
+    self.end.map(|end| (end - self.start).max(0) as usize)
+  }
+
   fn consume(&self, _ctx: &EvalCtx) -> Box<dyn Iterator<Item = Result<Value, ErrorStack>>> {
     Box::new(self.clone().into_iter())
   }
@@ -68,6 +72,14 @@ impl Sequence for MapSeq {
       Value::Callable(Rc::clone(&self.cb)),
       Value::Sequence(Rc::clone(&self.inner)),
     ])
+  }
+
+  fn exact_len(&self) -> Option<usize> {
+    if self.cb.is_side_effectful() {
+      None
+    } else {
+      self.inner.exact_len()
+    }
   }
 
   fn consume<'a>(
@@ -252,6 +264,10 @@ pub(crate) struct EagerSeq {
 impl Sequence for EagerSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
     Some(Vec::new())
+  }
+
+  fn exact_len(&self) -> Option<usize> {
+    Some(self.inner.len())
   }
 
   fn consume<'a>(
@@ -548,6 +564,10 @@ impl Sequence for TakeSeq {
     Some(vec![Value::Sequence(Rc::clone(&self.inner))])
   }
 
+  fn exact_len(&self) -> Option<usize> {
+    self.inner.exact_len().map(|n| n.min(self.count))
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -576,6 +596,10 @@ pub(crate) struct SkipSeq {
 impl Sequence for SkipSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
     Some(vec![Value::Sequence(Rc::clone(&self.inner))])
+  }
+
+  fn exact_len(&self) -> Option<usize> {
+    self.inner.exact_len().map(|n| n.saturating_sub(self.count))
   }
 
   fn consume<'a>(
@@ -874,6 +898,10 @@ impl Sequence for ChainSeq {
     )
   }
 
+  fn exact_len(&self) -> Option<usize> {
+    self.inner.iter().map(|s| s.exact_len()).sum()
+  }
+
   fn consume<'a>(
     &self,
     ctx: &'a EvalCtx,
@@ -890,6 +918,10 @@ pub(crate) struct ApplyTransformsSeq {
 impl Sequence for ApplyTransformsSeq {
   fn consumption_deps(&self) -> Option<Vec<Value>> {
     Some(vec![Value::Sequence(Rc::clone(&self.inner))])
+  }
+
+  fn exact_len(&self) -> Option<usize> {
+    self.inner.exact_len()
   }
 
   fn consume<'a>(

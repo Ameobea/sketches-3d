@@ -571,3 +571,74 @@ fn polygon_and_polyline_validation() {
   let sp = polygon_subpath(&[v(0., 0.), v(2., 0.), v(2., 2.)]).unwrap();
   assert!(sp.closed && sp.segments.len() == 3);
 }
+
+#[test]
+fn eval_many_matches_eval_at() {
+  use super::lazy::{LerpPath, Trimmed};
+  let ctx = EvalCtx::default();
+  let wiggle = rc(Path::from_draw_commands(
+    [
+      D::MoveTo(v(0., 0.)),
+      D::LineTo(v(1., 0.5)),
+      D::QuadraticBezier {
+        ctrl: v(2., 2.),
+        to: v(3., 0.),
+      },
+      D::CubicBezier {
+        ctrl1: v(3.5, -1.),
+        ctrl2: v(4., 1.),
+        to: v(5., 0.),
+      },
+      D::LineTo(v(5., 3.)),
+      D::Close,
+    ],
+    false,
+  ));
+  let circle = rc(Path::with_kind(PathKind::Subpath(circle_subpath(
+    v(1., 2.),
+    3.,
+    false,
+  ))));
+  let scale = Matrix3::new_nonuniform_scaling(&v(3., 0.5));
+  let lerp = rc(Path::lazy(Rc::new(LerpPath::new(
+    square(),
+    wiggle.clone(),
+    0.3,
+    8,
+  ))));
+  let paths: Vec<Rc<Path>> = vec![
+    square(),
+    wiggle.clone(),
+    circle,
+    rc(wiggle.reversed()),
+    rc(wiggle.transformed(&scale)),
+    lerp.clone(),
+    rc(Path::lazy(Rc::new(Trimmed::new(lerp, 0.2, 0.9)))),
+    rc(Path::group_items(vec![square(), wiggle.clone()], None, &ctx).unwrap()),
+    rc(Path::lazy(Rc::new(LerpPath::new(square(), square(), 0.5, 4))).reversed()),
+  ];
+  let n = 500;
+  let ascending: Vec<f32> = (0..=n).map(|i| i as f32 / n as f32).collect();
+  let descending: Vec<f32> = ascending.iter().rev().copied().collect();
+  let mut seed = 12345u32;
+  let random: Vec<f32> = (0..n)
+    .map(|_| {
+      seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+      (seed >> 8) as f32 / (1u32 << 24) as f32 * 1.4 - 0.2
+    })
+    .collect();
+  let repeated: Vec<f32> = [0.25, 0.25, 0.75, 0.25, 1.0, 0.0, 1.5, -1.]
+    .into_iter()
+    .cycle()
+    .take(64)
+    .collect();
+  for path in &paths {
+    for ts in [&ascending, &descending, &random, &repeated] {
+      let many = path.eval_many(ts, &ctx).unwrap();
+      for (&t, &p) in ts.iter().zip(&many) {
+        assert_eq!(p, path.eval_at(t, &ctx).unwrap(), "t={t}");
+      }
+    }
+    assert!(path.eval_many(&[], &ctx).unwrap().is_empty());
+  }
+}

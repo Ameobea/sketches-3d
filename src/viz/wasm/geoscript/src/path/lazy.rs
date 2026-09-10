@@ -9,6 +9,9 @@ use crate::{
 pub(crate) trait AbstractPath {
   fn name(&self) -> &'static str;
   fn eval_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack>;
+  fn eval_many_raw(&self, ts: &[f32], ctx: &EvalCtx) -> Result<Vec<Vec2>, ErrorStack> {
+    ts.iter().map(|&t| self.eval_raw(t, ctx)).collect()
+  }
   /// Local `t`, sorted, within `[0, 1]`; empty when nothing is known.
   fn critical_t_values(&self) -> Vec<f32>;
   /// Known piece boundaries used to seed adaptive materialization, not crease annotations.
@@ -112,6 +115,20 @@ impl AbstractPath for LerpPath {
     Ok(a + (b - a) * self.mix)
   }
 
+  fn eval_many_raw(&self, ts: &[f32], ctx: &EvalCtx) -> Result<Vec<Vec2>, ErrorStack> {
+    if self.mix <= 0.0 {
+      return self.a.eval_many(ts, ctx);
+    }
+    if self.mix >= 1.0 {
+      return self.b.eval_many(ts, ctx);
+    }
+    let mut out = self.a.eval_many(ts, ctx)?;
+    for (a, b) in out.iter_mut().zip(self.b.eval_many(ts, ctx)?) {
+      *a += (b - *a) * self.mix;
+    }
+    Ok(out)
+  }
+
   fn critical_t_values(&self) -> Vec<f32> {
     self.merged_critical.clone()
   }
@@ -125,7 +142,8 @@ impl AbstractPath for LerpPath {
     }
     let mut ts = self.a.sampling_t_values();
     ts.extend(self.b.sampling_t_values());
-    ts.sort_unstable_by(f32::total_cmp);
+    // stable sort: driftsort merges the two presorted runs in O(n)
+    ts.sort_by(f32::total_cmp);
     ts.dedup();
     ts
   }
@@ -215,6 +233,10 @@ impl Trimmed {
       critical,
     }
   }
+
+  fn inner_t(&self, t: f32) -> f32 {
+    (self.start_t + t.clamp(0.0, 1.0) * self.span).clamp(0.0, 1.0)
+  }
 }
 
 impl AbstractPath for Trimmed {
@@ -223,8 +245,12 @@ impl AbstractPath for Trimmed {
   }
 
   fn eval_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
-    let g = (self.start_t + t.clamp(0.0, 1.0) * self.span).clamp(0.0, 1.0);
-    self.inner.eval_at(g, ctx)
+    self.inner.eval_at(self.inner_t(t), ctx)
+  }
+
+  fn eval_many_raw(&self, ts: &[f32], ctx: &EvalCtx) -> Result<Vec<Vec2>, ErrorStack> {
+    let ts: Vec<f32> = ts.iter().map(|&t| self.inner_t(t)).collect();
+    self.inner.eval_many(&ts, ctx)
   }
 
   fn critical_t_values(&self) -> Vec<f32> {

@@ -103,6 +103,34 @@ impl Subpath {
     let idx = lens
       .partition_point(|&len| len < length)
       .min(lens.len() - 1);
+    self.sample_in_segment(idx, length)
+  }
+
+  /// `sample_by_length` that tries `*hint` (the previous result) and its neighbors before
+  /// binary searching, so runs of nearby lengths locate in O(1).
+  pub(crate) fn sample_by_length_hinted(&self, length: f32, hint: &mut usize) -> Vec2 {
+    let lens = self.cumulative_lengths.as_slice();
+    let n = lens.len();
+    let h = (*hint).min(n - 1);
+    let below = |i: usize| i == 0 || lens[i - 1] < length;
+    let within = |i: usize| below(i) && !(lens[i] < length);
+    let idx = if within(h) {
+      h
+    } else if h + 1 < n && within(h + 1) {
+      h + 1
+    } else if h > 0 && within(h - 1) {
+      h - 1
+    } else if below(h) {
+      (h + 1 + lens[(h + 1).min(n)..].partition_point(|&l| l < length)).min(n - 1)
+    } else {
+      lens[..h].partition_point(|&l| l < length)
+    };
+    *hint = idx;
+    self.sample_in_segment(idx, length)
+  }
+
+  fn sample_in_segment(&self, idx: usize, length: f32) -> Vec2 {
+    let lens = self.cumulative_lengths.as_slice();
     let seg_start_len = if idx == 0 { 0.0 } else { lens[idx - 1] };
     let seg = &self.segments.as_slice()[idx];
     let seg_len = seg.length();
@@ -114,6 +142,10 @@ impl Subpath {
 
   pub(crate) fn sample_t(&self, t: f32) -> Vec2 {
     self.sample_by_length(t * self.total_length())
+  }
+
+  pub(crate) fn sample_t_hinted(&self, t: f32, hint: &mut usize) -> Vec2 {
+    self.sample_by_length_hinted(t * self.total_length(), hint)
   }
 
   /// Anchored joints as local `t`; `0`/`1` iff the start joint is anchored (open ends always).

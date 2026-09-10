@@ -21,7 +21,7 @@ use nalgebra::{Matrix3, Matrix4, Rotation3, Unit, UnitQuaternion};
 use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
-use crate::builtins::trace_path::{build_segment_dicts, expect_path, sample_path_subpaths};
+use crate::builtins::trace_path::{expect_path, sample_path_subpaths, PathSegmentsSeq};
 use crate::materials::Material;
 use crate::mesh_ops::compute_uvs::{compute_uvs, UvParams, UvType};
 use crate::mesh_ops::extrude_pipe::PipeRadius;
@@ -5666,19 +5666,17 @@ fn len_impl(
     }
     3 => {
       let v = arg_refs[0].resolve(args, kwargs).as_sequence().unwrap();
-      if let Some(eager) = seq_as_eager(&*v) {
-        Ok(Value::Int(eager.inner.len() as i64))
-      } else {
-        let iter = v.consume(ctx);
-        let mut len = 0;
-        for res in iter {
-          match res {
-            Ok(_) => len += 1,
-            Err(err) => return Err(err.wrap("Error evaluating sequence in `len` function")),
-          }
-        }
-        Ok(Value::Int(len as i64))
+      if let Some(n) = v.exact_len() {
+        return Ok(Value::Int(n as i64));
       }
+      let mut len = 0;
+      for res in v.consume(ctx) {
+        match res {
+          Ok(_) => len += 1,
+          Err(err) => return Err(err.wrap("Error evaluating sequence in `len` function")),
+        }
+      }
+      Ok(Value::Int(len as i64))
     }
     4 => {
       let m = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
@@ -8862,10 +8860,10 @@ fn path_segments_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let path = expect_path(arg_refs[0].resolve(args, kwargs), "path_segments")?;
-  let dicts = build_segment_dicts(path, "path_segments")?;
-  Ok(Value::Sequence(Rc::new(EagerSeq {
-    inner: Rc::new(dicts),
-  })))
+  Ok(Value::Sequence(Rc::new(PathSegmentsSeq::new(
+    path,
+    "path_segments",
+  )?)))
 }
 
 /// Half-window used by `path_frame`'s central finite difference. Large enough that endpoint

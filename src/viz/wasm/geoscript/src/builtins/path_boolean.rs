@@ -507,8 +507,11 @@ pub fn path_boolean_impl(
       let mut source_anchors = Vec::new();
       let (subject_coords, subject_lengths) =
         sample_boolean_input(ctx, subject, &opts, &mut source_anchors)?;
-      let (clip_coords, clip_lengths) =
-        sample_boolean_input(ctx, clip, &opts, &mut source_anchors)?;
+      let (clip_coords, clip_lengths) = if Rc::ptr_eq(subject, clip) {
+        (subject_coords.clone(), subject_lengths.clone())
+      } else {
+        sample_boolean_input(ctx, clip, &opts, &mut source_anchors)?
+      };
 
       let op_ix = op as u32;
       let engine_discriminant = match opts.engine {
