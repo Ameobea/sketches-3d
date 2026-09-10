@@ -91,6 +91,7 @@ mod texture_goldens;
 pub mod ty;
 pub mod type_infer;
 pub mod value_json;
+mod vertex_cb;
 
 pub use self::ast::{parse_string_literal, traverse_fn_calls, Program};
 pub use self::builtins::fn_defs::serialize_fn_defs as get_serialized_builtin_fn_defs;
@@ -624,23 +625,42 @@ fn is_rng_builtin_name(name: &str) -> bool {
   matches!(name, "randv" | "randf" | "randi")
 }
 
-pub struct ManifoldHandle(Cell<usize>);
+use mesh_ops::mesh_boolean::LaneSpec;
+
+/// JS-side Manifold handle plus the `(attr name, lane count)` layout of the property lanes the
+/// manifold carries after its xyz, sorted by name. `0` = not yet created.
+pub struct ManifoldHandle {
+  handle: Cell<usize>,
+  layout: RefCell<Vec<LaneSpec>>,
+}
 
 impl ManifoldHandle {
   pub fn new(handle: usize) -> Self {
-    Self(Cell::new(handle))
+    Self::with_layout(handle, Vec::new())
+  }
+
+  pub fn with_layout(handle: usize, layout: Vec<LaneSpec>) -> Self {
+    Self {
+      handle: Cell::new(handle),
+      layout: RefCell::new(layout),
+    }
   }
 
   pub fn new_empty() -> Self {
-    Self(Cell::new(0))
+    Self::new(0)
   }
 
   pub fn get(&self) -> usize {
-    self.0.get()
+    self.handle.get()
   }
 
-  pub fn set(&self, handle: usize) {
-    self.0.set(handle);
+  pub fn set(&self, handle: usize, layout: Vec<LaneSpec>) {
+    self.handle.set(handle);
+    *self.layout.borrow_mut() = layout;
+  }
+
+  pub fn layout(&self) -> Vec<LaneSpec> {
+    self.layout.borrow().clone()
   }
 }
 
@@ -669,15 +689,34 @@ impl MeshHandle {
             raw_mesh.indices.len(),
           )
         };
-        let verts = &raw_mesh.vertices;
+        let layout: Vec<LaneSpec> = raw_mesh
+          .attrs
+          .iter()
+          .map(|a| LaneSpec::for_channel(&a.name, a.arity, &self.mesh.vertex_channels[&a.name]))
+          .collect();
+        let vert_props = mesh_ops::mesh_boolean::interleave_props(&raw_mesh);
+        let num_prop = 3 + raw_mesh.attrs.iter().map(|a| a.arity).sum::<usize>();
+        // Authored seams are position-coincident duplicates; Manifold rebuilds the closed
+        // topology through the merge vectors while keeping their distinct properties.
+        let (merge_from, merge_to) = if self.mesh.has_flag(mesh::linked_mesh::mesh_flags::NO_WELD) {
+          mesh_ops::mesh_boolean::seam_merge_vectors(&raw_mesh.vertices)
+        } else {
+          (Vec::new(), Vec::new())
+        };
 
-        let handle = mesh_ops::mesh_boolean::create_manifold(verts, indices);
+        let handle = mesh_ops::mesh_boolean::create_manifold(
+          &vert_props,
+          num_prop as u32,
+          indices,
+          &merge_from,
+          &merge_to,
+        );
         if handle < 0 {
           let err = get_last_manifold_err();
           return Err(ErrorStack::new(err).wrap("Error creating manifold mesh"));
         }
         let handle = handle as usize;
-        self.manifold_handle.set(handle);
+        self.manifold_handle.set(handle, layout);
         Ok(handle)
       }
       handle => Ok(handle),
@@ -755,7 +794,7 @@ impl Debug for MeshHandle {
 
 impl Drop for ManifoldHandle {
   fn drop(&mut self) {
-    let handle = self.0.get();
+    let handle = self.handle.get();
     if handle != 0 {
       drop_manifold_mesh_handle(handle);
     }
@@ -2298,6 +2337,8 @@ pub struct RenderedMesh {
   pub mesh: Rc<MeshHandle>,
   pub source_module: Option<String>,
   pub mesh_id: u32,
+  /// Custom attribute names from `render(attrs=)`; well-known attrs export regardless.
+  pub export_attrs: Rc<[String]>,
 }
 
 /// `source_module` serves cross-run cache dedupe (when two cached entries both
@@ -3482,6 +3523,7 @@ impl EvalCtx {
           EMPTY_KWARGS,
           self,
           MeshBooleanOp::from_str(builtin_name),
+          false,
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `fold`"));
       }
@@ -3533,6 +3575,7 @@ impl EvalCtx {
           EMPTY_KWARGS,
           self,
           MeshBooleanOp::from_str(builtin_name),
+          false,
         )
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `reduce`"));
       }
@@ -3703,17 +3746,7 @@ impl EvalCtx {
           continue;
         }
       };
-      match &param.ident {
-        DestructurePattern::Ident(_, _) => slots.borrow_mut()[slot_start] = val,
-        pattern => {
-          let mut ix = 0usize;
-          pattern.visit_assignments(self, val, &mut |_name, v| {
-            slots.borrow_mut()[slot_start + ix] = v;
-            ix += 1;
-            Ok(())
-          })?;
-        }
-      }
+      self.bind_param_slots(&mut slots.borrow_mut(), param, slot_start, val)?;
     }
 
     if let Some(invalid_arg_ix) = invalid_arg_ix {
@@ -3734,18 +3767,82 @@ impl EvalCtx {
       }
     }
 
+    self.run_closure_frame(callable, closure, slots)
+  }
+
+  /// `invoke_closure_resolved` without argument binding: `fixed` fills the leading params
+  /// positionally (type hints still checked) and `prefilled` values land directly in frame slots.
+  pub(crate) fn invoke_closure_prefilled(
+    &self,
+    callable: &Rc<Callable>,
+    closure: &Closure,
+    fixed: &[Value],
+    prefilled: SmallVec<[(usize, Value); 4]>,
+  ) -> Result<Value, ErrorStack> {
+    let meta: &ResolvedBody = &closure.resolved;
+    let mut slots = self.get_frame_scratch();
+    slots.resize(meta.n_slots as usize, Value::Nil);
+    for (i, val) in fixed.iter().enumerate() {
+      let param = &closure.params[i];
+      if let Some(hint) = param.type_hint {
+        hint.validate_val(val).map_err(|err| {
+          err.wrap(format!(
+            "Type error for positional closure arg `{:?}`",
+            param.ident.debug(self)
+          ))
+        })?;
+      }
+      self.bind_param_slots(&mut slots, param, meta.param_slots[i] as usize, val.clone())?;
+    }
+    for (slot, v) in prefilled {
+      slots[slot] = v;
+    }
+    self.run_closure_frame(callable, closure, RefCell::new(slots))
+  }
+
+  fn bind_param_slots(
+    &self,
+    slots: &mut [Value],
+    param: &ClosureArg,
+    slot_start: usize,
+    val: Value,
+  ) -> Result<(), ErrorStack> {
+    match &param.ident {
+      DestructurePattern::Ident(_, _) => slots[slot_start] = val,
+      pattern => {
+        let mut ix = 0usize;
+        pattern.visit_assignments(self, val, &mut |_name, v| {
+          slots[slot_start + ix] = v;
+          ix += 1;
+          Ok(())
+        })?;
+      }
+    }
+    Ok(())
+  }
+
+  /// Evaluates `closure`'s body over a fully bound frame and returns the frame to the scratch pool.
+  fn run_closure_frame(
+    &self,
+    callable: &Rc<Callable>,
+    closure: &Closure,
+    slots: RefCell<Vec<Value>>,
+  ) -> Result<Value, ErrorStack> {
+    let env = FrameEnv {
+      slots: &slots,
+      captures: &closure.captures,
+      self_ref: callable,
+    };
     // fast path for the dominant single-expression body shape; general bodies go through
     // the shared statement driver
     let out = if let [Statement::Expr(expr)] = &closure.body.0[..] {
-      self.eval_expr_env(expr, env)?
+      self.eval_expr_env(expr, &env)?
     } else {
-      self.eval_statements(&closure.body.0, env)?
+      self.eval_statements(&closure.body.0, &env)?
     };
-
     if let Some(return_type_hint) = closure.return_type_hint {
       return_type_hint.validate_val(&out)?;
     }
-
     self.restore_frame_scratch(slots.into_inner());
     Ok(out)
   }

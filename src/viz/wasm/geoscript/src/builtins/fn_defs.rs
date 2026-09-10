@@ -2805,6 +2805,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
+          },
         ],
         description: "Returns the boolean union of two meshes (`a | b`)",
         return_type: &[ArgType::Mesh],
@@ -2817,6 +2824,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to union"
+          },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
           },
         ],
         description: "Returns the boolean union of a sequence of meshes (`meshes[0] | meshes[1] | ...`)",
@@ -2844,6 +2858,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: "Mesh to subtract"
           },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
+          },
         ],
         description: "Returns the boolean difference of two meshes (`a - b`)",
         return_type: &[ArgType::Mesh],
@@ -2856,6 +2877,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to subtract in order"
+          },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
           },
         ],
         description: "Returns the boolean difference of a sequence of meshes (`meshes[0] - meshes[1] - ...`)",
@@ -2883,6 +2911,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
+          },
         ],
         description: "Returns the boolean intersection of two meshes (`a & b`)",
         return_type: &[ArgType::Mesh],
@@ -2895,6 +2930,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Sequence of meshes to intersect"
+          },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When the operands carry per-vertex attributes, the cut curve is an attribute seam.  By default its vertices are welded, blending both sides' values, so the output stays 2-manifold.  `true` keeps each side's values on duplicate vertices instead (like `rail_sweep`'s `split_seams`), leaving the mesh open along the cut.  Authored seams such as UV cuts survive either way."
           },
         ],
         description: "Returns the boolean intersection of a sequence of meshes (`meshes[0] & meshes[1] & ...`)",
@@ -6157,7 +6199,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|vtx: Vec3, normal: Vec3|: Vec3` that will be invoked for each vertex in the new mesh, returning a new position for that vertex"
+            description: "Callable with signature `|vtx: Vec3, normal: Vec3|: Vec3` that will be invoked for each vertex in the new mesh, returning a new position for that vertex  An optional trailing parameter must be a destructured attribute bag naming the per-vertex data to read, e.g. `|pos, normal, {uv, color, ix}|`: any attribute on the mesh (see `set_attr`), plus `ix` (vertex index in `verts` order), `pos`, and `normal`.  Only the named keys are read, so omitting the bag costs nothing."
           },
           ArgDef {
             name: "mesh",
@@ -6561,6 +6603,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "attrs",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Names of custom per-vertex attributes (see `set_attr`) to export as GPU vertex attributes, in addition to the well-known `uv`, `tangent`, and `color` which always export.  Each named attribute must exist on the mesh.  Exported attributes are available to custom shaders as `attribute`s of the same name."
+          },
         ],
         description: "Renders a mesh to the scene",
         return_type: &[ArgType::Nil],
@@ -6586,6 +6635,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::Sequence),
             default_value: DefaultValue::Required,
             description: "Either:\n - `Seq<Mesh | Light | Seq<Vec3 | Vec2>>` of objects to render to the scene, or\n - `Seq<Vec3>` of points representing a path to render, or\n - `Seq<Vec2>` of 2D points representing a path to render in the XZ plane",
+          },
+          ArgDef {
+            name: "attrs",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Names of custom per-vertex attributes (see `set_attr`) to export as GPU vertex attributes, in addition to the well-known `uv`, `tangent`, and `color` which always export.  Each named attribute must exist on the mesh.  Exported attributes are available to custom shaders as `attribute`s of the same name."
           },
         ],
         description: "Renders a sequence of entities to the scene.  The sequence can contain a heterogeneous mix of meshes, lights, and paths (`Seq<Vec3>` or `Seq<Vec2>`).  `Vec2` paths are rendered in the XZ plane.  Each entity will be rendered separately.",
@@ -9317,7 +9373,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Callable with signature `|pos: vec3, normal: vec3|: vec3`.  Given the position and normal of each vertex in the mesh, returns a new position for that vertex in the output mesh."
+            description: "Callable with signature `|pos: vec3, normal: vec3|: vec3`.  Given the position and normal of each vertex in the mesh, returns a new position for that vertex in the output mesh.  An optional trailing parameter must be a destructured attribute bag naming the per-vertex data to read, e.g. `|pos, normal, {uv, color, ix}|`: any attribute on the mesh (see `set_attr`), plus `ix` (vertex index in `verts` order), `pos`, and `normal`.  Only the named keys are read, so omitting the bag costs nothing."
           },
           ArgDef {
             name: "mesh",
@@ -10575,7 +10631,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Vec3, ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Direction to extrude the mesh.  Each vertex will be displaced by this amount.  If a callable is provided, it should have signature `|vertex_pos: vec3|: vec3` and return the displacement for each vertex."
+            description: "Direction to extrude the mesh.  Each vertex will be displaced by this amount.  If a callable is provided, it should have signature `|vertex_pos: vec3|: vec3` and return the displacement for each vertex.  An optional second parameter must be a destructured attribute bag, e.g. `|pos, {uv, ix}|`; see `warp`."
           },
           ArgDef {
             name: "mesh",
@@ -10601,7 +10657,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric, ArgType::Callable),
             default_value: DefaultValue::Required,
-            description: "Distance to extrude each vertex along its computed normal.  If a callable is provided, it should have signature `|vertex_pos: vec3|: num` and return the per-vertex distance."
+            description: "Distance to extrude each vertex along its computed normal.  If a callable is provided, it should have signature `|vertex_pos: vec3|: num` and return the per-vertex distance.  An optional second parameter must be a destructured attribute bag, e.g. `|pos, {uv, ix}|`; see `warp`."
           },
           ArgDef {
             name: "mesh",
@@ -13194,6 +13250,270 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Creates a rectangular area light (e.g. a softbox or window). The rectangle emits from its local -Z face; position and orientation come from transforms applied via `translate`/`rotate`/etc. Does not cast shadows.\n\nNote: This will not do anything until it is added to the scene via `render`",
         return_type: &[ArgType::Light],
       }
+    ],
+  },
+  "set_attr" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "Attribute name (letters, digits, underscores).  Well-known names carry fixed types and export rules: `uv` (vec2), `tangent` (vec4), `color` (vec3 or vec4, linear RGB).  Any other name defines a custom attribute.  `pos`, `normal`, and `ix` are reserved."
+          },
+          ArgDef {
+            name: "value",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Sequence),
+            default_value: DefaultValue::Required,
+            description: "Either a callable `|pos: vec3, normal: vec3, {...attrs}|: num | vec2 | vec3 | vec4` invoked once per vertex (see `warp` for the attribute bag), or a sequence with one value per vertex in `verts` order.  The value type sets the attribute's arity and must be the same for every vertex."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "spatial",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "How the attribute responds to transforms baked into the mesh: `\"none\"` (default; colors, weights, uvs) or `\"direction\"` (a unit direction lying in the surface: rotated with the mesh, negated when it is mirrored, and renormalized wherever vertices are blended)."
+          },
+        ],
+        description: "Returns a copy of `mesh` with per-vertex attribute `name` set, replacing any existing attribute of that name.  Attributes ride along through warps, transforms, seam splits, `extrude`, `join`/`+`, CSG booleans (interpolated at the cut, operand attribute sets unioned), `simplify`, and `split_by_plane`; are resampled by nearest point through re-tessellating ops (see `transfer_attrs`); are interpolated when vertices are split; can be read inside per-vertex callbacks via the attribute bag; and are exported to the GPU as vertex attributes (well-known names always, custom names via `render(attrs=)`).",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "attr" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the values of per-vertex attribute `name` as a sequence in `verts` order (`nil` for vertices lacking a value).  Errors if the mesh has no such attribute.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "attrs" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the names of the mesh's per-vertex attributes, sorted.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "drop_attr" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a copy of `mesh` without per-vertex attribute `name`.  Errors if the mesh has no such attribute.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "transfer_attrs" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "src",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh whose per-vertex attributes are sampled."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns a copy of `mesh` carrying every per-vertex attribute of `src`, sampled by nearest point: each vertex takes the barycentric blend of the closest `src` triangle (in world space).  Exact wherever `mesh` lies on `src`'s surface, e.g. after remeshing; also the way to paint attributes on a low-poly proxy and carry them onto detailed geometry.  Attribute seams (UV cuts) can't survive re-tessellation, so recompute UVs rather than transferring them.  `smooth`, `isotropic_remesh`, `delaunay_remesh`, `remesh_planar_patches`, `alpha_wrap`, and `convex_hull` apply this automatically.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "faces" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Returns the mesh's triangles as `[i, j, k]` sequences of vertex indices into `verts` order, CCW winding.  Together with `verts` this is the raw indexed mesh; `mesh(verts, indices)` rebuilds one.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "smooth_attr" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "Attribute to smooth."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "iterations",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(1)),
+            description: "Relaxation passes."
+          },
+          ArgDef {
+            name: "lambda",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.5)),
+            description: "How far each vertex moves toward its neighbours' mean per pass, 0..1."
+          },
+          ArgDef {
+            name: "weights",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("uniform".to_owned())),
+            description: "`\"uniform\"` weights every neighbour equally; `\"cotan\"` uses cotangent (geometry-aware) weights that don't bias toward densely tessellated regions."
+          },
+          ArgDef {
+            name: "pin",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Name of a scalar attribute; vertices where it is nonzero keep their value (feathering toward painted regions)."
+          },
+        ],
+        description: "Returns a copy of `mesh` with attribute `name` blurred over the mesh's own connectivity: each vertex relaxes toward the weighted mean of its one-ring, repeated `iterations` times.  Direction attributes stay unit length.  Use it to denoise `bake_ao` output, feather weights, or spread any painted attribute across the surface.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "bake_ao" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "samples",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(32)),
+            description: "Rays per vertex.  Cost is vertices x samples; 16 is fine while iterating, 64+ for a final bake."
+          },
+          ArgDef {
+            name: "max_dist",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Ignore hits farther than this (world units) for local occlusion; `nil` = unlimited."
+          },
+          ArgDef {
+            name: "occluders",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Mesh, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Other meshes that block rays in addition to `mesh` itself (world space)."
+          },
+          ArgDef {
+            name: "bias",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Ray-origin offset along the normal to avoid self-hits; defaults to 1e-4 of the mesh's bounding diagonal."
+          },
+          ArgDef {
+            name: "into",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("ao".to_owned())),
+            description: "Name of the scalar attribute written."
+          },
+        ],
+        description: "Bakes ambient occlusion per vertex into a scalar attribute: the fraction of cosine-weighted hemisphere rays from each vertex (around its smooth normal) that escape `mesh` and `occluders`; 1 = open, 0 = buried.  Sampling is deterministic, so re-evaluation is stable.  Resolution is the mesh's own: a large triangle gets a linear ramp between its corners, so `tessellate` first where occlusion detail matters, and `smooth_attr` the result to soften noise.  Read it in shaders via the material's `vertexAttrs`, or write it into `color`, which every material multiplies in by default.",
+        return_type: &[ArgType::Mesh],
+      },
     ],
   },
   "set_material" => FnDef {

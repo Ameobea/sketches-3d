@@ -1,4 +1,7 @@
 pub mod adaptive_sampler;
+#[cfg(test)]
+mod attr_tests;
+pub mod bake_ao;
 pub mod compute_uvs;
 pub mod extrude;
 pub mod extrude_path;

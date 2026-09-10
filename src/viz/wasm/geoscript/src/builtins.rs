@@ -12,7 +12,8 @@ use std::{cell::RefCell, fmt::Display};
 
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{mesh_flags, DisplacementNormalMethod, FaceKey, Plane, Vec3, Vertex, VertexKey},
+  attrs::{self, tangent_channel, uv_channel},
+  linked_mesh::{mesh_flags, DisplacementNormalMethod, FaceKey, Plane, Vec3, VertexKey},
   slotmap_utils::{vkey, vkey_ix},
   LinkedMesh, OwnedIndexedMesh,
 };
@@ -70,7 +71,7 @@ use crate::{
   seq_as_eager, ArgRef, Callable, Closure, ComposedFn, ErrorStack, EvalCtx, MapSeq, Value, Vec2,
   Vec4,
 };
-use crate::{ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
+use crate::{vertex_cb::VertexCb, ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod alpha_wrap_2d;
 pub(crate) mod blit;
@@ -96,6 +97,7 @@ pub(crate) mod spectral_noise;
 pub(crate) mod tex_kernels;
 pub(crate) mod texture;
 pub(crate) mod trace_path;
+pub mod vertex_attrs;
 
 pub static FUNCTION_ALIASES: phf::Map<&'static str, &'static str> = phf::phf_map! {
   "trans" => "translate",
@@ -251,27 +253,11 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
       let rhs = rhs.as_mesh().unwrap();
 
       let mut combined = (*lhs.mesh).clone();
-      let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
-      for face in rhs.mesh.faces.values() {
-        let new_vtx_keys = std::array::from_fn(|i| {
-          let old_vtx_key = face.vertices[i];
-          *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
-            let old_vtx = &rhs.mesh.vertices[old_vtx_key];
-
-            // transform from rhs local space -> world space -> lhs local space
-            let transformed_pos =
-              lhs.transform.try_inverse().unwrap() * rhs.transform * old_vtx.position.push(1.);
-
-            let new_key = combined.vertices.insert(Vertex::new(transformed_pos.xyz()));
-            combined.set_shading_normal(new_key, rhs.mesh.shading_normal(old_vtx_key));
-            combined.set_displacement_normal(new_key, rhs.mesh.displacement_normal(old_vtx_key));
-            new_key
-          })
-        });
-        combined.add_face::<false>(new_vtx_keys, ());
-      }
-      // Either operand's authored seams (`NO_WELD`) must survive the merge, regardless of side.
-      combined.flags |= rhs.mesh.flags;
+      // rhs local -> world -> lhs local
+      combined.append(
+        &rhs.mesh,
+        &(lhs.transform.try_inverse().unwrap() * rhs.transform),
+      );
 
       let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
         (Some(lhs_aabb), Some(rhs_aabb)) => Some(Aabb {
@@ -450,6 +436,7 @@ pub(crate) fn sub_impl(
         EMPTY_KWARGS,
         ctx,
         MeshBooleanOp::Difference,
+        false,
       )
     }
     5 => translate_impl(
@@ -892,9 +879,22 @@ pub(crate) fn bit_and_impl(
       EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Intersection,
+      false,
     ),
     _ => unimplemented!(),
   }
+}
+
+/// `split_seams` sits after the operands in both boolean signatures: `(a, b, split_seams)` and
+/// `(meshes, split_seams)`.
+fn split_seams_kwarg(
+  def_ix: usize,
+  arg_refs: &[ArgRef],
+  args: &[Value],
+  kwargs: &FxHashMap<Sym, Value>,
+) -> bool {
+  let ix = if def_ix == 0 { 2 } else { 1 };
+  matches!(arg_refs[ix].resolve(args, kwargs), Value::Bool(true))
 }
 
 pub(crate) fn bit_or_impl(
@@ -916,6 +916,7 @@ pub(crate) fn bit_or_impl(
       EMPTY_KWARGS,
       ctx,
       MeshBooleanOp::Union,
+      false,
     ),
     _ => unimplemented!(),
   }
@@ -1001,29 +1002,29 @@ pub(crate) fn warp_impl(
     0 => {
       let warp_fn = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
       let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
+      let cb = VertexCb::new(ctx, "warp", warp_fn, &["pos", "normal"], &mesh.mesh)?;
 
-      let mut needs_displacement_normals_computed = false;
       let mut new_mesh = (*mesh.mesh).clone();
-      if let Some(first_key) = new_mesh.vertices.keys().next() {
-        if new_mesh.displacement_normal(first_key).is_none() {
-          needs_displacement_normals_computed = true
-        }
-      }
-      if needs_displacement_normals_computed {
+      if cb.reads_fixed(1)
+        && new_mesh
+          .vertices
+          .keys()
+          .next()
+          .is_some_and(|k| new_mesh.displacement_normal(k).is_none())
+      {
         new_mesh.compute_vertex_displacement_normals();
       }
 
       let vtx_keys: Vec<_> = new_mesh.vertices.keys().collect();
       for vtx_key in vtx_keys {
         let position = new_mesh.vertices[vtx_key].position;
-        let displacement_normal = new_mesh
-          .displacement_normal(vtx_key)
-          .unwrap_or(Vec3::zeros());
-        let warped_pos = ctx
-          .invoke_callable(
-            warp_fn,
-            &[Value::Vec3(position), Value::Vec3(displacement_normal)],
-            EMPTY_KWARGS,
+        let normal = new_mesh.displacement_normal(vtx_key).unwrap_or_default();
+        let warped_pos = cb
+          .invoke(
+            ctx,
+            &[Value::Vec3(position), Value::Vec3(normal)],
+            &mesh.mesh,
+            vtx_key,
           )
           .map_err(|err| err.wrap("error calling warp cb"))?;
         let warped_pos = warped_pos.as_vec3().ok_or_else(|| {
@@ -2387,6 +2388,7 @@ fn convex_hull_impl(
         .collect::<Vec<_>>();
       let out_mesh = convex_hull_from_verts(&verts)
         .map_err(|err| err.wrap("Error in `convex_hull` function"))?;
+      let out_mesh = crate::mesh_ops::mesh_ops::with_transferred_attrs(mesh, out_mesh)?;
       Ok(Value::Mesh(Rc::new(out_mesh)))
     }
     _ => unimplemented!(),
@@ -3196,8 +3198,6 @@ fn embed_path_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  use mesh::linked_mesh::{Arity, Channel, FlipXform, Interp, SpatialXform};
-
   use crate::mesh_ops::tessellate_polygon::{
     estimate_embed_frame, tessellate_2d_paths_embedded, tessellate_2d_paths_embedded_refined,
     tessellate_2d_paths_embedded_two_caps, AutodiffEmbedFrame, CgalCdtOptions, CreaseUvs,
@@ -3793,18 +3793,8 @@ fn embed_path_impl(
             }
           };
 
-          let mut uv_ch = Channel::new(
-            Arity::Vec2,
-            Interp::Lerp,
-            FlipXform::Identity,
-            SpatialXform::Identity,
-          );
-          let mut tan_ch = Channel::new(
-            Arity::Vec4,
-            Interp::Lerp,
-            FlipXform::Negate,
-            SpatialXform::Direction,
-          );
+          let mut uv_ch = uv_channel();
+          let mut tan_ch = tangent_channel();
           for vk in mesh.vertices.keys().collect::<Vec<_>>() {
             let p = mesh.vertices[vk].position;
             let Some(&(is_off, ix)) = by_pos.get(&pos_key(p)) else {
@@ -3889,8 +3879,10 @@ fn embed_path_impl(
             uv_ch.set(vk, [uv.x, uv.y, 0., 0.]);
             tan_ch.set(vk, [t.x, t.y, t.z, w]);
           }
-          mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
-          mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+          mesh.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
+          mesh
+            .vertex_channels
+            .insert(attrs::TANGENT.to_owned(), tan_ch);
 
           // Wrap-seam split per ring, à la the shared-CDT path below.
           let mut verts_by_pos: FxHashMap<[u32; 3], Vec<VertexKey>> = FxHashMap::default();
@@ -4216,18 +4208,8 @@ fn embed_path_impl(
           }
         };
 
-        let mut uv_ch = Channel::new(
-          Arity::Vec2,
-          Interp::Lerp,
-          FlipXform::Identity,
-          SpatialXform::Identity,
-        );
-        let mut tan_ch = Channel::new(
-          Arity::Vec4,
-          Interp::Lerp,
-          FlipXform::Negate,
-          SpatialXform::Direction,
-        );
+        let mut uv_ch = uv_channel();
+        let mut tan_ch = tangent_channel();
         for vk in mesh.vertices.keys().collect::<Vec<_>>() {
           let p = mesh.vertices[vk].position;
           let Some(&(i, is_top)) = by_pos.get(&pos_key(p)) else {
@@ -4297,8 +4279,10 @@ fn embed_path_impl(
           uv_ch.set(vk, [uv.x, uv.y, 0., 0.]);
           tan_ch.set(vk, [t.x, t.y, t.z, w]);
         }
-        mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
-        mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+        mesh.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
+        mesh
+          .vertex_channels
+          .insert(attrs::TANGENT.to_owned(), tan_ch);
 
         // Split each boundary loop's wall wrap-seam — the closure quad where U jumps perimeter→0
         // and crushes the texture.  Clone the seam-side wall verts onto just the closure
@@ -4735,7 +4719,7 @@ fn text_to_mesh_impl(
         tessellate_svg_path_with_lyon(&svg_path, width.unwrap_or(0.), height.unwrap_or(0.))?;
 
       if let Some(depth) = depth.filter(|&d| d != 0.0) {
-        crate::mesh_ops::extrude::extrude(&mut mesh, |_| Ok(Vec3::new(0., depth, 0.)))?;
+        crate::mesh_ops::extrude::extrude(&mut mesh, |_, _| Ok(Vec3::new(0., depth, 0.)))?;
       }
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -5187,19 +5171,23 @@ fn extrude_impl(
       let mut out_mesh = (*mesh.mesh).clone();
 
       match up {
-        Value::Vec3(up) => extrude(&mut out_mesh, |_| Ok(*up))?,
-        Value::Callable(cb) => extrude(&mut out_mesh, |vtx| {
-          let out = ctx
-            .invoke_callable(cb, &[Value::Vec3(vtx)], EMPTY_KWARGS)
-            .map_err(|err| {
-              err.wrap("Error calling user-provided cb passed to `up` arg in `extrude`")
-            })?;
-          out.as_vec3().copied().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected Vec3 from user-provided cb passed to `up` arg in `extrude`, found: {out:?}"
-            ))
-          })
-        })?,
+        Value::Vec3(up) => extrude(&mut out_mesh, |_, _| Ok(*up))?,
+        Value::Callable(cb) => {
+          let cb = VertexCb::new(ctx, "extrude", cb, &["pos"], &mesh.mesh)?;
+          extrude(&mut out_mesh, |key, vtx| {
+            let out = cb
+              .invoke(ctx, &[Value::Vec3(vtx)], &mesh.mesh, key)
+              .map_err(|err| {
+                err.wrap("Error calling user-provided cb passed to `up` arg in `extrude`")
+              })?;
+            out.as_vec3().copied().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected Vec3 from user-provided cb passed to `up` arg in `extrude`, found: \
+                 {out:?}"
+              ))
+            })
+          })?
+        }
         _ => {
           return Err(ErrorStack::new(format!(
             "Invalid up argument for `extrude`; expected Vec3 or Callable, found: {up:?}"
@@ -5238,22 +5226,25 @@ fn extrude_along_normals_impl(
           let d = distance.as_float().unwrap();
           extrude_along_normals(&mut out_mesh, |_, _| Ok(d))?;
         }
-        Value::Callable(cb) => extrude_along_normals(&mut out_mesh, |_, vtx| {
-          let out = ctx
-            .invoke_callable(cb, &[Value::Vec3(vtx)], EMPTY_KWARGS)
-            .map_err(|err| {
-              err.wrap(
-                "Error calling user-provided cb passed to `distance` arg in \
-                 `extrude_along_normals`",
-              )
-            })?;
-          out.as_float().ok_or_else(|| {
-            ErrorStack::new(format!(
-              "Expected number from user-provided cb passed to `distance` arg in \
-               `extrude_along_normals`, found: {out:?}"
-            ))
-          })
-        })?,
+        Value::Callable(cb) => {
+          let cb = VertexCb::new(ctx, "extrude_along_normals", cb, &["pos"], &mesh.mesh)?;
+          extrude_along_normals(&mut out_mesh, |key, vtx| {
+            let out = cb
+              .invoke(ctx, &[Value::Vec3(vtx)], &mesh.mesh, key)
+              .map_err(|err| {
+                err.wrap(
+                  "Error calling user-provided cb passed to `distance` arg in \
+                   `extrude_along_normals`",
+                )
+              })?;
+            out.as_float().ok_or_else(|| {
+              ErrorStack::new(format!(
+                "Expected number from user-provided cb passed to `distance` arg in \
+                 `extrude_along_normals`, found: {out:?}"
+              ))
+            })
+          })?
+        }
         _ => {
           return Err(ErrorStack::new(format!(
             "Invalid distance argument for `extrude_along_normals`; expected number or Callable, \
@@ -6859,12 +6850,41 @@ fn render_impl(
 ) -> Result<Value, ErrorStack> {
   // Tag each rendered mesh with the module that fired the call so JS-side can
   // compose ancestor tree-transforms at scene-populate time.
-  let push_mesh = |mesh: Rc<crate::MeshHandle>| {
+  let export_attrs: Rc<[String]> = match def_ix {
+    0 | 2 => match arg_refs[1].resolve(args, kwargs) {
+      Value::Nil => Rc::from(Vec::new()),
+      Value::Sequence(seq) => seq
+        .consume(ctx)
+        .map(|v| {
+          let v = v?;
+          v.as_str().map(str::to_owned).ok_or_else(|| {
+            ErrorStack::new(format!(
+              "`render(attrs=)` entries must be attribute name strings; got {v:?}"
+            ))
+          })
+        })
+        .collect::<Result<Vec<_>, _>>()?
+        .into(),
+      _ => unreachable!(),
+    },
+    _ => Rc::from(Vec::new()),
+  };
+  let push_mesh = |mesh: Rc<crate::MeshHandle>| -> Result<(), ErrorStack> {
+    if let Some(missing) = export_attrs
+      .iter()
+      .find(|n| !mesh.mesh.vertex_channels.contains_key(*n))
+    {
+      return Err(ErrorStack::new(format!(
+        "`render(attrs=)` names attribute `{missing}` but the mesh has no such attribute"
+      )));
+    }
     ctx.rendered_meshes.push(crate::RenderedMesh {
       mesh,
       source_module: ctx.current_module.borrow().clone(),
       mesh_id: ctx.next_render_id(),
+      export_attrs: Rc::clone(&export_attrs),
     });
+    Ok(())
   };
   let push_light = |light: Light| {
     ctx.rendered_lights.push(crate::RenderedLight {
@@ -6879,7 +6899,7 @@ fn render_impl(
       let Value::Mesh(mesh) = arg_refs[0].resolve(args, kwargs) else {
         unreachable!()
       };
-      push_mesh(Rc::clone(mesh));
+      push_mesh(Rc::clone(mesh))?;
       Ok(Value::Nil)
     }
     1 => {
@@ -6923,7 +6943,7 @@ fn render_impl(
       let render_single = |res: Result<Value, ErrorStack>| -> Result<(), ErrorStack> {
         match res {
           Ok(Value::Mesh(mesh)) => {
-            push_mesh(mesh);
+            push_mesh(mesh)?;
           }
           Ok(Value::Light(light)) => {
             push_light(*light);
@@ -9005,7 +9025,7 @@ fn path_frame_impl(
 
   let mut map: ValueMap = ValueMap::default();
   map.insert("pos".to_owned(), Value::Vec2(pos));
-  map.insert("tangent".to_owned(), Value::Vec2(tangent));
+  map.insert(attrs::TANGENT.to_owned(), Value::Vec2(tangent));
   map.insert("normal".to_owned(), Value::Vec2(normal));
   Ok(Value::Map(Rc::new(map)))
 }
@@ -9413,26 +9433,7 @@ fn join_meshes(
       }
     };
 
-    let mut new_vtx_key_by_old: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
-    for face in rhs.mesh.faces.values() {
-      let new_vtx_keys = std::array::from_fn(|i| {
-        let old_vtx_key = face.vertices[i];
-        *new_vtx_key_by_old.entry(old_vtx_key).or_insert_with(|| {
-          let old_vtx = &rhs.mesh.vertices[old_vtx_key];
-
-          // transform from rhs local space -> world space -> lhs local space
-          let transformed_pos = out_transform_inv * rhs.transform * old_vtx.position.push(1.);
-
-          let new_key = combined.vertices.insert(Vertex::new(transformed_pos.xyz()));
-          combined.set_shading_normal(new_key, rhs.mesh.shading_normal(old_vtx_key));
-          combined.set_displacement_normal(new_key, rhs.mesh.displacement_normal(old_vtx_key));
-          new_key
-        })
-      });
-      combined.add_face::<false>(new_vtx_keys, ());
-    }
-    // Any joined mesh's authored seams (`NO_WELD`) must survive the merge.
-    combined.flags |= rhs.mesh.flags;
+    combined.append(&rhs.mesh, &(out_transform_inv * rhs.transform));
   }
 
   Ok(Value::Mesh(Rc::new(MeshHandle {
@@ -10471,9 +10472,11 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     join_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "union" => builtin_fn!(union, |def_ix, arg_refs, args, kwargs, ctx| {
-    eval_mesh_boolean(def_ix, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union)
+    let split = split_seams_kwarg(def_ix, arg_refs, args, kwargs);
+    eval_mesh_boolean(def_ix, arg_refs, args, kwargs, ctx, MeshBooleanOp::Union, split)
   }),
   "difference" => builtin_fn!(difference, |def_ix, arg_refs, args, kwargs, ctx| {
+    let split = split_seams_kwarg(def_ix, arg_refs, args, kwargs);
     eval_mesh_boolean(
       def_ix,
       arg_refs,
@@ -10481,9 +10484,11 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
       kwargs,
       ctx,
       MeshBooleanOp::Difference,
+      split,
     )
   }),
   "intersect" => builtin_fn!(intersect, |def_ix, arg_refs, args, kwargs, ctx| {
+    let split = split_seams_kwarg(def_ix, arg_refs, args, kwargs);
     eval_mesh_boolean(
       def_ix,
       arg_refs,
@@ -10491,6 +10496,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
       kwargs,
       ctx,
       MeshBooleanOp::Intersection,
+      split,
     )
   }),
   "keys" => builtin_fn!(keys, |_def_ix, arg_refs, args, kwargs, _ctx| {
@@ -10972,6 +10978,30 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "warp" => builtin_fn!(warp, |def_ix, arg_refs, args, kwargs, ctx| {
     warp_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
+  "set_attr" => builtin_fn!(set_attr, |_def_ix, arg_refs, args, kwargs, ctx| {
+    vertex_attrs::set_attr_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "attr" => builtin_fn!(attr, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::attr_impl(arg_refs, args, kwargs)
+  }),
+  "attrs" => builtin_fn!(attrs, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::attrs_impl(arg_refs, args, kwargs)
+  }),
+  "drop_attr" => builtin_fn!(drop_attr, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::drop_attr_impl(arg_refs, args, kwargs)
+  }),
+  "transfer_attrs" => builtin_fn!(transfer_attrs, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::transfer_attrs_impl(arg_refs, args, kwargs)
+  }),
+  "faces" => builtin_fn!(faces, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::faces_impl(arg_refs, args, kwargs)
+  }),
+  "smooth_attr" => builtin_fn!(smooth_attr, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::smooth_attr_impl(arg_refs, args, kwargs)
+  }),
+  "bake_ao" => builtin_fn!(bake_ao, |_def_ix, arg_refs, args, kwargs, ctx| {
+    vertex_attrs::bake_ao_impl(ctx, arg_refs, args, kwargs)
   }),
   "tessellate" => builtin_fn!(tessellate, |def_ix, arg_refs, args, kwargs, _ctx| {
     tessellate_impl(def_ix, arg_refs, args, kwargs)

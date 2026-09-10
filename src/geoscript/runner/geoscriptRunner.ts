@@ -204,8 +204,7 @@ export const runGeoscript = async (
       verts,
       indices,
       normals,
-      uvs,
-      tangents,
+      attrs,
       material: materialName,
       sourceModule,
       meshId,
@@ -224,17 +223,14 @@ export const runGeoscript = async (
     geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
 
-    if (uvs) {
-      geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    }
     if (normals) {
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     }
-    if (tangents) {
-      // Named `tangent` so three auto-enables USE_TANGENT for normal-mapped materials → analytic
-      // tangent-space normal maps. Safe now that the color + depth-prepass shaders pin
-      // `invariant gl_Position` (so depth still bit-matches) and the shader guards degenerate caps.
-      geometry.setAttribute('tangent', new THREE.BufferAttribute(tangents, 4));
+    // Attribute names are three's own (`uv`, `tangent`, `color`) or custom names for shaders.
+    // `tangent` auto-enables USE_TANGENT for normal-mapped materials; safe because the color +
+    // depth-prepass shaders pin `invariant gl_Position` and the shader guards degenerate caps.
+    for (const { name, itemSize, data } of attrs) {
+      geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize));
     }
 
     const matEntry = ((): MatEntry => {

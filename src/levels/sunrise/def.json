@@ -181,7 +181,7 @@
     "robot": {
       "type": "geoscript",
       "file": "geo/robot.geo",
-      "_meta": { "runtimeMs": 22.5, "count": 3, "codeHash": "b79e9b4", "asyncDeps": [ "cgal" ] }
+      "_meta": { "runtimeMs": 23.7, "count": 5, "codeHash": "b79e9b4", "asyncDeps": [ "cgal" ] }
     }
   },
   "objects": [
@@ -469,7 +469,7 @@
     {
       "id": "cap2",
       "asset": "csg_box",
-      "position": [189.4256, 51.5758, 202.0977],
+      "position": [189.4256, 51.5758, 201.1595],
       "material": "path_wall_triplanar",
       "rotation": [0.0411, -1.089, -0.0031],
       "scale": [1.2079, 1, 1.2079]

@@ -4,7 +4,9 @@ use fxhash::{FxBuildHasher, FxHashMap};
 use linked_mesh::{Mat4, Vec3, VertexKey};
 use nalgebra::Vector3;
 
+pub mod attrs;
 pub mod linked_mesh;
+pub mod occlusion;
 pub use linked_mesh::LinkedMesh;
 pub mod slotmap_utils;
 
@@ -121,16 +123,27 @@ impl<'a> From<&'a OwnedMesh> for Mesh<'a> {
   }
 }
 
+/// One flattened passive vertex attribute: `arity` floats per exported vertex.
+pub struct ExportedAttr {
+  pub name: String,
+  pub arity: usize,
+  pub data: Vec<f32>,
+}
+
 pub struct OwnedIndexedMesh {
   pub vertices: Vec<f32>,
   pub shading_normals: Option<Vec<f32>>,
   pub displacement_normals: Option<Vec<f32>>,
-  /// 2 floats/vertex when present (analytic UVs from `rail_sweep` etc.).
-  pub uv: Option<Vec<f32>>,
-  /// 4 floats/vertex when present: xyz tangent + w handedness (glTF convention).
-  pub tangent: Option<Vec<f32>>,
+  /// Every passive vertex channel, sorted by name; `uv` and `tangent` are ordinary entries.
+  pub attrs: Vec<ExportedAttr>,
   pub indices: Vec<usize>,
   pub transform: Option<nalgebra::Matrix4<f32>>,
+}
+
+impl OwnedIndexedMesh {
+  pub fn attr(&self, name: &str) -> Option<&ExportedAttr> {
+    self.attrs.iter().find(|a| a.name == name)
+  }
 }
 
 pub struct OwnedIndexedMeshBuilder {
@@ -140,39 +153,30 @@ pub struct OwnedIndexedMeshBuilder {
 }
 
 impl OwnedIndexedMeshBuilder {
+  /// `attrs` lists `(name, arity)` per passive attribute, in the order `add_vtx` values arrive.
   pub fn with_capacity(
     vtx_count: usize,
     face_count: usize,
     include_displacement_normals: bool,
     include_shading_normals: bool,
-    include_uv: bool,
-    include_tangent: bool,
+    attrs: &[(String, usize)],
   ) -> Self {
+    let buf = |lanes: usize| Vec::with_capacity(vtx_count * lanes);
     OwnedIndexedMeshBuilder {
       cur_vert_ix: 0,
       seen_vtx_keys: FxHashMap::with_capacity_and_hasher(vtx_count, FxBuildHasher::default()),
       mesh: OwnedIndexedMesh {
-        vertices: Vec::with_capacity(vtx_count * 3),
-        shading_normals: if include_shading_normals {
-          Some(Vec::with_capacity(vtx_count * 3))
-        } else {
-          None
-        },
-        displacement_normals: if include_displacement_normals {
-          Some(Vec::with_capacity(vtx_count * 3))
-        } else {
-          None
-        },
-        uv: if include_uv {
-          Some(Vec::with_capacity(vtx_count * 2))
-        } else {
-          None
-        },
-        tangent: if include_tangent {
-          Some(Vec::with_capacity(vtx_count * 4))
-        } else {
-          None
-        },
+        vertices: buf(3),
+        shading_normals: include_shading_normals.then(|| buf(3)),
+        displacement_normals: include_displacement_normals.then(|| buf(3)),
+        attrs: attrs
+          .iter()
+          .map(|(name, arity)| ExportedAttr {
+            name: name.clone(),
+            arity: *arity,
+            data: buf(*arity),
+          })
+          .collect(),
         indices: Vec::with_capacity(face_count * 3),
         transform: None,
       },
@@ -182,27 +186,26 @@ impl OwnedIndexedMeshBuilder {
   pub fn new(
     include_displacement_normals: bool,
     include_shading_normals: bool,
-    include_uv: bool,
-    include_tangent: bool,
+    attrs: &[(String, usize)],
   ) -> Self {
     OwnedIndexedMeshBuilder::with_capacity(
       0,
       0,
       include_displacement_normals,
       include_shading_normals,
-      include_uv,
-      include_tangent,
+      attrs,
     )
   }
 
+  /// `attr_vals` is aligned with the builder's attribute list; only each attr's `arity` lanes are
+  /// stored.
   pub fn add_vtx(
     &mut self,
     vtx_key: VertexKey,
     position: Vec3,
     shading_normal: Option<Vec3>,
     displacement_normal: Option<Vec3>,
-    uv: Option<[f32; 2]>,
-    tangent: Option<[f32; 4]>,
+    attr_vals: &[[f32; 4]],
   ) {
     let vert_ix = *self.seen_vtx_keys.entry(vtx_key).or_insert_with(|| {
       let ix = self.cur_vert_ix;
@@ -213,11 +216,8 @@ impl OwnedIndexedMeshBuilder {
       if let Some(displacement_normals) = self.mesh.displacement_normals.as_mut() {
         displacement_normals.extend(displacement_normal.unwrap_or_else(Vec3::zeros).iter());
       }
-      if let Some(uv_buf) = self.mesh.uv.as_mut() {
-        uv_buf.extend(uv.unwrap_or([0., 0.]).iter());
-      }
-      if let Some(tangent_buf) = self.mesh.tangent.as_mut() {
-        tangent_buf.extend(tangent.unwrap_or([0., 0., 0., 1.]).iter());
+      for (attr, v) in self.mesh.attrs.iter_mut().zip(attr_vals) {
+        attr.data.extend_from_slice(&v[..attr.arity]);
       }
       self.cur_vert_ix += 1;
       ix

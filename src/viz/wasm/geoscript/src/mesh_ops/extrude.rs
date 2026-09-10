@@ -2,7 +2,7 @@ use std::collections::hash_map::Entry;
 
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{FaceKey, Vec3, Vertex, VertexKey},
+  linked_mesh::{FaceKey, Vec3, VertexKey},
   LinkedMesh,
 };
 
@@ -30,13 +30,13 @@ fn extrude_with_offsets(
   let mut new_vtx_key_by_old = FxHashMap::default();
   for &face_key in faces {
     let mut new_vtx_keys: [VertexKey; 3] = unsafe { std::mem::transmute([(0u32, 0u32); 3]) };
-    for (i, &vtx_key) in mesh.faces[face_key].vertices.iter().enumerate() {
+    let face_verts = mesh.faces[face_key].vertices;
+    for (i, &vtx_key) in face_verts.iter().enumerate() {
       let new_vtx_key = match new_vtx_key_by_old.entry(vtx_key) {
         Entry::Occupied(o) => *o.get(),
         Entry::Vacant(v) => {
           let pos = mesh.vertices[vtx_key].position;
-          let offset = offsets[&vtx_key];
-          let new_vtx_key = mesh.vertices.insert(Vertex::new(pos + offset));
+          let new_vtx_key = mesh.add_vertex_cloned_from(vtx_key, pos + offsets[&vtx_key]);
           v.insert(new_vtx_key);
           new_vtx_key
         }
@@ -127,11 +127,11 @@ fn build_offsets_per_vertex(
 
 pub fn extrude(
   mesh: &mut LinkedMesh<()>,
-  up: impl Fn(Vec3) -> Result<Vec3, ErrorStack>,
+  up: impl Fn(VertexKey, Vec3) -> Result<Vec3, ErrorStack>,
 ) -> Result<(), ErrorStack> {
   let components = mesh.connected_components();
   for faces in components {
-    let offsets = build_offsets_per_vertex(mesh, &faces, |_, pos| up(pos))?;
+    let offsets = build_offsets_per_vertex(mesh, &faces, |key, pos| up(key, pos))?;
     extrude_with_offsets(mesh, &faces, &offsets);
   }
   Ok(())
@@ -194,7 +194,7 @@ fn test_extrude_issue() {
     .check_is_manifold::<false>()
     .expect("not manifold before extrude");
 
-  extrude(&mut mesh, |_| Ok(Vec3::new(0., 1., 0.))).unwrap();
+  extrude(&mut mesh, |_, _| Ok(Vec3::new(0., 1., 0.))).unwrap();
   mesh.check_is_manifold::<true>().expect("not two-manifold");
 }
 

@@ -99,6 +99,7 @@ export interface CustomShaderProps {
   envMap?: THREE.Texture;
   envMapIntensity?: number;
   transparent?: boolean;
+  vertexColors?: boolean;
   opacity?: number;
   alphaTest?: number;
   transmission?: number;
@@ -276,6 +277,8 @@ export interface CustomShaderShaders {
   constants?: Record<string, ShaderConstantDef>;
 }
 
+export type VertexAttrType = 'float' | 'vec2' | 'vec3' | 'vec4';
+
 export interface CustomShaderOptions {
   /** Multi-tap anisotropic footprint oversampling for the color slot. */
   antialiasColorShader?: boolean;
@@ -349,6 +352,8 @@ export interface CustomShaderOptions {
    */
   useWorldSpaceUVs?: boolean;
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
+  /** Custom per-vertex attributes, declared in the vertex stage and forwarded as `v_<name>`. */
+  vertexAttrs?: Record<string, VertexAttrType>;
   /**
    * Enables procedural Parallax Occlusion Mapping.  The fragment shader
    * raymarches a height field and shades the displaced hit point, giving the

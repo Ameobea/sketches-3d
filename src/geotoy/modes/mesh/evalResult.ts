@@ -132,6 +132,11 @@ export const buildEvalResultJson = async (params: {
           positions: attrArray(m.geometry, 'position'),
           normals: attrArray(m.geometry, 'normal'),
           uvs: attrArray(m.geometry, 'uv'),
+          attrs: Object.fromEntries(
+            Object.entries(m.geometry.attributes)
+              .filter(([name]) => !['position', 'normal', 'uv'].includes(name))
+              .map(([name, a]) => [name, { itemSize: a.itemSize, data: Array.from(a.array) }])
+          ),
           indices: idx ? Array.from(idx.array as Uint32Array) : null,
           matrixWorld: m.matrixWorld.elements.slice(),
         };

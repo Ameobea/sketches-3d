@@ -55,89 +55,63 @@ export const drop_all_mesh_handles = () => {
   MeshHandles.clear();
 };
 
+const HEADER_WORDS = 6;
+
+// Layout is documented on the Rust side: `mesh_boolean.rs::decode_manifold_output`.
 const encodeManifoldMesh = (manifold: Manifold, handleOnly: boolean) => {
   const handle = getNewHandle();
   MeshHandles.set(handle, manifold);
 
   if (handleOnly) {
-    const buffer = new ArrayBuffer(Uint32Array.BYTES_PER_ELEMENT * 4);
-    const u32View = new Uint32Array(buffer);
+    const u32View = new Uint32Array(HEADER_WORDS);
     u32View[2] = handle;
-    return new Uint8Array(buffer);
+    return new Uint8Array(u32View.buffer);
   }
 
   const outMesh = manifold.getMesh();
-  const outVerts = outMesh.vertProperties.slice();
-  const outIndices = outMesh.triVerts;
-  // let v3 = new THREE.Vector3();
-  // console.log(outMesh.runOriginalID);
-  // console.log(outMesh.runIndex, outMesh.numRun);
-  // console.log(outMesh.triVerts);
-  // console.log(outMesh.runTransform);
-  // if (outMesh.mergeFromVert.length > 0 || outMesh.mergeToVert.length > 0) {
-  //   throw new Error('unimplemented');
-  // }
-  // const transform = new THREE.Matrix4();
-  // for (let runIx = 0; runIx < outMesh.numRun; runIx += 1) {
-  //   const start = outMesh.runIndex[runIx];
-  //   const end = outMesh.runIndex[runIx + 1];
+  const { numProp, vertProperties, triVerts, runIndex, runTransform, runOriginalID } = outMesh;
+  const { mergeFromVert, mergeToVert } = outMesh;
+  const vtxCount = vertProperties.length / numProp;
+  const triangleCount = triVerts.length / 3;
+  const numRun = outMesh.numRun;
+  const runIndexLen = numRun > 0 ? numRun + 1 : 0;
 
-  //   const rawTransform = outMesh.transform(runIx);
-
-  //   transform.set(
-  //     rawTransform[0],
-  //     rawTransform[4],
-  //     rawTransform[8],
-  //     rawTransform[12],
-  //     rawTransform[1],
-  //     rawTransform[5],
-  //     rawTransform[9],
-  //     rawTransform[13],
-  //     rawTransform[2],
-  //     rawTransform[6],
-  //     rawTransform[10],
-  //     rawTransform[14],
-  //     0,
-  //     0,
-  //     0,
-  //     1
-  //   );
-
-  //   for (let vtxIx = start; vtxIx < end; vtxIx += 3) {
-  //     v3.set(
-  //       outMesh.vertProperties[outIndices[vtxIx]],
-  //       outMesh.vertProperties[outIndices[vtxIx + 1]],
-  //       outMesh.vertProperties[outIndices[vtxIx + 2]]
-  //     );
-  //     // v3 = v3.applyMatrix4(transform);
-  //     outVerts[outIndices[vtxIx]] = v3.x;
-  //     outVerts[outIndices[vtxIx + 1]] = v3.y;
-  //     outVerts[outIndices[vtxIx + 2]] = v3.z;
-  //   }
-  // }
-
-  const vtxCount = outVerts.length / 3;
-  const triangleCount = outIndices.length / 3;
-
-  // encode the output mesh into binary with the following structure:
-  // - 1 u32: handle
-  // - 1 u32: vtxCount
-  // - 1 u32: triCount
-  // - (vtxCount * 3 * f32): vertex positions (x, y, z)
-  // - (triCount * 3 * u32): triangle indices (v0, v1, v2)
-
-  const buffer = new ArrayBuffer(
-    Uint32Array.BYTES_PER_ELEMENT * 3 +
-      Float32Array.BYTES_PER_ELEMENT * vtxCount * 3 +
-      Uint32Array.BYTES_PER_ELEMENT * triangleCount * 3
-  );
+  const words =
+    HEADER_WORDS +
+    vertProperties.length +
+    triVerts.length +
+    runIndexLen +
+    numRun * 12 +
+    numRun * 2 +
+    mergeFromVert.length * 2;
+  const buffer = new ArrayBuffer(words * 4);
   const u32View = new Uint32Array(buffer);
   const f32View = new Float32Array(buffer);
-  u32View[0] = vtxCount;
-  u32View[1] = triangleCount;
-  u32View[2] = handle;
-  f32View.set(outVerts, 3);
-  u32View.set(outIndices, 3 + vtxCount * 3);
+  u32View.set([vtxCount, triangleCount, handle, numProp, numRun, mergeFromVert.length]);
+  let at = HEADER_WORDS;
+  f32View.set(vertProperties, at);
+  at += vertProperties.length;
+  u32View.set(triVerts, at);
+  at += triVerts.length;
+  u32View.set(runIndex.subarray(0, runIndexLen), at);
+  at += runIndexLen;
+  for (let run = 0; run < numRun; run += 1) {
+    if (runTransform.length >= (run + 1) * 12) {
+      f32View.set(runTransform.subarray(run * 12, run * 12 + 12), at);
+    } else {
+      f32View.set([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], at);
+    }
+    at += 12;
+  }
+  for (let run = 0; run < numRun; run += 1) {
+    u32View[at + run] = outMesh.backside(run) ? 1 : 0;
+  }
+  at += numRun;
+  u32View.set(runOriginalID.subarray(0, numRun), at);
+  at += numRun;
+  u32View.set(mergeFromVert, at);
+  at += mergeFromVert.length;
+  u32View.set(mergeToVert, at);
 
   return new Uint8Array(buffer);
 };
@@ -146,14 +120,26 @@ let lastErr = '';
 
 export const get_last_err = (): string => lastErr;
 
-export const create_manifold = (verts: Float32Array, indices: Uint32Array): number => {
+export const create_manifold = (
+  vertProperties: Float32Array,
+  numProp: number,
+  triVerts: Uint32Array,
+  mergeFromVert: Uint32Array,
+  mergeToVert: Uint32Array
+): number => {
   if (!ManifoldWasm) {
     throw new Error('Manifold Wasm not initialized');
   }
 
   const { Manifold, Mesh } = ManifoldWasm;
   try {
-    const manifold = new Manifold(new Mesh({ numProp: 3, triVerts: indices, vertProperties: verts }));
+    const mesh = new Mesh({
+      numProp,
+      vertProperties,
+      triVerts,
+      ...(mergeFromVert.length > 0 ? { mergeFromVert, mergeToVert } : {}),
+    });
+    const manifold = new Manifold(mesh);
     const handle = getNewHandle();
     MeshHandles.set(handle, manifold);
     return handle;
@@ -171,11 +157,28 @@ export const create_manifold = (verts: Float32Array, indices: Uint32Array): numb
   }
 };
 
+// Re-lays an operand's property lanes onto the boolean's union layout (see `lane_map` in Rust).
+const widenProps = (m: Manifold, laneMap: Int32Array, numProp: number): Manifold => {
+  const lanes = numProp - 3;
+  const identity = m.numProp() === lanes && laneMap.every((src, k) => src === k);
+  if (identity) return m;
+  const widened = m.setProperties(lanes, (newProp, _pos, oldProp) => {
+    for (let k = 0; k < lanes; k += 1) {
+      newProp[k] = laneMap[k] < 0 ? 0 : oldProp[laneMap[k]];
+    }
+  });
+  m.delete();
+  return widened;
+};
+
 export const apply_boolean = (
   aHandle: number,
   aTransform: Float32Array,
+  aLaneMap: Int32Array,
   bHandle: number,
   bTransform: Float32Array,
+  bLaneMap: Int32Array,
+  numProp: number,
   op: BooleanOperation,
   handleOnly: boolean
 ): Uint8Array => {
@@ -185,14 +188,16 @@ export const apply_boolean = (
 
   const { Manifold } = ManifoldWasm;
 
-  const a = MeshHandles.get(aHandle)?.transform([...aTransform] as Mat4);
-  if (!a) {
+  const a0 = MeshHandles.get(aHandle)?.transform([...aTransform] as Mat4);
+  if (!a0) {
     throw new Error(`No mesh found for handle ${aHandle}`);
   }
-  const b = MeshHandles.get(bHandle)?.transform([...bTransform] as Mat4);
-  if (!b) {
+  const b0 = MeshHandles.get(bHandle)?.transform([...bTransform] as Mat4);
+  if (!b0) {
     throw new Error(`No mesh found for handle ${bHandle}`);
   }
+  const a = widenProps(a0, aLaneMap, numProp);
+  const b = widenProps(b0, bLaneMap, numProp);
 
   const outManifold = (() => {
     switch (op) {

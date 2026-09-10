@@ -116,24 +116,39 @@ pub fn csg_sandbox_init(
     )
   };
 
-  let mesh0_handle = create_manifold(&mesh0_exported.vertices, &mesh0_exported_indices) as usize;
-  let mesh1_handle = create_manifold(&mesh1_exported.vertices, &mesh1_exported_indices) as usize;
+  let mesh0_handle = create_manifold(
+    &mesh0_exported.vertices,
+    3,
+    &mesh0_exported_indices,
+    &[],
+    &[],
+  ) as usize;
+  let mesh1_handle = create_manifold(
+    &mesh1_exported.vertices,
+    3,
+    &mesh1_exported_indices,
+    &[],
+    &[],
+  ) as usize;
 
   let identity_transform = Matrix4::identity();
   let identity_transform = identity_transform.as_slice();
   let encoded_output = apply_boolean(
     mesh0_handle,
     identity_transform,
+    &[],
     mesh1_handle,
     identity_transform,
+    &[],
+    3,
     MeshBooleanOp::Difference as u8,
     false,
   );
   drop_manifold_mesh_handle(mesh0_handle);
   drop_manifold_mesh_handle(mesh1_handle);
-  let (manifold_handle, out_verts, out_indices) = decode_manifold_output(&encoded_output);
-  drop_manifold_mesh_handle(manifold_handle);
-  let mut mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(&out_verts, &out_indices, None, None);
+  let out = decode_manifold_output(&encoded_output);
+  drop_manifold_mesh_handle(out.handle);
+  let mut mesh = geoscript::mesh_ops::mesh_boolean::manifold_output_to_mesh(&out, &[], false);
   mesh
     .check_is_manifold::<true>()
     .expect("Mesh is not manifold after CSG operation");

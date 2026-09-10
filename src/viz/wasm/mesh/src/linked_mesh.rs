@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::{f32::consts::PI, fmt::Debug, hash::Hash, marker::PhantomData, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
@@ -12,6 +13,7 @@ use parry3d::{
 use slotmap::{new_key_type, Key, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
 
+use crate::attrs;
 #[cfg(not(target_arch = "wasm32"))]
 use crate::models::{
   stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
@@ -582,15 +584,13 @@ impl<K: Key> ChannelStore<K> {
     }
   }
 
-  /// All-or-nothing weighted blend (matches the named-normal `zip` semantics): writes `dst` only
-  /// if every source has a value.
-  fn interp_slot(&mut self, dst: K, srcs: &[(K, f32)], interp: Interp) {
+  /// Weighted blend of `srcs`; `None` if any source lacks a value (matches the named-normal `zip`
+  /// semantics).
+  fn blend(&self, srcs: &[(K, f32)], interp: Interp) -> Option<[f32; 4]> {
     let arity = self.arity();
     let mut acc = [0f32; 4];
     for &(key, weight) in srcs {
-      let Some(v) = self.get(key) else {
-        return;
-      };
+      let v = self.get(key)?;
       for i in 0..4 {
         acc[i] += v[i] * weight;
       }
@@ -603,7 +603,13 @@ impl<K: Key> ChannelStore<K> {
         }
       }
     }
-    self.set(dst, acc);
+    Some(acc)
+  }
+
+  fn interp_slot(&mut self, dst: K, srcs: &[(K, f32)], interp: Interp) {
+    if let Some(v) = self.blend(srcs, interp) {
+      self.set(dst, v);
+    }
   }
 
   fn flip_slot(&mut self, key: K, flip: FlipXform) {
@@ -687,6 +693,31 @@ impl<K: Key> Channel<K> {
     if self.spatial == SpatialXform::Direction {
       self.store.transform_directions(m);
     }
+  }
+
+  /// Weighted blend of `srcs` per this channel's interp rule; `None` if any source lacks a value.
+  pub fn blend(&self, srcs: &[(K, f32)]) -> Option<[f32; 4]> {
+    self.store.blend(srcs, self.interp)
+  }
+
+  pub fn transform_direction_slot(&mut self, key: K, m: &Matrix3<f32>) {
+    if self.spatial != SpatialXform::Direction {
+      return;
+    }
+    if let Some(mut v) = self.store.get(key) {
+      let out = m * Vec3::new(v[0], v[1], v[2]);
+      let n = out.norm();
+      let out = if n > 1e-12 { out / n } else { out };
+      v[0] = out.x;
+      v[1] = out.y;
+      v[2] = out.z;
+      self.store.set(key, v);
+    }
+  }
+
+  /// Applies this channel's flip rule to one slot (surface winding reversed there).
+  pub fn flip_slot(&mut self, key: K) {
+    self.store.flip_slot(key, self.flip);
   }
 
   /// Writes `value` for `key`; lanes above this channel's arity are ignored, so callers pass
@@ -2669,42 +2700,66 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     }
   }
 
+  /// Passive channels sorted by name with their export arity, plus a scratch row for `add_vtx`.
+  fn export_channels(&self) -> (Vec<(&String, &Channel<VertexKey>)>, Vec<(String, usize)>) {
+    let mut channels: Vec<_> = self.vertex_channels.iter().collect();
+    channels.sort_unstable_by(|a, b| a.0.cmp(b.0));
+    let specs = channels
+      .iter()
+      .map(|(name, ch)| {
+        let arity = match ch.store {
+          ChannelStore::Scalar(_) => Arity::Scalar,
+          ChannelStore::Vec2(_) => Arity::Vec2,
+          ChannelStore::Vec3(_) => Arity::Vec3,
+          ChannelStore::Vec4(_) => Arity::Vec4,
+        };
+        ((*name).clone(), attrs::export_arity(name, arity))
+      })
+      .collect();
+    (channels, specs)
+  }
+
+  fn add_vtx_with_channels(
+    &self,
+    builder: &mut OwnedIndexedMeshBuilder,
+    channels: &[(&String, &Channel<VertexKey>)],
+    vals: &mut [[f32; 4]],
+    vtx_key: VertexKey,
+  ) {
+    for (slot, (name, ch)) in vals.iter_mut().zip(channels) {
+      *slot = attrs::export_value(name, ch.get(vtx_key));
+    }
+    builder.add_vtx(
+      vtx_key,
+      self.vertices[vtx_key].position,
+      self.shading_normal(vtx_key),
+      self.displacement_normal(vtx_key),
+      vals,
+    );
+  }
+
   pub fn to_raw_indexed(
     &self,
     include_shading_normals: bool,
     include_displacement_normals: bool,
     include_degenerate_faces: bool,
   ) -> OwnedIndexedMesh {
-    let uv_channel = self.vertex_channels.get("uv");
-    let tangent_channel = self.vertex_channels.get("tangent");
+    let (channels, specs) = self.export_channels();
     let mut builder = OwnedIndexedMeshBuilder::with_capacity(
       self.vertices.len(),
       self.faces.len(),
       include_displacement_normals,
       include_shading_normals,
-      uv_channel.is_some(),
-      tangent_channel.is_some(),
+      &specs,
     );
+    let mut vals = vec![[0f32; 4]; channels.len()];
 
     for face in self.faces.values() {
       if !include_degenerate_faces && face.is_degenerate(&self.vertices) {
         continue;
       }
-
       for &vtx_key in &face.vertices {
-        builder.add_vtx(
-          vtx_key,
-          self.vertices[vtx_key].position,
-          self.shading_normal(vtx_key),
-          self.displacement_normal(vtx_key),
-          uv_channel
-            .and_then(|ch| ch.get(vtx_key))
-            .map(|v| [v[0], v[1]]),
-          tangent_channel
-            .and_then(|ch| ch.get(vtx_key))
-            // preserve glTF handedness for Vec4 tangent channels; Vec3 channels report w=0 → 1
-            .map(|v| [v[0], v[1], v[2], if v[3] != 0. { v[3] } else { 1. }]),
-        );
+        self.add_vtx_with_channels(&mut builder, &channels, &mut vals, vtx_key);
       }
     }
 
@@ -2719,8 +2774,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     include_displacement_normals: bool,
     partition_fn: impl Fn(&Face<FaceData>) -> T,
   ) -> Vec<OwnedIndexedMesh> {
-    let uv_channel = self.vertex_channels.get("uv");
-    let tangent_channel = self.vertex_channels.get("tangent");
+    let (channels, specs) = self.export_channels();
+    let mut vals = vec![[0f32; 4]; channels.len()];
     let mut out_meshes = FxHashMap::default();
 
     for face in self.faces.values() {
@@ -2733,25 +2788,12 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         OwnedIndexedMeshBuilder::new(
           include_displacement_normals,
           include_shading_normals,
-          uv_channel.is_some(),
-          tangent_channel.is_some(),
+          &specs,
         )
       });
 
       for &vtx_key in &face.vertices {
-        builder.add_vtx(
-          vtx_key,
-          self.vertices[vtx_key].position,
-          self.shading_normal(vtx_key),
-          self.displacement_normal(vtx_key),
-          uv_channel
-            .and_then(|ch| ch.get(vtx_key))
-            .map(|v| [v[0], v[1]]),
-          tangent_channel
-            .and_then(|ch| ch.get(vtx_key))
-            // preserve glTF handedness for Vec4 tangent channels; Vec3 channels report w=0 → 1
-            .map(|v| [v[0], v[1], v[2], if v[3] != 0. { v[3] } else { 1. }]),
-        );
+        self.add_vtx_with_channels(builder, &channels, &mut vals, vtx_key);
       }
     }
 
@@ -4062,6 +4104,59 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
     m.fixed_view_mut::<3, 1>(0, 3)
       .copy_from(&(2. * offset * normal));
     self.bake_transform(m);
+  }
+
+  /// Appends `other`'s faces and the vertices they reference, with `xform` (other-local →
+  /// self-local) baked per `bake_transform`. The channel set becomes the union, zero-filled where
+  /// either side lacked a channel; flags are OR'd so authored seams survive.
+  pub fn append(&mut self, other: &LinkedMesh<FaceData>, xform: &Mat4)
+  where
+    FaceData: Clone,
+  {
+    let other: Cow<LinkedMesh<FaceData>> = if *xform == Mat4::identity() {
+      Cow::Borrowed(other)
+    } else {
+      let mut baked = other.clone();
+      baked.bake_transform(*xform);
+      Cow::Owned(baked)
+    };
+
+    let zero = [0f32; 4];
+    for (name, ch) in &other.vertex_channels {
+      if !self.vertex_channels.contains_key(name) {
+        let mut mine = ch.empty_like();
+        for k in self.vertices.keys() {
+          mine.set(k, zero);
+        }
+        self.vertex_channels.insert(name.clone(), mine);
+      }
+    }
+
+    let mut remap: FxHashMap<VertexKey, VertexKey> = FxHashMap::default();
+    for face in other.faces.values() {
+      let verts = face.vertices.map(|vk| {
+        *remap.entry(vk).or_insert_with(|| {
+          let nk = self
+            .vertices
+            .insert(Vertex::new(other.vertices[vk].position));
+          if let Some(n) = other.shading_normals.get(vk) {
+            self.shading_normals.insert(nk, *n);
+          }
+          if let Some(n) = other.displacement_normals.get(vk) {
+            self.displacement_normals.insert(nk, *n);
+          }
+          nk
+        })
+      });
+      self.add_face::<false>(verts, face.data.clone());
+    }
+    for (name, ch) in self.vertex_channels.iter_mut() {
+      let src = other.vertex_channels.get(name);
+      for (&ok, &nk) in &remap {
+        ch.set(nk, src.and_then(|c| c.get(ok)).unwrap_or(zero));
+      }
+    }
+    self.flags |= other.flags;
   }
 
   /// Builds `num_partitions` independent sub-meshes; face `fk` is placed into mesh

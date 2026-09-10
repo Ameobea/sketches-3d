@@ -3,9 +3,8 @@ use std::{cell::RefCell, f32::consts::PI, rc::Rc};
 
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{
-    mesh_flags, Arity, Channel, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey,
-  },
+  attrs::{self, tangent_channel, uv_channel},
+  linked_mesh::{mesh_flags, FaceKey, Vec3, VertexKey},
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -946,18 +945,8 @@ fn group_end_ring_loops(
 /// over incident faces. Pre-split ring-wrap faces (V-span > 0.5) have a garbage UV jacobian and are
 /// excluded; vertices touching only excluded faces (large planar cap spans) fall back to all faces.
 fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents: &[Vec3]) {
-  let mut uv_ch = Channel::new(
-    Arity::Vec2,
-    Interp::Lerp,
-    FlipXform::Identity,
-    SpatialXform::Identity,
-  );
-  let mut tan_ch = Channel::new(
-    Arity::Vec4,
-    Interp::Lerp,
-    FlipXform::Negate,
-    SpatialXform::Direction,
-  );
+  let mut uv_ch = uv_channel();
+  let mut tan_ch = tangent_channel();
   let (mut u_min, mut u_max) = (f32::INFINITY, f32::NEG_INFINITY);
   for (i, (uv, tan)) in uvs.iter().zip(tangents).enumerate() {
     let key = vkey(i as u32 + 1, 1);
@@ -1014,8 +1003,10 @@ fn attach_sweep_attributes(mesh: &mut LinkedMesh<()>, uvs: &[[f32; 2]], tangents
     }
   }
 
-  mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
-  mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+  mesh.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
+  mesh
+    .vertex_channels
+    .insert(attrs::TANGENT.to_owned(), tan_ch);
 }
 
 /// Total edge length of a closed loop of points (includes the last→first edge).

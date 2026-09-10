@@ -551,6 +551,9 @@
                   "transparent": {
                     "type": "boolean"
                   },
+                  "vertexColors": {
+                    "type": "boolean"
+                  },
                   "transmission": {
                     "type": "number"
                   },
@@ -743,6 +746,21 @@
                         "additionalProperties": false
                       }
                     ]
+                  },
+                  "vertexAttrs": {
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {
+                      "type": "string",
+                      "enum": [
+                        "float",
+                        "vec2",
+                        "vec3",
+                        "vec4"
+                      ]
+                    }
                   },
                   "useGeneratedUVs": {
                     "type": "boolean"

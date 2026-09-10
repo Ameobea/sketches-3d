@@ -13,7 +13,8 @@ use std::fmt::Write as _;
 use nalgebra::{Matrix3, Matrix4};
 
 use mesh::linked_mesh::{
-  Arity, Channel, ChannelStore, FlipXform, Interp, LinkedMesh, Plane, SpatialXform, Vec3, VertexKey,
+  mesh_flags, Arity, Channel, ChannelStore, FlipXform, Interp, LinkedMesh, Plane, SpatialXform,
+  Vec3, VertexKey,
 };
 use mesh::OwnedIndexedMesh;
 
@@ -494,5 +495,65 @@ fn separate_vertices_clones_passive_channels_onto_split_duplicates() {
       Some([7., 9.]),
       "split duplicate missing cloned uv"
     );
+  }
+}
+
+/// `append` unions channel sets (zero-filling whichever side lacked one), bakes the transform into
+/// positions and direction channels, and ORs flags.
+#[test]
+fn append_unions_channels_and_bakes_transform() {
+  let mut a: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  a.vertex_channels
+    .insert("uv".into(), Channel::for_attr("uv", Arity::Vec2));
+  for k in a.vertices.keys().collect::<Vec<_>>() {
+    set_uv(&mut a, k, [1., 2.]);
+  }
+
+  let mut b: LinkedMesh<()> = LinkedMesh::new_box(2., 2., 2.);
+  b.vertex_channels
+    .insert("tangent".into(), Channel::for_attr("tangent", Arity::Vec4));
+  b.vertex_channels
+    .insert("color".into(), Channel::for_attr("color", Arity::Vec3));
+  for k in b.vertices.keys().collect::<Vec<_>>() {
+    b.vertex_channels
+      .get_mut("tangent")
+      .unwrap()
+      .set(k, [1., 0., 0., 1.]);
+    b.vertex_channels
+      .get_mut("color")
+      .unwrap()
+      .set(k, [0.5, 0.25, 1., 0.]);
+  }
+  b.flags |= mesh_flags::NO_WELD;
+
+  let (na, nb, fa, fb) = (
+    a.vertices.len(),
+    b.vertices.len(),
+    a.faces.len(),
+    b.faces.len(),
+  );
+  let a_keys: Vec<VertexKey> = a.vertices.keys().collect();
+  // 90° about +Y (maps +X → -Z), then translate +10 X
+  let xform = Matrix4::from_axis_angle(&Vec3::y_axis(), std::f32::consts::FRAC_PI_2)
+    .append_translation(&Vec3::new(10., 0., 0.));
+  a.append(&b, &xform);
+
+  assert_eq!((a.vertices.len(), a.faces.len()), (na + nb, fa + fb));
+  assert!(a.has_flag(mesh_flags::NO_WELD));
+  let new_keys: Vec<VertexKey> = a.vertices.keys().filter(|k| !a_keys.contains(k)).collect();
+  assert_eq!(new_keys.len(), nb);
+  for &k in &a_keys {
+    assert_eq!(uv(&a, k), Some([1., 2.]));
+    assert_eq!(a.vertex_channels["color"].get(k), Some([0.; 4]));
+  }
+  for &k in &new_keys {
+    assert_eq!(uv(&a, k), Some([0., 0.]));
+    assert_eq!(a.vertex_channels["color"].get(k), Some([0.5, 0.25, 1., 0.]));
+    let t = a.vertex_channels["tangent"].get(k).unwrap();
+    assert!(
+      t[0].abs() < TOL && (t[2] + 1.).abs() < TOL && t[3] == 1.,
+      "{t:?}"
+    );
+    assert!(a.vertices[k].position.x > 8.);
   }
 }

@@ -847,6 +847,7 @@ export const buildCustomShaderArgs = (
     ambientDistanceAmp = globalConfig.ambientDistanceAmp,
     heightAlpha,
     transparent,
+    vertexColors,
   }: CustomShaderProps = {},
   {
     customVertexFragment,
@@ -885,6 +886,7 @@ export const buildCustomShaderArgs = (
     useGeneratedUVs,
     useWorldSpaceUVs,
     useTriplanarMapping,
+    vertexAttrs = {},
     pom,
     noOcclusion,
     vertexLighting = false,
@@ -1557,11 +1559,20 @@ export const buildCustomShaderArgs = (
       .join('\n');
   };
 
+  const vertexAttrEntries = Object.entries(vertexAttrs);
+  const vertexAttrDecls = vertexAttrEntries
+    .map(([n, t]) => `attribute ${t} ${n};\nvarying ${t} v_${n};`)
+    .join('\n');
+  const vertexAttrVaryings = vertexAttrEntries.map(([n, t]) => `varying ${t} v_${n};`).join('\n');
+  const vertexAttrAssigns = vertexAttrEntries.map(([n]) => `  v_${n} = ${n};`).join('\n');
+
   return {
     fog: true,
     lights: true,
     dithering: false,
     transparent: transparent ?? false,
+    // On by default: a geometry without a `color` attribute gets three's white default value.
+    vertexColors: vertexColors ?? true,
     uniforms,
     vertexShader: /* glsl */ `
 #define STANDARD
@@ -1612,6 +1623,7 @@ ${useTriplanarMapping ? 'varying vec3 vTriplanarPos;' : ''}
 ${useTriplanarMapping ? 'varying vec3 vTriplanarNormal;' : ''}
 ${useTriplanarMapping && randomizeUVOffset ? hashSeedToVec3GLSL : ''}
 ${pomTangent ? '#ifndef USE_TANGENT\nattribute vec4 tangent;\n#endif\nvarying vec3 vWorldTangent;' : ''}
+${vertexAttrDecls}
 
 // Keep gl_Position bit-identical to the depth-prepass material's regardless of which optional
 // features (USE_TANGENT, etc.) are compiled in, so the prepass depth-test match holds.
@@ -1620,6 +1632,7 @@ invariant gl_Position;
 void main() {
   #include <color_vertex>
   #include <morphcolor_vertex>
+${vertexAttrAssigns}
 
   #include <beginnormal_vertex>
   #include <morphnormal_vertex>
@@ -1827,6 +1840,7 @@ uniform mat4 modelMatrix;
 ${vertexLighting ? 'varying vec3 vVertexDirect;' : ''}
 ${vertexLighting ? 'varying vec3 vVertexIndirect;' : ''}
 ${vertexLighting && vertexLightingShininess > 0 ? 'varying vec3 vVertexSpecular;' : ''}
+${vertexAttrVaryings}
 
 #include <common>
 #include <packing>

@@ -69,6 +69,7 @@ const resolveShaderProps = (
     'opacity',
     'alphaTest',
     'transparent',
+    'vertexColors',
     'transmission',
     'ior',
     'clearcoat',
@@ -119,6 +120,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
     'useNoise2',
     'useOrenNayarDiffuse',
     'pom',
+    'vertexAttrs',
   ]);
 
   if (optionsJson.useTriplanarMapping !== undefined)
@@ -238,6 +240,7 @@ export const buildMaterial = (
     {
       color: p.color !== undefined ? new THREE.Color(p.color) : undefined,
       transparent: p.transparent,
+      vertexColors: p.vertexColors,
       alphaTest: p.alphaTest,
       fogMultiplier: p.fogMultiplier,
     },

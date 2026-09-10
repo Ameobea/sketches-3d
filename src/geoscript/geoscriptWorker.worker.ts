@@ -13,6 +13,12 @@ import type {
 import * as Geoscript from 'src/viz/wasmComp/geoscript_repl';
 
 /** Raw shape of `geoscript_repl_get_rendered_gizmo`'s JSON (snake_case from Rust). */
+interface RenderedMeshAttr {
+  name: string;
+  itemSize: number;
+  data: Float32Array;
+}
+
 interface RawRenderedGizmo {
   source_module: string | null;
   handle_id: string;
@@ -359,15 +365,22 @@ const methods = {
     const verts = Geoscript.geoscript_repl_get_rendered_mesh_vertices(ctxPtr, meshIx);
     const indices = Geoscript.geoscript_repl_get_rendered_mesh_indices(ctxPtr, meshIx);
     const normals = Geoscript.geoscript_repl_get_rendered_mesh_normals(ctxPtr, meshIx);
-    const uvs = Geoscript.geoscript_repl_get_rendered_mesh_uvs(ctxPtr, meshIx);
-    const tangents = Geoscript.geoscript_repl_get_rendered_mesh_tangents(ctxPtr, meshIx);
+    const attrCount = Geoscript.geoscript_repl_get_rendered_mesh_attr_count(ctxPtr, meshIx);
+    const attrs: RenderedMeshAttr[] = [];
+    for (let i = 0; i < attrCount; i += 1) {
+      attrs.push({
+        name: Geoscript.geoscript_repl_get_rendered_mesh_attr_name(ctxPtr, meshIx, i),
+        itemSize: Geoscript.geoscript_repl_get_rendered_mesh_attr_arity(ctxPtr, meshIx, i),
+        data: Geoscript.geoscript_repl_get_rendered_mesh_attr_data(ctxPtr, meshIx, i),
+      });
+    }
     const material = Geoscript.geoscript_repl_get_rendered_mesh_material(ctxPtr, meshIx);
     const sourceModule = Geoscript.geoscript_repl_get_rendered_mesh_source_module(ctxPtr, meshIx);
     const meshId = Geoscript.geoscript_repl_get_rendered_mesh_id(ctxPtr, meshIx);
 
     return Comlink.transfer(
-      { verts, indices, normals, uvs, tangents, transform, material, sourceModule, meshId },
-      filterNils([verts.buffer, indices.buffer, normals?.buffer, uvs?.buffer, tangents?.buffer])
+      { verts, indices, normals, attrs, transform, material, sourceModule, meshId },
+      filterNils([verts.buffer, indices.buffer, normals?.buffer, ...attrs.map(a => a.data.buffer)])
     );
   },
   getRenderedPathCount: (ctxPtr: number) => {

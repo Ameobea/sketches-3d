@@ -4,7 +4,10 @@ use std::str::FromStr;
 #[cfg(target_arch = "wasm32")]
 use mesh::linked_mesh::Mat4;
 use mesh::linked_mesh::Vec3;
+use mesh::linked_mesh::{Channel, FaceKey, VertexKey};
 use mesh::LinkedMesh;
+use parry3d::math::Point;
+use parry3d::query::PointQueryWithLocation;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -190,6 +193,66 @@ pub fn get_geodesic_error() -> String {
   String::new()
 }
 
+/// Samples `src`'s passive channels onto `dst` by nearest point: each `dst` vertex takes the
+/// barycentric blend of the closest `src` triangle (both in world space). Exact wherever `dst` lies
+/// on `src`'s surface.
+pub fn transfer_attrs_into(
+  src: &MeshHandle,
+  dst: &mut LinkedMesh<()>,
+  dst_transform: &nalgebra::Matrix4<f32>,
+) -> Result<(), ErrorStack> {
+  if src.mesh.vertex_channels.is_empty() || dst.vertices.is_empty() {
+    return Ok(());
+  }
+  let trimesh = src.get_or_create_trimesh().map_err(|err| {
+    ErrorStack::new(format!(
+      "transfer_attrs: source mesh has no triangles ({err:?})"
+    ))
+  })?;
+  // `build_trimesh` flattens faces in `faces.values()` order, degenerate ones included.
+  let src_faces: Vec<FaceKey> = src.mesh.faces.keys().collect();
+  let mut channels: Vec<(&String, &Channel<VertexKey>, Channel<VertexKey>)> = src
+    .mesh
+    .vertex_channels
+    .iter()
+    .map(|(name, ch)| (name, ch, ch.empty_like()))
+    .collect();
+
+  for (key, vtx) in dst.vertices.iter() {
+    let p = (dst_transform * vtx.position.push(1.)).xyz();
+    let (_, (tri, loc)) = trimesh.project_local_point_and_get_location(&Point::from(p), false);
+    let bary = loc.barycentric_coordinates().unwrap_or([1., 0., 0.]);
+    let face = &src.mesh.faces[src_faces[tri as usize]];
+    let srcs = [
+      (face.vertices[0], bary[0]),
+      (face.vertices[1], bary[1]),
+      (face.vertices[2], bary[2]),
+    ];
+    for (_, src_ch, dst_ch) in channels.iter_mut() {
+      if let Some(v) = src_ch.blend(&srcs) {
+        dst_ch.set(key, v);
+      }
+    }
+  }
+  for (name, _, ch) in channels {
+    dst.vertex_channels.insert(name.clone(), ch);
+  }
+  Ok(())
+}
+
+/// Re-tessellating ops rebuild their output from flat buffers; this samples the input's attributes
+/// back onto it.
+pub(crate) fn with_transferred_attrs(
+  src: &MeshHandle,
+  mut out: MeshHandle,
+) -> Result<MeshHandle, ErrorStack> {
+  if !src.mesh.vertex_channels.is_empty() {
+    let transform = out.transform;
+    transfer_attrs_into(src, Rc::make_mut(&mut out.mesh), &transform)?;
+  }
+  Ok(out)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn verify_cgal_loaded() -> Result<(), ErrorStack> {
   crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
@@ -216,13 +279,13 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
 
   let encoded_output = simplify(mesh.get_or_create_handle()?, tolerance);
 
-  let (manifold_handle, out_verts, out_indices) =
-    crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
-  let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
+  let layout = mesh.manifold_handle.layout();
+  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
+  let out_mesh = crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(&out, &layout, false);
   Ok(MeshHandle {
     mesh: Rc::new(out_mesh),
     transform: mesh.transform,
-    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
     material: mesh.material.clone(),
@@ -243,14 +306,12 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, ErrorStack> 
   let verts = unsafe { std::slice::from_raw_parts(verts.as_ptr() as *const f32, verts.len() * 3) };
 
   let encoded_output = convex_hull(verts);
-  let (manifold_handle, out_verts, out_indices) =
-    crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
-
-  let out_mesh: LinkedMesh<()> = LinkedMesh::from_raw_indexed(out_verts, out_indices, None, None);
+  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
+  let out_mesh = crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(&out, &[], false);
   Ok(MeshHandle {
     mesh: Rc::new(out_mesh),
     transform: Mat4::identity(),
-    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::new(out.handle)),
     aabb: RefCell::new(None),
     trimesh: RefCell::new(None),
     material: None,
@@ -273,6 +334,7 @@ pub fn split_mesh_by_plane(
   verify_cgal_loaded()?;
 
   let handle = mesh.get_or_create_handle()?;
+  let layout = mesh.manifold_handle.layout();
   split_by_plane(
     handle,
     mesh.transform.as_slice(),
@@ -283,33 +345,25 @@ pub fn split_mesh_by_plane(
   );
 
   let a = get_split_output(0);
-  let (manifold_handle, out_verts, out_indices) =
-    crate::mesh_ops::mesh_boolean::decode_manifold_output(&a);
+  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&a);
   let a = MeshHandle {
-    mesh: Rc::new(LinkedMesh::from_raw_indexed(
-      out_verts,
-      out_indices,
-      None,
-      None,
+    mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
+      &out, &layout, false,
     )),
     transform: Mat4::identity(),
-    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
     aabb: mesh.aabb.clone(),
     trimesh: mesh.trimesh.clone(),
     material: mesh.material.clone(),
   };
   let b = get_split_output(1);
-  let (manifold_handle, out_verts, out_indices) =
-    crate::mesh_ops::mesh_boolean::decode_manifold_output(&b);
+  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&b);
   let b = MeshHandle {
-    mesh: Rc::new(LinkedMesh::from_raw_indexed(
-      out_verts,
-      out_indices,
-      None,
-      None,
+    mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
+      &out, &layout, false,
     )),
     transform: Mat4::identity(),
-    manifold_handle: Rc::new(ManifoldHandle::new(manifold_handle)),
+    manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
     aabb: mesh.aabb.clone(),
     trimesh: mesh.trimesh.clone(),
     material: mesh.material.clone(),
@@ -363,7 +417,10 @@ pub fn alpha_wrap_mesh(
     vec3s_as_f32s(seeds),
   );
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  with_transferred_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -437,7 +494,10 @@ pub fn smooth_mesh(
     }
   }
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  with_transferred_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -512,7 +572,10 @@ pub fn remesh_planar_patches(
     least_squares,
   );
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  with_transferred_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -558,7 +621,10 @@ pub fn isotropic_remesh(
     sharp_angle_threshold_degrees,
   );
 
-  read_cgal_output_mesh(mesh.transform, mesh.material.clone())
+  with_transferred_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -612,14 +678,17 @@ pub fn delaunay_remesh(
   let mut out_mesh = read_raw_cgal_output_mesh()?;
   out_mesh.orient_connected_components_outward();
 
-  Ok(MeshHandle {
-    mesh: Rc::new(out_mesh),
-    transform: mesh.transform,
-    manifold_handle: mesh.manifold_handle.clone(),
-    aabb: mesh.aabb.clone(),
-    trimesh: mesh.trimesh.clone(),
-    material: mesh.material.clone(),
-  })
+  with_transferred_attrs(
+    mesh,
+    MeshHandle {
+      mesh: Rc::new(out_mesh),
+      transform: mesh.transform,
+      manifold_handle: mesh.manifold_handle.clone(),
+      aabb: mesh.aabb.clone(),
+      trimesh: mesh.trimesh.clone(),
+      material: mesh.material.clone(),
+    },
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]

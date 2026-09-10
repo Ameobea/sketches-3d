@@ -14,6 +14,7 @@ log = { version = "0.4", features = [] }
 arrayvec = "0.7"
 lyon_tessellation = "1.0"
 parry3d = "0.25"
+wide = "0.7"
 
 common = { path = "../common" }
 

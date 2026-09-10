@@ -9,8 +9,9 @@ use std::{
 
 use fxhash::FxHashMap;
 use mesh::{
+  attrs::{self, tangent_channel, uv_channel},
   csg::Plane,
-  linked_mesh::{mesh_flags, Arity, Channel, FlipXform, Interp, SpatialXform, Vec3, VertexKey},
+  linked_mesh::{mesh_flags, Vec3},
   slotmap_utils::vkey,
   LinkedMesh,
 };
@@ -19,24 +20,6 @@ use nalgebra::Matrix3;
 use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::{ErrorStack, ManifoldHandle, MeshHandle, Value};
-
-pub(crate) fn new_uv_channel() -> Channel<VertexKey> {
-  Channel::new(
-    Arity::Vec2,
-    Interp::Lerp,
-    FlipXform::Identity,
-    SpatialXform::Identity,
-  )
-}
-
-pub(crate) fn new_tangent_channel() -> Channel<VertexKey> {
-  Channel::new(
-    Arity::Vec4,
-    Interp::Lerp,
-    FlipXform::Negate,
-    SpatialXform::Direction,
-  )
-}
 
 pub(crate) fn orthonormal_basis(normal: Vec3) -> (Vec3, Vec3) {
   Plane { normal, w: 0. }.compute_basis()
@@ -867,8 +850,8 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
     .fold(Vec3::zeros(), |acc, (_, v)| acc + v.position)
     / out.vertices.len() as f32;
 
-  let mut uv_ch = new_uv_channel();
-  let mut tan_ch = new_tangent_channel();
+  let mut uv_ch = uv_channel();
+  let mut tan_ch = tangent_channel();
   for (key, v) in out.iter_vertices() {
     let d = v.position - centroid;
     uv_ch.set(
@@ -877,8 +860,10 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
     );
     tan_ch.set(key, [u_axis.x, u_axis.y, u_axis.z, 1.]);
   }
-  out.vertex_channels.insert("uv".to_owned(), uv_ch);
-  out.vertex_channels.insert("tangent".to_owned(), tan_ch);
+  out.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
+  out
+    .vertex_channels
+    .insert(attrs::TANGENT.to_owned(), tan_ch);
 
   Ok(MeshHandle {
     mesh: Rc::new(out),
@@ -892,24 +877,26 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
 
 fn attach_uv_tangent(mesh: &mut LinkedMesh<()>, uvs: &[f32], tangents: Option<&[f32]>, scale: f32) {
   let vtx_count = uvs.len() / 2;
-  let mut uv_ch = new_uv_channel();
+  let mut uv_ch = uv_channel();
   for i in 0..vtx_count {
     uv_ch.set(
       vkey(i as u32 + 1, 1),
       [uvs[i * 2] * scale, uvs[i * 2 + 1] * scale, 0., 0.],
     );
   }
-  mesh.vertex_channels.insert("uv".to_owned(), uv_ch);
+  mesh.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
 
   if let Some(t) = tangents.filter(|t| t.len() == vtx_count * 4) {
-    let mut tan_ch = new_tangent_channel();
+    let mut tan_ch = tangent_channel();
     for i in 0..vtx_count {
       tan_ch.set(
         vkey(i as u32 + 1, 1),
         [t[i * 4], t[i * 4 + 1], t[i * 4 + 2], t[i * 4 + 3]],
       );
     }
-    mesh.vertex_channels.insert("tangent".to_owned(), tan_ch);
+    mesh
+      .vertex_channels
+      .insert(attrs::TANGENT.to_owned(), tan_ch);
   }
 }
 
@@ -1162,15 +1149,17 @@ fn cylindrical_uvs(
   }
 
   let mut out = LinkedMesh::from_raw_indexed(&verts, &indices, None, None);
-  let mut uv_ch = new_uv_channel();
-  let mut tan_ch = new_tangent_channel();
+  let mut uv_ch = uv_channel();
+  let mut tan_ch = tangent_channel();
   for i in 0..(verts.len() / 3) {
     let key = vkey(i as u32 + 1, 1);
     uv_ch.set(key, [us[i] * scale, vs[i] * scale, 0., 0.]);
     tan_ch.set(key, tangents[i]);
   }
-  out.vertex_channels.insert("uv".to_owned(), uv_ch);
-  out.vertex_channels.insert("tangent".to_owned(), tan_ch);
+  out.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
+  out
+    .vertex_channels
+    .insert(attrs::TANGENT.to_owned(), tan_ch);
   out.mark_edge_sharpness(sharp_threshold_rad);
   out.separate_vertices_and_compute_normals();
   out.flags |= mesh_flags::NO_WELD;

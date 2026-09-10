@@ -370,6 +370,17 @@
       {/if}
     {/if}
 
+    <FormField
+      label="vertex colors"
+      help="Multiply the base color by the mesh's `color` attribute (see `set_attr`); meshes without one are unaffected."
+    >
+      <input
+        type="checkbox"
+        checked={cs.props.vertexColors ?? true}
+        onchange={e => (cs.props.vertexColors = (e.target as HTMLInputElement).checked)}
+      />
+    </FormField>
+
     <div style="display: flex; padding-left: 8px">
       <button class="edit-shaders" onclick={host.oneditshaders}>edit shaders</button>
     </div>

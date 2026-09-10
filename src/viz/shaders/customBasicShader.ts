@@ -5,6 +5,7 @@ interface CustomBasicShaderProps {
   name?: string;
   color?: THREE.Color;
   transparent?: boolean;
+  vertexColors?: boolean;
   alphaTest?: number;
   fogMultiplier?: number;
 }
@@ -24,6 +25,7 @@ const buildCustomBasicShaderArgs = (
     transparent: _transparent,
     alphaTest: _alphaTest,
     fogMultiplier,
+    vertexColors = true,
   }: CustomBasicShaderProps = {},
   { colorShader, vertexShader }: CustomBasicShaderShaders = {},
   { enableFog = true }: CustomBasicShaderOptions = {}
@@ -63,7 +65,7 @@ const buildCustomBasicShaderArgs = (
   return {
     fog: true,
     lights: true,
-    // dithering: true,
+    vertexColors,
     uniforms,
     vertexShader: `
 #include <common>

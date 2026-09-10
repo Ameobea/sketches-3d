@@ -10,6 +10,7 @@ use geoscript::{
   ErrorStack, EvalCtx, GizmoKind, InjectedTextureParams, Mat4, Program, Scope, Sym, TextureFilter,
   TextureFormat, TextureHandle, TextureWrap, Value,
 };
+use mesh::attrs;
 use mesh::{
   linked_mesh::{mesh_flags, Vec3},
   OwnedIndexedMesh,
@@ -119,6 +120,10 @@ impl GeoscriptReplCtx {
         mesh.to_raw_indexed(true, false, false)
       };
       owned_mesh.transform = Some(mesh_handle.transform);
+      owned_mesh.attrs.retain(|a| {
+        attrs::known(&a.name).is_some_and(|s| s.export_default)
+          || rendered.export_attrs.iter().any(|n| *n == a.name)
+      });
       self.output_meshes.push(OutputMesh {
         mesh: owned_mesh,
         material: match &mesh_handle.material {
@@ -728,16 +733,49 @@ pub fn geoscript_repl_get_rendered_mesh_uvs(
   mesh_ix: usize,
 ) -> Option<Vec<f32>> {
   let ctx = unsafe { &*ctx };
-  ctx.output_meshes[mesh_ix].mesh.uv.clone()
+  ctx.output_meshes[mesh_ix]
+    .mesh
+    .attr(attrs::UV)
+    .map(|a| a.data.clone())
 }
 
 #[wasm_bindgen]
-pub fn geoscript_repl_get_rendered_mesh_tangents(
+pub fn geoscript_repl_get_rendered_mesh_attr_count(
   ctx: *const GeoscriptReplCtx,
   mesh_ix: usize,
-) -> Option<Vec<f32>> {
+) -> usize {
   let ctx = unsafe { &*ctx };
-  ctx.output_meshes[mesh_ix].mesh.tangent.clone()
+  ctx.output_meshes[mesh_ix].mesh.attrs.len()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_attr_name(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+  attr_ix: usize,
+) -> String {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh.attrs[attr_ix].name.clone()
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_attr_arity(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+  attr_ix: usize,
+) -> usize {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh.attrs[attr_ix].arity
+}
+
+#[wasm_bindgen]
+pub fn geoscript_repl_get_rendered_mesh_attr_data(
+  ctx: *const GeoscriptReplCtx,
+  mesh_ix: usize,
+  attr_ix: usize,
+) -> Vec<f32> {
+  let ctx = unsafe { &*ctx };
+  ctx.output_meshes[mesh_ix].mesh.attrs[attr_ix].data.clone()
 }
 
 #[wasm_bindgen]
@@ -1426,6 +1464,7 @@ mod tests {
       }),
       source_module: None,
       mesh_id: 0,
+      export_attrs: Rc::from(Vec::new()),
     });
     ctx.convert_rendered_meshes();
     ctx.output_meshes[0].mesh.vertices.len() / 3

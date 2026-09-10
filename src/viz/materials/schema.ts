@@ -109,6 +109,21 @@ export const ShaderShadersJsonSchema = z.object({
  * - `red`: single-channel heightmap — loaded as RedFormat with mipmaps off.
  * - `noPicker`: not offered by the material editor's texture picker.
  */
+const THREE_BUILTIN_ATTRS = new Set([
+  'position',
+  'normal',
+  'uv',
+  'uv1',
+  'uv2',
+  'uv3',
+  'color',
+  'tangent',
+  'skinIndex',
+  'skinWeight',
+  'instanceMatrix',
+  'instanceColor',
+]);
+
 export const TEXTURE_SLOT_META = {
   map: { srgb: true, stacks: true },
   normalMap: { stacks: true },
@@ -172,6 +187,9 @@ export const ShaderPropsJsonSchema = z.object({
   opacity: z.number().optional(),
   alphaTest: z.number().optional(),
   transparent: z.boolean().optional(),
+  /** Multiply the base color by the geometry's `color` attribute (linear RGB/RGBA). On by default;
+   *  geometries without the attribute are unaffected. `false` ignores the attribute. */
+  vertexColors: z.boolean().optional(),
   transmission: z.number().optional(),
   ior: z.number().optional(),
   clearcoat: z.number().optional(),
@@ -219,6 +237,14 @@ export const ShaderPropsJsonSchema = z.object({
 /** Serializable subset of CustomShaderOptions */
 export const ShaderOptionsJsonSchema = z.object({
   useTriplanarMapping: z.union([z.boolean(), TriplanarMappingParamsJsonSchema]).optional(),
+  /** Custom per-vertex attributes the shaders read, by name and GLSL type. Each is declared as an
+   *  `attribute` in the vertex stage and forwarded to the fragment stage as `v_<name>`. */
+  vertexAttrs: z
+    .record(
+      z.string().refine(n => !THREE_BUILTIN_ATTRS.has(n), 'collides with a three.js attribute'),
+      z.enum(['float', 'vec2', 'vec3', 'vec4'])
+    )
+    .optional(),
   useGeneratedUVs: z.boolean().optional(),
   useWorldSpaceUVs: z.boolean().optional(),
   tileBreaking: z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }).optional(),
@@ -376,6 +402,7 @@ export const CustomBasicShaderMatDefSchema = z.object({
     .object({
       color: z.number().optional(),
       transparent: z.boolean().optional(),
+      vertexColors: z.boolean().optional(),
       alphaTest: z.number().optional(),
       fogMultiplier: z.number().optional(),
     })
