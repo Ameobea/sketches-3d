@@ -450,7 +450,7 @@ fn apply_mesh_boolean_op(
     transform: Matrix4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, union)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: None,
   })
 }

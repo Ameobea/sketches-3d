@@ -5,8 +5,8 @@ use linked_mesh::{Mat4, Vec3, VertexKey};
 use nalgebra::Vector3;
 
 pub mod attrs;
+pub mod bvh;
 pub mod linked_mesh;
-pub mod occlusion;
 pub use linked_mesh::LinkedMesh;
 pub mod slotmap_utils;
 

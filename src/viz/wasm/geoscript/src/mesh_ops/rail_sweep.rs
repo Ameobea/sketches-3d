@@ -2708,7 +2708,7 @@ pub(crate) fn rail_sweep_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }

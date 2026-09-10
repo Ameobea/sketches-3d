@@ -5,15 +5,11 @@ use arrayvec::ArrayVec;
 use bitvec::{bitarr, slice::BitSlice};
 use fxhash::{FxBuildHasher, FxHashMap, FxHashSet};
 use nalgebra::{Matrix3, Matrix4, Vector3};
-use parry3d::{
-  bounding_volume::Aabb,
-  math::Point,
-  shape::{TriMesh, TriMeshBuilderError},
-};
 use slotmap::{new_key_type, Key, SecondaryMap, SlotMap};
 use smallvec::SmallVec;
 
 use crate::attrs;
+use crate::bvh::{Aabb, TriBvh};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::models::{
   stanford_bunny::{STANFORD_BUNNY_INDICES, STANFORD_BUNNY_VERTICES},
@@ -3481,85 +3477,24 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   pub fn compute_aabb(&self, transform: &Matrix4<f32>) -> Aabb {
-    if self.vertices.is_empty() {
-      return Aabb::new_invalid();
-    }
-
-    let mut mins = Vec3::new(f32::MAX, f32::MAX, f32::MAX);
-    let mut maxs = Vec3::new(f32::MIN, f32::MIN, f32::MIN);
-
-    for vtx in self.vertices.values() {
-      let transformed_pos = (transform * vtx.position.push(1.)).xyz();
-      mins = Vec3::new(
-        mins.x.min(transformed_pos.x),
-        mins.y.min(transformed_pos.y),
-        mins.z.min(transformed_pos.z),
-      );
-      maxs = Vec3::new(
-        maxs.x.max(transformed_pos.x),
-        maxs.y.max(transformed_pos.y),
-        maxs.z.max(transformed_pos.z),
-      );
-    }
-
-    Aabb::new(
-      Point::new(mins.x, mins.y, mins.z),
-      Point::new(maxs.x, maxs.y, maxs.z),
+    Aabb::from_points(
+      self
+        .vertices
+        .values()
+        .map(|v| (transform * v.position.push(1.)).xyz()),
     )
   }
 
-  pub fn build_trimesh(&self, transform: &Matrix4<f32>) -> Result<TriMesh, TriMeshBuilderError> {
-    let OwnedIndexedMesh {
-      mut vertices,
-      mut indices,
-      ..
-    } = self.to_raw_indexed(false, false, true);
-
-    vertices.shrink_to_fit();
-    assert_eq!(vertices.len() % 3, 0,);
-    assert_eq!(vertices.capacity() % 3, 0);
-
-    {
-      let vec3_view = unsafe {
-        std::slice::from_raw_parts_mut(vertices.as_ptr() as *mut Vec3, vertices.len() / 3)
-      };
-      for v in vec3_view.iter_mut() {
-        *v = (transform * v.push(1.)).xyz();
-      }
-    }
-
-    let point_vertices = unsafe {
-      Vec::from_raw_parts(
-        vertices.as_ptr() as *mut Point<f32>,
-        vertices.len() / 3,
-        vertices.capacity() / 3,
-      )
-    };
-    std::mem::forget(vertices);
-
-    let arr_indices = if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
-      assert_eq!(indices.len() % 3, 0);
-      indices.shrink_to_fit();
-      assert_eq!(indices.capacity() % 3, 0);
-      let arr_indices = unsafe {
-        Vec::from_raw_parts(
-          indices.as_ptr() as *mut [u32; 3],
-          indices.len() / 3,
-          indices.capacity() / 3,
-        )
-      };
-      std::mem::forget(indices);
-      arr_indices
-    } else {
-      indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|[a, b, c]| [*a as u32, *b as u32, *c as u32])
-        .collect()
-    };
-
-    TriMesh::new(point_vertices, arr_indices)
+  /// World-space BVH over the faces in `faces.values()` order (degenerate ones included).
+  pub fn build_bvh(&self, transform: &Matrix4<f32>) -> TriBvh {
+    let xf = |v: Vec3| (transform * v.push(1.)).xyz();
+    TriBvh::build(
+      self
+        .faces
+        .values()
+        .map(|f| f.vertices.map(|k| xf(self.vertices[k].position)))
+        .collect(),
+    )
   }
 
   pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
@@ -4328,107 +4263,42 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   ///
   /// Returns `None` if no self-intersection is found.
   pub fn find_first_self_intersection(&self) -> Option<SelfIntersectionResult> {
-    use parry3d::bounding_volume::BoundingVolume;
-    use parry3d::partitioning::{Bvh, BvhBuildStrategy, BvhWorkspace};
-
     use crate::triangle_intersection::tri_tri_intersection;
 
     if self.faces.len() < 2 {
       return None;
     }
-
-    // 1. Build parallel arrays: face keys and per-face AABBs
     let face_keys: Vec<FaceKey> = self.faces.keys().collect();
-    let aabbs: Vec<Aabb> = face_keys
-      .iter()
-      .map(|&fk| {
-        let face = &self.faces[fk];
-        let positions = face.vertex_positions(&self.vertices);
-        let mut aabb = Aabb::from_points(positions.iter().map(|p| Point::new(p.x, p.y, p.z)));
-        // Pad the AABB slightly for numerical robustness with f32 vertex positions
-        aabb.loosen(1e-6);
-        aabb
-      })
-      .collect();
-
-    // 2. Build BVH
-    let bvh = Bvh::from_leaves(BvhBuildStrategy::Binned, &aabbs);
-
-    // 3. Traverse BVH against itself to find overlapping AABB pairs
-    let mut workspace = BvhWorkspace::default();
-    let mut result: Option<SelfIntersectionResult> = None;
-
-    bvh.traverse_bvtt_single_tree::<false>(&mut workspace, &mut |a, b| {
-      if result.is_some() {
-        return;
-      }
-
-      let fk_a = face_keys[a as usize];
-      let fk_b = face_keys[b as usize];
-      let face_a = &self.faces[fk_a];
-      let face_b = &self.faces[fk_b];
-
-      // 4. Count shared vertices to determine adjacency
-      let mut shared = 0usize;
-      for va in &face_a.vertices {
-        for vb in &face_b.vertices {
-          if va == vb {
-            shared += 1;
-          }
-        }
-      }
-      // Skip edge-adjacent faces (2 shared vertices) and same face (3 shared)
-      if shared >= 2 {
-        return;
-      }
-
-      // 5. Narrow-phase: triangle-triangle intersection test
-      let pos_a = face_a.vertex_positions(&self.vertices);
-      let pos_b = face_b.vertex_positions(&self.vertices);
-
-      if let Some(isect) =
-        tri_tri_intersection(pos_a[0], pos_a[1], pos_a[2], pos_b[0], pos_b[1], pos_b[2])
-      {
-        result = Some(SelfIntersectionResult {
-          face_a: fk_a,
-          face_b: fk_b,
-          positions_a: pos_a,
-          positions_b: pos_b,
-          point: isect.point,
-          intersection_type: isect.intersection_type,
-        });
-      }
-    });
-
-    result
-  }
-}
-
-impl<T: Default> From<TriMesh> for LinkedMesh<T> {
-  fn from(trimesh: TriMesh) -> Self {
-    // TODO: optimize using the fastpath slotmap methods
-    let mut mesh: LinkedMesh<T> =
-      LinkedMesh::new(trimesh.vertices().len(), trimesh.indices().len(), None);
-    let mut vtx_keys = Vec::with_capacity(trimesh.vertices().len());
-    for vtx in trimesh.vertices() {
-      let vtx_key = mesh
+    let bvh = self.build_bvh(&Matrix4::identity());
+    let mut result = None;
+    bvh.for_each_pair(&bvh, 1e-6, |a, pos_a, b, pos_b| {
+      let (fk_a, fk_b) = (face_keys[a as usize], face_keys[b as usize]);
+      let (face_a, face_b) = (&self.faces[fk_a], &self.faces[fk_b]);
+      let shared = face_a
         .vertices
-        .insert(Vertex::new(Vec3::new(vtx.x, vtx.y, vtx.z)));
-      vtx_keys.push(vtx_key);
-    }
-
-    for &[v0, v1, v2] in trimesh.indices() {
-      mesh.add_face::<true>(
-        [
-          vtx_keys[v0 as usize],
-          vtx_keys[v1 as usize],
-          vtx_keys[v2 as usize],
-        ],
-        T::default(),
-      );
-    }
-
-    mesh
+        .iter()
+        .filter(|v| face_b.vertices.contains(v))
+        .count();
+      // edge-adjacent faces always meet along their shared edge
+      if shared >= 2 {
+        return false;
+      }
+      let Some(isect) =
+        tri_tri_intersection(pos_a[0], pos_a[1], pos_a[2], pos_b[0], pos_b[1], pos_b[2])
+      else {
+        return false;
+      };
+      result = Some(SelfIntersectionResult {
+        face_a: fk_a,
+        face_b: fk_b,
+        positions_a: *pos_a,
+        positions_b: *pos_b,
+        point: isect.point,
+        intersection_type: isect.intersection_type,
+      });
+      true
+    });
+    result
   }
 }
 

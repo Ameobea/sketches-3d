@@ -17,10 +17,7 @@ use mesh::{
   slotmap_utils::{vkey, vkey_ix},
   LinkedMesh, OwnedIndexedMesh,
 };
-use nalgebra::{Matrix3, Matrix4, Point3, Rotation3, Unit, UnitQuaternion};
-use parry3d::bounding_volume::Aabb;
-use parry3d::math::{Isometry, Point};
-use parry3d::query::Ray;
+use nalgebra::{Matrix3, Matrix4, Rotation3, Unit, UnitQuaternion};
 use rand::RngExt;
 use rand::{Rng, SeedableRng};
 
@@ -260,18 +257,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
       );
 
       let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
-        (Some(lhs_aabb), Some(rhs_aabb)) => Some(Aabb {
-          mins: Point3::new(
-            lhs_aabb.mins.x.min(rhs_aabb.mins.x),
-            lhs_aabb.mins.y.min(rhs_aabb.mins.y),
-            lhs_aabb.mins.z.min(rhs_aabb.mins.z),
-          ),
-          maxs: Point3::new(
-            lhs_aabb.maxs.x.max(rhs_aabb.maxs.x),
-            lhs_aabb.maxs.y.max(rhs_aabb.maxs.y),
-            lhs_aabb.maxs.z.max(rhs_aabb.maxs.z),
-          ),
-        }),
+        (Some(a), Some(b)) => Some(a.union(b)),
         _ => None,
       };
 
@@ -280,7 +266,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
         transform: lhs.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(maybe_combined_aabb),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: lhs.material.clone(),
       })))
     }
@@ -1040,7 +1026,7 @@ pub(crate) fn warp_impl(
         transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh.material.clone(),
       })))
     }
@@ -1768,7 +1754,7 @@ fn mesh_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -1777,7 +1763,7 @@ fn mesh_impl(
       transform: Matrix4::identity(),
       manifold_handle: Rc::new(ManifoldHandle::new_empty()),
       aabb: RefCell::new(None),
-      trimesh: RefCell::new(None),
+      bvh: RefCell::new(None),
       material: None,
     }))),
     _ => unimplemented!(),
@@ -2503,7 +2489,7 @@ fn sample_voxels_impl(
           transform: Matrix4::identity(),
           manifold_handle: Rc::new(ManifoldHandle::new_empty()),
           aabb: RefCell::new(None),
-          trimesh: RefCell::new(None),
+          bvh: RefCell::new(None),
           material: None,
         })))
       } else if out_meshes.len() == 1 {
@@ -2561,7 +2547,7 @@ fn fan_fill_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -2613,7 +2599,7 @@ fn fan_fill_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -2796,7 +2782,7 @@ fn tessellate_path_impl(
                   transform: Matrix4::identity(),
                   manifold_handle: Rc::new(ManifoldHandle::new_empty()),
                   aabb: RefCell::new(None),
-                  trimesh: RefCell::new(None),
+                  bvh: RefCell::new(None),
                   material: None,
                 })));
               }
@@ -2974,7 +2960,7 @@ fn tessellate_path_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -3446,7 +3432,7 @@ fn embed_path_impl(
           transform: Matrix4::identity(),
           manifold_handle: Rc::new(ManifoldHandle::new_empty()),
           aabb: RefCell::new(None),
-          trimesh: RefCell::new(None),
+          bvh: RefCell::new(None),
           material: None,
         }))
       };
@@ -4406,7 +4392,7 @@ fn stitch_contours_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -4493,7 +4479,7 @@ fn extrude_path_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -4727,7 +4713,7 @@ fn text_to_mesh_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -5049,7 +5035,7 @@ fn compute_normals_impl(
         transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh.material.clone(),
       })))
     }
@@ -5200,7 +5186,7 @@ fn extrude_impl(
         transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh.material.clone(),
       })))
     }
@@ -5258,7 +5244,7 @@ fn extrude_along_normals_impl(
         transform: mesh.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh.material.clone(),
       })))
     }
@@ -5488,7 +5474,7 @@ fn extrude_pipe_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       })))
     }
@@ -5803,20 +5789,12 @@ fn intersects_ray_impl(
       let mesh = arg_refs[2].resolve(args, kwargs).as_mesh().unwrap();
       let max_distance = arg_refs[3].resolve(args, kwargs).as_float();
 
-      let trimesh = mesh
-        .get_or_create_trimesh()
-        .map_err(|err| ErrorStack::new(format!("Error creating trimesh for raycast: {err}")))?;
-
-      let has_hit = parry3d::query::RayCast::intersects_ray(
-        &*trimesh,
-        &Isometry::default(),
-        &Ray {
-          dir: ray_direction,
-          origin: Point::new(ray_origin.x, ray_origin.y, ray_origin.z),
-        },
-        max_distance.unwrap_or(f32::INFINITY),
-      );
-      Ok(Value::Bool(has_hit))
+      let max_t = max_distance.unwrap_or(f32::INFINITY);
+      Ok(Value::Bool(mesh.get_or_create_bvh().any_hit(
+        &ray_origin,
+        &ray_direction,
+        max_t,
+      )))
     }
     _ => unimplemented!(),
   }
@@ -5840,30 +5818,12 @@ fn intersects_impl(
       let a_aabb = a.get_or_compute_aabb();
       let b_aabb = b.get_or_compute_aabb();
 
-      if a_aabb.intersection(&b_aabb).is_none() {
+      if !a_aabb.intersects(&b_aabb) {
         return Ok(Value::Bool(false));
       }
-
-      let a_trimesh = a.get_or_create_trimesh().map_err(|err| {
-        ErrorStack::new(format!(
-          "Error creating trimesh for mesh `a` in `intersects`: {err}"
-        ))
-      })?;
-      let b_trimesh = b.get_or_create_trimesh().map_err(|err| {
-        ErrorStack::new(format!(
-          "Error creating trimesh for mesh `b` in `intersects`: {err}"
-        ))
-      })?;
-
-      let result = parry3d::query::intersection_test(
-        &Isometry::default(),
-        &*a_trimesh,
-        &Isometry::default(),
-        &*b_trimesh,
-      )
-      .unwrap();
-
-      Ok(Value::Bool(result))
+      Ok(Value::Bool(
+        a.get_or_create_bvh().intersects(&b.get_or_create_bvh()),
+      ))
     }
     _ => unimplemented!(),
   }
@@ -5885,10 +5845,7 @@ fn aabb_impl(
       }
       let bbox = mesh.get_or_compute_aabb();
       Ok(Value::Sequence(Rc::new(EagerSeq {
-        inner: Rc::new(vec![
-          Value::Vec3(bbox.mins.coords),
-          Value::Vec3(bbox.maxs.coords),
-        ]),
+        inner: Rc::new(vec![Value::Vec3(bbox.mins), Value::Vec3(bbox.maxs)]),
       })))
     }
     _ => unimplemented!(),
@@ -6013,7 +5970,7 @@ fn connected_components_impl(
             transform,
             manifold_handle: Rc::new(ManifoldHandle::new_empty()),
             aabb: RefCell::new(None),
-            trimesh: RefCell::new(None),
+            bvh: RefCell::new(None),
             material: material.clone(),
           }))
         })
@@ -6052,7 +6009,7 @@ fn tessellate_impl(
         transform: transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh_handle.material.clone(),
       })))
     }
@@ -6096,7 +6053,7 @@ fn subdivide_by_plane_impl(
         transform: mesh_handle.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh_handle.material.clone(),
       })))
     }
@@ -6155,7 +6112,7 @@ fn subdivide_by_plane_impl(
         transform: mesh_handle.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh_handle.material.clone(),
       })))
     }
@@ -6203,7 +6160,7 @@ fn subdivide_by_line_impl(
         transform: mesh_handle.transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh_handle.material.clone(),
       })))
     }
@@ -8342,7 +8299,7 @@ fn origin_to_geometry_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         aabb: RefCell::new(None),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         transform: mesh.transform,
         mesh: Rc::new(new_mesh),
         material: mesh.material.clone(),
@@ -8378,7 +8335,7 @@ fn apply_transforms_impl(
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: mesh.material.clone(),
       })))
     }
@@ -9116,7 +9073,7 @@ fn flip_normals_impl(
       Ok(Value::Mesh(Rc::new(MeshHandle {
         aabb: mesh.aabb.clone(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         transform: mesh.transform,
         mesh: Rc::new(new_mesh),
         material: mesh.material.clone(),
@@ -9134,7 +9091,7 @@ fn reflected_mesh(mesh: &MeshHandle, normal: Vec3, offset: f32) -> Value {
     transform: mesh.transform,
     manifold_handle: Rc::new(ManifoldHandle::new_empty()),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: mesh.material.clone(),
   }))
 }
@@ -9253,7 +9210,7 @@ fn partition_faces_impl(
         transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: material.clone(),
       }))
     })
@@ -9441,7 +9398,7 @@ fn join_meshes(
     transform: out_transform,
     manifold_handle: Rc::new(ManifoldHandle::new_empty()),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: base.material.clone(),
   })))
 }

@@ -18,13 +18,13 @@ use ast::{Expr, FunctionCallTarget, Statement};
 use fxhash::{FxHashMap, FxHashSet, FxHasher64};
 
 pub mod value_map;
-use mesh::{linked_mesh::Vec3, LinkedMesh};
+use mesh::{
+  bvh::{Aabb, TriBvh},
+  linked_mesh::Vec3,
+  LinkedMesh,
+};
 use nalgebra::{Matrix4, Vector2, Vector4};
 use nanoserde::SerJson;
-use parry3d::{
-  bounding_volume::Aabb,
-  shape::{TriMesh, TriMeshBuilderError},
-};
 use pest::{
   pratt_parser::{Assoc, Op, PrattParser},
   Parser,
@@ -668,11 +668,9 @@ pub struct MeshHandle {
   pub mesh: Rc<LinkedMesh<()>>,
   pub transform: Matrix4<f32>,
   pub manifold_handle: Rc<ManifoldHandle>,
-  /// AABB of the mesh in world space.  Computed as needed.
+  /// World-space AABB and triangle BVH, computed as needed.
   pub aabb: RefCell<Option<Aabb>>,
-  /// parry3d trimesh representation of the mesh, if set.  Computed as needed - used for
-  /// intersection tests and other operations.
-  pub trimesh: RefCell<Option<Rc<TriMesh>>>,
+  pub bvh: RefCell<Option<Rc<TriBvh>>>,
   pub material: Option<Rc<Material>>,
 }
 
@@ -733,14 +731,13 @@ impl MeshHandle {
     aabb
   }
 
-  fn get_or_create_trimesh(&self) -> Result<Rc<TriMesh>, TriMeshBuilderError> {
-    if let Some(trimesh) = self.trimesh.borrow().as_ref() {
-      return Ok(Rc::clone(trimesh));
+  fn get_or_create_bvh(&self) -> Rc<TriBvh> {
+    if let Some(bvh) = self.bvh.borrow().as_ref() {
+      return Rc::clone(bvh);
     }
-
-    let trimesh = Rc::new(self.mesh.build_trimesh(&self.transform)?);
-    *self.trimesh.borrow_mut() = Some(Rc::clone(&trimesh));
-    Ok(trimesh)
+    let bvh = Rc::new(self.mesh.build_bvh(&self.transform));
+    *self.bvh.borrow_mut() = Some(Rc::clone(&bvh));
+    bvh
   }
 
   fn new(mesh: Rc<LinkedMesh<()>>) -> Self {
@@ -749,12 +746,12 @@ impl MeshHandle {
       transform: Matrix4::identity(),
       manifold_handle: Rc::new(ManifoldHandle::new(0)),
       aabb: RefCell::new(None),
-      trimesh: RefCell::new(None),
+      bvh: RefCell::new(None),
       material: None,
     }
   }
 
-  fn clone(&self, retain_manifold_handle: bool, retain_aabb: bool, retain_trimesh: bool) -> Self {
+  fn clone(&self, retain_manifold_handle: bool, retain_aabb: bool, retain_bvh: bool) -> Self {
     Self {
       mesh: Rc::clone(&self.mesh),
       transform: self.transform,
@@ -768,8 +765,8 @@ impl MeshHandle {
       } else {
         RefCell::new(None)
       },
-      trimesh: if retain_trimesh {
-        self.trimesh.clone()
+      bvh: if retain_bvh {
+        self.bvh.clone()
       } else {
         RefCell::new(None)
       },

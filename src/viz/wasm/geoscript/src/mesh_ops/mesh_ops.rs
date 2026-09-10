@@ -6,8 +6,6 @@ use mesh::linked_mesh::Mat4;
 use mesh::linked_mesh::Vec3;
 use mesh::linked_mesh::{Channel, FaceKey, VertexKey};
 use mesh::LinkedMesh;
-use parry3d::math::Point;
-use parry3d::query::PointQueryWithLocation;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -49,7 +47,7 @@ pub(crate) fn read_cgal_output_mesh(
     transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material,
   })
 }
@@ -204,12 +202,12 @@ pub fn transfer_attrs_into(
   if src.mesh.vertex_channels.is_empty() || dst.vertices.is_empty() {
     return Ok(());
   }
-  let trimesh = src.get_or_create_trimesh().map_err(|err| {
-    ErrorStack::new(format!(
-      "transfer_attrs: source mesh has no triangles ({err:?})"
-    ))
-  })?;
-  // `build_trimesh` flattens faces in `faces.values()` order, degenerate ones included.
+  if src.mesh.faces.is_empty() {
+    return Err(ErrorStack::new(
+      "transfer_attrs: source mesh has no triangles",
+    ));
+  }
+  let bvh = src.get_or_create_bvh();
   let src_faces: Vec<FaceKey> = src.mesh.faces.keys().collect();
   let mut channels: Vec<(&String, &Channel<VertexKey>, Channel<VertexKey>)> = src
     .mesh
@@ -220,8 +218,7 @@ pub fn transfer_attrs_into(
 
   for (key, vtx) in dst.vertices.iter() {
     let p = (dst_transform * vtx.position.push(1.)).xyz();
-    let (_, (tri, loc)) = trimesh.project_local_point_and_get_location(&Point::from(p), false);
-    let bary = loc.barycentric_coordinates().unwrap_or([1., 0., 0.]);
+    let (tri, bary, _) = bvh.closest_point(&p).unwrap();
     let face = &src.mesh.faces[src_faces[tri as usize]];
     let srcs = [
       (face.vertices[0], bary[0]),
@@ -287,7 +284,7 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
     transform: mesh.transform,
     manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: mesh.material.clone(),
   })
 }
@@ -313,7 +310,7 @@ pub fn convex_hull_from_verts(verts: &[Vec3]) -> Result<MeshHandle, ErrorStack> 
     transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::new(out.handle)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: None,
   })
 }
@@ -353,7 +350,7 @@ pub fn split_mesh_by_plane(
     transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
     aabb: mesh.aabb.clone(),
-    trimesh: mesh.trimesh.clone(),
+    bvh: mesh.bvh.clone(),
     material: mesh.material.clone(),
   };
   let b = get_split_output(1);
@@ -365,7 +362,7 @@ pub fn split_mesh_by_plane(
     transform: Mat4::identity(),
     manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
     aabb: mesh.aabb.clone(),
-    trimesh: mesh.trimesh.clone(),
+    bvh: mesh.bvh.clone(),
     material: mesh.material.clone(),
   };
 
@@ -685,7 +682,7 @@ pub fn delaunay_remesh(
       transform: mesh.transform,
       manifold_handle: mesh.manifold_handle.clone(),
       aabb: mesh.aabb.clone(),
-      trimesh: mesh.trimesh.clone(),
+      bvh: mesh.bvh.clone(),
       material: mesh.material.clone(),
     },
   )

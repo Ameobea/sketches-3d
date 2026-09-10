@@ -9587,7 +9587,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Returns true if the two meshes intersect, false otherwise",
+        description: "Returns true if any triangle of `a` intersects one of `b`.  Surfaces only: a mesh fully inside another doesn't count, and neither does contact at a single point.",
         return_type: &[ArgType::Bool],
       },
     ],
@@ -9707,7 +9707,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Float, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Max distance to check for intersection (`nil` considers intersections at any distance).  If the intersection occurs at a distance greater than this, `false` will be returned."
+            description: "Max distance to check for intersection (`nil` considers intersections at any distance), measured in multiples of `ray_direction` (world distance for a unit vector).  If the intersection occurs at a distance greater than this, `false` will be returned."
           },
         ],
         description: "Casts a ray from `ray_origin` in `ray_direction` and checks if it intersects `mesh` within `max_distance` (or any distance if `max_distance` is `nil`)",
@@ -13478,9 +13478,9 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
           ArgDef {
             name: "samples",
             interned_name: Sym(0),
-            valid_types: argtype_flags!(ArgType::Int),
-            default_value: DefaultValue::Optional(|| Value::Int(32)),
-            description: "Rays per vertex.  Cost is vertices x samples; 16 is fine while iterating, 64+ for a final bake."
+            valid_types: argtype_flags!(ArgType::Int, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Rays per vertex; `nil` = 32, or 256 with `refine`.  Cost is vertices x samples; 16 is fine while iterating, 64+ for a final bake.  Estimator noise falls as ~0.34/samples^0.75 (RMS 0.025 at 32, 0.005 at 256), which is also what bounds how finely `refine` can resolve."
           },
           ArgDef {
             name: "max_dist",
@@ -13510,8 +13510,29 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::String("ao".to_owned())),
             description: "Name of the scalar attribute written."
           },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "AO tolerance for adaptive tessellation.  Each face's edge midpoints and centroid are sampled (quarter points too on edges whose ends differ by more than this); where a sample differs from the linear interpolation of the corners by more than this, the face is bisected (longest edge first, Rivara-style, so triangles stay well-shaped; seam twins split together) and the new faces tested in turn, so vertices land only where a linear ramp would be wrong.  Costs roughly one extra sample per edge and per face of the output.  Clamped to the sampling noise floor, ~1.3/samples^0.75 (0.095 at 32 samples, 0.02 at 256, 0.012 at 512), with a printed notice; below it noise would refine every penumbra down to `min_edge`.  So `samples` sets the finest resolvable feature and `refine` the accepted interpolation error.  `nil` leaves the mesh as is."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal."
+          },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Split the mesh along sharp edges and recompute shading normals first, exactly like `compute_normals` with the runtime sharp-angle threshold, so each side of a crease bakes with its own normal and holds its own AO (and `smooth_attr` can't bleed across it).  Off, a crease vertex gets one value blended over both sides.  Leaves the mesh open along creases like the exported mesh already is, so bake last; already-split meshes are unaffected."
+          },
         ],
-        description: "Bakes ambient occlusion per vertex into a scalar attribute: the fraction of cosine-weighted hemisphere rays from each vertex (around its smooth normal) that escape `mesh` and `occluders`; 1 = open, 0 = buried.  Sampling is deterministic, so re-evaluation is stable.  Resolution is the mesh's own: a large triangle gets a linear ramp between its corners, so `tessellate` first where occlusion detail matters, and `smooth_attr` the result to soften noise.  Read it in shaders via the material's `vertexAttrs`, or write it into `color`, which every material multiplies in by default.",
+        description: "Bakes ambient occlusion per vertex into a scalar attribute: the fraction of cosine-weighted hemisphere rays from each vertex (around its smooth normal) that escape `mesh` and `occluders`; 1 = open, 0 = buried.  Sampling is deterministic, so re-evaluation is stable.  Resolution is the mesh's own: a large triangle gets a linear ramp between its corners, so either `tessellate` first where occlusion detail matters or pass `refine` to split edges only where the ramp is wrong, and `smooth_attr` the result to soften noise (typically `smooth_attr(\"ao\", iterations=2, weights=\"cotan\")`).  Read it in shaders via the material's `vertexAttrs`, or write it into `color`, which every material multiplies in by default.",
         return_type: &[ArgType::Mesh],
       },
     ],

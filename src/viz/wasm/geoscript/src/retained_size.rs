@@ -13,7 +13,7 @@ use crate::{Callable, TexKind, Value};
 /// The distinct heap allocations a value keeps alive, as `(address, bytes)` pairs — a set
 /// rather than a total because texture ops freely share plane buffers and cached values wrap
 /// each other, so callers dedupe by address. Only allocations owned through an `Rc` reachable
-/// from the value are reported; lazily-populated memo fields (mip chains, cached trimeshes)
+/// from the value are reported; lazily-populated memo fields (mip chains, cached BVHs)
 /// can be replaced behind a shared reference, which would leave a stale address charged.
 pub(crate) fn retained_allocs(value: &Value) -> Vec<(usize, usize)> {
   let mut walk = Walk::default();

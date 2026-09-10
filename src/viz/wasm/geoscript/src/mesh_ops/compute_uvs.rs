@@ -533,7 +533,7 @@ fn rebuild_split_mesh(
     transform: src.transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: src.material.clone(),
   }
 }
@@ -870,7 +870,7 @@ fn planar_uvs(mesh: &MeshHandle, scale: f32) -> Result<MeshHandle, ErrorStack> {
     transform: mesh.transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: mesh.material.clone(),
   })
 }
@@ -1169,7 +1169,7 @@ fn cylindrical_uvs(
     transform: mesh.transform,
     manifold_handle: Rc::new(ManifoldHandle::new(0)),
     aabb: RefCell::new(None),
-    trimesh: RefCell::new(None),
+    bvh: RefCell::new(None),
     material: mesh.material.clone(),
   })
 }

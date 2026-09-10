@@ -13,6 +13,8 @@ pub mod mesh_boolean;
 pub mod mesh_ops;
 pub mod parametric_surface;
 mod profile_creases;
+#[cfg(test)]
+mod query_tests;
 pub mod rail_sweep;
 pub mod stitch_contours;
 pub mod tessellate_polygon;

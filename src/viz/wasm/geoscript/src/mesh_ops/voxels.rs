@@ -163,7 +163,7 @@ pub fn sample_voxels(
         transform: Mat4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: materials.get(i).cloned(),
       };
       out_meshes.push(mesh);

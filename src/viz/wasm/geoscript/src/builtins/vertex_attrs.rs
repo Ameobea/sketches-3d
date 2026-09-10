@@ -3,12 +3,12 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 use mesh::{
   attrs::{self, SmoothWeights},
-  linked_mesh::{Arity, Channel, Interp, SpatialXform, VertexKey},
+  linked_mesh::{mesh_flags, Arity, Channel, Interp, SpatialXform, VertexKey},
   LinkedMesh,
 };
 
 use crate::{
-  mesh_ops::bake_ao::{bake_ao, AoParams},
+  mesh_ops::bake_ao::{bake_ao, AoParams, Refine},
   seq::EagerSeq,
   vertex_cb::{attr_value, VertexCb, IX_KEY},
   ArgRef, ErrorStack, EvalCtx, ManifoldHandle, MeshHandle, Sym, Value,
@@ -79,7 +79,7 @@ fn with_mesh(src: &MeshHandle, mesh: LinkedMesh<()>) -> Value {
     transform: src.transform,
     manifold_handle: Rc::new(ManifoldHandle::new_empty()),
     aabb: src.aabb.clone(),
-    trimesh: src.trimesh.clone(),
+    bvh: src.bvh.clone(),
     material: src.material.clone(),
   }))
 }
@@ -333,7 +333,21 @@ pub(crate) fn bake_ao_impl(
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   let mesh = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
-  let samples = arg_refs[1].resolve(args, kwargs).as_int().unwrap().max(1) as usize;
+  let refine_tol = match arg_refs[6].resolve(args, kwargs) {
+    Value::Nil => None,
+    v => {
+      let tol = v.as_float().unwrap();
+      if tol <= 0. {
+        return Err(ErrorStack::new("`bake_ao` `refine` tolerance must be > 0"));
+      }
+      Some(tol)
+    }
+  };
+  let samples = match arg_refs[1].resolve(args, kwargs) {
+    Value::Nil if refine_tol.is_some() => 256,
+    Value::Nil => 32,
+    v => v.as_int().unwrap().max(1) as usize,
+  };
   let max_dist = match arg_refs[2].resolve(args, kwargs) {
     Value::Nil => f32::MAX,
     v => v.as_float().unwrap(),
@@ -352,11 +366,12 @@ pub(crate) fn bake_ao_impl(
       .collect::<Result<_, _>>()?,
     _ => unreachable!(),
   };
+  let diag = {
+    let aabb = mesh.get_or_compute_aabb();
+    (aabb.maxs - aabb.mins).norm()
+  };
   let bias = match arg_refs[4].resolve(args, kwargs) {
-    Value::Nil => {
-      let aabb = mesh.get_or_compute_aabb();
-      ((aabb.maxs - aabb.mins).norm() * 1e-4).max(1e-6)
-    }
+    Value::Nil => (diag * 1e-4).max(1e-6),
     v => v.as_float().unwrap(),
   };
   let into = attr_name(arg_refs[5].resolve(args, kwargs))?;
@@ -371,21 +386,64 @@ pub(crate) fn bake_ao_impl(
        it with `set_attr(\"{into}\", |p, n, {{ao}}| v3(ao))`"
     )));
   }
+  let refine = refine_tol.map(|tol| {
+    // Measured estimator RMS error is ~0.34·samples^-0.75 (nearly independent of the occlusion
+    // level); a probe-vs-chord comparison sees ~1.25× that, and tolerances under ~3σ turn noise
+    // into splits all the way down to `min_edge`.
+    let floor = 1.3 * (samples as f32).powf(-0.75);
+    if tol < floor {
+      let msg = format!(
+        "bake_ao: refine={tol} is below the sampling noise floor at {samples} samples \
+         (~{floor:.3}); using {floor:.3}.  Raise `samples` to refine finer."
+      );
+      ctx.prints.borrow_mut().push(msg.clone());
+      (ctx.log_fn)(&msg);
+    }
+    let min_edge = match arg_refs[7].resolve(args, kwargs) {
+      Value::Nil => diag * 0.01,
+      v => v.as_float().unwrap(),
+    };
+    Refine {
+      tol: tol.max(floor),
+      min_edge,
+    }
+  });
 
+  let mut out = (*mesh.mesh).clone();
+  if arg_refs[8].resolve(args, kwargs).as_bool().unwrap() {
+    out.recompute_shading_normals_preserving_seams(
+      ctx.read_sharp_angle_threshold_degrees().to_radians(),
+    );
+    out.flags |= mesh_flags::NO_WELD;
+  }
   let ao = bake_ao(
     mesh,
+    &mut out,
     &occluders,
     &AoParams {
       samples,
       max_dist,
       bias,
     },
+    refine.as_ref(),
   )?;
-  let mut out = (*mesh.mesh).clone();
   let mut ch = Channel::for_attr(into, Arity::Scalar);
   for (k, v) in ao {
     ch.set(k, [v, 0., 0., 0.]);
   }
   out.vertex_channels.insert(into.to_owned(), ch);
-  Ok(with_mesh(mesh, out))
+  // Splits keep the surface, but cached BVH triangle indices no longer map onto the new faces.
+  let unchanged = out.vertices.len() == mesh.mesh.vertices.len();
+  Ok(Value::Mesh(Rc::new(MeshHandle {
+    mesh: Rc::new(out),
+    transform: mesh.transform,
+    manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+    aabb: mesh.aabb.clone(),
+    bvh: if unchanged {
+      mesh.bvh.clone()
+    } else {
+      Default::default()
+    },
+    material: mesh.material.clone(),
+  })))
 }

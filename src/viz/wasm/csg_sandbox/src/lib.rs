@@ -85,9 +85,6 @@ pub fn csg_sandbox_init(
   // let csg1 = CSG::from(mesh1.mesh.clone());
 
   // let mut mesh = csg0.subtract(csg1.mesh);
-  // let mut mesh = csg0
-  //   .intersect_experimental(csg1.mesh)
-  //   .expect("Error applying CSG");
 
   let target_edge_length = 0.56;
   tessellation::tessellate_mesh(

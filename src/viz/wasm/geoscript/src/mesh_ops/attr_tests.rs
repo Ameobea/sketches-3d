@@ -261,3 +261,85 @@ local = box(1) | bake_ao(samples=16, occluders=box(4), max_dist=0.5, into="occ")
     .iter()
     .all(|v| v.as_float().unwrap() > 0.98));
 }
+
+#[test]
+fn bake_ao_refine_splits_near_occluder_only() {
+  let ctx = parse_and_eval_program(
+    r#"
+floor = box(40, 0.5, 40)
+lid = box(4) | trans(17, 2.25, 0)
+flat = floor | bake_ao(samples=32, occluders=lid)
+fine = floor | bake_ao(samples=64, occluders=lid, refine=0.06, min_edge=0.5)
+"#,
+  )
+  .unwrap();
+  let flat = ctx
+    .get_global("flat")
+    .unwrap()
+    .as_mesh()
+    .unwrap()
+    .mesh
+    .clone();
+  let fine = ctx
+    .get_global("fine")
+    .unwrap()
+    .as_mesh()
+    .unwrap()
+    .mesh
+    .clone();
+  // seams split by default: six separate faces
+  assert_eq!((flat.faces.len(), flat.vertices.len()), (12, 24));
+  assert!(fine.faces.len() > 100, "{}", fine.faces.len());
+  assert!(all_have(&fine, "ao"));
+  let ch = &fine.vertex_channels["ao"];
+  let mut near = Vec::new();
+  let mut far = Vec::new();
+  for f in fine.faces.values() {
+    let [a, b, c] = f.vertices.map(|k| fine.vertices[k].position);
+    let centroid = (a + b + c) / 3.;
+    if centroid.y < 0. {
+      continue;
+    }
+    let longest = [(a - b).norm(), (b - c).norm(), (c - a).norm()]
+      .into_iter()
+      .fold(0f32, f32::max);
+    if ((centroid.x - 17.).powi(2) + centroid.z.powi(2)).sqrt() < 1.5 {
+      near.push(longest);
+    } else if centroid.x < 0. {
+      far.push(longest);
+    }
+  }
+  let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+  assert!(
+    mean(&near) * 4. < mean(&far),
+    "near {} far {}",
+    mean(&near),
+    mean(&far)
+  );
+  for (k, v) in fine.vertices.iter() {
+    let ao = ch.get(k).unwrap()[0];
+    if v.position.y > 0. && (v.position.x - 17.).abs() < 1.5 && v.position.z.abs() < 1.5 {
+      assert!(ao < 0.6, "{ao} at {:?}", v.position);
+    } else if v.position.y > 0. && v.position.x < -5. {
+      assert!(ao > 0.95, "{ao} at {:?}", v.position);
+    }
+  }
+  // The shadow reaches the +x crease, so its seam edges refined; every boundary edge must still
+  // have a bit-identical twin on the other side (no T-junctions).
+  let mut twins: fxhash::FxHashMap<[[u32; 3]; 2], usize> = Default::default();
+  let mut seam_edges = 0;
+  for e in fine.edges.values() {
+    if e.faces.len() == 1 {
+      seam_edges += 1;
+      let [a, b] = e.vertices.map(|k| {
+        let p = fine.vertices[k].position;
+        [p.x.to_bits(), p.y.to_bits(), p.z.to_bits()]
+      });
+      *twins
+        .entry(if a < b { [a, b] } else { [b, a] })
+        .or_default() += 1;
+    }
+  }
+  assert!(seam_edges > 24, "{seam_edges}");
+  assert!(twins.values().all(|&n| n == 2), "unmatched seam edges");
+}
