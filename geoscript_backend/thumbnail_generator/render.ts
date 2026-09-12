@@ -4,14 +4,18 @@ import express, { type Request, type Response } from 'express';
 import puppeteer, { type Page, type Browser } from 'puppeteer';
 import sharp from 'sharp';
 import { gzipSync } from 'node:zlib';
+import { POLICY_ARGS } from './policy.ts';
 
 const app = express();
 const port = 5812;
 
-// macOS (dev) can't create a WebGL2 context under SwiftShader, so use ANGLE's
-// Metal backend (real GPU); Linux servers keep software SwiftShader.
+// macOS (dev) can't create a WebGL2 context under SwiftShader, so use ANGLE's Metal backend
+// (real GPU); Linux servers use software SwiftShader, which Chrome 130+ only allows behind
+// `--enable-unsafe-swiftshader` (`--use-gl=swiftshader` no longer yields a context).
 const GL_ARGS =
-  process.platform === 'darwin' ? ['--use-gl=angle', '--use-angle=metal'] : ['--use-gl=swiftshader'];
+  process.platform === 'darwin'
+    ? ['--use-gl=angle', '--use-angle=metal']
+    : ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'];
 
 const BROWSER_ARGS = [
   '--no-sandbox',
@@ -62,6 +66,7 @@ const TRACE_CATEGORIES = [
 const PROD_TRANSIENT_URL = 'https://3d.ameo.design/geotoy/render';
 const DEV_TRANSIENT_URL = 'http://localhost:4800/geotoy/render';
 
+
 interface TransientRenderOptions {
   /** 'png' (default) | 'avif' | 'jpeg' */
   format?: 'png' | 'avif' | 'jpeg';
@@ -101,7 +106,6 @@ async function setupPage(
   opts: {
     width?: number;
     height?: number;
-    allowLocalhost?: boolean;
     timeoutMs?: number;
     trace?: boolean;
   } = {}
@@ -111,7 +115,6 @@ async function setupPage(
   isTracing: () => boolean;
 }> {
   await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
-  const allowLocalhost = !!opts.allowLocalhost;
   const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
 
   // Capture in-page failures (console errors/warnings, uncaught exceptions, failed
@@ -197,57 +200,14 @@ async function setupPage(
     }),
   ]);
 
-  // Dev pages load from localhost anyway, and interception pauses module-worker imports
-  // that never resume under this puppeteer, so the request policy is prod-only.
-  if (allowLocalhost) {
-    return { promise: renderReadyPromise, getDiagnostics: () => diagnostics, isTracing: () => tracing };
-  }
-
-  await page.setRequestInterception(true);
-
-  page.on('request', request => {
-    const requestUrlString = request.url();
-    let requestUrl: URL;
-
-    try {
-      requestUrl = new URL(requestUrlString);
-    } catch (_err) {
-      console.log(`Blocking request to invalid URL: ${requestUrlString}`);
-      request.abort();
-      return;
+  // The network policy lives in the browser's proxy config (see POLICY_PAC); here only a
+  // main-frame navigation off the target origin is caught, failing fast instead of timing out.
+  const targetOrigin = new URL(url).origin;
+  page.on('framenavigated', frame => {
+    const origin = URL.parse(frame.url())?.origin;
+    if (frame === page.mainFrame() && origin && origin !== targetOrigin) {
+      failReady(new Error(`Page navigated away from the render target: ${frame.url()}`));
     }
-
-    const ipv4Regex = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/;
-    // Block if the hostname is an IP address. This covers IPv4 and IPv6 (which contain colons).
-    const isIpAddress = ipv4Regex.test(requestUrl.hostname) || requestUrl.hostname.includes(':');
-
-    if (isIpAddress) {
-      console.log(`Blocking request to IP address: ${requestUrlString}`);
-      request.abort();
-      return;
-    }
-
-    // Block file: always; block localhost unless explicitly allowed (dev mode).
-    if (requestUrl.protocol === 'file:') {
-      console.log(`Blocking request to local resource: ${requestUrlString}`);
-      request.abort();
-      return;
-    }
-    if (requestUrl.hostname === 'localhost' && !allowLocalhost) {
-      console.log(`Blocking request to local resource: ${requestUrlString}`);
-      request.abort();
-      return;
-    }
-
-    // Block navigations away from the target page
-    if (request.resourceType() === 'document' && requestUrlString !== url) {
-      console.log(`Blocking navigation to: ${requestUrlString}`);
-      request.abort();
-      return;
-    }
-
-    // Allow all other requests to continue
-    request.continue();
   });
 
   return { promise: renderReadyPromise, getDiagnostics: () => diagnostics, isTracing: () => tracing };
@@ -259,7 +219,7 @@ interface RenderOpts {
   /** Viewport dimensions. */
   width?: number;
   height?: number;
-  /** Allow puppeteer to load localhost resources (dev mode). */
+  /** Dev mode: skip the prod network policy so localhost frontends load. */
   allowLocalhost?: boolean;
   /** Setup hook called before navigation (e.g. `evaluateOnNewDocument` for payload injection). */
   beforeNavigate?: (page: Page) => Promise<void>;
@@ -280,7 +240,12 @@ async function render(
 ): Promise<RenderOutput> {
   console.log('Launching browser...');
   const browser: Browser = await puppeteer.launch({
-    args: opts.bench ? [...BROWSER_ARGS, ...BENCH_ARGS] : BROWSER_ARGS,
+    args: [
+      ...BROWSER_ARGS,
+      ...(opts.bench ? BENCH_ARGS : []),
+      // Dev pages live on localhost, so the policy is prod-only.
+      ...(opts.allowLocalhost ? [] : POLICY_ARGS),
+    ],
   });
 
   try {
@@ -292,7 +257,6 @@ async function render(
     } = await setupPage(page, url, abortController, {
       width: opts.width,
       height: opts.height,
-      allowLocalhost: opts.allowLocalhost,
       timeoutMs: opts.timeoutMs,
       trace: opts.trace,
     });
