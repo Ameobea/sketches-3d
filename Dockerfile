@@ -8,6 +8,8 @@ RUN yarn install --frozen-lockfile
 
 FROM deps AS builder
 
+ARG GIT_HEAD=unknown
+ENV GIT_HEAD=$GIT_HEAD
 COPY . /app
 
 # adapter-node's `precompress` brotli/gzips ~90MB of output on libuv's threadpool, which

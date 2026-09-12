@@ -1462,7 +1462,7 @@ mod tests {
         transform: Mat4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new(0)),
         aabb: RefCell::new(None),
-        trimesh: RefCell::new(None),
+        bvh: RefCell::new(None),
         material: None,
       }),
       source_module: None,

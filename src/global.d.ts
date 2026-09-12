@@ -1,5 +1,8 @@
 /// <reference types="@sveltejs/kit" />
 
+/** `git describe --always --dirty` of the build (vite `define`). */
+declare const __GIT_HEAD__: string;
+
 declare module 'n8ao';
 // declare module 'svelte-codemirror-editor';
 declare module 'graphviz-builder';

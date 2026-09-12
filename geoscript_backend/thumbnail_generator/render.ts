@@ -79,9 +79,9 @@ interface TransientRenderOptions {
   materialOverride?: 'normal' | 'wireframe' | 'wireframe-xray';
   /** `geotoy eval`: serialize the run's outputs to JSON instead of rendering an image. */
   eval?: unknown;
-  /** Benchmark request (dev only): re-run in place and report timings instead of rendering. */
+  /** Benchmark request: re-run in place and report timings instead of rendering. */
   bench?: unknown;
-  /** Bench only (dev only): capture a DevTools trace of the timed runs. */
+  /** Bench only: capture a DevTools trace of the timed runs. */
   trace?: boolean;
 }
 
@@ -454,9 +454,8 @@ app.post('/render_transient', jsonBodyParser, async (req: Request, res: Response
   const dev = !!options.dev;
   const bench = options.bench;
   const trace = !!options.trace;
-  if ((bench || trace) && !dev) {
-    return res.status(400).send('bench/trace are only available in dev mode');
-  }
+  // bench/trace are not gated on `dev`: this port is firewalled, and the only outside path
+  // is the backend's `/render/transient` proxy, which requires the CLI token.
   const timeoutMs =
     typeof options.timeoutMs === 'number' && options.timeoutMs > 0
       ? Math.min(options.timeoutMs, (bench ? 60 : 10) * 60 * 1000)

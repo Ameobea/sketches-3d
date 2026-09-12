@@ -79,7 +79,7 @@ pub struct VectorizeState {
 #[wasm_bindgen::prelude::wasm_bindgen]
 extern "C" {
   type Performance;
-  #[wasm_bindgen(js_name = performance)]
+  #[wasm_bindgen(thread_local_v2, js_name = performance)]
   static PERFORMANCE: Performance;
   #[wasm_bindgen(method)]
   fn now(this: &Performance) -> f64;
@@ -88,7 +88,7 @@ extern "C" {
 fn now_ms() -> f64 {
   #[cfg(target_arch = "wasm32")]
   {
-    PERFORMANCE.now()
+    PERFORMANCE.with(|p| p.now())
   }
   #[cfg(not(target_arch = "wasm32"))]
   {

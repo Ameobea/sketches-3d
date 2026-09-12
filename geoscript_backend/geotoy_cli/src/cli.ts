@@ -119,7 +119,7 @@ const identityInstance = (): Instance => ({
 const usage = `Usage:
   geotoy render <path> [options]   Render a composition to an image
   geotoy eval   <path> [options]   Run a composition and print its outputs as JSON
-  geotoy bench  <path> [options]   Time repeated runs of a composition (requires --dev)
+  geotoy bench  <path> [options]   Time repeated runs of a composition (prod, or --dev)
 
   <path>  Either a directory containing a composition, or a single .geo file
           (treated as the _root source).
@@ -405,7 +405,7 @@ const resolveCommon = (opts: Opts, defaultTimeoutSec: number, bench = false): Co
   const backend =
     (opts.backend as string | undefined) ?? (dev ? (bench ? DEV_BENCH_SERVICE : DEV_BACKEND) : PROD_BACKEND);
   const token = (opts.token as string | undefined) ?? process.env.GEOTOY_CLI_TOKEN ?? '';
-  if (!token && !bench) die('Missing CLI token. Pass --token or set GEOTOY_CLI_TOKEN.');
+  if (!token && !(bench && dev)) die('Missing CLI token. Pass --token or set GEOTOY_CLI_TOKEN.');
   const timeoutSec = opts.timeout ? parseFloat(opts.timeout as string) : defaultTimeoutSec;
   if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) die(`Invalid --timeout ${opts.timeout}`);
   return { backend, token, timeoutMs: Math.round(timeoutSec * 1000), dev };
@@ -545,7 +545,6 @@ const intOpt = (opts: Opts, key: string, dflt: number, min: number): number => {
 
 const runBench = async (input: string, opts: Opts) => {
   const common = resolveCommon(opts, 600, true);
-  if (!common.dev) die('bench requires --dev (the render service only benchmarks local frontends)');
   const mode = (opts.mode as string | undefined) ?? 'cold';
   if (mode !== 'cold' && mode !== 'warm') die(`Invalid --mode ${mode}. Must be cold or warm.`);
   const bench: BenchRequest = {
@@ -557,7 +556,7 @@ const runBench = async (input: string, opts: Opts) => {
 
   const payload = buildPayload(input);
   if (opts['no-prelude']) payload.metadata.preludeEjected = true;
-  payload.options = { dev: true, timeoutMs: common.timeoutMs, bench, trace: !!opts.trace };
+  payload.options = { dev: common.dev, timeoutMs: common.timeoutMs, bench, trace: !!opts.trace };
 
   const outPath = opts.out as string | undefined;
   process.stderr.write(

@@ -5,7 +5,7 @@ authors = ["Casey Primozic <casey@cprimozic.net>"]
 edition = "2021"
 
 [dependencies]
-nalgebra = "0.34"
+nalgebra = "0.35"
 slotmap = "1.0"
 fxhash = "0.2"
 smallvec = "1.15"
@@ -13,7 +13,7 @@ bitvec = { version = "1",  default-features = false, features = ["alloc", "std"]
 log = { version = "0.4", features = [] }
 arrayvec = "0.7"
 lyon_tessellation = "1.0"
-wide = "0.7"
+wide = "1"
 
 common = { path = "../common" }
 

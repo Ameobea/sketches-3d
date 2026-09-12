@@ -9,11 +9,11 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 fxhash = "0.2"
-nalgebra = "0.34"
+nalgebra = "0.35"
 smallvec = "1.15"
 faer = { version = "0.24", default-features = false, features = ["std"] }
 
 mesh = { path = "../mesh" }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wasm-bindgen = "=0.2.92"
+wasm-bindgen = "=0.2.128"

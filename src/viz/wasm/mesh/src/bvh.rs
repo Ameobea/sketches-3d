@@ -4,7 +4,7 @@
 //! four children and leaves hold a few triangles.
 
 use smallvec::SmallVec;
-use wide::{f32x4, CmpGe, CmpGt, CmpLe};
+use wide::f32x4;
 
 use crate::linked_mesh::Vec3;
 use crate::triangle_intersection::tri_tri_intersection;
@@ -438,7 +438,7 @@ impl TriBvh {
         let d = lo.fast_max(zero).fast_max(-hi);
         dist_sq += d * d;
       }
-      let live = (height.cmp_gt(zero) & dist_sq.cmp_le(max_sq)).move_mask();
+      let live = (height.simd_gt(zero) & dist_sq.simd_le(max_sq)).to_bitmask();
       for k in 0..4 {
         if live & (1 << k) == 0 {
           continue;
@@ -526,9 +526,9 @@ impl TriBvh {
     let overlap = |na: &Node4, ja: usize, nb: &Node4| -> u32 {
       let mut m = 0b1111u32;
       for ax in 0..3 {
-        let lo = f32x4::splat(na.mins[ax].as_array_ref()[ja]);
-        let hi = f32x4::splat(na.maxs[ax].as_array_ref()[ja]);
-        m &= ((nb.maxs[ax] + e).cmp_ge(lo) & (nb.mins[ax] - e).cmp_le(hi)).move_mask() as u32;
+        let lo = f32x4::splat(na.mins[ax].as_array()[ja]);
+        let hi = f32x4::splat(na.maxs[ax].as_array()[ja]);
+        m &= ((nb.maxs[ax] + e).simd_ge(lo) & (nb.mins[ax] - e).simd_le(hi)).to_bitmask();
       }
       m
     };
@@ -618,7 +618,7 @@ fn inv_dir(d: &Vec3) -> [f32x4; 3] {
 }
 
 #[inline(always)]
-fn slab4(node: &Node4, o: &[f32x4; 3], inv: &[f32x4; 3], max_t: f32) -> i32 {
+fn slab4(node: &Node4, o: &[f32x4; 3], inv: &[f32x4; 3], max_t: f32) -> u32 {
   let mut tmin = f32x4::splat(0.);
   let mut tmax = f32x4::splat(max_t);
   for axis in 0..3 {
@@ -627,7 +627,7 @@ fn slab4(node: &Node4, o: &[f32x4; 3], inv: &[f32x4; 3], max_t: f32) -> i32 {
     tmin = tmin.fast_max(t1.fast_min(t2));
     tmax = tmax.fast_min(t1.fast_max(t2));
   }
-  tmax.cmp_ge(tmin).move_mask()
+  tmax.simd_ge(tmin).to_bitmask()
 }
 
 /// Möller–Trumbore, both faces, `(0, max_t)` exclusive.

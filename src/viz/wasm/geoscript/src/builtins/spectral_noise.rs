@@ -91,7 +91,7 @@ mod fm {
 /// the setup. Lane-for-lane identical to `fm` (same coefficients, same operand order).
 mod fm4 {
   use bytemuck::cast;
-  use wide::{f32x4, i32x4, CmpEq, CmpLe, CmpLt};
+  use wide::{f32x4, i32x4};
 
   #[inline(always)]
   pub fn log2(x: f32x4) -> f32x4 {
@@ -161,11 +161,11 @@ mod fm4 {
               + t
                 * (f32x4::splat(-0.020_864)
                   + t * (f32x4::splat(0.000_919_2) + t * f32x4::splat(-0.000_025_2)))));
-    let odd: f32x4 = cast((i & i32x4::splat(1)).cmp_eq(i32x4::splat(1)));
-    let (a, b) = (odd.blend(c, s), odd.blend(s, c));
+    let odd: f32x4 = cast((i & i32x4::splat(1)).simd_eq(i32x4::splat(1)));
+    let (a, b) = (odd.select(c, s), odd.select(s, c));
     let sign = |m: i32x4| -> f32x4 { cast(m & i32x4::splat(0x8000_0000u32 as i32)) };
-    let neg_a = sign((i & i32x4::splat(2)).cmp_eq(i32x4::splat(2)));
-    let neg_b = sign(((i + i32x4::splat(1)) & i32x4::splat(2)).cmp_eq(i32x4::splat(2)));
+    let neg_a = sign((i & i32x4::splat(2)).simd_eq(i32x4::splat(2)));
+    let neg_b = sign(((i + i32x4::splat(1)) & i32x4::splat(2)).simd_eq(i32x4::splat(2)));
     (a ^ neg_a, b ^ neg_b)
   }
 
@@ -173,15 +173,15 @@ mod fm4 {
   #[inline(always)]
   pub fn angle_over_pi(fy: f32x4, ay: f32x4, ax: f32x4, neg_x: bool) -> f32x4 {
     let z = atan_over_pi(ay.min(ax) / ay.max(ax).max(f32x4::splat(f32::MIN_POSITIVE)));
-    let le: f32x4 = cast(ay.cmp_le(ax));
-    let q = le.blend(z, f32x4::splat(0.5) - z);
-    let neg_y = fy.cmp_lt(f32x4::splat(0.));
+    let le: f32x4 = cast(ay.simd_le(ax));
+    let q = le.select(z, f32x4::splat(0.5) - z);
+    let neg_y = fy.simd_lt(f32x4::splat(0.));
     let flip = if neg_x {
       !cast::<f32x4, i32x4>(neg_y)
     } else {
       cast::<f32x4, i32x4>(neg_y)
     };
-    cast::<i32x4, f32x4>(flip).blend(f32x4::splat(1.) - q, q)
+    cast::<i32x4, f32x4>(flip).select(f32x4::splat(1.) - q, q)
   }
 }
 

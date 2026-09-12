@@ -2,7 +2,7 @@
 //! reuse them: AA fill coverage / per-texel winding (`EdgeList`, texel space) and exact
 //! nearest-segment queries (`SegmentField`, path space on the unit window).
 
-use wide::{f32x4, CmpLt};
+use wide::f32x4;
 
 use crate::builtins::trace_path::FillRule;
 use crate::Vec2;
@@ -349,10 +349,10 @@ impl SegmentField {
         let mut best_s = f32x4::ZERO;
         for &ix in &list {
           let (d2, s) = self.nearest4(ix as usize, px, py);
-          let m = d2.cmp_lt(best_d2);
-          best_d2 = m.blend(d2, best_d2);
-          best_ix = m.blend(f32x4::splat(ix as f32), best_ix);
-          best_s = m.blend(s, best_s);
+          let m = d2.simd_lt(best_d2);
+          best_d2 = m.select(d2, best_d2);
+          best_ix = m.select(f32x4::splat(ix as f32), best_ix);
+          best_s = m.select(s, best_s);
         }
         let (d, ix, s) = (
           best_d2.sqrt().to_array(),

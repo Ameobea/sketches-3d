@@ -13,7 +13,7 @@ const UVSolversWasm = new AsyncOnce(async () => {
     throw new Error('uv_solvers wasm URL not configured; call setUVSolversWasmURL() first');
   }
   const mod = await import('src/viz/wasmComp/uv_solvers');
-  await mod.default(fetch(WasmURL));
+  await mod.default({ module_or_path: fetch(WasmURL) });
   return mod;
 });
 

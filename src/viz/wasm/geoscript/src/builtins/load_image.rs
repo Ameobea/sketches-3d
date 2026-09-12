@@ -44,7 +44,7 @@ fn fetch_rgba(uri: &str) -> Result<(usize, usize, Vec<u8>), ErrorStack> {
   let mut reader = decoder
     .read_info()
     .map_err(|err| ErrorStack::new(format!("error decoding PNG: {err}")))?;
-  let mut buf = vec![0u8; reader.output_buffer_size()];
+  let mut buf = vec![0u8; reader.output_buffer_size().unwrap()];
   let info = reader
     .next_frame(&mut buf)
     .map_err(|err| ErrorStack::new(format!("error decoding PNG: {err}")))?;

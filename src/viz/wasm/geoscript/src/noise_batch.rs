@@ -3,7 +3,7 @@
 //! 4-wide SIMD, but bit-identical to the per-texel kernels in `noise`: same operand
 //! order, same rounding, same integer hashing.
 
-use wide::{f32x4, CmpGe, CmpGt, CmpLt};
+use wide::f32x4;
 
 use crate::{
   noise::{
@@ -73,8 +73,8 @@ fn max_abs(s: &[f32]) -> f32 {
 #[inline(always)]
 fn wrap_cells(cell: f32x4, period: f32x4, inv: f32x4) -> f32x4 {
   let w = cell - (cell * inv).floor() * period;
-  let w = w.cmp_lt(f32x4::splat(0.)).blend(w + period, w);
-  w.cmp_ge(period).blend(w - period, w)
+  let w = w.simd_lt(f32x4::splat(0.)).select(w + period, w);
+  w.simd_ge(period).select(w - period, w)
 }
 
 #[inline(always)]
@@ -97,8 +97,8 @@ fn surflet4((gx, gy): (f32x4, f32x4), dx: f32x4, dy: f32x4) -> f32x4 {
   let attn = f32x4::splat(1.) - (dx * dx + dy * dy);
   let a4 = ((attn * attn) * attn) * attn;
   attn
-    .cmp_gt(f32x4::splat(0.))
-    .blend(a4 * (dx * gx + dy * gy), f32x4::splat(0.))
+    .simd_gt(f32x4::splat(0.))
+    .select(a4 * (dx * gx + dy * gy), f32x4::splat(0.))
 }
 
 #[inline(always)]
@@ -250,8 +250,8 @@ fn surflet3_4(g: (f32x4, f32x4, f32x4), dx: f32x4, dy: f32x4, dz: f32x4) -> f32x
   let attn = f32x4::splat(1.) - (dx * dx + dy * dy + dz * dz);
   let a4 = ((attn * attn) * attn) * attn;
   attn
-    .cmp_gt(f32x4::splat(0.))
-    .blend(a4 * (dx * g.0 + dy * g.1 + dz * g.2), f32x4::splat(0.))
+    .simd_gt(f32x4::splat(0.))
+    .select(a4 * (dx * g.0 + dy * g.1 + dz * g.2), f32x4::splat(0.))
 }
 
 #[inline(always)]

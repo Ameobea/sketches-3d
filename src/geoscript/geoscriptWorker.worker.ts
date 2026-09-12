@@ -69,7 +69,7 @@ const initGeoscript = async () => {
   }
   // Pass `fetch(url)` directly so wasm-bindgen uses `WebAssembly.instantiateStreaming`.
   // With the `<link rel="preload">` from the scene route, the fetch is a cache hit.
-  await Geoscript.default(fetch(geoscriptReplWasmURL));
+  await Geoscript.default({ module_or_path: fetch(geoscriptReplWasmURL) });
   return Geoscript;
 };
 

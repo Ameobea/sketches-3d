@@ -341,14 +341,16 @@ Plus the common `--dev` / `--backend` / `--token` / `--no-prelude` / `--timeout`
 
 ## `geotoy bench` — time repeated runs
 
-`geotoy bench <path> --dev` boots the composition once in a headless page, then re-runs it in
+`geotoy bench <path>` boots the composition once in a headless page, then re-runs it in
 place (`--warmup` untimed + `--iterations` timed runs) and prints per-run phase timings as JSON.
 `--mode cold` (default) clears every cross-run cache before each run; `--trace` also captures a
-DevTools trace of the timed runs to `<out>.trace.json.gz`. Dev only: the render service refuses
-bench requests against prod. The corpus-scale version is `scripts/geotoy-bench.ts`; see
-`docs/geotoy-bench.md`.
+DevTools trace of the timed runs to `<out>.trace.json.gz`. Without `--dev` it times the deployed
+prod frontend through the backend proxy (CLI token required, 15 min cap per request); `--dev` uses
+the local render service + frontend directly. The corpus-scale version is
+`scripts/geotoy-bench.ts`; see `docs/geotoy-bench.md`.
 
 ```sh
+geotoy bench my_scene/ --iterations 5 -o my_scene.prod.bench.json
 geotoy bench my_scene/ --dev --iterations 10 --trace -o my_scene.bench.json
 ```
 

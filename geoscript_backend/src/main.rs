@@ -1,5 +1,3 @@
-#![feature(once_cell_try)]
-
 use std::{sync::Arc, time::Duration};
 
 use foundations::{

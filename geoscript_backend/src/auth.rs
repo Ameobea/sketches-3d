@@ -1,6 +1,6 @@
 use argon2::{
   Argon2,
-  password_hash::{PasswordHasher, PasswordVerifier, SaltString},
+  password_hash::{PasswordHasher, PasswordVerifier},
 };
 use axum::{
   Json,
@@ -56,17 +56,8 @@ pub async fn register(
     ));
   }
 
-  let mut salt_bytes = [0u8; 16];
-  getrandom::fill(&mut salt_bytes).map_err(|_| {
-    APIError::new(
-      StatusCode::INTERNAL_SERVER_ERROR,
-      "Failed to generate salt.",
-    )
-  })?;
-  let salt = SaltString::encode_b64(&salt_bytes)
-    .map_err(|_| APIError::new(StatusCode::INTERNAL_SERVER_ERROR, "Failed to encode salt."))?;
   let hashed_password = Argon2::default()
-    .hash_password(registration.password.as_bytes(), &salt)
+    .hash_password(registration.password.as_bytes())
     .map_err(|_| {
       APIError::new(
         StatusCode::INTERNAL_SERVER_ERROR,

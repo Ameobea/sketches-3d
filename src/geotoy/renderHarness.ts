@@ -176,6 +176,7 @@ export const startRenderHarness = ({
       },
       asyncDeps: bs.asyncDeps,
       userAgent: navigator.userAgent,
+      build: __GIT_HEAD__,
     };
   };
 

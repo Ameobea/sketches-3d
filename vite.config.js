@@ -1,3 +1,4 @@
+import { execSync } from 'child_process';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import devtoolsJson from 'vite-plugin-devtools-json';
@@ -6,7 +7,19 @@ import { behaviorsPlugin } from './src/viz/sceneRuntime/viteBehaviorsPlugin.ts';
 import { generatorsPlugin } from './src/viz/levelDef/viteGeneratorsPlugin.ts';
 import { generatedScenesPlugin } from './src/viz/scenes/viteGeneratedScenesPlugin.ts';
 
+// Docker builds have no .git; the Justfile passes GIT_HEAD as a build arg instead.
+const gitHead = () => {
+  try {
+    return execSync('git describe --always --dirty', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch {
+    return 'unknown';
+  }
+};
+
 const config = defineConfig({
+  define: { __GIT_HEAD__: JSON.stringify(process.env.GIT_HEAD || gitHead()) },
   plugins: [
     // Must run before `sveltekit()` so its `config()` hook writes the
     // `src/routes/(generated)/` tree before SvelteKit walks the routes dir.

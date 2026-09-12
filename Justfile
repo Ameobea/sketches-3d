@@ -37,7 +37,7 @@ preview:
   bun run preview --host 0.0.0.0 --port 4800
 
 docker-build:
-  docker build -t dream:latest .
+  docker build --build-arg GIT_HEAD="$(git describe --always --dirty)" -t dream:latest .
 
 build-and-deploy:
   #!/bin/bash

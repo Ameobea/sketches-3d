@@ -6,7 +6,7 @@ import { getComposition, getCompositionLatest } from 'src/geoscript/geotoyAPICli
 
 const Geoscript = new AsyncOnce((fetch: typeof window.fetch) =>
   import('src/viz/wasmComp/geoscript_repl').then(async engine => {
-    await engine.default(fetch(geoscriptReplWasmURL));
+    await engine.default({ module_or_path: fetch(geoscriptReplWasmURL) });
     return engine;
   })
 );
