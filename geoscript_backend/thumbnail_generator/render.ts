@@ -113,6 +113,8 @@ async function setupPage(
   promise: Promise<ReadySignal>;
   getDiagnostics: () => string[];
   isTracing: () => boolean;
+  /** Disarms the readiness timeout; call once the render is over however it ended. */
+  dispose: () => void;
 }> {
   await page.setViewport({ width: opts.width ?? 600, height: opts.height ?? 600 });
   const timeoutMs = opts.timeoutMs ?? 30 * 60 * 1000;
@@ -146,6 +148,7 @@ async function setupPage(
 
   let settleReady!: (signal: ReadySignal) => void;
   let failReady!: (err: Error) => void;
+  let dispose = () => {};
   const renderReadyPromise = new Promise<ReadySignal>((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error(`Render timed out after ${timeoutMs}ms`)), timeoutMs);
 
@@ -165,6 +168,7 @@ async function setupPage(
       clearTimeout(timeout);
       abortController.signal.removeEventListener('abort', onAbort);
     };
+    dispose = settle;
     settleReady = signal => {
       settle();
       resolve(signal);
@@ -174,6 +178,10 @@ async function setupPage(
       reject(err);
     };
   });
+
+  // If navigation throws before this promise is awaited, a later timeout rejection must not
+  // become an unhandled rejection (which exits the process); the real awaiter still sees it.
+  renderReadyPromise.catch(() => {});
 
   // Awaited: an un-awaited binding can miss the navigation, leaving the page's readiness
   // call a silent no-op that only surfaces as a timeout.
@@ -210,7 +218,12 @@ async function setupPage(
     }
   });
 
-  return { promise: renderReadyPromise, getDiagnostics: () => diagnostics, isTracing: () => tracing };
+  return {
+    promise: renderReadyPromise,
+    getDiagnostics: () => diagnostics,
+    isTracing: () => tracing,
+    dispose: () => dispose(),
+  };
 }
 
 interface RenderOpts {
@@ -254,6 +267,7 @@ async function render(
       promise: renderReadyPromise,
       getDiagnostics,
       isTracing,
+      dispose,
     } = await setupPage(page, url, abortController, {
       width: opts.width,
       height: opts.height,
@@ -298,6 +312,8 @@ async function render(
       const enriched = new Error(diags.length ? `${base}\n\nBrowser diagnostics:\n${diags.join('\n')}` : base);
       (enriched as Error & { diagnostics?: string[] }).diagnostics = diags;
       throw enriched;
+    } finally {
+      dispose();
     }
   } finally {
     console.log('Closing browser...');
