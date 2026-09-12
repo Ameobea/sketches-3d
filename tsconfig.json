@@ -24,6 +24,7 @@
     "src/service-worker.d.ts",
     "src/service-worker/**/*.d.ts",
     "src/viz/wasm/**/build/**",
+    "src/viz/wasm/manifold-build/**",
     "src/viz/wasm/cgal/**",
     "src/viz/wasm/uv_unwrap/**",
     "src/viz/wasm/geodesics/**",

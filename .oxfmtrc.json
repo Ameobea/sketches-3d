@@ -22,6 +22,7 @@
     "src/viz/wasm/uv_unwrap",
     "src/viz/wasm/cgal",
     "src/viz/wasm/normals_bench",
+    "src/viz/wasm/manifold-build",
     "src/api",
     "src/geoscript/parser",
     "static",

@@ -89,6 +89,7 @@ pub(crate) mod path_raster;
 pub(crate) mod polyline_frames;
 pub(crate) mod ramp;
 pub(crate) mod sampling;
+pub(crate) mod simplify_path;
 pub(crate) mod sort;
 pub(crate) mod spectral_noise;
 pub(crate) mod tex_kernels;
@@ -2382,18 +2383,37 @@ fn convex_hull_impl(
 }
 
 fn simplify_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
   match def_ix {
-    0 => {
-      let tolerance = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
-
-      let out_mesh_handle =
-        simplify_mesh(mesh, tolerance).map_err(|err| err.wrap("Error in `simplify` function"))?;
+    0 | 1 => {
+      let (tolerance_ix, mesh_ix) = if def_ix == 0 { (0, 1) } else { (1, 0) };
+      let tolerance = arg_refs[tolerance_ix]
+        .resolve(args, kwargs)
+        .as_float()
+        .unwrap();
+      let mesh = arg_refs[mesh_ix].resolve(args, kwargs).as_mesh().unwrap();
+      let engine = arg_refs[2].resolve(args, kwargs);
+      let engine = match engine.as_str().unwrap() {
+        "meshopt" => crate::mesh_ops::mesh_ops::SimplifyEngine::Meshopt,
+        "manifold" => crate::mesh_ops::mesh_ops::SimplifyEngine::Manifold,
+        other => {
+          return Err(ErrorStack::new(format!(
+            "Invalid `engine` for `simplify`: {other}; expected \"meshopt\" or \"manifold\""
+          )))
+        }
+      };
+      let out_mesh_handle = simplify_mesh(
+        mesh,
+        tolerance,
+        engine,
+        ctx.read_sharp_angle_threshold_degrees(),
+      )
+      .map_err(|err| err.wrap("Error in `simplify` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh_handle)))
     }
     _ => unimplemented!(),
@@ -11112,6 +11132,9 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "discretize_path" => builtin_fn!(discretize_path, |def_ix, arg_refs, args, kwargs, ctx| {
     trace_path::discretize_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
+  "simplify_path" => builtin_fn!(simplify_path, |def_ix, arg_refs, args, kwargs, ctx| {
+    simplify_path::simplify_path_impl(ctx, def_ix, arg_refs, args, kwargs)
+  }),
   "path_segments" => builtin_fn!(path_segments, |def_ix, arg_refs, args, kwargs, _ctx| {
     path_segments_impl(def_ix, arg_refs, args, kwargs)
   }),
@@ -11187,8 +11210,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "embed_path" => builtin_fn!(embed_path, |def_ix, arg_refs, args, kwargs, ctx| {
     embed_path_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "simplify" => builtin_fn!(simplify, |def_ix, arg_refs, args, kwargs, _ctx| {
-    simplify_impl(def_ix, arg_refs, args, kwargs)
+  "simplify" => builtin_fn!(simplify, |def_ix, arg_refs, args, kwargs, ctx| {
+    simplify_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "convex_hull" => builtin_fn!(convex_hull, |def_ix, arg_refs, args, kwargs, ctx| {
     convex_hull_impl(ctx, def_ix, arg_refs, args, kwargs)

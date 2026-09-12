@@ -54,6 +54,7 @@ import { initUVSolvers, setUVSolversWasmURL } from './uvSolvers';
 import { initImageData } from './imageData';
 import { initModelData, setModelDataURLs } from './modelData';
 import { textToSvg } from './text_to_path';
+import { initMeshopt } from './meshopt';
 import type { GeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 
 // Wasm asset URLs are passed in by the main thread via `init()` (not imported
@@ -104,6 +105,7 @@ const enrichWasmError = (err: unknown): Error => {
 };
 
 export interface GeoscriptAsyncDeps {
+  meshopt?: boolean;
   geodesics?: boolean;
   cgal?: boolean;
   text_to_path?: boolean;
@@ -119,6 +121,7 @@ const initAsyncDeps = (
   argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>>
 ) => {
   const promises: Promise<void>[] = [];
+  if (deps.meshopt) promises.push(initMeshopt());
   if (deps.geodesics) {
     promises.push(initGeodesics());
   }
@@ -182,6 +185,7 @@ const methods = {
   init: async (
     urls: GeoscriptWorkerWasmURLs,
     eagerDeps?: {
+      meshopt?: boolean;
       cgal?: boolean;
       clipper2?: boolean;
       geodesics?: boolean;
@@ -199,6 +203,7 @@ const methods = {
     setModelDataURLs(urls.modelData);
 
     const eagerInits: Promise<unknown>[] = [];
+    if (eagerDeps?.meshopt) eagerInits.push(initMeshopt());
     if (eagerDeps?.cgal) {
       const p = initCGAL();
       if (p instanceof Promise) {

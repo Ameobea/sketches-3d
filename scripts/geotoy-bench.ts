@@ -150,6 +150,7 @@ interface Report {
   createdAt: string;
   config: Record<string, unknown>;
   wasm: { sha256: string; bytes: number; mtime: string };
+  assets?: Record<string, { sha256: string; bytes: number }>;
   git: { head: string; dirty: number };
   compositions: CompEntry[];
   summary: {
@@ -294,6 +295,28 @@ const wasmInfo = () => {
   };
 };
 
+/** Include the external geometry engines; identical Rust Wasm does not imply identical runs. */
+const assetInfo = () =>
+  Object.fromEntries(
+    [
+      'src/viz/wasmComp/geoscript_repl_bg.wasm',
+      'src/viz/wasm/cgal/index.wasm',
+      'src/viz/wasm/cgal/index.js',
+      'node_modules/manifold-3d/manifold.wasm',
+      'node_modules/manifold-3d/manifold.js',
+      'node_modules/meshoptimizer/meshopt_simplifier.js',
+      'src/geoscript/meshopt.ts',
+      'src/geoscript/manifold.ts',
+      'src/geoscript/geodesics.ts',
+      'src/geoscript/geodesicPathBuffers.ts',
+    ]
+      .filter(p => existsSync(join(ROOT, p)))
+      .map(p => {
+        const bytes = readFileSync(join(ROOT, p));
+        return [p, { sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length }];
+      })
+  );
+
 const runCommand = async () => {
   const outDir = optVal('--out') ?? die('--out is required');
   const dbPath = optVal('--db') ?? join(ROOT, 'geoscript_backend', 'geoscript_backend.sqlite3');
@@ -306,6 +329,7 @@ const runCommand = async () => {
   const tab = optVal('--tab');
   const timeoutMs = Number(optVal('--timeout') ?? 600) * 1000;
   const only = optVal('--ids') ? new Set(parseIds(optVal('--ids')!)) : null;
+  const singleRunIds = optVal('--single-run-ids') ? parseIds(optVal('--single-run-ids')!) : [];
   const resume = has('--resume');
   if (!Number.isInteger(iterations) || iterations < 1) die('--iterations must be a positive integer');
   if (!Number.isInteger(warmup) || warmup < 0) die('--warmup must be a non-negative integer');
@@ -334,16 +358,28 @@ const runCommand = async () => {
     db: dbPath,
     service,
     ids: rows.map(r => r.id),
+    singleRunIds,
   };
   const report: Report = {
     label: outDir,
     createdAt: new Date().toISOString(),
     config,
     wasm: wasmInfo(),
+    assets: assetInfo(),
     git: gitInfo(),
     compositions: [],
     summary: buildSummary([], 0),
   };
+  if (resume && existsSync(join(outDir, 'report.json'))) {
+    const previous = JSON.parse(readFileSync(join(outDir, 'report.json'), 'utf8')) as Report;
+    if (JSON.stringify(previous.assets) !== JSON.stringify(report.assets)) {
+      die('Cannot resume: benchmark assets changed. Use a new output directory.');
+    }
+    for (const key of ['iterations', 'warmup', 'mode', 'render', 'trace', 'db', 'singleRunIds']) {
+      if (JSON.stringify(previous.config[key]) !== JSON.stringify(report.config[key]))
+        die(`Cannot resume: ${key} changed.`);
+    }
+  }
   console.log(
     `benching ${rows.length} compositions → ${outDir}  (${mode}, ${warmup} warmup + ${iterations} timed${trace ? ', traced' : ''}; wasm ${report.wasm.sha256} @ ${report.git.head}${report.git.dirty ? ' dirty' : ''})`
   );
@@ -356,6 +392,10 @@ const runCommand = async () => {
 
   const t0 = Date.now();
   for (const row of rows) {
+    if (JSON.stringify(assetInfo()) !== JSON.stringify(report.assets)) {
+      flush(Date.now() - t0);
+      die('Benchmark assets changed during the run; stopping to avoid mixed measurements.');
+    }
     if (resume && existsSync(entryPath(row.id))) {
       report.compositions.push(JSON.parse(readFileSync(entryPath(row.id), 'utf8')));
       console.log(`↻ ${row.id} ${row.title} (resumed)`);
@@ -371,7 +411,17 @@ const runCommand = async () => {
     const payload = {
       tree,
       metadata,
-      options: { dev: true, timeoutMs, bench: { iterations, warmup, mode, render }, trace },
+      options: {
+        dev: true,
+        timeoutMs,
+        bench: {
+          iterations: singleRunIds.includes(row.id) ? 1 : iterations,
+          warmup: singleRunIds.includes(row.id) ? 0 : warmup,
+          mode,
+          render,
+        },
+        trace,
+      },
     };
     const started = Date.now();
     let entry: CompEntry;
@@ -491,7 +541,8 @@ const compareCommand = () => {
   console.log(
     `\n${rows.length} compared: ${better} faster, ${worse} slower (p<0.05, |Δ|>2%); sum of medians ${fmtMs(sumA)} → ${fmtMs(sumB)} (${(((sumB - sumA) / sumA) * 100).toFixed(1)}%)`
   );
-  if (a.wasm.sha256 === b.wasm.sha256) console.log('note: identical wasm builds');
+  if (a.wasm.sha256 === b.wasm.sha256)
+    console.log('note: identical Geoscript Wasm builds; external engines may differ (see assets)');
 };
 
 switch (cmd) {

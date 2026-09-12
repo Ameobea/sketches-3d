@@ -208,7 +208,7 @@ pub(crate) struct SpanData {
   arc_length_mass: f32,
   /// Sum of curvature (weighted chord-deviation) contributions across all sub-segments.
   curvature_mass: f32,
-  /// Uniformly-spaced t-values including both endpoints; len = n_dense + 1.
+  /// Grid t-values including both endpoints; len = n_dense + 1.
   dense_ts: Vec<f32>,
   /// Per-sub-segment density values; len = n_dense.
   densities: Vec<f32>,
@@ -259,22 +259,47 @@ impl SpanData {
 /// Samples `n_dense + 1` uniformly-spaced points (both endpoints included), computes chord
 /// deviations zeroed at both endpoints (preventing cross-boundary curvature leakage), and
 /// builds the density/cumulative arrays used for proportional sample placement.
+fn uniform_dense_ts(t_start: f32, t_end: f32, n_dense: usize) -> Vec<f32> {
+  let span_len = t_end - t_start;
+  (0..=n_dense)
+    .map(|i| t_start + span_len * (i as f32 / n_dense as f32))
+    .collect()
+}
+
+/// Grid for a span of a piecewise-linear curve: its interior joints, each flanked by a probe one
+/// uniform-grid step away (clamped to the half-gap to the neighboring joint). The chord deviation
+/// at a joint then measures its corner exactly, at the same scale the uniform grid would have
+/// resolved it, and straight runs need no probes at all.
+fn polyline_dense_ts(t_start: f32, t_end: f32, n_dense: usize, joints: &[f32]) -> Vec<f32> {
+  const EPS: f32 = 1e-6;
+  let step = (t_end - t_start) / n_dense as f32;
+  let lo = joints.partition_point(|&j| j <= t_start + EPS);
+  let hi = joints.partition_point(|&j| j < t_end - EPS).max(lo);
+  let inner = &joints[lo..hi];
+  let mut out = Vec::with_capacity(inner.len() * 3 + 2);
+  out.push(t_start);
+  for (k, &j) in inner.iter().enumerate() {
+    let prev = if k == 0 { t_start } else { inner[k - 1] };
+    let next = inner.get(k + 1).copied().unwrap_or(t_end);
+    out.push(j - step.min((j - prev) * 0.5));
+    out.push(j);
+    out.push(j + step.min((next - j) * 0.5));
+  }
+  out.push(t_end);
+  out.dedup_by(|a, b| (*a - *b).abs() < EPS);
+  out
+}
+
 pub(crate) fn analyze_span<P, E>(
-  t_start: f32,
-  t_end: f32,
-  n_dense: usize,
+  dense_ts: Vec<f32>,
   sample_many: &impl Fn(&[f32]) -> Result<Vec<P>, E>,
 ) -> Result<SpanData, E>
 where
   P: AdaptiveSamplePoint,
 {
-  let n_pts = n_dense + 1;
-  let span_len = t_end - t_start;
-
-  // Uniform t-values covering [t_start, t_end], endpoints included.
-  let dense_ts: Vec<f32> = (0..n_pts)
-    .map(|i| t_start + span_len * (i as f32 / n_dense as f32))
-    .collect();
+  let n_pts = dense_ts.len();
+  let n_dense = n_pts - 1;
+  let (t_start, t_end) = (dense_ts[0], dense_ts[n_dense]);
 
   let dense_pts = sample_many(&dense_ts)?;
 
@@ -392,9 +417,10 @@ where
   let spans: Vec<SpanData> = span_samplers
     .iter()
     .map(|sample_fn| {
-      analyze_span::<P, std::convert::Infallible>(0.0, 1.0, n_dense, &|ts: &[f32]| {
-        Ok(ts.iter().map(|&t| sample_fn(t)).collect())
-      })
+      analyze_span::<P, std::convert::Infallible>(
+        uniform_dense_ts(0.0, 1.0, n_dense),
+        &|ts: &[f32]| Ok(ts.iter().map(|&t| sample_fn(t)).collect()),
+      )
       .expect("infallible sample_fn cannot fail")
     })
     .collect();
@@ -459,16 +485,19 @@ where
     initial_ts,
     |ts| ts.iter().map(|&t| sample_fn(t)).collect(),
     min_segment_length,
+    None,
   )
 }
 
 /// `adaptive_sample_fallible` with the dense probes of each span requested as one batch, for
-/// samplers with a cheap bulk path (concrete paths).
+/// samplers with a cheap bulk path (concrete paths). `linear_joints` (sorted `t`s between which
+/// the curve is exactly linear) replaces the uniform probe grid with `polyline_dense_ts`.
 pub fn adaptive_sample_batched<P, E>(
   target_count: usize,
   initial_ts: &[f32],
   sample_many: impl Fn(&[f32]) -> Result<Vec<P>, E>,
   min_segment_length: f32,
+  linear_joints: Option<&[f32]>,
 ) -> Result<Vec<f32>, E>
 where
   P: AdaptiveSamplePoint,
@@ -528,12 +557,12 @@ where
 
   let mut spans: Vec<SpanData> = Vec::with_capacity(n_spans);
   for i in 0..n_spans {
-    let span = analyze_span::<P, E>(
-      boundaries[i],
-      boundaries[i + 1],
-      n_dense_per_span,
-      &sample_many,
-    )?;
+    let (t0, t1) = (boundaries[i], boundaries[i + 1]);
+    let grid = match linear_joints {
+      Some(joints) => polyline_dense_ts(t0, t1, n_dense_per_span, joints),
+      None => uniform_dense_ts(t0, t1, n_dense_per_span),
+    };
+    let span = analyze_span::<P, E>(grid, &sample_many)?;
     spans.push(span);
   }
 
@@ -972,5 +1001,94 @@ mod tests {
     let sampler = |t: f32| Vec2::new(t, 0.0);
     let allocs = distribute_samples_by_mass::<Vec2, _>(0, &[sampler, sampler], 64);
     assert_eq!(allocs, vec![0, 0]);
+  }
+
+  /// Arc-length parameterized polyline through `points`: its joint `t`s and a batched sampler.
+  fn polyline(
+    points: &[Vec2],
+  ) -> (
+    Vec<f32>,
+    impl Fn(&[f32]) -> Result<Vec<Vec2>, std::convert::Infallible> + '_,
+  ) {
+    let mut cum = vec![0.0f32];
+    for w in points.windows(2) {
+      cum.push(cum.last().unwrap() + (w[1] - w[0]).norm());
+    }
+    let total = *cum.last().unwrap();
+    let joints: Vec<f32> = cum.iter().map(|c| c / total).collect();
+    let sample = move |ts: &[f32]| {
+      Ok(
+        ts.iter()
+          .map(|&t| {
+            let d = t.clamp(0., 1.) * total;
+            let i = cum.partition_point(|&c| c < d).clamp(1, cum.len() - 1);
+            let f = ((d - cum[i - 1]) / (cum[i] - cum[i - 1])).clamp(0., 1.);
+            points[i - 1] + (points[i] - points[i - 1]) * f
+          })
+          .collect(),
+      )
+    };
+    (joints, sample)
+  }
+
+  fn uniform_and_polyline(target: usize, initial: &[f32], points: &[Vec2]) -> (Vec<f32>, Vec<f32>) {
+    let (joints, sample) = polyline(points);
+    let uniform = adaptive_sample_batched(target, initial, &sample, 1e-5, None).unwrap();
+    let exact = adaptive_sample_batched(target, initial, &sample, 1e-5, Some(&joints)).unwrap();
+    assert_eq!(uniform.len(), exact.len());
+    (uniform, exact)
+  }
+
+  #[test]
+  fn polyline_grid_agrees_with_uniform_grid() {
+    let v = Vec2::new;
+    // Straight spans (every corner critical): identical placement.
+    let square = [v(0., 0.), v(1., 0.), v(1., 1.), v(0., 1.), v(0., 0.)];
+    let (u, e) = uniform_and_polyline(20, &[0., 0.25, 0.5, 0.75, 1.], &square);
+    for (a, b) in u.iter().zip(&e) {
+      assert!((a - b).abs() < 1e-5, "{u:?} vs {e:?}");
+    }
+
+    // An uncritical right angle at t=0.5 attracts a sample in both, at the same place.
+    let l = [v(0., 0.), v(1., 0.), v(1., 1.)];
+    let (u, e) = uniform_and_polyline(9, &[0., 1.], &l);
+    let nearest = |ts: &[f32]| ts.iter().map(|t| (t - 0.5).abs()).fold(1., f32::min);
+    assert!(nearest(&u) < 0.03 && nearest(&e) < 0.03, "{u:?} vs {e:?}");
+    for (a, b) in u.iter().zip(&e) {
+      assert!((a - b).abs() < 1. / 9., "{u:?} vs {e:?}");
+    }
+
+    // A fine jittered circle: every sample within one spacing of the uniform grid's.
+    let n = 400;
+    let mut seed = 7u32;
+    let mut jitter = || {
+      seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+      (seed >> 8) as f32 / (1u32 << 24) as f32 - 0.5
+    };
+    let circle: Vec<Vec2> = (0..=n)
+      .map(|i| {
+        let a = i as f32 / n as f32 * 2. * PI;
+        let r = if i == n { 1. } else { 1. + 0.02 * jitter() };
+        v(a.cos() * r, a.sin() * r)
+      })
+      .collect();
+    let (u, e) = uniform_and_polyline(48, &[0., 1.], &circle);
+    for (a, b) in u.iter().zip(&e) {
+      assert!((a - b).abs() < 1. / 48., "{u:?} vs {e:?}");
+    }
+  }
+
+  #[test]
+  fn polyline_grid_shape() {
+    let g = polyline_dense_ts(0., 1., 100, &[0., 0.3, 0.3000001, 0.5, 0.9999999, 1.]);
+    assert_eq!((g[0], *g.last().unwrap()), (0., 1.));
+    assert!(g.windows(2).all(|w| w[1] > w[0]), "{g:?}");
+    assert!(g.contains(&0.3) && g.contains(&0.5), "{g:?}");
+    let at = g.iter().position(|&t| t == 0.5).unwrap();
+    assert!(
+      (g[at - 1] - 0.49).abs() < 1e-6 && (g[at + 1] - 0.51).abs() < 1e-6,
+      "{g:?}"
+    );
+    assert_eq!(polyline_dense_ts(0., 1., 100, &[0., 1.]), vec![0., 1.]);
   }
 }

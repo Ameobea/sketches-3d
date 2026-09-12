@@ -6,6 +6,7 @@ export const DEP_BIT_UV_UNWRAP = 1 << 4;
 export const DEP_BIT_UV_SOLVERS = 1 << 5;
 export const DEP_BIT_MODEL_DATA = 1 << 6;
 export const DEP_BIT_IMAGE_DATA = 1 << 7;
+export const DEP_BIT_MESHOPT = 1 << 8;
 
 export const bitmaskToAsyncDepNames = (bitmask: number): string[] => {
   const deps: string[] = [];
@@ -32,6 +33,9 @@ export const bitmaskToAsyncDepNames = (bitmask: number): string[] => {
   }
   if (bitmask & DEP_BIT_IMAGE_DATA) {
     deps.push('image_data');
+  }
+  if (bitmask & DEP_BIT_MESHOPT) {
+    deps.push('meshopt');
   }
   return deps;
 };

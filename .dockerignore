@@ -25,3 +25,4 @@ yarn-error.log
 src/viz/wasm/**/build
 src/viz/wasm/**/build2
 src/viz/wasm/normals_bench
+src/viz/wasm/manifold-build

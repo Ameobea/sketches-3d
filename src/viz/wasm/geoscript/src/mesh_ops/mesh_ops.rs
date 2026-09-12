@@ -260,19 +260,37 @@ pub(crate) fn verify_cgal_loaded() -> Result<(), ErrorStack> {
   }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum SimplifyEngine {
+  Meshopt,
+  Manifold,
+}
+
+pub fn simplify_mesh(
+  mesh: &MeshHandle,
+  tolerance: f32,
+  engine: SimplifyEngine,
+  sharp_angle_degrees: f32,
+) -> Result<MeshHandle, ErrorStack> {
+  if !tolerance.is_finite() || tolerance <= 0. {
+    return Err(ErrorStack::new(
+      "Invalid `tolerance` passed to `simplify`; must be finite and greater than zero",
+    ));
+  }
+  if mesh.mesh.faces.is_empty() {
+    return Ok(mesh.clone(false, false, false));
+  }
+  match engine {
+    SimplifyEngine::Meshopt => super::meshopt::simplify(mesh, tolerance, sharp_angle_degrees),
+    SimplifyEngine::Manifold => simplify_manifold(mesh, tolerance),
+  }
+}
+
 #[cfg(target_arch = "wasm32")]
-pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
+fn simplify_manifold(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, ErrorStack> {
   use std::cell::RefCell;
 
   use crate::ManifoldHandle;
-
-  verify_cgal_loaded()?;
-
-  if tolerance <= 0. {
-    return Err(ErrorStack::new(
-      "Invalid `tolerance` passed to `simplify`; must be greater than zero",
-    ));
-  }
 
   let encoded_output = simplify(mesh.get_or_create_handle()?, tolerance);
 
@@ -290,7 +308,7 @@ pub fn simplify_mesh(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn simplify_mesh(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, ErrorStack> {
+fn simplify_manifold(mesh: &MeshHandle, _tolerance: f32) -> Result<MeshHandle, ErrorStack> {
   Ok(mesh.clone(false, false, false))
 }
 

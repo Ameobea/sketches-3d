@@ -32,6 +32,12 @@ const optVal = (flag: string): string | undefined => {
 const dbPath = optVal('--db') ?? join(ROOT, 'geoscript_backend', 'geoscript_backend.sqlite3');
 const outDir = optVal('--out') ?? die('--out is required');
 const size = Number(optVal('--size') ?? 512);
+const timeoutMs = Number(optVal('--timeout') ?? 60) * 1000;
+const materialOverride = optVal('--material');
+if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) die('--timeout must be positive and finite');
+if (materialOverride && !['normal', 'wireframe', 'wireframe-xray'].includes(materialOverride)) {
+  die('--material must be normal, wireframe, or wireframe-xray');
+}
 const only = optVal('--only')
   ?.split(',')
   .map(s => Number(s));
@@ -98,6 +104,18 @@ writeFileSync(
         dirty: git(['status', '--porcelain']).split('\n').filter(Boolean).length,
       },
       wasmSha256: createHash('sha256').update(readFileSync(wasmPath)).digest('hex').slice(0, 16),
+      assets: Object.fromEntries(
+        [
+          'node_modules/manifold-3d/manifold.js',
+          'node_modules/manifold-3d/manifold.wasm',
+          'node_modules/meshoptimizer/meshopt_simplifier.js',
+        ].map(path => [
+          path,
+          createHash('sha256')
+            .update(readFileSync(join(ROOT, path)))
+            .digest('hex'),
+        ])
+      ),
       db: dbPath,
       mode: evalMode ? { eval: true, expr: evalExpr ?? null, meshes: evalMeshes } : { size },
       args,
@@ -159,8 +177,8 @@ const renderRow = async (row: Row) => {
     tree,
     metadata,
     options: evalMode
-      ? { dev: true, timeoutMs: 60_000, eval: { expr: evalExpr, samples: 0, meshes: evalMeshes } }
-      : { format: 'png', dev: true, width: size, height: size, timeoutMs: 60_000 },
+      ? { dev: true, timeoutMs, eval: { expr: evalExpr, samples: 0, meshes: evalMeshes } }
+      : { format: 'png', dev: true, width: size, height: size, timeoutMs, materialOverride },
   };
   const started = Date.now();
   try {

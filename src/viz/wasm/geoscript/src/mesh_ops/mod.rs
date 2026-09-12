@@ -11,6 +11,7 @@ pub mod fku_stitch;
 pub mod helpers;
 pub mod mesh_boolean;
 pub mod mesh_ops;
+mod meshopt;
 pub mod parametric_surface;
 mod profile_creases;
 #[cfg(test)]

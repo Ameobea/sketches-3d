@@ -32,13 +32,11 @@ src/viz/wasm/clipper2/*
 !src/viz/wasm/clipper2/clipper2.ts
 !src/viz/wasm/clipper2/clipper2z.d.ts
 rustc-ice-*.txt
+src/viz/wasm/manifold-build/
 .codex
 design
 !src/viz/wasmComp/wasmAssetURLs.ts
-src/viz/wasm/normals_bench
 docs
-src/viz/wasm/interp_bench
-src/viz/wasm/fku_bench
 /geoscript_backend.sqlite3
 geo_compositions/*.geo
 geo_compositions/_index.tsv

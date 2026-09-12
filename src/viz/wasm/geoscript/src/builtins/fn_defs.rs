@@ -11812,7 +11812,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Numeric),
             default_value: DefaultValue::Optional(|| Value::Float(0.01)),
-            description: "The maximum distance between the original and simplified meshes.  0.01 is a good starting point."
+            description: "Positive finite simplification tolerance in mesh-local distance units. 0.01 is a good starting point. The engines use different error estimates, so equal tolerances need not produce equal triangle counts; this is not a certified maximum surface-distance bound."
           },
           ArgDef {
             name: "mesh",
@@ -11821,8 +11821,42 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("meshopt".to_owned())),
+            description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates manifold output and may reduce less to preserve topology. Manifold uses the existing solid-library simplifier. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
+          },
         ],
-        description: "Simplifies a mesh, reducing the number of vertices.  Maintains manifold-ness.",
+        description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Output is checked for manifold topology; self-intersection freedom is not guaranteed by this check.",
+        return_type: &[ArgType::Mesh],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.01)),
+            description: "Positive finite simplification tolerance in mesh-local distance units. 0.01 is a good starting point. The engines use different error estimates, so equal tolerances need not produce equal triangle counts; this is not a certified maximum surface-distance bound."
+          },
+          ArgDef {
+            name: "engine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("meshopt".to_owned())),
+            description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates manifold output and may reduce less to preserve topology. Manifold uses the existing solid-library simplifier. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
+          },
+        ],
+        description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Output is checked for manifold topology; self-intersection freedom is not guaranteed by this check.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -14338,6 +14372,52 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         return_type: &[ArgType::Path],
       }
     ]
+  },
+  "simplify_path" => FnDef {
+    module: "path",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "A path. Lazy paths (e.g. `lerp_paths`) are discretized first at the ambient curve angle."
+          },
+          ArgDef {
+            name: "tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.01)),
+            description: "Max distance (in path units) any removed vertex may lie from the simplified outline. 0 only removes collinear vertices."
+          },
+        ],
+        description: "Removes vertices from the straight runs of a path (Ramer–Douglas–Peucker) while keeping every remaining point of the original within `tolerance` of the result. Curve segments are kept verbatim, and critical points marked by producers (`path_union`, `offset_path`, `alpha_wrap_2d`, `discretize_path`, …) are never removed, so `critical_points` survive; authored joints from pen ops / `polygon` are all candidates. Use it to thin dense polylines (boolean/wrap output, traced text, SVG) before sweeping, lerping, or further booleans.",
+        return_type: &[ArgType::Path],
+      },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Max distance (in path units) any removed vertex may lie from the simplified outline."
+          },
+          ArgDef {
+            name: "path",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "A path."
+          },
+        ],
+        description: "Tolerance-first form for pipelines: `path | simplify_path(0.02)`.",
+        return_type: &[ArgType::Path],
+      },
+    ],
   },
   "discretize_path" => FnDef {
     module: "path",

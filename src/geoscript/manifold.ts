@@ -58,9 +58,9 @@ export const drop_all_mesh_handles = () => {
 const HEADER_WORDS = 6;
 
 // Layout is documented on the Rust side: `mesh_boolean.rs::decode_manifold_output`.
-const encodeManifoldMesh = (manifold: Manifold, handleOnly: boolean) => {
-  const handle = getNewHandle();
-  MeshHandles.set(handle, manifold);
+const encodeManifoldMesh = (manifold: Manifold, handleOnly: boolean, existingHandle?: number) => {
+  const handle = existingHandle ?? getNewHandle();
+  if (existingHandle === undefined) MeshHandles.set(handle, manifold);
 
   if (handleOnly) {
     const u32View = new Uint32Array(HEADER_WORDS);
@@ -241,6 +241,13 @@ export const simplify = (handle: number, tolerance: number) => {
   const simplified = mesh.simplify(tolerance);
 
   return encodeManifoldMesh(simplified, false);
+};
+
+/** Read the importer's normalized mesh without duplicating ownership of its Manifold handle. */
+export const read_manifold_mesh = (handle: number): Uint8Array => {
+  const mesh = MeshHandles.get(handle);
+  if (!mesh) throw new Error(`No mesh found for handle ${handle}`);
+  return encodeManifoldMesh(mesh, false, handle);
 };
 
 export const convex_hull = (verts: Float32Array) => {

@@ -1,4 +1,5 @@
 import { AsyncOnce } from 'src/viz/util/AsyncOnce';
+import { buildGeodesicPathBuffers } from './geodesicPathBuffers';
 
 let LastError = '';
 
@@ -76,29 +77,7 @@ export const trace_geodesic_path = (
   //
   // Also, the geodesic walker expects the path to be provided as absolute coordinates, but we
   // receive it as a list of movements.
-  const numPairs = path.length - 1;
-  const indices = new Uint32Array(numPairs * 3 + 3);
-  const absPath = new Float32Array(path.length + 2);
-
-  // movement from origin to first point
-  absPath[0] = 0;
-  absPath[1] = 0;
-  indices[0] = 0;
-  indices[1] = 1;
-  indices[2] = 1;
-
-  for (let pairIx = 0; pairIx < numPairs; pairIx += 1) {
-    const dy = path[pairIx * 2];
-    const dx = path[pairIx * 2 + 1];
-    const y = absPath[pairIx * 2] + dy;
-    const x = absPath[pairIx * 2 + 1] + dx;
-    absPath[2 + pairIx * 2] = y;
-    absPath[2 + pairIx * 2 + 1] = x;
-
-    indices[3 + pairIx * 3] = pairIx + 1;
-    indices[3 + pairIx * 3 + 1] = pairIx + 2;
-    indices[3 + pairIx * 3 + 2] = pairIx + 2;
-  }
+  const { positions: absPath, indices } = buildGeodesicPathBuffers(path);
 
   const vec_meshIndices = vec_uint32(meshIndices);
   const vec_meshVerts = vec_f32(meshVerts);

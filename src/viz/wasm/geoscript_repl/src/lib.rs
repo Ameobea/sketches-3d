@@ -162,6 +162,7 @@ pub fn geoscript_repl_parse_program(
 
 #[derive(Default, SerJson)]
 pub struct GeoscriptAsyncDependencies {
+  pub meshopt: bool,
   pub geodesics: bool,
   pub cgal: bool,
   pub clipper2: bool,
@@ -180,7 +181,9 @@ pub fn geoscript_repl_get_async_dependencies(ctx: *mut GeoscriptReplCtx) -> Stri
   let mut deps = GeoscriptAsyncDependencies::default();
   let check_dep = |name: Sym, deps: &mut GeoscriptAsyncDependencies| {
     ctx.geo_ctx.with_resolved_sym(name, |name| {
-      if name == "trace_geodesic_path" {
+      if name == "simplify" {
+        deps.meshopt = true;
+      } else if name == "trace_geodesic_path" {
         deps.geodesics = true;
       } else if name == "offset_path" {
         deps.clipper2 = true;

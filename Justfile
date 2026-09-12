@@ -3,6 +3,9 @@ set dotenv-load := true
 build-wasm:
   cd src/viz/wasm && just build
 
+manifold:
+  bash scripts/build-manifold.sh --if-needed
+
 opt-wasm:
   cd src/viz/wasm && just opt
 
@@ -10,12 +13,14 @@ copy-wasm:
   cd src/viz/wasm && just copy-files
 
 run:
+  just manifold
   just build-wasm
   just opt-wasm
   just copy-wasm
   bun run dev
 
 build:
+  just manifold
   just build-wasm
   just opt-wasm
   just copy-wasm

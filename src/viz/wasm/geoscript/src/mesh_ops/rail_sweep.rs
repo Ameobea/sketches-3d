@@ -289,6 +289,14 @@ impl DynamicProfileData {
       v
     }
   }
+
+  fn unrotated_t(&self, g: f32) -> f32 {
+    if self.rotation_offset != 0.0 {
+      (g - self.rotation_offset).rem_euclid(1.0)
+    } else {
+      g
+    }
+  }
 }
 
 struct RingContext {
@@ -804,7 +812,18 @@ fn sample_one_loop(
 
   let mut samples = if use_adaptive {
     // A path profile is probed directly in bulk; only black-box samplers pay per-call dispatch.
+    // A polyline profile also hands over its joints in loop-local t, so its spans are analyzed
+    // exactly at the joints instead of on a dense uniform grid.
     let path = callable_path(&ring.profile_data.sampler);
+    let joints: Option<Vec<f32>> = path.filter(|p| p.is_piecewise_linear()).map(|p| {
+      let mut js: Vec<f32> = p
+        .sampling_t_values()
+        .into_iter()
+        .map(|g| (ring.profile_data.unrotated_t(g) - sample_lo) / sample_width)
+        .collect();
+      js.sort_by(f32::total_cmp);
+      js
+    });
     adaptive_sample_batched(
       budget,
       &local_crit,
@@ -824,6 +843,7 @@ fn sample_one_loop(
           .collect(),
       },
       1e-5,
+      joints.as_deref(),
     )?
   } else {
     let use_fku = should_use_fku(fku_stitching, budget, budget);
