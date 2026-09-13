@@ -7,3 +7,5 @@ image = "geoscript-thumbnail-renderer:latest"
 
 [deploy.run]
 net = "host"
+# Reaps the Chrome processes puppeteer leaves behind; without it hundreds of zombies pile up.
+extra_args = ["--init"]

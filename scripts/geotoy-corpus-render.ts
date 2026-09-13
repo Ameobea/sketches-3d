@@ -50,7 +50,7 @@ const evalMeshes = optVal('--meshes') ?? 'summary';
  * producing a raster to diff. The other expected failures are syntax errors that fail
  * instantly, so they stay in and keep their `_failures.json` entries as regression signal.
  */
-const KNOWN_TIMEOUT_IDS = new Set([64]);
+const KNOWN_TIMEOUT_IDS = new Set<number>([]);
 const includeTimeouts = args.includes('--include-timeouts');
 const concurrencyRaw = Number(optVal('--concurrency') ?? 6);
 // A NaN here silently renders nothing (`Array.from({length: NaN})` is empty) and still

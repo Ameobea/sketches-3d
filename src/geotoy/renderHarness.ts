@@ -33,6 +33,9 @@ interface BenchSample {
   constEvalCache: ConstEvalCacheStats;
   materials?: number;
   frame?: number;
+  /** `renderer.render` invocations during the run; nonzero means the GPU was busy while the
+   *  composition evaluated, which inflates timings under software GL. */
+  frames: number;
 }
 
 interface RenderHarnessDeps {
@@ -105,6 +108,7 @@ export const startRenderHarness = ({
       }
     });
     pipelineController.renderFrame(timeDiffSeconds);
+    viz.renderOverlay();
     done();
   }, false);
   const renderOneFrame = () => new Promise<void>(resolve => (frameRequested = resolve));
@@ -115,11 +119,25 @@ export const startRenderHarness = ({
    *  loaded async deps carry over; `performance` marks delimit each run for the trace. */
   const runBench = async (req: BenchRequest, boot: RunOutcome<any> & { type: 'ok' }) => {
     const bootMs = performance.now();
+    // Who renders while a bench runs (the first few distinct call stacks), for the envelope.
+    const renderCallers: string[] = [];
+    const origRender = viz.renderer.render.bind(viz.renderer);
+    viz.renderer.render = ((...args: Parameters<typeof origRender>) => {
+      if (renderCallers.length < 3) {
+        const stack = (new Error().stack ?? '').split('\n').slice(2, 7).join(' <- ');
+        if (!renderCallers.includes(stack)) {
+          renderCallers.push(stack);
+        }
+      }
+      return origRender(...args);
+    }) as typeof viz.renderer.render;
     const sample = async (label: string): Promise<BenchSample> => {
       performance.mark(`${label}:start`);
       const t0 = performance.now();
+      const frame0 = viz.renderer.info.render.frame;
       const o = req.mode === 'cold' ? await execution.runUncached() : await execution.run();
       const wall = performance.now() - t0;
+      const frames = viz.renderer.info.render.frame - frame0;
       performance.mark(`${label}:end`);
       performance.measure(label, `${label}:start`, `${label}:end`);
       if (!o || o.type !== 'ok') {
@@ -131,6 +149,7 @@ export const startRenderHarness = ({
         phases: s.phases,
         asyncDepRetries: s.asyncDepRetries,
         constEvalCache: s.constEvalCache,
+        frames,
       };
       if (req.render) {
         let t = performance.now();
@@ -187,6 +206,7 @@ export const startRenderHarness = ({
       asyncDeps: bs.asyncDeps,
       userAgent: navigator.userAgent,
       build: __GIT_HEAD__,
+      renderCallers,
     };
   };
 

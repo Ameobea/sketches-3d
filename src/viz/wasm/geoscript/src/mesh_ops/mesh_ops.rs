@@ -579,9 +579,14 @@ pub fn remesh_planar_patches(
     )
   };
 
+  // Attribute seams reach here as coincident duplicate vertices with open edges between them;
+  // CGAL then segments planar patches across sheets it can't stitch back together.
+  let (vertices, indices) =
+    crate::mesh_ops::slivers::weld_coincident_vertices(&raw_mesh.vertices, in_indices)
+      .unwrap_or_else(|| (raw_mesh.vertices.clone(), in_indices.to_vec()));
   cgal_remesh_planar_patches(
-    &raw_mesh.vertices,
-    in_indices,
+    &vertices,
+    &indices,
     max_angle_deg,
     max_offset,
     least_squares,

@@ -346,6 +346,16 @@ export class Viz {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   };
 
+  /** Gizmo overlay on top of what was just drawn. Routed through an MSAA target so gizmo edges
+   *  get AA — the main pipeline's SMAA pass runs before this and never sees the overlay scene. */
+  public renderOverlay = () => {
+    if (this.overlayScene.children.length === 0) {
+      return;
+    }
+    this.overlayRenderer ??= new OverlayMSAARenderer(this.renderer);
+    this.overlayRenderer.render(this.overlayScene, this.camera);
+  };
+
   /** Split from `presentFrame` so a frame can be staged and inspected without being drawn. */
   public stageFrame = (deltaTime: number, curTimeSeconds: number) => {
     this.stats?.begin();
@@ -358,19 +368,13 @@ export class Viz {
   };
 
   public presentFrame = (deltaTime: number, curTimeSeconds: number) => {
+    // An override owns the whole frame, overlay included: the headless harness draws nothing
+    // on most frames, and an overlay pass there kept software GL busy for the entire run.
     if (this.renderOverride) {
       this.renderOverride(deltaTime);
     } else {
       this.renderer.render(this.scene, this.camera);
-    }
-
-    // Routed through an MSAA target so gizmo edges get AA — the main pipeline's
-    // SMAA pass runs before this and never sees the overlay scene.
-    if (this.overlayScene.children.length > 0) {
-      if (!this.overlayRenderer) {
-        this.overlayRenderer = new OverlayMSAARenderer(this.renderer);
-      }
-      this.overlayRenderer.render(this.overlayScene, this.camera);
+      this.renderOverlay();
     }
 
     this.afterRenderCbs.forEach(cb => cb(curTimeSeconds, deltaTime));

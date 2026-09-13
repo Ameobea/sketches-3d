@@ -131,6 +131,8 @@ interface Sample {
   wall: number;
   phases: Phases;
   asyncDepRetries: number;
+  /** `renderer.render` calls during the run; should be 0, else GPU work skews the timings. */
+  frames?: number;
   constEvalCache: { entries: number; bytes: number; maxBytes: number };
   materials?: number;
   frame?: number;
@@ -262,8 +264,10 @@ const printTable = (comps: CompEntry[]) => {
     const s = c.summary;
     const tabs = c.tabsRun.length > 1 ? `[${c.tabsRun.join(', ')}]` : '';
     const retries = c.retriesDuringTimed ? ` !retries=${c.retriesDuringTimed}` : '';
+    const frames = c.runs.reduce((n, r) => n + (r.frames ?? 0), 0);
+    const gpu = frames ? ` !frames=${frames}` : '';
     console.log(
-      `${pad(String(c.id), 4)} ${pad(c.title, 30)} ${pad(fmtMs(s.eval.median), 9, true)} ${pad(fmtMs(s.eval.mad), 7, true)} ${pad(fmtMs(s.eval.min), 9, true)} ${pad(fmtMs(s.ambient.median), 8, true)} ${pad(fmtMs(s.extract.median), 8, true)} ${pad(fmtMs(s.apply.median), 8, true)} ${pad(fmtMs(s.wall.median), 9, true)}  ${tabs}${retries}`
+      `${pad(String(c.id), 4)} ${pad(c.title, 30)} ${pad(fmtMs(s.eval.median), 9, true)} ${pad(fmtMs(s.eval.mad), 7, true)} ${pad(fmtMs(s.eval.min), 9, true)} ${pad(fmtMs(s.ambient.median), 8, true)} ${pad(fmtMs(s.extract.median), 8, true)} ${pad(fmtMs(s.apply.median), 8, true)} ${pad(fmtMs(s.wall.median), 9, true)}  ${tabs}${retries}${gpu}`
     );
   }
 };
@@ -605,11 +609,12 @@ const toHistoryRecord = (r: Report): Report => ({
           trace: null,
           warmupRuns: [],
           runs: c.runs.map(
-            ({ wall, phases, asyncDepRetries }) =>
+            ({ wall, phases, asyncDepRetries, frames }) =>
               ({
                 wall: r2(wall),
                 phases: Object.fromEntries(Object.entries(phases).map(([k, v]) => [k, r2(v)])),
                 asyncDepRetries,
+                frames,
               }) as Sample
           ),
         }

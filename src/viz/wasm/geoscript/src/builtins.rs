@@ -4554,6 +4554,9 @@ fn trace_geodesic_path_impl(
       } = mesh.mesh.to_raw_indexed(false, false, true);
       let indices: Vec<u32> = indices.iter().map(|&ix| ix as u32).collect();
       let (vertices, indices) =
+        crate::mesh_ops::slivers::weld_coincident_vertices(&vertices, &indices)
+          .unwrap_or((vertices, indices));
+      let (vertices, indices) =
         crate::mesh_ops::slivers::collapse_sliver_triangles(&vertices, &indices, 1e-5);
       let mut out_points = trace_geodesic_path(
         &vertices,
