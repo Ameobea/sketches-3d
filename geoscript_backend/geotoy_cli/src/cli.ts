@@ -74,6 +74,8 @@ interface EvalRequest {
 
 interface BenchRequest {
   iterations: number;
+  minTimeMs?: number;
+  maxIterations?: number;
   warmup: number;
   mode: 'cold' | 'warm';
   render: boolean;
@@ -150,7 +152,9 @@ eval options:
 
 bench options:
   -o, --out <file>     Write the timings JSON to a file (default: stdout)
-  --iterations <n>     Timed runs after boot + warmup (default 5)
+  --iterations <n>     Minimum timed runs after boot + warmup (default 5)
+  --min-time <s>       Keep sampling until timed eval time reaches this (default 2; 0 = exactly --iterations)
+  --max-iterations <n> Cap for --min-time (default 50)
   --warmup <n>         Untimed runs before timing (default 2)
   --mode <cold|warm>   cold clears every cross-run cache before each run (default cold)
   --render             Also wait for materials + render a frame per timed run
@@ -369,6 +373,12 @@ const parseArgs = (argv: string[]) => {
       case '--iterations':
         i = val('iterations', i);
         break;
+      case '--min-time':
+        i = val('min-time', i);
+        break;
+      case '--max-iterations':
+        i = val('max-iterations', i);
+        break;
       case '--warmup':
         i = val('warmup', i);
         break;
@@ -549,6 +559,8 @@ const runBench = async (input: string, opts: Opts) => {
   if (mode !== 'cold' && mode !== 'warm') die(`Invalid --mode ${mode}. Must be cold or warm.`);
   const bench: BenchRequest = {
     iterations: intOpt(opts, 'iterations', 5, 1),
+    minTimeMs: intOpt(opts, 'min-time', 2, 0) * 1000,
+    maxIterations: intOpt(opts, 'max-iterations', 50, 1),
     warmup: intOpt(opts, 'warmup', 2, 0),
     mode,
     render: !!opts.render,

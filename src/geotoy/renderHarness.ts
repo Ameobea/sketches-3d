@@ -11,8 +11,13 @@ import type { TextureMode } from 'src/geotoy/modes/texture/textureMode.svelte';
 import type { ConstEvalCacheStats, RunPhases } from 'src/geoscript/runner/types';
 
 export interface BenchRequest {
-  /** Timed iterations, after the boot run and warmup. */
+  /** Minimum timed iterations, after the boot run and warmup. */
   iterations: number;
+  /** Keep sampling past `iterations` until the timed runs' eval time sums to this (hyperfine-style),
+   *  so sub-millisecond compositions get a usable sample size. */
+  minTimeMs?: number;
+  /** Cap on timed iterations when `minTimeMs` is set. */
+  maxIterations?: number;
   /** Untimed iterations after the boot run (JIT warmup; the boot run already loaded async deps). */
   warmup: number;
   /** `cold` clears every cross-run cache (const-eval, module exports, Clipper2 memos) before each run. */
@@ -145,8 +150,13 @@ export const startRenderHarness = ({
     // The render service starts CDP tracing here so the trace covers only timed runs.
     await (window as any).onBenchPhase?.('timed');
     const runs: BenchSample[] = [];
-    for (let i = 0; i < req.iterations; i++) {
-      runs.push(await sample(`bench:timed:${i}`));
+    const minTimeMs = req.minTimeMs ?? 0;
+    const maxIterations = Math.max(req.iterations, req.maxIterations ?? req.iterations);
+    let timedEvalMs = 0;
+    for (let i = 0; i < req.iterations || (timedEvalMs < minTimeMs && i < maxIterations); i++) {
+      const s = await sample(`bench:timed:${i}`);
+      runs.push(s);
+      timedEvalMs += s.phases.eval;
     }
 
     const tabs = getTabs();

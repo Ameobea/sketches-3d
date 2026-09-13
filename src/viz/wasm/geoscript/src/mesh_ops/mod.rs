@@ -17,6 +17,7 @@ mod profile_creases;
 #[cfg(test)]
 mod query_tests;
 pub mod rail_sweep;
+pub mod slivers;
 pub mod stitch_contours;
 pub mod tessellate_polygon;
 pub mod voxels;

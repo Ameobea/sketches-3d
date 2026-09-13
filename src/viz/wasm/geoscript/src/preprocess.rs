@@ -245,6 +245,8 @@ struct Scanner<'a> {
   line: u32,
   col: u32,
   last_sig: LastSignificant,
+  /// Last significant token was the range operator (`0..`); only the `|` decision reads it.
+  after_range: bool,
   pending_newline: bool,
   paren_bracket_nesting: i32,
   /// REAL `{}` only — inserted `{` from closure wrapping lives in `closure_stack`.
@@ -264,6 +266,7 @@ impl<'a> Scanner<'a> {
       line: 1,
       col: 1,
       last_sig: LastSignificant::ExprStarter,
+      after_range: false,
       pending_newline: false,
       paren_bracket_nesting: 0,
       curly_nesting: 0,
@@ -319,6 +322,18 @@ impl<'a> Scanner<'a> {
   }
 
   /// Emit `}` at the current position. Errors on empty body.
+  /// A line end terminates open shorthand bodies, except ones still inside a `(`/`[` they
+  /// opened: `|i| vec3(\n ...)` can't end there, so the body continues past the newline.
+  fn pop_closures_at_line_end(&mut self) -> Result<(), PreprocessError> {
+    while let Some(top) = self.closure_stack.last() {
+      if self.paren_bracket_nesting > top.base_paren {
+        break;
+      }
+      self.pop_closure()?;
+    }
+    Ok(())
+  }
+
   fn pop_closure(&mut self) -> Result<(), PreprocessError> {
     let entry = self
       .closure_stack
@@ -491,7 +506,7 @@ impl<'a> Scanner<'a> {
       // a unit so a trailing `|` isn't misread as a closure header. After an
       // expr-starter, `|` opens a closure (including `||` empty-params).
       if b == b'|' {
-        if self.last_sig == LastSignificant::ExprEnder {
+        if self.last_sig == LastSignificant::ExprEnder || self.after_range {
           let n = if self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'|' {
             2
           } else {
@@ -499,6 +514,7 @@ impl<'a> Scanner<'a> {
           };
           self.advance(n);
           self.last_sig = LastSignificant::ExprStarter;
+          self.after_range = false;
           self.pending_newline = false;
           continue;
         }
@@ -515,18 +531,13 @@ impl<'a> Scanner<'a> {
         continue;
       }
       if b == b'\n' {
-        // Newline terminates ALL open shorthand-closure bodies.
-        while !self.closure_stack.is_empty() {
-          self.pop_closure()?;
-        }
+        self.pop_closures_at_line_end()?;
         self.pending_newline = true;
         self.advance(1);
         continue;
       }
       if b == b'/' && self.pos + 1 < self.bytes.len() && self.bytes[self.pos + 1] == b'/' {
-        while !self.closure_stack.is_empty() {
-          self.pop_closure()?;
-        }
+        self.pop_closures_at_line_end()?;
         let end = scan_line_comment(self.src, self.pos);
         self.advance_to(end);
         continue;
@@ -598,6 +609,8 @@ impl<'a> Scanner<'a> {
         _ => {}
       }
       self.last_sig = char_class(b);
+      // `..` completes an (open) range, so a following `|` is a pipe, not a closure header.
+      self.after_range = b == b'.' && self.pos > 0 && self.bytes[self.pos - 1] == b'.';
       self.pending_newline = false;
       self.mark_content();
       self.advance(1);
@@ -636,6 +649,31 @@ pub fn preprocess(src: &str) -> Result<Preprocessed, PreprocessError> {
 
 #[cfg(test)]
 mod tests {
+  #[test]
+  fn shorthand_body_continues_inside_open_parens() {
+    let out = super::preprocess("xs = 0..3 -> |i| vec3(\n  i, i,\n  i\n)\n").unwrap();
+    assert_eq!(out.rewritten, "xs = 0..3 -> |i| {vec3(\n  i, i,\n  i\n)}\n");
+  }
+
+  #[test]
+  fn pipe_after_open_range_is_not_a_closure_header() {
+    let src = "r = 0..\n  | fold_while({ n: 0 }, |{ n }, _, i: int| {\n    ok = any(|p| p < 8, \
+               [1])\n    { n: n }\n  })\n";
+    let out = super::preprocess(src).unwrap();
+    assert_eq!(out.rewritten, src.replace("|p| p < 8", "|p| {p < 8}"));
+    // Same on one line: the second `|` used to be taken as the header's closer.
+    let one_line = "0.. | take(5) | map(|x| x) | collect\n";
+    assert_eq!(
+      super::preprocess(one_line).unwrap().rewritten,
+      one_line.replace("|x| x", "|x| {x}")
+    );
+    // Only the `|` decision changes; `0..` still continues onto a `(` line as before.
+    assert_eq!(
+      super::preprocess("0..\n(5)\n").unwrap().rewritten,
+      "0..\n(5)\n"
+    );
+  }
+
   use super::*;
 
   fn rewritten(src: &str) -> String {

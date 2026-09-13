@@ -4552,27 +4552,17 @@ fn trace_geodesic_path_impl(
       let OwnedIndexedMesh {
         vertices, indices, ..
       } = mesh.mesh.to_raw_indexed(false, false, true);
-      let mut out_points = if std::mem::size_of::<usize>() == std::mem::size_of::<u32>() {
-        let indices = unsafe { std::mem::transmute::<Vec<usize>, Vec<u32>>(indices) };
-        trace_geodesic_path(
-          &vertices,
-          &indices,
-          path_slice,
-          full_path,
-          start_pos_local_space,
-          up_dir_world_space,
-        )
-      } else {
-        let indices: Vec<u32> = indices.iter().map(|&ix| ix as u32).collect();
-        trace_geodesic_path(
-          &vertices,
-          &indices,
-          path_slice,
-          full_path,
-          start_pos_local_space,
-          up_dir_world_space,
-        )
-      };
+      let indices: Vec<u32> = indices.iter().map(|&ix| ix as u32).collect();
+      let (vertices, indices) =
+        crate::mesh_ops::slivers::collapse_sliver_triangles(&vertices, &indices, 1e-5);
+      let mut out_points = trace_geodesic_path(
+        &vertices,
+        &indices,
+        path_slice,
+        full_path,
+        start_pos_local_space,
+        up_dir_world_space,
+      );
 
       if out_points.len() == 1 {
         let err = get_geodesic_error();

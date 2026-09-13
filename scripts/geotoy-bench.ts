@@ -13,7 +13,7 @@
  * what gets timed, and appends a trimmed record to `bench_history/prod/` for trend tracking.
  *
  *   bun scripts/geotoy-bench.ts run --out bench_results/<label> [--target dev|prod] [--ids 100-136,140]
- *       [--iterations 5] [--warmup 2] [--mode cold|warm] [--render] [--trace] [--tab <name>]
+ *       [--iterations 5] [--min-time 2] [--max-iterations 50] [--warmup 2] [--mode cold|warm] [--render] [--trace] [--tab <name>]
  *       [--timeout <s>] [--db <path>] [--service <url>] [--resume] [--history <dir>]
  *   bun scripts/geotoy-bench.ts summary <dir|record.json>
  *   bun scripts/geotoy-bench.ts compare <baseline> <candidate> [--metric eval|wall|...]
@@ -388,6 +388,9 @@ const runCommand = async () => {
   if (prod) headers['X-CLI-Token'] = cliToken();
   const historyDir = optVal('--history') ?? (prod ? HISTORY_DIR : null);
   const iterations = Number(optVal('--iterations') ?? 5);
+  // hyperfine-style: keep sampling until the timed eval time reaches this, capped.
+  const minTimeMs = Number(optVal('--min-time') ?? 2) * 1000;
+  const maxIterations = Number(optVal('--max-iterations') ?? 50);
   const warmup = Number(optVal('--warmup') ?? 2);
   const mode = (optVal('--mode') ?? 'cold') as 'cold' | 'warm';
   const render = has('--render');
@@ -401,6 +404,8 @@ const runCommand = async () => {
   const singleRunIds = optVal('--single-run-ids') ? parseIds(optVal('--single-run-ids')!) : [];
   const resume = has('--resume');
   if (!Number.isInteger(iterations) || iterations < 1) die('--iterations must be a positive integer');
+  if (!(minTimeMs >= 0) || !Number.isInteger(maxIterations) || maxIterations < iterations)
+    die('--min-time must be >= 0 and --max-iterations >= --iterations');
   if (!Number.isInteger(warmup) || warmup < 0) die('--warmup must be a non-negative integer');
   if (mode !== 'cold' && mode !== 'warm') die('--mode must be cold or warm');
   mkdirSync(outDir, { recursive: true });
@@ -419,6 +424,8 @@ const runCommand = async () => {
   const config = {
     target,
     iterations,
+    minTimeMs,
+    maxIterations,
     warmup,
     mode,
     render,
@@ -449,7 +456,18 @@ const runCommand = async () => {
       die('Cannot resume: benchmark assets changed. Use a new output directory.');
     }
     report.build = previous.build ?? null;
-    for (const key of ['target', 'iterations', 'warmup', 'mode', 'render', 'trace', 'db', 'singleRunIds']) {
+    for (const key of [
+      'target',
+      'iterations',
+      'minTimeMs',
+      'maxIterations',
+      'warmup',
+      'mode',
+      'render',
+      'trace',
+      'db',
+      'singleRunIds',
+    ]) {
       if (JSON.stringify(previous.config[key]) !== JSON.stringify(report.config[key]))
         die(`Cannot resume: ${key} changed.`);
     }
@@ -458,7 +476,7 @@ const runCommand = async () => {
     ? `prod via ${service}; deployed ${report.deployed?.dream ?? '?'}`
     : `wasm ${report.wasm.sha256} @ ${report.git.head}${report.git.dirty ? ' dirty' : ''}`;
   console.log(
-    `benching ${rows.length} compositions → ${outDir}  (${mode}, ${warmup} warmup + ${iterations} timed${trace ? ', traced' : ''}; ${provenance})`
+    `benching ${rows.length} compositions → ${outDir}  (${mode}, ${warmup} warmup + ${iterations}..${maxIterations} timed, ≥${minTimeMs / 1000}s${trace ? ', traced' : ''}; ${provenance})`
   );
 
   const entryPath = (id: number) => join(outDir, `${id}.bench.json`);
@@ -493,6 +511,8 @@ const runCommand = async () => {
         timeoutMs,
         bench: {
           iterations: singleRunIds.includes(row.id) ? 1 : iterations,
+          minTimeMs: singleRunIds.includes(row.id) ? 0 : minTimeMs,
+          maxIterations,
           warmup: singleRunIds.includes(row.id) ? 0 : warmup,
           mode,
           render,
@@ -502,54 +522,63 @@ const runCommand = async () => {
     };
     const started = Date.now();
     let entry: CompEntry;
-    try {
-      const res = await fetch(service, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(timeoutMs + 60_000),
-      });
-      if (!res.ok) throw new Error(`${res.status}: ${(await res.text().catch(() => '')).slice(0, 2000)}`);
-      // The service streams keep-alive whitespace and reports failures in-band.
-      const { bench, traceGz, error } = (await res.json()) as {
-        bench?: BenchEnvelope;
-        traceGz: string | null;
-        error?: string;
-      };
-      if (!bench) throw new Error(error ?? 'no bench payload in response');
-      if (report.build == null && bench.build) {
-        report.build = bench.build;
-        console.log(`  frontend build: ${bench.build}`);
+    // Page-load failures (cert verifier swaps, closed connections) are transient; retry once.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const res = await fetch(service, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(timeoutMs + 60_000),
+        });
+        if (!res.ok) throw new Error(`${res.status}: ${(await res.text().catch(() => '')).slice(0, 2000)}`);
+        // The service streams keep-alive whitespace and reports failures in-band.
+        const { bench, traceGz, error } = (await res.json()) as {
+          bench?: BenchEnvelope;
+          traceGz: string | null;
+          error?: string;
+        };
+        if (!bench) throw new Error(error ?? 'no bench payload in response');
+        if (report.build == null && bench.build) {
+          report.build = bench.build;
+          console.log(`  frontend build: ${bench.build}`);
+        }
+        let traceFile: string | null = null;
+        if (traceGz) {
+          traceFile = `${row.id}.trace.json.gz`;
+          writeFileSync(join(outDir, traceFile), Buffer.from(traceGz, 'base64'));
+        }
+        entry = {
+          id: row.id,
+          title: row.title,
+          ok: true,
+          elapsedMs: Date.now() - started,
+          trace: traceFile,
+          ...bench,
+          summary: summarizeRuns(bench.runs),
+          retriesDuringTimed: bench.runs.reduce((n, r) => n + r.asyncDepRetries, 0),
+        };
+        const s = entry.summary;
+        const tabs = entry.tabsRun.length > 1 ? `  [${entry.tabsRun.join(', ')}]` : '';
+        console.log(
+          `✓ ${row.id} ${row.title}  eval ${fmtMs(s.eval.median)} ±${fmtMs(s.eval.mad)} (min ${fmtMs(s.eval.min)})  wall ${fmtMs(s.wall.median)}  boot ${fmtMs(entry.bootMs)}${tabs}${entry.retriesDuringTimed ? '  !retries' : ''}  ${fmtMs(entry.elapsedMs)}`
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt === 0 && /net::ERR_/.test(message)) {
+          console.log(`↻ ${row.id} ${row.title}: ${message.split('\n')[0].slice(0, 120)} — retrying`);
+          continue;
+        }
+        entry = {
+          id: row.id,
+          title: row.title,
+          ok: false,
+          error: message,
+          elapsedMs: Date.now() - started,
+        };
+        console.log(`✗ ${row.id} ${row.title}: ${entry.error.split('\n')[0].slice(0, 200)}`);
       }
-      let traceFile: string | null = null;
-      if (traceGz) {
-        traceFile = `${row.id}.trace.json.gz`;
-        writeFileSync(join(outDir, traceFile), Buffer.from(traceGz, 'base64'));
-      }
-      entry = {
-        id: row.id,
-        title: row.title,
-        ok: true,
-        elapsedMs: Date.now() - started,
-        trace: traceFile,
-        ...bench,
-        summary: summarizeRuns(bench.runs),
-        retriesDuringTimed: bench.runs.reduce((n, r) => n + r.asyncDepRetries, 0),
-      };
-      const s = entry.summary;
-      const tabs = entry.tabsRun.length > 1 ? `  [${entry.tabsRun.join(', ')}]` : '';
-      console.log(
-        `✓ ${row.id} ${row.title}  eval ${fmtMs(s.eval.median)} ±${fmtMs(s.eval.mad)} (min ${fmtMs(s.eval.min)})  wall ${fmtMs(s.wall.median)}  boot ${fmtMs(entry.bootMs)}${tabs}${entry.retriesDuringTimed ? '  !retries' : ''}  ${fmtMs(entry.elapsedMs)}`
-      );
-    } catch (err) {
-      entry = {
-        id: row.id,
-        title: row.title,
-        ok: false,
-        error: err instanceof Error ? err.message : String(err),
-        elapsedMs: Date.now() - started,
-      };
-      console.log(`✗ ${row.id} ${row.title}: ${entry.error.split('\n')[0].slice(0, 200)}`);
+      break;
     }
     writeFileSync(entryPath(row.id), JSON.stringify(entry, null, 2));
     report.compositions.push(entry);
@@ -565,6 +594,7 @@ const runCommand = async () => {
 
 /** Trimmed report kept under version control: raw timed samples stay (for `compare`), boot,
  *  warmup, trace, and asset hashes go. */
+const r2 = (x: number) => Math.round(x * 100) / 100;
 const toHistoryRecord = (r: Report): Report => ({
   ...r,
   assets: undefined,
@@ -574,7 +604,14 @@ const toHistoryRecord = (r: Report): Report => ({
           ...c,
           trace: null,
           warmupRuns: [],
-          runs: c.runs.map(({ constEvalCache: _, ...run }) => run as Sample),
+          runs: c.runs.map(
+            ({ wall, phases, asyncDepRetries }) =>
+              ({
+                wall: r2(wall),
+                phases: Object.fromEntries(Object.entries(phases).map(([k, v]) => [k, r2(v)])),
+                asyncDepRetries,
+              }) as Sample
+          ),
         }
       : c
   ),
