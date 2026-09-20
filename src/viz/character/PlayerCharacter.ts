@@ -25,7 +25,7 @@ export const DefaultGait: ProceduralLegsConf = {
   reach: 0.95,
   idleCrouch: 0.15,
   minCycleSeconds: 0.12,
-  maxCycleSeconds: 1,
+  maxCycleSeconds: 1.5,
   tuck: 3,
   airBend: 0.1,
   jumpReleaseTau: 0.09,
@@ -36,7 +36,7 @@ export const DefaultGait: ProceduralLegsConf = {
   landAttackTau: 0.03,
   landRecoverTau: 0.08,
   minWalkSpeed: 0.5,
-  wallCadence: 0.3,
+  wallCadence: 0.15,
 };
 
 const YawTau = 0.03;
@@ -102,6 +102,8 @@ export const setupPlayerCharacter = async (viz: Viz, handle: LevelLoadHandle, op
   const colliderHeight = shape === 'capsule' ? h + 2 * r : shape === 'cylinder' ? h : 2 * r;
   const scale = colliderHeight / (bbox.max.y - skeleton.floorY);
   const legs = new ProceduralLegs(skeleton, pivot, gait);
+  legs.onFootfall = () => viz.sfxManager.playWalkStep();
+  viz.sfxManager.externalWalkSteps = true;
   pivot.scale.setScalar(scale);
   pivot.position.y = -getPlayerColliderCenterToFeetOffset(shape, h, r) - skeleton.floorY * scale;
   pivot.add(model);
@@ -144,15 +146,8 @@ export const setupPlayerCharacter = async (viz: Viz, handle: LevelLoadHandle, op
   });
 
   viz.registerBeforeRenderCb((_curTimeSeconds, dt) => {
-    const isFirstPerson = viz.cameraController?.isFirstPerson ?? false;
-    root.visible = !isFirstPerson;
-    if (isFirstPerson) {
-      hasPrevPos = false;
-      jumpQueued = false;
-      landQueued = false;
-      legs.reset();
-      return;
-    }
+    // legs keep simulating while hidden since their footfalls drive the walk sfx
+    root.visible = !(viz.cameraController?.isFirstPerson ?? false);
 
     const [wx, , wz] = fpCtx.playerStateGetters.getWalkVelocity();
     const speed = Math.hypot(wx, wz);

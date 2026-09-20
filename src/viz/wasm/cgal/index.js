@@ -424,7 +424,7 @@ async function createWasm() {
     wasmExports = instance.exports;
     wasmMemory = wasmExports["E"];
     updateMemoryViews();
-    wasmTable = wasmExports["G"];
+    wasmTable = wasmExports["H"];
     removeRunDependency("wasm-instantiate");
     return wasmExports;
   }
@@ -2518,9 +2518,9 @@ var wasmExports = await createWasm();
 
 var ___wasm_call_ctors = wasmExports["F"];
 
-var _malloc = wasmExports["H"];
+var ___getTypeName = wasmExports["G"];
 
-var ___getTypeName = wasmExports["I"];
+var _malloc = wasmExports["I"];
 
 var __emscripten_timeout = wasmExports["J"];
 
@@ -2591,5 +2591,4 @@ if (typeof exports === 'object' && typeof module === 'object') {
   module.exports.default = CGAL;
 } else if (typeof define === 'function' && define['amd'])
   define([], () => CGAL);
-
-export { CGAL };
+export { CGAL }

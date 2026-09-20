@@ -222,9 +222,9 @@ export const processLoadedScene = async (
       }
     );
     // Portals don't write depth, so the volumetric raymarch integrates fog behind them.
-    // FinalPass composites them over the fog anyway (no fogCoverageAttenuatesEmissive
-    // without a SkyStack) — the pit fog sits entirely below every portal, so punching
-    // through is the correct look.
+    // They composite over the fog anyway (ParticlePass only applies coverage to emissiveRT
+    // under a SkyStack) — the pit fog sits entirely below every portal, so punching through
+    // is the correct look.
     portal.userData.noLight = true;
 
     if (!portal.name.includes('_') || !unmappedColor) {

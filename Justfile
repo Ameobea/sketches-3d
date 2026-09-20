@@ -9,13 +9,16 @@ manifold:
 opt-wasm:
   cd src/viz/wasm && just opt
 
+opt-wasm-dev:
+  cd src/viz/wasm && WASM_OPT_MODE=dev just opt
+
 copy-wasm:
   cd src/viz/wasm && just copy-files
 
 run:
   just manifold
   just build-wasm
-  just opt-wasm
+  just opt-wasm-dev
   just copy-wasm
   bun run dev
 

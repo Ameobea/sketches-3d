@@ -15,6 +15,7 @@ import {
   type ShaderSlotKey,
 } from 'src/viz/materials/schema';
 import type { TreeDef as GeotoyTreeDef } from 'src/geoscript/geotoyAPIClient';
+import { ParticleSystemDefRawSchema, ParticleSystemDefSchema } from 'src/viz/particles/schema';
 import { COLOR_KEYS, hexStrToInt } from './colorUtils';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
@@ -1015,6 +1016,8 @@ export const LevelDefSchema = z
     character: CharacterDefSchema.optional(),
     generators: GeneratorsRecordSchema.optional(),
     audio: AudioDefSchema.optional(),
+    /** Scene-level ambient particle systems (camera-anchored). */
+    particles: z.array(ParticleSystemDefSchema).optional(),
   })
   .superRefine((def, ctx) => {
     const assetKeys = new Set(Object.keys(def.assets));
@@ -1105,6 +1108,18 @@ export const LevelDefSchema = z
       validateNode(assetDef.tree, ['tree']);
     }
 
+    for (const [i, sys] of (def.particles ?? []).entries()) {
+      for (const [name, u] of Object.entries(sys.shaders.customUniforms ?? {})) {
+        if (u.type === 'sampler2D' && !texKeys.has(u.value)) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['particles', i, 'shaders', 'customUniforms', name],
+            message: `Unknown texture "${u.value}". Available: ${[...texKeys].join(', ') || '(none)'}`,
+          });
+        }
+      }
+    }
+
     // Each material's texture refs must reference existing texture entries
     for (const [matName, matDef] of Object.entries(def.materials ?? {})) {
       if (matDef.type !== 'customShader' || !matDef.props) continue;
@@ -1142,6 +1157,7 @@ export const LevelDefRawSchema = z.object({
   character: CharacterDefSchema.optional(),
   generators: GeneratorsRecordSchema.optional(),
   audio: AudioDefSchema.optional(),
+  particles: z.array(ParticleSystemDefRawSchema).optional(),
 });
 
 export type LevelDefRaw = z.infer<typeof LevelDefRawSchema>;

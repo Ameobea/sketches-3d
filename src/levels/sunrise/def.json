@@ -496,5 +496,109 @@
         }
       }
     }
+  ],
+  "particles": [
+    {
+      "id": "spores",
+      "count": 1600000,
+      "quality": { "low": 0, "medium": 0.5, "high": 1 },
+      "volume": { "kind": "cameraBox", "size": [264, 150, 264], "edgeFade": 8 },
+      "orient": "billboard",
+      "output": "scene",
+      "light": "sunGated",
+      "sizePx": { "min": 1, "max": 5 },
+      "gates": [
+        { "gate": "nearFade", "affects": "alpha", "range": [2, 8] },
+        { "gate": "floorExposed", "affects": "alpha", "planeY": -45, "depth": 400, "range": [0, 4] }
+      ],
+      "shaders": {
+        "motion": { "file": "particles/spores_motion.glsl" },
+        "sprite": { "file": "particles/spores_sprite.glsl" },
+        "customUniforms": {
+          "wind": { "type": "vec3", "value": [0.2, 0.7, -0.12] },
+          "sporeColor": { "type": "vec3", "value": [0.55, 0.35, 0.28] }
+        },
+        "constants": {
+          "SP_SIZE": { "type": "float", "value": 0.2 },
+          "SP_SPEED": { "type": "float", "value": 0.5 }
+        }
+      }
+    },
+    {
+      "id": "wisps",
+      "count": 3000,
+      "enabled": false,
+      "quality": { "low": 0, "medium": 0.5, "high": 1 },
+      "volume": { "kind": "cameraBox", "size": [164, 80, 164], "edgeFade": 16 },
+      "lifetime": 40,
+      "output": "scene",
+      "light": "sunGated",
+      "sizePx": { "min": 1, "max": 700 },
+      "softDepth": 3,
+      "gates": [
+        { "gate": "nearFade", "affects": "alpha", "range": [6, 22] },
+        { "gate": "farFade", "affects": "alpha", "range": [45, 75] }
+      ],
+      "shaders": {
+        "motion": { "file": "particles/wisp_motion.glsl" },
+        "sprite": { "file": "particles/wisp_sprite.glsl" },
+        "customUniforms": {
+          "wind": { "type": "vec3", "value": [0.35, 0.22, -0.2] },
+          "wispColor": { "type": "vec3", "value": [0.6, 0.42, 0.45] }
+        },
+        "constants": {
+          "WISP_SIZE": { "type": "float", "value": 11 },
+          "WISP_ALPHA": { "type": "float", "value": 0.07 },
+          "WISP_EROSION": { "type": "float", "value": 0.8 }
+        }
+      }
+    },
+    {
+      "id": "haze",
+      "enabled": true,
+      "count": 2700,
+      "quality": { "low": 0, "medium": 0.6, "high": 1 },
+      "volume": { "kind": "cameraBox", "size": [280, 160, 280], "edgeFade": 80, "offset": [0, -60, 0] },
+      "lifetime": 70,
+      "output": "scene",
+      "light": "sunGated",
+      "sizePx": { "min": 600, "max": 900 },
+      "softDepth": 4,
+      "gates": [{ "gate": "nearFade", "affects": "alpha", "range": [14, 45] }],
+      "shaders": {
+        "motion": { "file": "particles/wisp_motion.glsl" },
+        "sprite": { "file": "particles/wisp_sprite.glsl" },
+        "customUniforms": {
+          "wind": { "type": "vec3", "value": [0.25, 0.05, -0.15] },
+          "wispColor": { "type": "vec3", "value": [0.5, 0.38, 0.42] }
+        },
+        "constants": {
+          "WISP_SIZE": { "type": "float", "value": 34 },
+          "WISP_ALPHA": { "type": "float", "value": 0.1 },
+          "WISP_MEANDER": { "type": "float", "value": 6 },
+          "WISP_EROSION": { "type": "float", "value": 0.35 },
+          "WISP_ASPECT": { "type": "float", "value": 1.3 },
+          "WISP_FREQ": { "type": "vec2", "value": [1.3, 1.6] }
+        }
+      }
+    },
+    {
+      "id": "glow_spores",
+      "count": 260,
+      "quality": { "low": 0, "medium": 0.6, "high": 1 },
+      "volume": { "kind": "cameraBox", "size": [64, 40, 64], "edgeFade": 10 },
+      "output": "emissive",
+      "sizePx": { "min": 2, "max": 28 },
+      "gates": [{ "gate": "nearFade", "affects": "alpha", "range": [3, 10] }],
+      "shaders": {
+        "motion": { "file": "particles/glow_motion.glsl" },
+        "sprite": { "file": "particles/glow_sprite.glsl" },
+        "customUniforms": {
+          "wind": { "type": "vec3", "value": [0.15, 0.02, -0.1] },
+          "glowColor": { "type": "vec3", "value": [0.5, 0.2, 0.1] }
+        },
+        "constants": { "GLOW_SIZE": { "type": "float", "value": 0.24 } }
+      }
+    }
   ]
 }

@@ -104,7 +104,7 @@ export interface SfxWalkConfig {
 }
 
 export interface SfxLandConfig {
-  materialLandSounds: Partial<Record<MaterialClass, (() => void) | string[]>>;
+  materialLandSounds: Partial<Record<MaterialClass, (() => void) | string | string[]>>;
 }
 
 export interface SfxBoostConfig {
@@ -247,6 +247,7 @@ export class SoundEngine {
 
   // Walk timing (carried over from old SfxManager).
   private curWalkMatClass: MaterialClass | null = null;
+  public externalWalkSteps = false;
   private timeSinceLastStepSound = 0;
   private nextStepSoundTime = 0;
 
@@ -472,7 +473,7 @@ export class SoundEngine {
     const override = this.config.land?.materialLandSounds?.[materialClass];
     if (override !== undefined) {
       if (typeof override === 'function') override();
-      else this.playSfxRandom(override);
+      else this.playSfxRandom(Array.isArray(override) ? override : [override]);
       return;
     }
     if (materialClass === MaterialClass.MetalPlate) {
@@ -501,6 +502,10 @@ export class SoundEngine {
 
   public onWalkStop() {
     this.curWalkMatClass = null;
+  }
+
+  public playWalkStep() {
+    this.config.walk.playWalkSound?.(this.curWalkMatClass ?? MaterialClass.Default);
   }
 
   public playSfxRandom(names: readonly string[], opts?: PlaySfxOpts) {
@@ -669,7 +674,7 @@ export class SoundEngine {
     if (!this.enabled) return;
 
     // Walk-step timing (preserved from old SfxManager).
-    if (this.config.walk.playWalkSound && this.isWalking) {
+    if (this.config.walk.playWalkSound && this.isWalking && !this.externalWalkSteps) {
       this.timeSinceLastStepSound += timeDiffSeconds;
       if (this.timeSinceLastStepSound > this.nextStepSoundTime) {
         this.config.walk.playWalkSound(this.curWalkMatClass!);

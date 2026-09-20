@@ -903,7 +903,7 @@ export class BulletPhysics {
     const effectiveInput = { ...input, keyFlags: this.getEffectiveKeyFlags(input) };
 
     const wasWalking = this.isWalking;
-    this.isWalking = (effectiveInput.keyFlags & 0x0f) !== 0;
+    this.isWalking = prevOnGround && (effectiveInput.keyFlags & 0x0f) !== 0;
     if (wasWalking && !this.isWalking) {
       this.viz.sfxManager.onWalkStop();
     } else if (!wasWalking && this.isWalking) {

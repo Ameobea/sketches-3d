@@ -11,10 +11,26 @@ import { buildPylonsCheckpointMaterial } from 'src/viz/parkour/regions/pylons/ma
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { SkyStack, HorizonMode, gradientBackground } from 'src/viz/SkyStack';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
+import { MaterialClass } from 'src/viz/shaders/customShader.types';
 
 export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: VizConfig): SceneConfig => {
   const playerHeight = 5;
   const playerRadius = 1.5;
+
+  viz.sfxManager.registerSfxDefs({
+    metal_thud: {
+      url: 'https://i.ameo.link/e13.ogg',
+      playbackRate: [0.64, 0.6435],
+      gain: 0.4,
+      filter: { type: 'bp', freq: 5600, q: 1.2 },
+    },
+    metal_click: {
+      url: 'https://i.ameo.link/e14.ogg',
+      playbackRate: [1.5, 1.514],
+      gain: 0.2,
+      filter: { type: 'hp', freq: 7000, q: 1.2 },
+    },
+  });
 
   const scoreThresholds: ScoreThresholds = {
     [Score.SPlus]: Infinity,
@@ -76,6 +92,10 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
         zoomEnabled: true,
         maxZoomDistance: 50,
       },
+      sfx: {
+        land: { materialLandSounds: { [MaterialClass.Default]: 'metal_thud' } },
+        walk: { playWalkSound: () => viz.sfxManager.playSfx('metal_click') },
+      },
     }
   );
 
@@ -122,7 +142,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     skyStack,
     emissiveBloom:
       vizConf.graphics.quality > GraphicsQuality.Low
-        ? { intensity: 4.0, levels: 3, luminanceThreshold: 0.02, radius: 0.25, luminanceSoftKnee: 0.08 }
+        ? { intensity: 6.0, levels: 3, luminanceThreshold: 0.02, radius: 0.55, luminanceSoftKnee: 0.08 }
         : null,
     fogShader: `vec4 getFogEffect(vec3 worldPos, vec3 cameraPos, vec3 playerPos, float depth, float curTimeSeconds) {
           if (depth >= 1.) {

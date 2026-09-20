@@ -7,6 +7,7 @@ import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils'
 import { getAssetsDir } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
 import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
+import { PARTICLE_GLSL_FIELDS } from 'src/viz/particles/schema';
 import { resolveExternalParent, resolveLibraryMaterials } from './libraryMaterials.server';
 import { inlineGeotoyMaterialTextures, resolveGeotoyMaterial } from './geotoyMaterials.server';
 import { compMaterialKey } from 'src/geoscript/runner/bakeComposition';
@@ -533,7 +534,12 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
         if (assetDef.type === 'geotoyComposition') {
           return [
             assetId,
-            await resolveCompositionAsset(assetId, assetDef, paletteByAsset.get(assetId)!, compositionDocCache),
+            await resolveCompositionAsset(
+              assetId,
+              assetDef,
+              paletteByAsset.get(assetId)!,
+              compositionDocCache
+            ),
           ];
         }
         return [assetId, assetDef];
@@ -581,6 +587,15 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     assets: resolvedAssets,
     materials: mergedMaterials,
     textures: mergedTextures,
+    particles: withLibrary.particles?.map(sys => {
+      const shaders = { ...sys.shaders };
+      for (const field of PARTICLE_GLSL_FIELDS) {
+        const val = shaders[field];
+        if (typeof val === 'object')
+          shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
+      }
+      return { ...sys, shaders };
+    }),
   };
 
   const result = LevelDefSchema.safeParse(inlinedDef);

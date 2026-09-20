@@ -14,12 +14,10 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     emissiveBloomBuffer: THREE.Texture | null,
     bloomIntensity: number,
     fogShader: string | undefined,
-    fogCoverageInAlpha: boolean,
-    fogCoverageAttenuatesEmissive: boolean
+    fogCoverageInAlpha: boolean
   ) {
     const defines: Record<string, string> = {};
     if (fogCoverageInAlpha) defines.SCENE_ALPHA_IS_FOG_COVERAGE = '1';
-    if (fogCoverageAttenuatesEmissive) defines.FOG_COVERAGE_ATTENUATES_EMISSIVE = '1';
     if (toneMapping === 'aces') defines.TONE_MAPPING_ACES = '1';
     else if (toneMapping === 'cineon') defines.TONE_MAPPING_CINEON = '1';
     else if (toneMapping === 'reinhard') defines.TONE_MAPPING_REINHARD = '1';
@@ -113,7 +111,6 @@ export class FinalPass extends Pass {
       bloomIntensity = 1.0,
       fogShader,
       fogCoverageInAlpha = false,
-      fogCoverageAttenuatesEmissive = false,
     }: {
       toneMapping?: ToneMappingMode;
       exposure?: number;
@@ -140,14 +137,6 @@ export class FinalPass extends Pass {
        * `configureDefaultPostprocessingPipeline` when a `VolumetricPass` is present.
        */
       fogCoverageInAlpha?: boolean;
-      /**
-       * Additionally attenuate the emissive + bloom composite by that coverage.
-       * Wanted only when the emissive buffer carries far-plane sky content
-       * (SkyStack) that volumetric fog must cover; near-field bypass meshes
-       * (e.g. portals) should instead punch through fog that's behind them, and
-       * their depth isn't in the buffer the fog raymarches against.
-       */
-      fogCoverageAttenuatesEmissive?: boolean;
     } = {}
   ) {
     super('FinalPass', undefined, new THREE.Camera());
@@ -159,8 +148,7 @@ export class FinalPass extends Pass {
       emissiveBloomBuffer,
       bloomIntensity,
       fogShader,
-      fogCoverageInAlpha,
-      fogCoverageAttenuatesEmissive
+      fogCoverageInAlpha
     );
     this.hasFogShader = !!fogShader;
     this.needsDepth = !!fogShader;

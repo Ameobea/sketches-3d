@@ -131,7 +131,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
   return options;
 };
 
-const resolveCustomUniforms = (
+export const resolveCustomUniforms = (
   json: Record<string, CustomUniformJson>,
   textures: ReadonlyMap<string, THREE.Texture>
 ): Record<string, CustomUniformDef> => {

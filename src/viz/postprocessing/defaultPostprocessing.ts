@@ -23,6 +23,7 @@ import { deriveDirectionalShadowNormalBias } from 'src/viz/helpers/lights';
 import { EmissiveBypassPass, EMISSIVE_BYPASS_LAYER } from 'src/viz/passes/emissiveBypassPass';
 import { EmissiveClearPass } from 'src/viz/passes/emissiveClearPass';
 import { InlineEmissivePass, INLINE_EMISSIVE_LAYER } from 'src/viz/passes/inlineEmissivePass';
+import { ParticlePass } from 'src/viz/passes/particlePass';
 import { EmissiveBloomPass, type EmissiveBloomConfig } from 'src/viz/passes/emissiveBlurPass';
 import { FinalPass, type ToneMappingMode } from 'src/viz/passes/finalPass';
 import {
@@ -53,6 +54,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   public readonly emissiveBypassPass: EmissiveBypassPass | null;
   public readonly inlineEmissivePass: InlineEmissivePass | null;
   public readonly transparentPass: TransparentPass | null;
+  public readonly particlePass: ParticlePass | null;
   private readonly emissiveBloomPass: EmissiveBloomPass | null;
   private readonly finalPass: FinalPass | null;
   private readonly renderFrameCb: (timeDiffSeconds: number) => void;
@@ -70,7 +72,8 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     emissiveBloomPass: EmissiveBloomPass | null = null,
     finalPass: FinalPass | null = null,
     inlineEmissivePass: InlineEmissivePass | null = null,
-    transparentPass: TransparentPass | null = null
+    transparentPass: TransparentPass | null = null,
+    particlePass: ParticlePass | null = null
   ) {
     this.viz = viz;
     this.effectComposer = effectComposer;
@@ -80,6 +83,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
     this.emissiveBypassPass = emissiveBypassPass;
     this.inlineEmissivePass = inlineEmissivePass;
     this.transparentPass = transparentPass;
+    this.particlePass = particlePass;
     this.emissiveBloomPass = emissiveBloomPass;
     this.finalPass = finalPass;
     this.renderFrameCb = renderFrameCb;
@@ -439,12 +443,30 @@ export const configureDefaultPostprocessingPipeline = ({
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
-  // A VolumetricPass exports fog coverage in the scene buffer's alpha channel;
-  // FinalPass uses it to keep the distance fog (and, with a SkyStack, the emissive
-  // composite) from repainting content hidden under opaque fog.
-  const fogCoverageInAlpha = (effectComposer as unknown as { passes: { enabled: boolean }[] }).passes.some(
+  // A VolumetricPass exports fog coverage in the scene buffer's alpha channel; FinalPass
+  // uses it to keep the distance fog from repainting content hidden under opaque fog.
+  // ParticlePass extends the same contract, zeroing the alpha first when no volumetric
+  // pass wrote it, and applies the coverage to emissiveRT.
+  const hasVolumetricPass = (effectComposer as unknown as { passes: { enabled: boolean }[] }).passes.some(
     p => p.enabled && p instanceof VolumetricPass
   );
+  let particlePass: ParticlePass | null = null;
+  const particleDepth = effectComposer.stableDepthTarget?.depthTexture;
+  if (emissiveBypassPass && particleDepth) {
+    const { width, height } = viz.renderer.domElement;
+    particlePass = new ParticlePass(viz, width, height, emissiveBypassPass.emissiveRT, {
+      fogShader,
+      hasEmissiveRT: true,
+      sceneAlphaIsCoverage: hasVolumetricPass,
+      // Only a SkyStack puts far-plane content (the sky) into the emissive buffer; without one
+      // it holds near-field glowing meshes that should punch through fog behind them (e.g.
+      // nexus portals over the pit fog).
+      coverageAttenuatesEmissive: !!skyStack,
+    });
+    particlePass.setStableDepthTexture(particleDepth as THREE.DepthTexture);
+    effectComposer.addPass(particlePass);
+  }
+  const fogCoverageInAlpha = hasVolumetricPass || particlePass !== null;
 
   if (postEffects?.length) {
     const hdrFxPass = new EffectPass(viz.camera, ...postEffects);
@@ -524,10 +546,6 @@ export const configureDefaultPostprocessingPipeline = ({
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
     fogShader,
     fogCoverageInAlpha,
-    // Only a SkyStack puts far-plane content (the sky) into the emissive buffer;
-    // without one the buffer holds near-field glowing meshes that should punch
-    // through fog behind them (e.g. nexus portals over the pit fog).
-    fogCoverageAttenuatesEmissive: fogCoverageInAlpha && !!skyStack,
   });
   effectComposer.addPass(finalPass);
 
@@ -656,7 +674,8 @@ export const configureDefaultPostprocessingPipeline = ({
     emissiveBlurPass,
     finalPass,
     inlineEmissivePass,
-    transparentPass
+    transparentPass,
+    particlePass
   );
   controller.csm = csm;
   if (pomRescanCb) {

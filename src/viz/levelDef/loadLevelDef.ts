@@ -60,6 +60,7 @@ import { replaceLeafInstance } from './editorStructuralOps';
 import { buildCompositionChild } from './editorNodeFactory';
 import { addLevelLightToScene, createLevelLight } from './levelLightUtils';
 import { fitAutoShadowFrustaFromScene } from 'src/viz/helpers/lights';
+import { loadLevelParticles } from 'src/viz/particles/loadParticles';
 export type { LevelObject, LevelGroup, LevelSceneNode, LevelLight } from './levelSceneTypes';
 import { buildMaterial, stampMaterialMetaUserData } from 'src/viz/materials';
 import { CustomShaderMaterial, setSceneEnvironment } from 'src/viz/shaders/customShader';
@@ -1765,6 +1766,8 @@ export const loadLevelDef = (
     // Register as a startup barrier so physics doesn't tick until behaviors are wired
     viz.registerPhysicsStartupBarrier(behaviorWiringComplete);
   };
+
+  loadLevelParticles(viz, levelDef.particles ?? [], quality, loadedTextures, completePromise);
 
   return {
     objects: objectsPromise,

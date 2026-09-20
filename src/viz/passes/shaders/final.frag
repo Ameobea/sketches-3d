@@ -61,22 +61,12 @@ vec3 reconstructWorldPos(float depth) {
 void main() {
   vec4 color = texture2D(inputBuffer, vUv);
 
-  // Volumetric fog coverage exported in the scene buffer's alpha (see VolumetricPass).
-  // Attenuates the distance fog so it doesn't repaint content hidden under opaque fog
-  // using the depth of geometry beneath it.
+  // Coverage of what composited over the scene after the opaque render (volumetric fog,
+  // particles), exported in its alpha. Attenuates the distance fog so it doesn't repaint them
+  // using the depth of geometry beneath. ParticlePass applies the same coverage to emissiveRT.
   float fogCoverage = 0.0;
   #ifdef SCENE_ALPHA_IS_FOG_COVERAGE
   fogCoverage = clamp(color.a, 0.0, 1.0);
-  #endif
-
-  // Applied to the emissive + bloom composite only when the emissive buffer carries
-  // far-plane sky content that fog must cover (FOG_COVERAGE_ATTENUATES_EMISSIVE).
-  // Near-field bypass meshes (e.g. portals) punch through fog behind them instead —
-  // their depth isn't in the buffer the fog raymarched against, so its coverage
-  // includes fog they should occlude.
-  float emissiveFogCoverage = 0.0;
-  #ifdef FOG_COVERAGE_ATTENUATES_EMISSIVE
-  emissiveFogCoverage = fogCoverage;
   #endif
 
   // Fog blend runs in linear space, before tone mapping, so the fog color is
@@ -119,7 +109,8 @@ void main() {
 #ifdef HAS_EMISSIVE_BUFFER
 {
   vec4 emissive = texture2D(emissiveBuffer, vUv);
-  emissive.a *= 1.0 - emissiveFogCoverage;
+  // Additive emissive particles can push HalfFloat alpha past 1.
+  emissive.a = min(emissive.a, 1.0);
   // Apply the same fog factor computed above to the emissive sample so the
   // composite matches the fogged scene below. The bloom path is pre-fogged
   // in EmissiveBloomPass's filter step (so blurred halos attenuate correctly);
@@ -136,10 +127,9 @@ void main() {
 
 #ifdef HAS_EMISSIVE_BLOOM
 {
-  // Additive bloom glow from the MipmapBlur of the emissive buffer, attenuated by
-  // fog coverage so halos don't detach from sources hidden under volumetric fog.
+  // Additive bloom glow from the MipmapBlur of the emissive buffer.
   vec4 bloom = texture2D(emissiveBloomBuffer, vUv);
-  color.rgb += linearToSRGB(bloom.rgb) * bloomIntensity * (1.0 - emissiveFogCoverage);
+  color.rgb += linearToSRGB(bloom.rgb) * bloomIntensity;
 }
 #endif
 

@@ -116,6 +116,7 @@ export class ProceduralLegs {
   private probe: LegsInput['probeGround'];
   private probeDist = 0;
   private legReachW = 0;
+  onFootfall?: () => void;
 
   constructor(
     skeleton: CharacterSkeleton,
@@ -208,16 +209,18 @@ export class ProceduralLegs {
     this.rootBone.position.y = this.rootRestY - this.totalCrouch;
 
     const horizVel = _horizVel.copy(inp.bodyVel).setY(0);
-    const speed = Math.max(horizVel.length(), conf.wallCadence * inp.walkSpeed);
+    const bodySpeed = horizVel.length();
+    const cadenceSpeed = Math.max(bodySpeed, conf.wallCadence * inp.walkSpeed);
     const strideW = conf.stride * scale;
     const cycle = walking
       ? THREE.MathUtils.clamp(
-          strideW / (conf.duty * Math.max(speed, 1e-3)),
+          strideW / (conf.duty * Math.max(cadenceSpeed, 1e-3)),
           conf.minCycleSeconds,
           conf.maxCycleSeconds
         )
       : Infinity;
-    const strideEff = walking ? Math.min(strideW, speed * conf.duty * cycle) : 0;
+    // stride spans the body's real travel over one stance, keeping planted feet centred under the hips
+    const strideEff = walking ? Math.min(strideW, bodySpeed * conf.duty * cycle) : 0;
     const moveDir = horizVel.lengthSq() > 1e-6 ? _moveDir.copy(horizVel).normalize() : _moveDir.set(0, 0, 0);
     if (walking) {
       this.phase = (this.phase + dt / cycle) % 1;
@@ -256,6 +259,7 @@ export class ProceduralLegs {
             this.groundAt(_point.copy(underHip).addScaledVector(moveDir, strideEff / 2), hipWorldY)
           );
           leg.inSwing = false;
+          this.onFootfall?.();
         }
       } else {
         const u = (ph - conf.duty) / (1 - conf.duty);

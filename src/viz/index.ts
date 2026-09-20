@@ -41,6 +41,7 @@ import { unmount } from 'svelte';
 import type { OrbitControls } from 'three/examples/jsm/Addons.js';
 import { LoadOrbitControls } from './preloadCache';
 import { loadLevelDef, type LevelLoadHandle } from './levelDef/loadLevelDef';
+import type { ParticleSystem } from './particles/ParticleSystem';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 import { OverlayMSAARenderer } from './gizmos/overlayMSAA';
@@ -249,6 +250,8 @@ export class Viz {
   private lastPauseState: boolean | null = null;
   private customKeyEventMap = new Map<string, (event: KeyboardEvent) => void>();
   public levelLoadHandle: LevelLoadHandle | null = null;
+  /** Drawn by the pipeline's `ParticlePass`; entries dispose themselves via `registerDestroyedCb`. */
+  public particleSystems: ParticleSystem[] = [];
 
   constructor(
     paused: TransparentWritable<boolean>,
@@ -1122,6 +1125,7 @@ export class Viz {
     for (const cb of this.onDestroyedCbs) {
       cb();
     }
+    this.particleSystems.length = 0;
 
     this.scene.traverse(o => {
       if (o instanceof THREE.Mesh) {

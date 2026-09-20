@@ -1,5 +1,9 @@
 set dotenv-load := true
 
+# wasm-bindgen and --strip-dwarf discard DWARF anyway; keeping it only costs link time and
+# ~7x larger intermediates. Native release builds (perf line info) are unaffected.
+export CARGO_PROFILE_RELEASE_DEBUG := "0"
+
 copy-files:
   cp -r ./build/* ../wasmComp
   cp ./build2/*.wasm ../wasmComp
@@ -83,7 +87,7 @@ debug:
   cargo build --target wasm32-unknown-unknown --workspace
 
   just bindgen
-  just opt
+  WASM_OPT_MODE=dev just opt
   just copy-files
 
 fmt:
@@ -116,7 +120,7 @@ build-csg-sandbox:
 build-geoscript-repl:
   RUSTFLAGS="-C target-feature=+simd128 -Z threads=8" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
-  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
+  WASM_OPT_MODE=dev ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
   cp ./build/geoscript_repl* ../wasmComp
 
 build-geoscript-repl-release:
@@ -128,7 +132,7 @@ build-geoscript-repl-release:
 build-geoscript-analysis:
   RUSTFLAGS="-C target-feature=+simd128 -Z threads=8" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_analysis_wasm
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_analysis_wasm.wasm --target web --remove-producers-section --out-dir ./build
-  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
+  WASM_OPT_MODE=dev ./optimize-wasm.sh ./build/geoscript_analysis_wasm_bg.wasm
   cp ./build/geoscript_analysis_wasm* ../wasmComp
 
 build-geoscript-analysis-release:
@@ -141,7 +145,7 @@ build-geoscript:
   #!/bin/bash
   set -e
   RUSTFLAGS="-C target-feature=+simd128 -Z threads=8" cargo build --profile dev-opt --target wasm32-unknown-unknown --package geoscript_repl --package geoscript_analysis_wasm --package uv_solvers
-  export WASM_OPT_LEVEL=O2
+  export WASM_OPT_MODE=dev
   (
     wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/geoscript_repl.wasm --target web --remove-producers-section --out-dir ./build
     ./optimize-wasm.sh ./build/geoscript_repl_bg.wasm
@@ -162,7 +166,7 @@ build-geoscript:
 build-uv-solvers:
   RUSTFLAGS="-C target-feature=+simd128 -Z threads=8" cargo build --profile dev-opt --target wasm32-unknown-unknown --package uv_solvers
   wasm-bindgen ./target/wasm32-unknown-unknown/dev-opt/uv_solvers.wasm --target web --remove-producers-section --out-dir ./build
-  WASM_OPT_LEVEL=O2 ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
+  WASM_OPT_MODE=dev ./optimize-wasm.sh ./build/uv_solvers_bg.wasm
   cp ./build/uv_solvers* ../wasmComp
 
 build-uv-solvers-release:
