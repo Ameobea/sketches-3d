@@ -14,10 +14,12 @@ class FinalPassMaterial extends THREE.ShaderMaterial {
     emissiveBloomBuffer: THREE.Texture | null,
     bloomIntensity: number,
     fogShader: string | undefined,
-    fogCoverageInAlpha: boolean
+    fogCoverageInAlpha: boolean,
+    scenePrefogged: boolean
   ) {
     const defines: Record<string, string> = {};
     if (fogCoverageInAlpha) defines.SCENE_ALPHA_IS_FOG_COVERAGE = '1';
+    if (scenePrefogged) defines.SCENE_PREFOGGED = '1';
     if (toneMapping === 'aces') defines.TONE_MAPPING_ACES = '1';
     else if (toneMapping === 'cineon') defines.TONE_MAPPING_CINEON = '1';
     else if (toneMapping === 'reinhard') defines.TONE_MAPPING_REINHARD = '1';
@@ -111,6 +113,7 @@ export class FinalPass extends Pass {
       bloomIntensity = 1.0,
       fogShader,
       fogCoverageInAlpha = false,
+      scenePrefogged = false,
     }: {
       toneMapping?: ToneMappingMode;
       exposure?: number;
@@ -137,6 +140,11 @@ export class FinalPass extends Pass {
        * `configureDefaultPostprocessingPipeline` when a `VolumetricPass` is present.
        */
       fogCoverageInAlpha?: boolean;
+      /**
+       * `ParticlePass` already applied the distance fog to the scene buffer (so its particles
+       * composite over a fogged background); the fog here then only feeds the emissive composite.
+       */
+      scenePrefogged?: boolean;
     } = {}
   ) {
     super('FinalPass', undefined, new THREE.Camera());
@@ -148,7 +156,8 @@ export class FinalPass extends Pass {
       emissiveBloomBuffer,
       bloomIntensity,
       fogShader,
-      fogCoverageInAlpha
+      fogCoverageInAlpha,
+      scenePrefogged
     );
     this.hasFogShader = !!fogShader;
     this.needsDepth = !!fogShader;

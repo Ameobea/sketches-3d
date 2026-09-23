@@ -13,7 +13,7 @@ export interface ParticlePipelineCtx {
   sceneDepth: THREE.Texture;
 }
 
-const glslFloat = (v: number) => (Number.isInteger(v) ? `${v}.0` : `${v}`);
+export const glslFloat = (v: number) => (Number.isInteger(v) ? `${v}.0` : `${v}`);
 
 const uniformDecls = (uniforms: Record<string, CustomUniformDef>) =>
   Object.entries(uniforms)
@@ -87,6 +87,12 @@ const distributeGlsl = (volume: ParticleVolume) => {
   }
 };
 
+const edgeFadeVec = ({ size, edgeFade }: ParticleVolume) => {
+  const f = edgeFade ?? Math.min(...size) * 0.1;
+  const v = typeof f === 'number' ? new THREE.Vector3(f, f, f) : new THREE.Vector3().fromArray(f);
+  return v.max(new THREE.Vector3().setScalar(1e-3));
+};
+
 const ORIENT_GLSL = {
   billboard: `
   float cr = cos(p.rot), sr = sin(p.rot);
@@ -120,6 +126,12 @@ export class ParticleMaterial extends THREE.ShaderMaterial {
     if (hasFog) defines.HAS_FOG = '1';
     if (output === 'emissive') defines.OUTPUT_EMISSIVE = '1';
     if (def.softDepth) defines.SOFT_DEPTH = glslFloat(def.softDepth);
+    if (def.renderScale) {
+      if (!def.softDepth || output !== 'scene') {
+        throw new Error(`particle system "${def.id}": renderScale needs softDepth and scene output`);
+      }
+      defines.RENDER_SCALE_INV = glslFloat(1 / def.renderScale);
+    }
 
     const decls = [constantDefines(def.shaders.constants ?? {}), uniformDecls(customUniforms)].join('\n');
     const vertexShader = VERT.replace('//__CUSTOM_UNIFORMS__', `${decls}\n${fieldDecls(def.gates ?? [])}`)
@@ -142,7 +154,7 @@ export class ParticleMaterial extends THREE.ShaderMaterial {
       pPlayerPos: { value: new THREE.Vector3() },
       pBoxSize: { value: new THREE.Vector3().fromArray(def.volume.size) },
       pBoxCenter: { value: new THREE.Vector3() },
-      pBoxEdgeFade: { value: def.volume.edgeFade ?? Math.min(...def.volume.size) * 0.1 },
+      pBoxEdgeFade: { value: edgeFadeVec(def.volume) },
       pLifetime: { value: def.lifetime ?? 0 },
       pStretch: { value: def.stretch ?? 0.05 },
       pPxRange: { value: new THREE.Vector2(def.sizePx?.min ?? 1.5, def.sizePx?.max ?? 128) },

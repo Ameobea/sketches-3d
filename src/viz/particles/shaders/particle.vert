@@ -4,7 +4,7 @@ uniform float pTime;
 uniform vec3 pPlayerPos;
 uniform vec3 pBoxSize;
 uniform vec3 pBoxCenter;
-uniform float pBoxEdgeFade;
+uniform vec3 pBoxEdgeFade;
 uniform float pLifetime;
 uniform float pStretch;
 uniform vec2 pPxRange;
@@ -21,6 +21,9 @@ out float vSeed;
 out float vAge;
 out vec4 vFog;
 out float vViewZ;
+#ifdef SOFT_DEPTH
+flat out float vSoftRadius;
+#endif
 
 //__CUSTOM_UNIFORMS__
 
@@ -84,7 +87,7 @@ void main() {
   vec3 halfBox = pBoxSize * 0.5;
   vec3 rel = mod(p.pos - pBoxCenter + halfBox, pBoxSize) - halfBox;
   vec3 wpos = pBoxCenter + rel;
-  vec3 edge = smoothstep(vec3(0.0), vec3(pBoxEdgeFade), halfBox - abs(rel));
+  vec3 edge = smoothstep(vec3(0.0), pBoxEdgeFade, halfBox - abs(rel));
   float alpha = p.color.a * edge.x * edge.y * edge.z;
   float size = p.size;
   float dist = distance(wpos, cameraPosition);
@@ -103,6 +106,9 @@ void main() {
     size *= pPxRange.y / px;
   }
   if (alpha <= 0.002) size = 0.0;
+#ifdef SOFT_DEPTH
+  vSoftRadius = size * 0.5 * SOFT_DEPTH;
+#endif
 
   vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
   vec3 camUp = vec3(viewMatrix[0][1], viewMatrix[1][1], viewMatrix[2][1]);

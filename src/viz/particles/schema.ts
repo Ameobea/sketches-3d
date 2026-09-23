@@ -40,8 +40,8 @@ export type ExposureGate = z.infer<typeof ExposureGateSchema>;
 export const ParticleGateSchema = z.union([DistanceGateSchema, ExposureGateSchema]);
 export type ParticleGate = z.infer<typeof ParticleGateSchema>;
 
-/** `edgeFade` = fade width at the faces. Default: 10% of the smallest dimension */
-const volumeCommon = { size: Vec3, edgeFade: z.number().min(0).optional() };
+/** Fade width at the faces, one value or per axis. Default: 10% of the smallest dimension */
+const volumeCommon = { size: Vec3, edgeFade: z.union([z.number().min(0), Vec3]).optional() };
 
 /**
  * The window onto the world-anchored, toroidally repeating particle field. Its faces fade, so any
@@ -109,11 +109,17 @@ export const ParticleSystemDefSchema = z.object({
   /** Projected size clamp in pixels; below `min` the sprite grows and dims to preserve coverage. Default: min 1.5, max 128 */
   sizePx: z.object({ min: z.number().min(0).optional(), max: z.number().positive().optional() }).optional(),
   /**
-   * World-unit depth over which sprites fade out ahead of the geometry behind them, for large soft
-   * sprites that would otherwise clip against it in hard lines. Depth-tests per fragment in the
-   * shader instead of in hardware, so leave it off for dense systems of tiny sprites.
+   * Depth-fades each sprite as an ellipsoid whose depth radius is `softDepth` × its screen radius
+   * (1 = sphere), by the fraction of its view-ray chord lying between the near plane and the
+   * geometry behind it, so large soft sprites don't cut walls in hard lines. Depth-tests per
+   * fragment in the shader instead of in hardware, so leave it off for dense systems of tiny sprites.
    */
   softDepth: z.number().positive().optional(),
+  /**
+   * Draw into a buffer this fraction of the viewport and composite it back with a depth-aware
+   * upsample, capping the fill cost of screen-filling soft sprites. Needs `softDepth`; `scene` output only.
+   */
+  renderScale: z.number().gt(0).lt(1).optional(),
   gates: z.array(ParticleGateSchema).optional(),
   shaders: z.object({
     /** `Particle motion(float seed, float age, vec3 origin, vec4 params)` — see particle.vert for the struct. */

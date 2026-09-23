@@ -10,6 +10,10 @@
 #ifndef WISP_EROSION
 #define WISP_EROSION 0.8
 #endif
+// fbm range remapped to 0..1 body density; narrow = hard-edged clumps, wide = diffuse
+#ifndef WISP_BODY
+#define WISP_BODY vec2(0.35, 0.8)
+#endif
 
 float wHash(vec2 p) {
   p = fract(p * vec2(0.1031, 0.1030));
@@ -35,13 +39,14 @@ float wFbm(vec2 x) {
 
 vec4 sprite(vec2 uv, float seed, float age) {
   vec2 d = (uv - 0.5) * 2.0;
-  float window = 1.0 - smoothstep(0.55, 1.0, dot(d, d));
-  if (window <= 0.0) return vec4(0.0);
+  float r2 = dot(d, d);
+  if (r2 >= 1.0) return vec4(0.0);
   vec2 q = d * WISP_FREQ + seed * 91.7 + vec2(age * 0.02, 0.0);
   vec2 warp = vec2(wNoise(q * 0.7 + 7.1), wNoise(q * 0.7 - 3.3)) - 0.5;
-  vec2 e = (d + warp * 0.8) * vec2(1.0, WISP_ASPECT);
+  // warp dies at the rim so the silhouette reaches zero inside the quad instead of being clipped by it
+  vec2 e = (d + warp * 0.8 * (1.0 - r2)) * vec2(1.0, WISP_ASPECT);
   float falloff = max(1.0 - dot(e, e), 0.0);
-  falloff *= falloff * window;
-  float body = smoothstep(0.35, 0.8, wFbm(q + warp * 1.5) + falloff * 0.3);
+  falloff *= falloff;
+  float body = smoothstep(WISP_BODY.x, WISP_BODY.y, wFbm(q + warp * 1.5) + falloff * 0.3);
   return vec4(1.0, 1.0, 1.0, falloff * mix(1.0, body, WISP_EROSION));
 }

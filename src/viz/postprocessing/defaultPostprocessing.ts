@@ -101,6 +101,7 @@ export class PostprocessingPipelineController implements PostprocessingControlle
   setFogEnabled(enabled: boolean): void {
     this.finalPass?.setFogEnabled(enabled);
     this.emissiveBloomPass?.setFogEnabled(enabled);
+    this.particlePass?.setFogEnabled(enabled);
     this.viz.invalidate();
   }
 
@@ -443,10 +444,11 @@ export const configureDefaultPostprocessingPipeline = ({
 
   addMiddlePasses?.(effectComposer, viz, quality);
 
-  // A VolumetricPass exports fog coverage in the scene buffer's alpha channel; FinalPass
-  // uses it to keep the distance fog from repainting content hidden under opaque fog.
-  // ParticlePass extends the same contract, zeroing the alpha first when no volumetric
-  // pass wrote it, and applies the coverage to emissiveRT.
+  // A VolumetricPass exports fog coverage in the scene buffer's alpha channel, which attenuates
+  // the distance fog so it doesn't repaint content hidden under opaque fog. That contract is only
+  // exact for opaque coverage, so with a ParticlePass the distance fog is applied there, before
+  // its particles; it also applies the coverage to emissiveRT, and FinalPass keeps the fog for
+  // the emissive composite only.
   const hasVolumetricPass = (effectComposer as unknown as { passes: { enabled: boolean }[] }).passes.some(
     p => p.enabled && p instanceof VolumetricPass
   );
@@ -546,6 +548,7 @@ export const configureDefaultPostprocessingPipeline = ({
     bloomIntensity: emissiveBlurPass?.intensity ?? 1.0,
     fogShader,
     fogCoverageInAlpha,
+    scenePrefogged: particlePass !== null && !!fogShader,
   });
   effectComposer.addPass(finalPass);
 

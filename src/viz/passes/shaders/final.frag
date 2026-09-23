@@ -85,7 +85,9 @@ void main() {
     // Returns vec4(fogColor.rgb, fogFactor) where fogFactor=0 is clear, 1 is full fog.
     fogResult = getFogEffect(worldPos, fogCameraPos, fogPlayerPos, depth, curTimeSeconds);
     fogResult.a *= 1.0 - fogCoverage;
+    #ifndef SCENE_PREFOGGED
     color.rgb = mix(color.rgb, fogResult.rgb, fogResult.a);
+    #endif
   }
   #endif
 
