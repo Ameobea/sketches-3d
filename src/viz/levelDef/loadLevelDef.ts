@@ -12,6 +12,8 @@ import {
   forEachMesh,
   instantiateLevelObject,
   meshesFromRunObjects,
+  resolveNocollide,
+  resolveNonPermeable,
 } from './levelObjectUtils';
 import type {
   GeneratedObject,
@@ -266,6 +268,9 @@ const extractPrototype = (objects: GeneratedObject[]): THREE.Mesh | null => {
   return meshes[0];
 };
 
+/** Placement always starts on the placeholder material; `assignWhenCompiled` swaps the real one in. */
+const NO_PREBUILT_MATERIALS = new Map<string, THREE.Material>();
+
 /**
  * Bakes the asset's root transform into vertices before rendering, so `obj.transform`
  * comes back as identity. Use for any path that hands the mesh to `instantiateLevelObject`,
@@ -405,6 +410,17 @@ const computeUpdatedMeta = (
   return result;
 };
 
+const postAssetMeta = (sceneName: string, updates: Record<string, GeoscriptAssetMeta>) => {
+  if (!dev || Object.keys(updates).length === 0) {
+    return;
+  }
+  fetch(`/level_editor/${sceneName}/asset-metadata`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(updates),
+  }).catch(err => console.error('[levelDef] Failed to save asset metadata:', err));
+};
+
 /**
  * Run all geoscript and CSG assets via the executor, firing onResolved incrementally.
  * In dev mode, collects per-asset runtime metadata and POSTs updates to disk.
@@ -507,14 +523,7 @@ const resolveScriptAssets = async (
   if (ownsExecutor) {
     executor.terminate();
   }
-
-  if (dev && Object.keys(metaUpdates).length > 0) {
-    fetch(`/level_editor/${sceneName}/asset-metadata`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(metaUpdates),
-    }).catch(err => console.error('[levelDef] Failed to save asset metadata:', err));
-  }
+  postAssetMeta(sceneName, metaUpdates);
 };
 
 /**
@@ -839,14 +848,14 @@ export const loadLevelDef = (
   });
 
   const maybeRegisterPhysics = (fpCtx: PhysicsContext, levelObj: LevelObject) => {
-    // Jump pads default to no rigid-body collider (they're pure trigger volumes); an explicit
-    // `nocollide: false` still opts back in.
-    const jumpPadDefault = !!levelObj.def.parkour?.entities?.some(e => e.kind === 'jumpPad');
-    const nocollide =
-      levelObj.def.nocollide ?? (levelObj.def.userData?.nocollide as boolean | undefined) ?? jumpPadDefault;
-    if (registeredPhysicsObjects.has(levelObj.id) || !hasAsset(levelObj.def) || nocollide) {
+    if (registeredPhysicsObjects.has(levelObj.id) || !hasAsset(levelObj.def)) {
       return;
     }
+    const assetDef = levelDef.assets[levelObj.def.asset!];
+    if (resolveNocollide(levelObj.def, assetDef)) {
+      return;
+    }
+    levelObj.entity.nonPermeable ??= assetDef?.nonPermeable;
 
     // Placement is gated on `resolveAssetPrototype` resolution, so by the time a
     // `levelObj` exists its asset's collision data (if any) is already in the cache.
@@ -882,6 +891,72 @@ export const loadLevelDef = (
     }
   };
 
+  /** Entity-side effects of a material (physics class, surface configs, camera permeability) —
+   *  applied as soon as the material is known, independent of the visual swap below. */
+  const bindMaterialToEntity = (levelObj: LevelObject, mat: THREE.Material) => {
+    if (mat instanceof CustomShaderMaterial && mat.materialClass !== undefined) {
+      levelObj.entity.setMaterialClass(mat.materialClass);
+    }
+    propagateMatUserDataToEntity(mat, levelObj.entity);
+    if (mat.userData.nonPermeable && levelObj.entity.nonPermeable === undefined) {
+      if (levelObj.entity.body) {
+        viz.fpCtx!.markBodyNonPermeable(levelObj.entity.body);
+      } else {
+        levelObj.entity.nonPermeable = true;
+      }
+    }
+  };
+
+  const parallelShaderCompile = viz.renderer.extensions.has('KHR_parallel_shader_compile');
+
+  /** Objects are placed on the placeholder material; the real one is swapped in once its program
+   *  has linked on the driver's threads, so the first frame drawing it never blocks on the link. */
+  const compiles = new WeakMap<THREE.Material, Map<string, Promise<unknown>>>();
+
+  /** One compile per material × placed geometry set; instances of an asset share geometry. */
+  const compileFor = (object: THREE.Object3D, mat: THREE.Material) => {
+    const meshes: THREE.Mesh[] = [];
+    forEachMesh(object, mesh => meshes.push(mesh));
+    const key = meshes.map(m => `${m.geometry.uuid}:${+m.castShadow}${+m.receiveShadow}`).join();
+    let byKey = compiles.get(mat);
+    if (!byKey) {
+      byKey = new Map();
+      compiles.set(mat, byKey);
+    }
+    let compiled = byKey.get(key);
+    if (!compiled) {
+      const probes = new THREE.Group();
+      for (const mesh of meshes) {
+        const probe = new THREE.Mesh(mesh.geometry, mat);
+        probe.castShadow = mesh.castShadow;
+        probe.receiveShadow = mesh.receiveShadow;
+        probes.add(probe);
+      }
+      compiled = viz.renderer.compileAsync(probes, viz.camera, viz.scene);
+      byKey.set(key, compiled);
+    }
+    return compiled;
+  };
+
+  const assignWhenCompiled = (levelObj: LevelObject, matName: string, mat: THREE.Material) => {
+    const finish = () => {
+      if (builtMaterials.get(matName) !== mat) {
+        return;
+      }
+      assignMaterial(levelObj.object, mat);
+      const cb = matAssignedCbs.get(matName);
+      if (cb) {
+        forEachMesh(levelObj.object, cb);
+      }
+    };
+    if (!parallelShaderCompile) {
+      finish();
+      return;
+    }
+    // A failed async compile still swaps: the first draw then links synchronously, as before.
+    void compileFor(levelObj.object, mat).then(finish, finish);
+  };
+
   // Register a placed leaf into the scene-node bookkeeping (allLevelObjects / nodeById) and splice
   // it into its parent group's children (or rootNodes) at the input-def index.
   const registerLeafNode = (levelObj: LevelObject) => {
@@ -910,7 +985,7 @@ export const loadLevelDef = (
 
   const placeObject = (assetId: string, prototype: THREE.Mesh, objDef: ObjectDef) => {
     const clone = instantiateLevelObject(prototype, objDef, {
-      builtMaterials,
+      builtMaterials: NO_PREBUILT_MATERIALS,
       fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
     });
 
@@ -918,9 +993,7 @@ export const loadLevelDef = (
     parent.add(clone);
 
     const entity = new Entity(viz, objDef.id, clone);
-    if (objDef.nonPermeable !== undefined) {
-      entity.nonPermeable = objDef.nonPermeable;
-    }
+    entity.nonPermeable = resolveNonPermeable(objDef, levelDef.assets[objDef.asset!]);
     if (objDef.parkour?.boostSurface) {
       entity.setBoostSurfaceConfig(objDef.parkour.boostSurface);
     }
@@ -929,12 +1002,6 @@ export const loadLevelDef = (
     }
     if (objDef.externalVelocityGroundDampingFactor) {
       entity.setExternalVelocityGroundDampingFactor(objDef.externalVelocityGroundDampingFactor);
-    }
-    // Texture-less materials build before any placement, so tryBuildMaterial's post-build
-    // propagation runs against an empty allLevelObjects map; cover the already-built case here.
-    const earlyMat = objDef.material ? builtMaterials.get(objDef.material) : undefined;
-    if (earlyMat) {
-      propagateMatUserDataToEntity(earlyMat, entity);
     }
     const levelObj: LevelObject = {
       id: objDef.id,
@@ -946,10 +1013,10 @@ export const loadLevelDef = (
     };
     registerLeafNode(levelObj);
 
-    // Fire onAssigned callback if the material factory registered one.
-    if (objDef.material) {
-      const cb = matAssignedCbs.get(objDef.material);
-      if (cb) forEachMesh(clone, cb);
+    const earlyMat = objDef.material ? builtMaterials.get(objDef.material) : undefined;
+    if (earlyMat) {
+      bindMaterialToEntity(levelObj, earlyMat);
+      assignWhenCompiled(levelObj, objDef.material!, earlyMat);
     }
 
     // Physics: register immediately if physics is already up, otherwise the batch callback covers it
@@ -1016,11 +1083,16 @@ export const loadLevelDef = (
     baked: BakedCompositionMesh,
     childIndex: number
   ) => {
-    const levelObj = buildCompositionChild({ viz, builtMaterials }, objDef, baked, childIndex, g =>
-      resolveChildMaterial(def, objDef, g, assetId)
+    const levelObj = buildCompositionChild(
+      { viz, builtMaterials: NO_PREBUILT_MATERIALS },
+      objDef,
+      baked,
+      childIndex,
+      g => resolveChildMaterial(def, objDef, g, assetId)
     );
     levelObj.owner = group;
     group.object.add(levelObj.object);
+    levelObj.entity.nonPermeable ??= def.nonPermeable;
 
     // Object-level surface config applies to every child of a composition placement, taking
     // precedence over material userData (the propagate guards below skip already-set fields).
@@ -1034,21 +1106,18 @@ export const loadLevelDef = (
       levelObj.entity.setExternalVelocityGroundDampingFactor(objDef.externalVelocityGroundDampingFactor);
     }
 
-    const matName = levelObj.def.material;
-    const builtMat = matName ? builtMaterials.get(matName) : undefined;
-    if (builtMat) propagateMatUserDataToEntity(builtMat, levelObj.entity);
-
     allLevelObjects.set(levelObj.id, levelObj);
     (group.opaqueParts ??= []).push(levelObj);
 
-    // Register for the post-texture material build, or fire the assigned-cb if already built.
+    const matName = levelObj.def.material;
     if (matName) {
       const list = matToObjIds.get(matName) ?? [];
       list.push(levelObj.id);
       matToObjIds.set(matName, list);
+      const builtMat = builtMaterials.get(matName);
       if (builtMat) {
-        const cb = matAssignedCbs.get(matName);
-        if (cb) forEachMesh(levelObj.object, cb);
+        bindMaterialToEntity(levelObj, builtMat);
+        assignWhenCompiled(levelObj, matName, builtMat);
       }
     }
 
@@ -1089,6 +1158,7 @@ export const loadLevelDef = (
       return;
     }
 
+    const compRuns = new Map<string, ReturnType<typeof buildCompositionAssetRunInputs>>();
     const compJobs: GeoscriptJob[] = compIds.map(id => {
       const def = assetDefs[id] as GeotoyCompositionAssetDef;
       if (def.rootNodeName) {
@@ -1097,11 +1167,13 @@ export const loadLevelDef = (
         );
       }
       const run = buildCompositionAssetRunInputs(def, def.inputs);
+      compRuns.set(id, run);
+      const includePrelude = !def.preludeEjected;
       return {
         id,
         modules: run.modules,
         code: run.code,
-        includePrelude: !def.preludeEjected,
+        includePrelude,
         preludeKind: run.preludeKind,
         tabAmbients: run.tabAmbients,
         rootModuleName: run.rootModuleName,
@@ -1109,7 +1181,7 @@ export const loadLevelDef = (
         gizmoValues: run.gizmoValues,
         asyncDeps: def._meta?.asyncDeps?.filter(d => d !== 'text_to_path') ?? [],
         deps: [],
-        collectMetadata: false,
+        collectMetadata: dev && !variantBase.has(id) && shouldCollectMeta(def, run.modules, includePrelude),
         textureDetail: 'gpu',
         availableMaterials: def.materialNames ?? [],
         defaultMaterialName: def.defaultMaterialName ?? null,
@@ -1140,6 +1212,7 @@ export const loadLevelDef = (
     });
 
     const promises = sharedExecutor.submit([...compJobs, ...texRunJobs]);
+    const metaUpdates: Record<string, GeoscriptAssetMeta> = {};
     try {
       await Promise.all([
         ...compIds.map(id =>
@@ -1151,6 +1224,19 @@ export const loadLevelDef = (
               return;
             }
             const def = assetDefs[id] as GeotoyCompositionAssetDef;
+            if (res.meta) {
+              const run = compRuns.get(id)!;
+              const updated = computeUpdatedMeta(
+                def._meta,
+                res.meta,
+                run.modules,
+                !def.preludeEjected,
+                def.inputs
+              );
+              if (JSON.stringify(updated) !== JSON.stringify(def._meta)) {
+                metaUpdates[id] = updated;
+              }
+            }
             const treeId = def.treeId ?? 'main';
             const controls = normalizeCompositionRunOutputs(res.controls, treeId);
             const gizmos = normalizeCompositionRunOutputs(res.gizmos, treeId);
@@ -1199,6 +1285,7 @@ export const loadLevelDef = (
     } finally {
       finishRemaining();
     }
+    postAssetMeta(viz.sceneName, metaUpdates);
   };
 
   const tryBuildMaterial = (matName: string) => {
@@ -1210,29 +1297,11 @@ export const loadLevelDef = (
     const mat = buildMaterial(def, texMap);
     builtMaterials.set(matName, mat);
 
-    // Assign to any already-placed objects
     for (const objId of matToObjIds.get(matName) ?? []) {
       const levelObj = allLevelObjects.get(objId);
       if (levelObj) {
-        assignMaterial(levelObj.object, mat);
-
-        // Upgrade the entity's material class now that the real material has arrived.
-        if (mat instanceof CustomShaderMaterial && mat.materialClass !== undefined) {
-          levelObj.entity.setMaterialClass(mat.materialClass);
-        }
-
-        propagateMatUserDataToEntity(mat, levelObj.entity);
-
-        if (mat.userData.nonPermeable && physicsReady) {
-          const fpCtx = viz.fpCtx;
-          if (fpCtx) {
-            if (levelObj.entity.nonPermeable === undefined && levelObj.entity.body) {
-              fpCtx.markBodyNonPermeable(levelObj.entity.body);
-            }
-          } else {
-            console.error(`\`fpCtx\` not ready when trying to mark "${levelObj.id}" as non-permeable`);
-          }
-        }
+        bindMaterialToEntity(levelObj, mat);
+        assignWhenCompiled(levelObj, matName, mat);
       }
     }
   };
@@ -1393,9 +1462,8 @@ export const loadLevelDef = (
     characterSink
   );
 
-  // Composition jobs share the worker ctx with script assets, so run them after the script
-  // batch settles (concurrent `submit()` calls would interleave resets on the shared ctx).
-  const compositionsDone = geoscriptDone.then(() => resolveCompositionAssets());
+  // Each worker job is atomic from reset through extraction, so both batches can be in flight.
+  const compositionsDone = resolveCompositionAssets();
 
   // `geoscriptDone` resolves after every `onAssetResolved` has been called (so every
   // `initialPlacementPromises` entry exists); awaiting those + composition expansion then
@@ -1678,14 +1746,11 @@ export const loadLevelDef = (
         stampMaterialMetaUserData(matDef, mat);
       }
       builtMaterials.set(matName, mat);
-      // Assign to any already-placed objects referencing this material
       for (const objId of matToObjIds.get(matName) ?? []) {
         const levelObj = allLevelObjects.get(objId);
         if (levelObj) {
-          assignMaterial(levelObj.object, mat);
-          propagateMatUserDataToEntity(mat, levelObj.entity);
-          const cb = matAssignedCbs.get(matName);
-          if (cb) forEachMesh(levelObj.object, cb);
+          bindMaterialToEntity(levelObj, mat);
+          assignWhenCompiled(levelObj, matName, mat);
         }
       }
     }

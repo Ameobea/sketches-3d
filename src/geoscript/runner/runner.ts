@@ -1,4 +1,4 @@
-export { runGeoscript } from './geoscriptRunner';
+export { runGeoscript, isWasmTrap } from './geoscriptRunner';
 export type {
   RunGeoscriptOptions,
   GeoscriptRunResult as RunResult,

@@ -5,6 +5,7 @@ import type { GeoscriptWorkerMethods } from 'src/geoscript/geoscriptWorker.worke
 import type { WorkerManager } from 'src/geoscript/workerManager';
 import { getGeoscriptWorkerWasmURLs } from 'src/viz/wasmComp/wasmAssetURLs';
 import {
+  isWasmTrap,
   runGeoscript,
   type RunGeoscriptOptions,
   type RunResult,
@@ -133,6 +134,12 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.ctxEpoch++;
   };
 
+  /** A wasm trap never unwinds, so it leaves RefCells borrowed and the instance unusable. */
+  private recreateWorker = async () => {
+    this.replBox = { repl: await this.opts.workerManager.recreate() };
+    await this.init();
+  };
+
   /** Resolves with the next run settlement — the in-flight run's if one is executing,
    *  else the next run to start (which adopts the queued deferred). Settles only after
    *  `consume` has applied the result. */
@@ -251,6 +258,10 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
       if (myGen !== this.runGen) return null;
 
       if (result.error) {
+        if (result.wasmTrap) {
+          await this.recreateWorker();
+          if (myGen !== this.runGen) return null;
+        }
         const failedModule = extractFailedModuleName(result.error);
         return {
           type: 'err',
@@ -267,6 +278,10 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     } catch (e) {
       if (myGen !== this.runGen) return null;
       console.error('geoscript run failed', e);
+      if (isWasmTrap(e)) {
+        await this.recreateWorker();
+        if (myGen !== this.runGen) return null;
+      }
       return {
         type: 'err',
         err: `Run failed: ${e instanceof Error ? e.message : String(e)}`,
@@ -286,8 +301,7 @@ export class GeoscriptExecution<T extends RunInput = RunInput> {
     this.opts.onCancelCleanup();
     this.runStats = null;
 
-    this.replBox = { repl: await this.opts.workerManager.recreate() };
-    await this.init();
+    await this.recreateWorker();
 
     this.lastOkInputKey = null;
     this.err = 'Execution interrupted';

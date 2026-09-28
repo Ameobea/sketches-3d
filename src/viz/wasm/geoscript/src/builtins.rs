@@ -9843,42 +9843,24 @@ fn flatten_impl(
 }
 
 fn abs_impl(
-  def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
 ) -> Result<Value, ErrorStack> {
-  match def_ix {
-    0 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_int().unwrap();
-      Ok(Value::Int(value.abs()))
-    }
-    1 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(value.abs()))
-    }
-    2 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
-      Ok(Value::Vec3(Vec3::new(
-        value.x.abs(),
-        value.y.abs(),
-        value.z.abs(),
+  Ok(match arg_refs[0].resolve(args, kwargs) {
+    Value::Int(i) => Value::Int(i.abs()),
+    Value::Float(f) => Value::Float(f.abs()),
+    Value::Vec2(v) => Value::Vec2(v.abs()),
+    Value::Vec3(v) => Value::Vec3(v.abs()),
+    Value::Vec4(v) => Value::Vec4(Rc::new(v.abs())),
+    Value::Texture(t) => texture::texture_map_unary(t, |x| x.abs()),
+    other => {
+      return Err(ErrorStack::new(format!(
+        "`abs` expects a number, vector, or texture; found: {:?}",
+        other.get_type()
       )))
     }
-    3 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
-      Ok(Value::Vec2(Vec2::new(value.x.abs(), value.y.abs())))
-    }
-    4 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(value, |x| x.abs()))
-    }
-    5 => {
-      let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
-      Ok(Value::Vec4(Rc::new(value.map(|x| x.abs()))))
-    }
-    _ => unimplemented!(),
-  }
+  })
 }
 
 fn signum_impl(
@@ -10572,8 +10554,8 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let val = arg_refs[0].resolve(args, kwargs);
     pos_impl(def_ix, val)
   }),
-  "abs" => builtin_fn!(abs, |def_ix, arg_refs, args, kwargs, _ctx| {
-    abs_impl(def_ix, arg_refs, args, kwargs)
+  "abs" => builtin_fn!(abs, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    abs_impl(arg_refs, args, kwargs)
   }),
   "signum" => builtin_fn!(signum, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     signum_impl(def_ix, arg_refs, args, kwargs)

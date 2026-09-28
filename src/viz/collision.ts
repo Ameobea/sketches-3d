@@ -70,6 +70,7 @@ import {
   type CollisionShapeBuildResult,
   applyShapeBuildResult,
   buildCollisionShapeFromMesh,
+  SharedTrimeshCache,
   extractHullInputVertices,
 } from './collisionShapes.js';
 import {
@@ -252,6 +253,7 @@ export class BulletPhysics {
   /** Tracks whether backface rendering was enabled last frame to avoid redundant scene traversals. */
   private backfaceRenderingEnabled = true;
   private readonly collisionShapeCleanupFns = new WeakMap<BtCollisionObject, () => void>();
+  private readonly trimeshCache: SharedTrimeshCache;
   public flightRecorder: FlightRecorder = new FlightRecorder();
   public packStateBufPtr = 0;
   private shadowProbeBufPtr = 0;
@@ -259,6 +261,7 @@ export class BulletPhysics {
 
   constructor({ viz, Ammo, initialSpawnPos }: BulletPhysicsArgs) {
     this.Ammo = Ammo;
+    this.trimeshCache = new SharedTrimeshCache(Ammo, (x, y, z) => this.btvec3(x, y, z));
     this.viz = viz;
     this.simulationTickRate = viz.sceneConf.simulationTickRate ?? DefaultSimulationTickRateHz;
     this.validatePlayerPhysicsConfig();
@@ -1322,7 +1325,11 @@ export class BulletPhysics {
         destroyShape();
       } else {
         const collisionShape = collisionObj.getCollisionShape();
-        if (collisionShape) {
+        if (collisionShape && this.trimeshCache.isShared(collisionShape)) {
+          console.error(
+            `Refusing to free shared trimesh of unregistered body for mesh ${meshName ?? '<Unknown>'}`
+          );
+        } else if (collisionShape) {
           this.Ammo.destroy(collisionShape);
         }
       }
@@ -1540,7 +1547,14 @@ export class BulletPhysics {
     extraScale?: THREE.Vector3,
     collisionMeshOverride?: CollisionMeshOverride
   ): CollisionShapeBuildResult =>
-    buildCollisionShapeFromMesh(this.Ammo, this.btvec3, mesh, extraScale, collisionMeshOverride);
+    buildCollisionShapeFromMesh(
+      this.Ammo,
+      this.btvec3,
+      mesh,
+      extraScale,
+      collisionMeshOverride,
+      this.trimeshCache
+    );
 
   /** Creates a btTransform from a position and optional quaternion.  Caller must destroy it. */
   private makeBtTransform = (pos: THREE.Vector3, quat?: THREE.Quaternion) => {
@@ -2007,6 +2021,10 @@ export class BulletPhysics {
     this.destroyCollisionShape(this.playerGhostObject, 'player');
     this.Ammo.destroy(this.playerGhostObject);
     this.Ammo.destroy(this.collisionWorld);
+    const leakedRefs = this.trimeshCache.dispose();
+    if (leakedRefs > 0 && import.meta.env.DEV) {
+      console.warn(`[physics] ${leakedRefs} trimesh bodies were never removed before world teardown`);
+    }
   };
 
   public addHeightmapTerrain = (

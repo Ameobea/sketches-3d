@@ -1,6 +1,6 @@
 import * as Comlink from 'comlink';
 
-import { runGeoscript } from './runner/geoscriptRunner';
+import { buildRunResult } from './runner/geoscriptRunner';
 import type {
   GeneratedObject,
   GizmoValuesByModule,
@@ -8,6 +8,7 @@ import type {
   RenderedGizmo,
   TextureDetail,
   TextureParamsEntry,
+  WorkerRunPayload,
 } from './runner/types';
 import type { TreeKind } from './geotoyAPIClient';
 import type { GeoscriptAsyncDeps } from './geoscriptWorker.worker';
@@ -78,91 +79,70 @@ export class GeoscriptExecutor {
     this.ctxPtrPromise = repl.init(getGeoscriptWorkerWasmURLs(), eagerDeps);
   }
 
+  /** Every job runs inside the worker back to back; results stream in per job, so the main
+   *  thread being busy (placement, physics, uploads) never stalls generation. Concurrent
+   *  `submit`s are safe: each job is atomic on the worker from reset through extraction. */
   submit(jobs: GeoscriptJob[]): Map<string, Promise<GeoscriptJobResult>> {
-    const repl = this.workerManager.getWorker();
     const results = new Map<string, Promise<GeoscriptJobResult>>();
-
-    // Collect all unique non-text_to_path async deps across all jobs.
-    const allDeps = new Set<string>();
+    const pending = new Map<string, (r: GeoscriptJobResult) => void>();
     for (const job of jobs) {
-      for (const dep of job.asyncDeps) {
-        if (dep !== 'text_to_path') {
-          allDeps.add(dep);
-        }
+      results.set(job.id, new Promise(res => pending.set(job.id, res)));
+    }
+    const failed = (error: string): GeoscriptJobResult => ({ objects: [], error, controls: [], gizmos: [] });
+
+    const byId = new Map(jobs.map(j => [j.id, j]));
+    const workerJobs = jobs.map(job => ({
+      id: job.id,
+      code: job.code,
+      modules: job.modules,
+      preludeKind: job.preludeKind ?? (job.includePrelude ? 'mesh' : undefined),
+      ambientSources: job.tabAmbients ? undefined : job.ambientSources,
+      tabAmbients: job.tabAmbients,
+      gizmoValues: job.gizmoValues ?? {},
+      textureParams: job.textureParams ?? [],
+      textureDetail: job.textureDetail ?? 'full',
+      rootModuleName: job.rootModuleName,
+      vectorize: { disabled: false, verify: false, profile: false },
+      materials: job.availableMaterials
+        ? { defaultName: job.defaultMaterialName ?? null, available: job.availableMaterials }
+        : undefined,
+      clearConstEvalCache: job.collectMetadata,
+      asyncDeps: job.asyncDeps.filter(d => d !== 'text_to_path') as (keyof GeoscriptAsyncDeps)[],
+    }));
+    const onResult = (id: string, payload: WorkerRunPayload) => {
+      const res = pending.get(id);
+      if (!res) {
+        return;
       }
-    }
+      pending.delete(id);
+      if (payload.error) {
+        res(failed(payload.error));
+        return;
+      }
+      try {
+        const { objects, gizmos, controls, stats } = buildRunResult(payload, {});
+        res({
+          objects,
+          error: null,
+          controls,
+          gizmos,
+          meta: byId.get(id)!.collectMetadata
+            ? { runtimeMs: stats.runtimeMs, asyncDeps: stats.asyncDeps }
+            : undefined,
+        });
+      } catch (err) {
+        res(failed(String(err)));
+      }
+    };
 
-    // Kick off all dep loads concurrently.
-    const depPromises = new Map<string, Promise<void>>();
-    for (const dep of allDeps) {
-      depPromises.set(
-        dep,
-        this.ctxPtrPromise.then(() => repl.initAsyncDep(dep as keyof GeoscriptAsyncDeps))
-      );
-    }
-
-    // Run jobs sequentially (single worker requires shared-ctx ordering).
-    // Each job's promise resolves as soon as that job completes.
-    let chain = this.ctxPtrPromise.then(() => {});
-    for (const job of jobs) {
-      const jobDeps = job.asyncDeps.filter(d => d !== 'text_to_path');
-
-      const jobPromise = new Promise<GeoscriptJobResult>(res => {
-        chain = chain
-          .then(async () => {
-            // Wait for this job's specific deps.
-            if (jobDeps.length > 0) {
-              await Promise.all(jobDeps.map(d => depPromises.get(d)!));
-            }
-
-            const ctxPtr = await this.ctxPtrPromise;
-
-            if (job.collectMetadata) {
-              await repl.clearConstEvalCache(ctxPtr);
-            }
-
-            if (job.availableMaterials) {
-              await repl.setMaterials(ctxPtr, job.defaultMaterialName ?? null, job.availableMaterials);
-            }
-
-            // runGeoscript handles reset + setModuleSources internally.
-            const runResult = await runGeoscript({
-              code: job.code,
-              ctxPtr,
-              repl,
-              preludeKind: job.preludeKind ?? (job.includePrelude ? 'mesh' : undefined),
-              modules: job.modules,
-              ambientSources: job.tabAmbients ? undefined : job.ambientSources,
-              tabAmbients: job.tabAmbients,
-              gizmoValues: job.gizmoValues,
-              textureParams: job.textureParams,
-              textureDetail: job.textureDetail,
-              rootModuleName: job.rootModuleName,
-            });
-
-            const result: GeoscriptJobResult = {
-              objects: runResult.objects,
-              error: runResult.error,
-              controls: runResult.controls,
-              gizmos: runResult.gizmos,
-            };
-            if (job.collectMetadata && !runResult.error) {
-              result.meta = {
-                runtimeMs: runResult.stats.runtimeMs,
-                asyncDeps: runResult.stats.asyncDeps,
-              };
-            }
-
-            res(result);
-          })
-          .catch(err => {
-            res({ objects: [], error: String(err), controls: [], gizmos: [] });
-          });
+    this.ctxPtrPromise
+      .then(ctxPtr => this.workerManager.getWorker().runJobs(ctxPtr, workerJobs, Comlink.proxy(onResult)))
+      .catch(err => {
+        for (const res of pending.values()) {
+          res(failed(String(err)));
+        }
+        pending.clear();
       });
-
-      results.set(job.id, jobPromise);
-    }
-
     return results;
   }
 

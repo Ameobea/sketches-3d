@@ -302,6 +302,10 @@ export interface BtBvhTriangleMeshShape extends BtCollisionShape {
   getTriangleInfoMap(): BtTriangleInfoMap;
 }
 
+export interface BtScaledBvhTriangleMeshShape extends BtConcaveShape {
+  getChildShape(): BtBvhTriangleMeshShape;
+}
+
 export interface BtInternalEdgeUtility {
   btGenerateInternalEdgeInfo(trimeshShape: BtBvhTriangleMeshShape, triangleInfoMap: BtTriangleInfoMap): void;
 }
@@ -409,6 +413,10 @@ export interface AmmoInterface {
     useQuantizedAabbCompression: boolean,
     buildBVH: boolean
   ) => BtBvhTriangleMeshShape;
+  btScaledBvhTriangleMeshShape: new (
+    childShape: BtBvhTriangleMeshShape,
+    localScaling: BtVec3
+  ) => BtScaledBvhTriangleMeshShape;
   btInternalEdgeUtility: BtInternalEdgeUtilityStatic;
   _malloc: (size: number) => number;
   _free: (ptr: number) => void;

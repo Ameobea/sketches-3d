@@ -1,6 +1,7 @@
 import type * as THREE from 'three';
 import type * as Comlink from 'comlink';
-import type { GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
+import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
+import type { Light } from 'src/geotoy/modes/mesh/lights';
 import type { MaterialDef } from '../materials';
 import type { TreeKind } from '../geotoyAPIClient';
 import type { ChannelStats } from '../textureStats';
@@ -295,4 +296,118 @@ export interface GeoscriptRunResult {
   controls: RenderedControl[];
   /** Empty on error. Bodies replayed from the const-eval cache don't run, so don't report. */
   vectorizeReports: VectorizeReport[];
+  /** The wasm instance trapped; the worker must be recreated before further use. */
+  wasmTrap?: boolean;
+}
+
+/** Raw gizmo JSON from `geoscript_repl_get_rendered_gizmo` (snake_case from Rust). */
+export interface RawRenderedGizmo {
+  source_module: string | null;
+  handle_id: string;
+  kind: 'vec3' | 'transform';
+  origin: [number, number, number];
+  value: number[];
+  absolute: boolean;
+  axes: [boolean, boolean, boolean];
+  ghost: boolean | null;
+}
+
+/** Raw control JSON from `geoscript_repl_get_rendered_control` (snake_case from Rust). */
+export interface RawRenderedControl {
+  source_module: string | null;
+  handle_id: string;
+  kind: RenderedControl['kind'];
+  label: string | null;
+  value: number[];
+  str_value: string | null;
+  min: number | null;
+  max: number | null;
+  step: number | null;
+  style: string | null;
+  options: string[];
+  stats: number[] | null;
+  has_override: boolean;
+}
+
+export interface RenderedMeshPayload {
+  verts: Float32Array;
+  indices: Uint32Array;
+  normals?: Float32Array;
+  attrs: { name: string; itemSize: number; data: Float32Array }[];
+  transform: Float32Array;
+  material: string;
+  sourceModule: string;
+  meshId: number;
+}
+
+export interface RenderedPathPayload {
+  verts: Float32Array;
+  pathId: number;
+  sourceModule: string;
+}
+
+export interface RenderedLightPayload {
+  light: Light;
+  lightId: number;
+  sourceModule: string;
+}
+
+/** Empty strings mean unset for `usage`/`minFilter`/`magFilter`/`format`. */
+export interface RenderedTexturePayload {
+  width: number;
+  height: number;
+  channels: number;
+  layers: number;
+  pixels?: Float32Array;
+  encoded?: Uint8Array;
+  encodedFormat?: string;
+  rgba?: Float32Array;
+  name: string;
+  usage: string;
+  wrap: string;
+  sourceModule: string;
+  textureId: number;
+  minFilter: string;
+  magFilter: string;
+  format: string;
+  stats: Float32Array;
+}
+
+/** One geoscript run executed entirely inside the worker: reset → ambient → eval → extract. */
+export interface WorkerRunJob {
+  code: string;
+  preludeKind?: string;
+  rootModuleName?: string;
+  modules?: Record<string, string>;
+  modulePreludes?: Record<string, string>;
+  /** Omitted = left untouched; `[]` clears. `tabAmbients` takes precedence. */
+  ambientSources?: string[];
+  tabAmbients?: { tabId: string; preludeKind: string; globalsSource: string }[];
+  gizmoValues: GizmoValuesByModule;
+  textureParams: TextureParamsEntry[];
+  vectorize: VectorizeFlags;
+  textureDetail: TextureDetail;
+  /** Registered before the run; survives reset, so each job that cares sets its own. */
+  materials?: { defaultName: string | null; available: string[] };
+  clearConstEvalCache?: boolean;
+  /** Initialized before the first attempt; anything else loads on demand via the sentinel retry. */
+  asyncDeps?: (keyof GeoscriptAsyncDeps)[];
+}
+
+export interface WorkerRunPayload {
+  error: string | null;
+  wasmTrap: boolean;
+  asyncDepRetries: number;
+  /** Eval-only; `phases.evalWall` also covers parsing. */
+  durationMs: number;
+  usedDepsBitmask: number;
+  phases: Omit<RunPhases, 'eval'>;
+  constEvalCache: ConstEvalCacheStats;
+  vectorizeReports: VectorizeReport[];
+  meshes: RenderedMeshPayload[];
+  paths: RenderedPathPayload[];
+  lights: RenderedLightPayload[];
+  textures: RenderedTexturePayload[];
+  gizmos: RawRenderedGizmo[];
+  controls: RawRenderedControl[];
 }

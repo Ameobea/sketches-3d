@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import type * as Comlink from 'comlink';
 import type {
   RunGeoscriptOptions,
   GeoscriptRunResult,
@@ -9,12 +8,12 @@ import type {
   MatEntry,
   RenderedGizmo,
   RenderedControl,
+  WorkerRunPayload,
 } from './types';
 import { buildLight, fitAutoShadowFrusta } from 'src/geotoy/modes/mesh/lights';
 import { parseChannelStats } from '../textureStats';
 import { FallbackMat, HiddenMat, LineMat, NormalMat, WireframeMat } from '../materials';
 import type { RenderedObject } from './types';
-import type { GeoscriptAsyncDeps, GeoscriptWorkerMethods } from '../geoscriptWorker.worker';
 import { bitmaskToAsyncDepNames } from '../asyncDepBits';
 import type { TreeDef } from '../geotoyAPIClient';
 import { ROOT_NODE_NAME } from '../geotoyAPIClient';
@@ -22,6 +21,8 @@ import { buildParentMap } from 'src/geotoy/modules/treeOps';
 import { buildWorldMatrixCache, instancePathKey, type NodeWorldInstance } from './worldMatrixCache';
 export { buildWorldMatrixCache, instancePathKey };
 export type { NodeWorldInstance, WorldMatrixCache } from './worldMatrixCache';
+
+export { isWasmTrap } from '../wasmTrap';
 
 const buildEmptyRunStats = (): RunStats => ({
   runtimeMs: 0,
@@ -47,182 +48,48 @@ const getOverrideMat = (materialOverride: 'wireframe' | 'wireframe-xray' | 'norm
   return null;
 };
 
-/**
- * If `err` is a `__GEOTOY_UNINITIALIZED_MODULE__:<dep>` sentinel, init the dep and
- * return true so the caller can retry. Returns false otherwise.
- */
-const tryInitAsyncDepFromErr = async (
-  err: string,
-  repl: Comlink.Remote<GeoscriptWorkerMethods>
-): Promise<boolean> => {
-  if (!err.includes('__GEOTOY_UNINITIALIZED_MODULE__:')) return false;
-  const depName = /__GEOTOY_UNINITIALIZED_MODULE__:(\w+)/.exec(err)?.[1];
-  if (!depName) {
-    console.error('Unrecognized __GEOTOY_UNINITIALIZED_MODULE__ format:', err);
-    return false;
-  }
-  const deps: GeoscriptAsyncDeps = {};
-  deps[depName as keyof GeoscriptAsyncDeps] = true;
-  const argsByKey: Partial<Record<keyof GeoscriptAsyncDeps, string[]>> = {};
-  if (err.includes('||__||')) {
-    argsByKey[depName as keyof GeoscriptAsyncDeps] = err.split('||__||').slice(1);
-  }
-  await repl.initAsyncDeps(deps, argsByKey);
-  return true;
-};
+type BuildRunResultOpts = Pick<RunGeoscriptOptions, 'materials' | 'materialOverride' | 'renderMode'>;
 
-export const runGeoscript = async (
-  opts: RunGeoscriptOptions,
-  asyncDepRetries = 0
-): Promise<GeoscriptRunResult> => {
-  const {
-    code,
-    ctxPtr,
-    repl,
-    materials = {},
-    preludeKind,
-    materialOverride,
-    renderMode = false,
-    textureDetail = 'full',
-    modules,
-    modulePreludes,
-    ambientSources,
-    tabAmbients,
-    gizmoValues,
-    textureParams,
-    rootModuleName,
-    vectorize = { disabled: false, verify: false, profile: false },
-  } = opts;
+/** Main-thread half of a run: turn the worker's payload into scene objects + stats. */
+export const buildRunResult = (
+  payload: WorkerRunPayload,
+  { materials = {}, materialOverride, renderMode = false }: BuildRunResultOpts
+): Pick<GeoscriptRunResult, 'objects' | 'stats' | 'gizmos' | 'controls'> => {
   const tStart = performance.now();
-  await repl.reset(ctxPtr);
-  await repl.setVectorizeFlags(ctxPtr, vectorize);
-
-  // Sent even when empty: `set_module_sources` is the only thing that clears the ctx's
-  // registered sources, so skipping it would leave a previous run's modules resolvable.
-  if (modules) {
-    await repl.setModuleSources(ctxPtr, modules, modulePreludes);
-  }
-
-  const tSetup = performance.now();
-
-  if (tabAmbients !== undefined) {
-    try {
-      await repl.setTabAmbientScopes(
-        ctxPtr,
-        tabAmbients.map(t => t.tabId),
-        tabAmbients.map(t => t.preludeKind),
-        tabAmbients.map(t => t.globalsSource)
-      );
-    } catch (err) {
-      const errStr = err instanceof Error ? err.message : String(err);
-      if (await tryInitAsyncDepFromErr(errStr, repl)) {
-        return runGeoscript(opts, asyncDepRetries + 1);
-      }
-      return {
-        objects: [],
-        stats: buildEmptyRunStats(),
-        error: `Error building ambient scope: ${err}`,
-        gizmos: [],
-        controls: [],
-        vectorizeReports: [],
-      };
-    }
-  } else if (ambientSources !== undefined) {
-    try {
-      await repl.setAmbientScope(ctxPtr, ambientSources, rootModuleName);
-    } catch (err) {
-      const errStr = err instanceof Error ? err.message : String(err);
-      if (await tryInitAsyncDepFromErr(errStr, repl)) {
-        return runGeoscript(opts, asyncDepRetries + 1);
-      }
-      return {
-        objects: [],
-        stats: buildEmptyRunStats(),
-        error: `Error building ambient scope: ${err}`,
-        gizmos: [],
-        controls: [],
-        vectorizeReports: [],
-      };
-    }
-  }
-
-  // Always sent (default `{}`/`[]`) so a previous run's handle values can't leak in.
-  await repl.setGizmoValues(ctxPtr, gizmoValues ?? {});
-  await repl.setTextureParams(ctxPtr, textureParams ?? []);
-
-  const tAmbient = performance.now();
-  let evalResult: { durationMs: number; usedDepsBitmask: number } = { durationMs: 0, usedDepsBitmask: 0 };
-  try {
-    evalResult = await repl.eval(ctxPtr, code, preludeKind, rootModuleName);
-  } catch (evalErr) {
-    const errorMessage = `Error evaluating code: ${evalErr}`;
-    console.error(errorMessage, evalErr);
-    return {
-      objects: [],
-      stats: buildEmptyRunStats(),
-      error: errorMessage,
-      gizmos: [],
-      controls: [],
-      vectorizeReports: [],
-    };
-  }
-
-  const tEval = performance.now();
-  const err = (await repl.getErr(ctxPtr)) || null;
-  if (err) {
-    // Safety net: if a dep wasn't pre-loaded, load it now and re-run.
-    // text_to_path always goes through this path since its args are runtime values.
-    if (await tryInitAsyncDepFromErr(err, repl)) {
-      return runGeoscript(opts, asyncDepRetries + 1);
-    }
-    return {
-      objects: [],
-      stats: buildEmptyRunStats(),
-      error: err,
-      gizmos: [],
-      controls: [],
-      vectorizeReports: [],
-    };
-  }
-
   const stats: RunStats = {
     ...buildEmptyRunStats(),
-    runtimeMs: evalResult.durationMs,
-    asyncDepRetries,
-    asyncDeps: bitmaskToAsyncDepNames(evalResult.usedDepsBitmask),
-    constEvalCache: await repl.getConstEvalCacheStats(ctxPtr),
+    runtimeMs: payload.durationMs,
+    asyncDepRetries: payload.asyncDepRetries,
+    renderedMeshCount: payload.meshes.length,
+    renderedPathCount: payload.paths.length,
+    renderedLightCount: payload.lights.length,
+    renderedTextureCount: payload.textures.length,
+    asyncDeps: bitmaskToAsyncDepNames(payload.usedDepsBitmask),
+    constEvalCache: payload.constEvalCache,
   };
-  const vectorizeReports = await repl.getVectorizeReports(ctxPtr);
-  const renderedObjects: GeneratedObject[] = [];
-
   const overrideMat = getOverrideMat(materialOverride);
+  const objects: GeneratedObject[] = [];
 
-  stats.renderedMeshCount = await repl.getRenderedMeshCount(ctxPtr);
-  for (let i = 0; i < stats.renderedMeshCount; i += 1) {
-    const {
-      transform,
-      verts,
-      indices,
-      normals,
-      attrs,
-      material: materialName,
-      sourceModule,
-      meshId,
-    } = await repl.getRenderedMesh(ctxPtr, i);
-
-    const matLookup = materials[materialName] ?? {
-      def: null,
-      mat: { resolved: FallbackMat, promise: Promise.resolve(FallbackMat) },
+  for (const {
+    transform,
+    verts,
+    indices,
+    normals,
+    attrs,
+    material: materialName,
+    sourceModule,
+    meshId,
+  } of payload.meshes) {
+    const mat = materials[materialName]?.mat ?? {
+      resolved: FallbackMat,
+      promise: Promise.resolve(FallbackMat),
     };
-    const { mat } = matLookup;
-
     stats.totalVtxCount += verts.length / 3;
     stats.totalFaceCount += indices.length / 3;
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
-
     if (normals) {
       geometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
     }
@@ -233,27 +100,16 @@ export const runGeoscript = async (
       geometry.setAttribute(name, new THREE.BufferAttribute(data, itemSize));
     }
 
-    const matEntry = ((): MatEntry => {
-      if (!materialName) {
-        return {
-          resolved: FallbackMat,
-          promise: Promise.resolve(FallbackMat),
-        };
-      }
+    const matEntry: MatEntry = !materialName
+      ? { resolved: FallbackMat, promise: Promise.resolve(FallbackMat) }
+      : 'promise' in mat
+        ? mat
+        : { resolved: mat, promise: Promise.resolve(mat) };
 
-      if ('promise' in mat) {
-        return mat;
-      }
-
-      return { resolved: mat, promise: Promise.resolve(mat) };
-    })();
-
-    const material = overrideMat ? overrideMat : (matEntry.resolved ?? HiddenMat);
-
-    renderedObjects.push({
+    objects.push({
       type: 'mesh',
       geometry,
-      material,
+      material: overrideMat ?? matEntry.resolved ?? HiddenMat,
       materialName,
       // Plain-material entries (geotoy's MaterialRuntime) are assigned reactively by
       // the shell; only MatEntry callers rely on populateScene's async swap.
@@ -266,18 +122,14 @@ export const runGeoscript = async (
     });
   }
 
-  stats.renderedPathCount = await repl.getRenderedPathCount(ctxPtr);
-  for (let i = 0; i < stats.renderedPathCount; i += 1) {
-    const { verts: pathVerts, pathId, sourceModule } = await repl.getRenderedPath(ctxPtr, i);
-    stats.totalVtxCount += pathVerts.length / 3;
-    stats.totalFaceCount += pathVerts.length / 3 - 1;
-
-    const pathGeometry = new THREE.BufferGeometry();
-    pathGeometry.setAttribute('position', new THREE.BufferAttribute(pathVerts, 3));
-
-    renderedObjects.push({
+  for (const { verts, pathId, sourceModule } of payload.paths) {
+    stats.totalVtxCount += verts.length / 3;
+    stats.totalFaceCount += verts.length / 3 - 1;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(verts, 3));
+    objects.push({
       type: 'path',
-      geometry: pathGeometry,
+      geometry,
       material: LineMat,
       castShadow: false,
       receiveShadow: false,
@@ -286,21 +138,12 @@ export const runGeoscript = async (
     });
   }
 
-  stats.renderedLightCount = await repl.getRenderedLightCount(ctxPtr);
-  for (let i = 0; i < stats.renderedLightCount; i += 1) {
-    const { light, lightId, sourceModule } = await repl.getRenderedLight(ctxPtr, i);
-    renderedObjects.push({
-      type: 'light',
-      light: buildLight(light, renderMode),
-      lightId,
-      sourceModule,
-    });
+  for (const { light, lightId, sourceModule } of payload.lights) {
+    objects.push({ type: 'light', light: buildLight(light, renderMode), lightId, sourceModule });
   }
 
-  stats.renderedTextureCount = await repl.getRenderedTextureCount(ctxPtr);
-  for (let i = 0; i < stats.renderedTextureCount; i += 1) {
-    const t = await repl.getRenderedTexture(ctxPtr, i, textureDetail);
-    renderedObjects.push({
+  for (const t of payload.textures) {
+    objects.push({
       type: 'texture',
       name: t.name,
       usage: (t.usage || null) as GeneratedTexture['usage'],
@@ -323,61 +166,88 @@ export const runGeoscript = async (
   }
 
   // Gizmos are interactive overlay state, not scene meshes — kept off `objects`.
-  const gizmos: RenderedGizmo[] = [];
-  const gizmoCount = await repl.getRenderedGizmoCount(ctxPtr);
-  for (let i = 0; i < gizmoCount; i += 1) {
-    const g = await repl.getRenderedGizmo(ctxPtr, i);
-    gizmos.push({
-      sourceModule: g.source_module,
-      handleId: g.handle_id,
-      kind: g.kind,
-      origin: g.origin,
-      value: g.value,
-      absolute: g.absolute,
-      axes: g.axes,
-      ghost: g.ghost,
-    });
-  }
-
-  const controls: RenderedControl[] = [];
-  const controlCount = await repl.getRenderedControlCount(ctxPtr);
-  for (let i = 0; i < controlCount; i += 1) {
-    const c = await repl.getRenderedControl(ctxPtr, i);
-    controls.push({
-      sourceModule: c.source_module,
-      handleId: c.handle_id,
-      kind: c.kind,
-      label: c.label,
-      value: c.value,
-      str_value: c.str_value,
-      min: c.min,
-      max: c.max,
-      step: c.step,
-      style: c.style,
-      options: c.options,
-      stats: c.stats ? parseChannelStats(c.stats) : null,
-      hasOverride: c.has_override,
-    });
-  }
+  const gizmos: RenderedGizmo[] = payload.gizmos.map(g => ({
+    sourceModule: g.source_module,
+    handleId: g.handle_id,
+    kind: g.kind,
+    origin: g.origin,
+    value: g.value,
+    absolute: g.absolute,
+    axes: g.axes,
+    ghost: g.ghost,
+  }));
+  const controls: RenderedControl[] = payload.controls.map(c => ({
+    sourceModule: c.source_module,
+    handleId: c.handle_id,
+    kind: c.kind,
+    label: c.label,
+    value: c.value,
+    str_value: c.str_value,
+    min: c.min,
+    max: c.max,
+    step: c.step,
+    style: c.style,
+    options: c.options,
+    stats: c.stats ? parseChannelStats(c.stats) : null,
+    hasOverride: c.has_override,
+  }));
 
   stats.phases = {
-    setup: tSetup - tStart,
-    ambient: tAmbient - tSetup,
-    eval: evalResult.durationMs,
-    evalWall: tEval - tAmbient,
-    extract: performance.now() - tEval,
+    ...payload.phases,
+    eval: payload.durationMs,
+    extract: payload.phases.extract + (performance.now() - tStart),
   };
+  return { objects, stats, gizmos, controls };
+};
 
-  const result: GeoscriptRunResult = {
-    objects: renderedObjects,
-    stats,
+export const runGeoscript = async (opts: RunGeoscriptOptions): Promise<GeoscriptRunResult> => {
+  const {
+    code,
+    ctxPtr,
+    repl,
+    materials,
+    preludeKind,
+    materialOverride,
+    renderMode,
+    textureDetail = 'full',
+    modules,
+    modulePreludes,
+    ambientSources,
+    tabAmbients,
+    gizmoValues,
+    textureParams,
+    rootModuleName,
+    vectorize = { disabled: false, verify: false, profile: false },
+  } = opts;
+  const payload = await repl.runJob(ctxPtr, {
+    code,
+    preludeKind,
+    rootModuleName,
+    modules,
+    modulePreludes,
+    ambientSources,
+    tabAmbients,
+    gizmoValues: gizmoValues ?? {},
+    textureParams: textureParams ?? [],
+    vectorize,
+    textureDetail,
+  });
+  if (payload.error) {
+    return {
+      objects: [],
+      stats: buildEmptyRunStats(),
+      error: payload.error,
+      wasmTrap: payload.wasmTrap,
+      gizmos: [],
+      controls: [],
+      vectorizeReports: [],
+    };
+  }
+  return {
+    ...buildRunResult(payload, { materials, materialOverride, renderMode }),
     error: null,
-    gizmos,
-    controls,
-    vectorizeReports,
+    vectorizeReports: payload.vectorizeReports,
   };
-
-  return result;
 };
 
 export interface PopulateSceneOpts {

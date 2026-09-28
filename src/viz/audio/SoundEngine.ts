@@ -256,7 +256,7 @@ export class SoundEngine {
   }
 
   constructor(opts?: SoundEngineOpts) {
-    this.enabled = opts?.enabled ?? true;
+    this.enabled = (opts?.enabled ?? true) && typeof SharedArrayBuffer !== 'undefined';
     this.config = opts?.config ?? buildDefaultSfxConfig();
     this.nextStepSoundTime = this.getNextStepSoundTime();
 

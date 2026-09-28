@@ -23,6 +23,8 @@
                 "type": "string"
               },
               "wrapS": {
+                "description": "Default: 'repeat'",
+                "markdownDescription": "Default: 'repeat'",
                 "type": "string",
                 "enum": [
                   "repeat",
@@ -31,6 +33,8 @@
                 ]
               },
               "wrapT": {
+                "description": "Default: 'repeat'",
+                "markdownDescription": "Default: 'repeat'",
                 "type": "string",
                 "enum": [
                   "repeat",
@@ -39,6 +43,8 @@
                 ]
               },
               "magFilter": {
+                "description": "Default: 'linear' above low graphics quality (customShader snaps to texel centers for the nearest look), else 'nearest'",
+                "markdownDescription": "Default: 'linear' above low graphics quality (customShader snaps to texel centers for the nearest look), else 'nearest'",
                 "type": "string",
                 "enum": [
                   "nearest",
@@ -46,6 +52,8 @@
                 ]
               },
               "minFilter": {
+                "description": "Default: 'nearestMipLinear'",
+                "markdownDescription": "Default: 'nearestMipLinear'",
                 "type": "string",
                 "enum": [
                   "nearest",
@@ -55,9 +63,13 @@
                 ]
               },
               "anisotropy": {
+                "description": "Default: by graphics quality (low 1 / medium 8 / high 16)",
+                "markdownDescription": "Default: by graphics quality (low 1 / medium 8 / high 16)",
                 "type": "number"
               },
               "colorSpace": {
+                "description": "Default: '' (`NoColorSpace`)",
+                "markdownDescription": "Default: '' (`NoColorSpace`)",
                 "type": "string",
                 "enum": [
                   "srgb",
@@ -65,6 +77,8 @@
                 ]
               },
               "format": {
+                "description": "Default: 'rgba' (`RGBA8`)",
+                "markdownDescription": "Default: 'rgba' (`RGBA8`)",
                 "type": "string",
                 "enum": [
                   "rgba",
@@ -87,17 +101,25 @@
                 "maximum": 9007199254740991
               },
               "version": {
+                "description": "Pin a specific version; omitted = latest.",
+                "markdownDescription": "Pin a specific version; omitted = latest.",
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991
               },
               "tab": {
+                "description": "Texture tab (tree id); optional when the composition has exactly one texture tab.",
+                "markdownDescription": "Texture tab (tree id); optional when the composition has exactly one texture tab.",
                 "type": "string"
               },
               "output": {
-                "type": "string"
+                "type": "string",
+                "description": "`render_texture(name=…)` output to bind.",
+                "markdownDescription": "`render_texture(name=…)` output to bind."
               },
               "inputs": {
+                "description": "Values for the tab's `input_*` controls, keyed by control name.",
+                "markdownDescription": "Values for the tab's `input_*` controls, keyed by control name.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -191,7 +213,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -305,7 +329,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -373,7 +399,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -417,7 +445,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -476,7 +506,9 @@
               "geotoyComposition",
               "output"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "A texture sourced from a Geotoy composition's texture tab, as authored on disk. The server\ninlines the run payload (trees + tab metadata) and rewrites it to `GeotoyProcTextureDefSchema`.",
+            "markdownDescription": "A texture sourced from a Geotoy composition's texture tab, as authored on disk. The server\ninlines the run payload (trees + tab metadata) and rewrites it to `GeotoyProcTextureDefSchema`."
           }
         ]
       }
@@ -496,6 +528,8 @@
                 "const": "customShader"
               },
               "name": {
+                "description": "Geotoy display + geoscript-reference name; level-def keys materials by record name and ignores this.",
+                "markdownDescription": "Geotoy display + geoscript-reference name; level-def keys materials by record name and ignores this.",
                 "type": "string"
               },
               "props": {
@@ -512,7 +546,9 @@
                         "type": "string",
                         "pattern": "^#[0-9a-fA-F]{6}$"
                       }
-                    ]
+                    ],
+                    "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                    "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                   },
                   "roughness": {
                     "type": "number"
@@ -534,7 +570,9 @@
                         "type": "string",
                         "pattern": "^#[0-9a-fA-F]{6}$"
                       }
-                    ]
+                    ],
+                    "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                    "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                   },
                   "emissiveIntensity": {
                     "type": "number"
@@ -552,6 +590,8 @@
                     "type": "boolean"
                   },
                   "vertexColors": {
+                    "description": "Multiply the base color by the geometry's `color` attribute (linear RGB/RGBA). On by default;\ngeometries without the attribute are unaffected. `false` ignores the attribute.",
+                    "markdownDescription": "Multiply the base color by the geometry's `color` attribute (linear RGB/RGBA). On by default;\ngeometries without the attribute are unaffected. `false` ignores the attribute.",
                     "type": "boolean"
                   },
                   "transmission": {
@@ -586,7 +626,9 @@
                         "type": "string",
                         "pattern": "^#[0-9a-fA-F]{6}$"
                       }
-                    ]
+                    ],
+                    "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                    "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                   },
                   "sheenRoughness": {
                     "type": "number"
@@ -634,6 +676,8 @@
                     ]
                   },
                   "uvScale": {
+                    "description": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
+                    "markdownDescription": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
                     "type": "array",
                     "items": [
                       {
@@ -645,6 +689,8 @@
                     ]
                   },
                   "stackIndex": {
+                    "description": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
+                    "markdownDescription": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
                     "type": "number"
                   },
                   "map": {
@@ -669,6 +715,8 @@
                     "type": "string"
                   },
                   "pomHeightMap": {
+                    "description": "Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`.",
+                    "markdownDescription": "Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`.",
                     "type": "string"
                   },
                   "ambientDistanceAmp": {
@@ -723,7 +771,9 @@
                     "additionalProperties": false
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "description": "Like ShaderPropsJsonSchema but the color props accept \"#rrggbb\" strings.",
+                "markdownDescription": "Like ShaderPropsJsonSchema but the color props accept \"#rrggbb\" strings."
               },
               "options": {
                 "type": "object",
@@ -748,6 +798,8 @@
                     ]
                   },
                   "vertexAttrs": {
+                    "description": "Custom per-vertex attributes the shaders read, by name and GLSL type. Each is declared as an\n`attribute` in the vertex stage and forwarded to the fragment stage as `v_<name>`.",
+                    "markdownDescription": "Custom per-vertex attributes the shaders read, by name and GLSL type. Each is declared as an\n`attribute` in the vertex stage and forwarded to the fragment stage as `v_<name>`.",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -956,7 +1008,9 @@
                     "additionalProperties": false
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "description": "Serializable subset of CustomShaderOptions",
+                "markdownDescription": "Serializable subset of CustomShaderOptions"
               },
               "shaders": {
                 "type": "object",
@@ -978,7 +1032,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "commonShader": {
                     "anyOf": [
@@ -997,7 +1053,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "colorShader": {
                     "anyOf": [
@@ -1016,7 +1074,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "lightAttenuationShader": {
                     "anyOf": [
@@ -1035,7 +1095,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "normalShader": {
                     "anyOf": [
@@ -1054,7 +1116,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "stackIndexShader": {
                     "anyOf": [
@@ -1073,7 +1137,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "roughnessShader": {
                     "anyOf": [
@@ -1092,7 +1158,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "roughnessReverseColorRamp": {
                     "type": "object",
@@ -1180,7 +1248,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "metalnessReverseColorRamp": {
                     "type": "object",
@@ -1268,7 +1338,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "iridescenceShader": {
                     "anyOf": [
@@ -1287,7 +1359,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "iridescenceReverseColorRamp": {
                     "type": "object",
@@ -1375,7 +1449,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "includeNoiseShadersVertex": {
                     "type": "boolean"
@@ -1397,7 +1473,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "pomNormalShader": {
                     "anyOf": [
@@ -1416,7 +1494,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                    "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                   },
                   "customUniforms": {
                     "type": "object",
@@ -1630,7 +1710,9 @@
                           ],
                           "additionalProperties": false
                         }
-                      ]
+                      ],
+                      "description": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`).",
+                      "markdownDescription": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`)."
                     }
                   },
                   "constants": {
@@ -1777,41 +1859,59 @@
                           ],
                           "additionalProperties": false
                         }
-                      ]
+                      ],
+                      "description": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach.",
+                      "markdownDescription": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach."
                     }
                   }
                 },
-                "additionalProperties": false
+                "additionalProperties": false,
+                "description": "Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`.",
+                "markdownDescription": "Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`."
               },
               "emissiveBypass": {
                 "type": "boolean"
               },
               "inlineEmissiveBypass": {
+                "description": "Two-output material: lit/tone-mapped base + all emissive (uniform/map/`emissiveShader`)\nrouted to the bypass buffer. Requires a pipeline with `emissiveBypass: true`.\nSee `CustomShaderOptions.inlineEmissiveBypass`.",
+                "markdownDescription": "Two-output material: lit/tone-mapped base + all emissive (uniform/map/`emissiveShader`)\nrouted to the bypass buffer. Requires a pipeline with `emissiveBypass: true`.\nSee `CustomShaderOptions.inlineEmissiveBypass`.",
                 "type": "boolean"
               },
               "nonPermeable": {
+                "description": "If true, the camera will hard-snap rather than dither through this material, and the\nsoft-occlusion shader effect is disabled for it.",
+                "markdownDescription": "If true, the camera will hard-snap rather than dither through this material, and the\nsoft-occlusion shader effect is disabled for it.",
                 "type": "boolean"
               },
               "parkour": {
                 "type": "object",
                 "properties": {
                   "boostSurface": {
+                    "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                    "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
                         "type": "number",
-                        "minimum": 0
+                        "minimum": 0,
+                        "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                        "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                       },
                       "jumpRetention": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 1
+                        "maximum": 1,
+                        "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                        "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                       },
                       "rampUpSeconds": {
+                        "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                        "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                         "type": "number",
                         "minimum": 0
                       },
                       "followSurfaceSlope": {
+                        "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                        "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                         "type": "boolean"
                       }
                     },
@@ -1822,19 +1922,27 @@
                     "additionalProperties": false
                   },
                   "climb": {
+                    "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                    "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
+                        "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                        "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
+                        "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                        "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
+                        "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                        "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                         "type": "number",
                         "minimum": 0
                       }
@@ -1865,6 +1973,8 @@
                 ]
               },
               "extends": {
+                "description": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
+                "markdownDescription": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
                 "oneOf": [
                   {
                     "type": "object",
@@ -1972,7 +2082,9 @@
                         "type": "string",
                         "pattern": "^#[0-9a-fA-F]{6}$"
                       }
-                    ]
+                    ],
+                    "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                    "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                   },
                   "transparent": {
                     "type": "boolean"
@@ -1999,28 +2111,40 @@
                 "type": "boolean"
               },
               "nonPermeable": {
+                "description": "If true, the camera will hard-snap rather than dither through this material.",
+                "markdownDescription": "If true, the camera will hard-snap rather than dither through this material.",
                 "type": "boolean"
               },
               "parkour": {
                 "type": "object",
                 "properties": {
                   "boostSurface": {
+                    "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                    "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
                         "type": "number",
-                        "minimum": 0
+                        "minimum": 0,
+                        "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                        "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                       },
                       "jumpRetention": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 1
+                        "maximum": 1,
+                        "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                        "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                       },
                       "rampUpSeconds": {
+                        "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                        "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                         "type": "number",
                         "minimum": 0
                       },
                       "followSurfaceSlope": {
+                        "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                        "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                         "type": "boolean"
                       }
                     },
@@ -2031,19 +2155,27 @@
                     "additionalProperties": false
                   },
                   "climb": {
+                    "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                    "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
+                        "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                        "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
+                        "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                        "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
+                        "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                        "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                         "type": "number",
                         "minimum": 0
                       }
@@ -2090,28 +2222,40 @@
                 "type": "boolean"
               },
               "nonPermeable": {
+                "description": "If true, the camera will hard-snap rather than dither through this material.\nThe runtime-provided material must have `userData.nonPermeable = true` set manually.",
+                "markdownDescription": "If true, the camera will hard-snap rather than dither through this material.\nThe runtime-provided material must have `userData.nonPermeable = true` set manually.",
                 "type": "boolean"
               },
               "parkour": {
                 "type": "object",
                 "properties": {
                   "boostSurface": {
+                    "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                    "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
                         "type": "number",
-                        "minimum": 0
+                        "minimum": 0,
+                        "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                        "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                       },
                       "jumpRetention": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 1
+                        "maximum": 1,
+                        "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                        "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                       },
                       "rampUpSeconds": {
+                        "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                        "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                         "type": "number",
                         "minimum": 0
                       },
                       "followSurfaceSlope": {
+                        "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                        "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                         "type": "boolean"
                       }
                     },
@@ -2122,19 +2266,27 @@
                     "additionalProperties": false
                   },
                   "climb": {
+                    "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                    "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
+                        "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                        "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
+                        "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                        "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
+                        "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                        "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                         "type": "number",
                         "minimum": 0
                       }
@@ -2168,7 +2320,9 @@
             "required": [
               "type"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "A material whose `THREE.Material` instance is provided at runtime via `LevelLoadHandle.setMaterialFactories`.\nUsed for fully custom materials that can't be described in data (e.g. animated or shader-heavy materials).",
+            "markdownDescription": "A material whose `THREE.Material` instance is provided at runtime via `LevelLoadHandle.setMaterialFactories`.\nUsed for fully custom materials that can't be described in data (e.g. animated or shader-heavy materials)."
           },
           {
             "type": "object",
@@ -2187,7 +2341,9 @@
               "type",
               "materialId"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Reference a Geotoy library material by id; the server inlines its def (and resolves its\ntexture ids → level `textures` entries) at load time, so the client never sees this variant.",
+            "markdownDescription": "Reference a Geotoy library material by id; the server inlines its def (and resolves its\ntexture ids → level `textures` entries) at load time, so the client never sees this variant."
           }
         ]
       }
@@ -2207,14 +2363,28 @@
                 "const": "gltf"
               },
               "meshName": {
-                "type": "string"
+                "type": "string",
+                "description": "Name of the mesh/object as it appears in the loaded gltf scene",
+                "markdownDescription": "Name of the mesh/object as it appears in the loaded gltf scene"
               },
               "colliderShape": {
                 "type": "string",
                 "enum": [
                   "trimesh",
                   "convexHull"
-                ]
+                ],
+                "description": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.",
+                "markdownDescription": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances."
+              },
+              "nocollide": {
+                "description": "If true, placements of this asset are not registered in the collision world.",
+                "markdownDescription": "If true, placements of this asset are not registered in the collision world.",
+                "type": "boolean"
+              },
+              "nonPermeable": {
+                "description": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "markdownDescription": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "type": "boolean"
               }
             },
             "required": [
@@ -2234,9 +2404,13 @@
                 "type": "string"
               },
               "includePrelude": {
+                "description": "Whether to include the standard geoscript prelude. Default: true",
+                "markdownDescription": "Whether to include the standard geoscript prelude. Default: true",
                 "type": "boolean"
               },
               "inputs": {
+                "description": "Values for the program's `input_*` controls, keyed by control name.",
+                "markdownDescription": "Values for the program's `input_*` controls, keyed by control name.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -2330,7 +2504,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -2444,7 +2620,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -2512,7 +2690,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -2556,7 +2736,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -2615,7 +2797,19 @@
                 "enum": [
                   "trimesh",
                   "convexHull"
-                ]
+                ],
+                "description": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.",
+                "markdownDescription": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances."
+              },
+              "nocollide": {
+                "description": "If true, placements of this asset are not registered in the collision world.",
+                "markdownDescription": "If true, placements of this asset are not registered in the collision world.",
+                "type": "boolean"
+              },
+              "nonPermeable": {
+                "description": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "markdownDescription": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "type": "boolean"
               },
               "_meta": {
                 "type": "object",
@@ -2632,6 +2826,8 @@
                     "type": "string"
                   },
                   "asyncDeps": {
+                    "description": "Async dep names actually used during eval. Omitted when none were used.",
+                    "markdownDescription": "Async dep names actually used during eval. Omitted when none were used.",
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -2660,12 +2856,18 @@
                 "const": "geoscript"
               },
               "file": {
-                "type": "string"
+                "type": "string",
+                "description": "Path to a .geo file, relative to the level's directory.",
+                "markdownDescription": "Path to a .geo file, relative to the level's directory."
               },
               "includePrelude": {
+                "description": "Whether to include the standard geoscript prelude. Default: true",
+                "markdownDescription": "Whether to include the standard geoscript prelude. Default: true",
                 "type": "boolean"
               },
               "inputs": {
+                "description": "Values for the program's `input_*` controls, keyed by control name.",
+                "markdownDescription": "Values for the program's `input_*` controls, keyed by control name.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -2759,7 +2961,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -2873,7 +3077,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -2941,7 +3147,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -2985,7 +3193,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -3044,7 +3254,19 @@
                 "enum": [
                   "trimesh",
                   "convexHull"
-                ]
+                ],
+                "description": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.",
+                "markdownDescription": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances."
+              },
+              "nocollide": {
+                "description": "If true, placements of this asset are not registered in the collision world.",
+                "markdownDescription": "If true, placements of this asset are not registered in the collision world.",
+                "type": "boolean"
+              },
+              "nonPermeable": {
+                "description": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "markdownDescription": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "type": "boolean"
               },
               "_meta": {
                 "type": "object",
@@ -3061,6 +3283,8 @@
                     "type": "string"
                   },
                   "asyncDeps": {
+                    "description": "Async dep names actually used during eval. Omitted when none were used.",
+                    "markdownDescription": "Async dep names actually used during eval. Omitted when none were used.",
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -3079,7 +3303,9 @@
               "type",
               "file"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Geoscript asset that references an external file (resolved server-side before the client sees it).",
+            "markdownDescription": "Geoscript asset that references an external file (resolved server-side before the client sees it)."
           },
           {
             "type": "object",
@@ -3096,7 +3322,19 @@
                 "enum": [
                   "trimesh",
                   "convexHull"
-                ]
+                ],
+                "description": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.",
+                "markdownDescription": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances."
+              },
+              "nocollide": {
+                "description": "If true, placements of this asset are not registered in the collision world.",
+                "markdownDescription": "If true, placements of this asset are not registered in the collision world.",
+                "type": "boolean"
+              },
+              "nonPermeable": {
+                "description": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "markdownDescription": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "type": "boolean"
               },
               "_meta": {
                 "type": "object",
@@ -3113,6 +3351,8 @@
                     "type": "string"
                   },
                   "asyncDeps": {
+                    "description": "Async dep names actually used during eval. Omitted when none were used.",
+                    "markdownDescription": "Async dep names actually used during eval. Omitted when none were used.",
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -3146,14 +3386,20 @@
                 "maximum": 9007199254740991
               },
               "version": {
+                "description": "Pin a specific version; omitted = latest.",
+                "markdownDescription": "Pin a specific version; omitted = latest.",
                 "type": "integer",
                 "minimum": -9007199254740991,
                 "maximum": 9007199254740991
               },
               "tab": {
+                "description": "Mesh tab (tree id) to import; omitted = the composition's first mesh tab.",
+                "markdownDescription": "Mesh tab (tree id) to import; omitted = the composition's first mesh tab.",
                 "type": "string"
               },
               "materialMap": {
+                "description": "geotoy material NAME -> level-def material id. Unmapped names fall back.",
+                "markdownDescription": "geotoy material NAME -> level-def material id. Unmapped names fall back.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -3163,9 +3409,13 @@
                 }
               },
               "rootNodeName": {
+                "description": "Restrict the import to a subtree by node name; omitted = whole tree.",
+                "markdownDescription": "Restrict the import to a subtree by node name; omitted = whole tree.",
                 "type": "string"
               },
               "inputs": {
+                "description": "Values for the composition's `input_*` controls, keyed by control name.",
+                "markdownDescription": "Values for the composition's `input_*` controls, keyed by control name.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -3259,7 +3509,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -3373,7 +3625,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -3441,7 +3695,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -3485,7 +3741,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -3544,7 +3802,19 @@
                 "enum": [
                   "trimesh",
                   "convexHull"
-                ]
+                ],
+                "description": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances.",
+                "markdownDescription": "Asset collider shape (default `trimesh`).\n\n`convexHull` precomputes a real hull once per asset via Manifold and shares it across all instances."
+              },
+              "nocollide": {
+                "description": "If true, placements of this asset are not registered in the collision world.",
+                "markdownDescription": "If true, placements of this asset are not registered in the collision world.",
+                "type": "boolean"
+              },
+              "nonPermeable": {
+                "description": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "markdownDescription": "Camera non-permeability default; takes precedence over the material-level flag.",
+                "type": "boolean"
               },
               "_meta": {
                 "type": "object",
@@ -3561,6 +3831,8 @@
                     "type": "string"
                   },
                   "asyncDeps": {
+                    "description": "Async dep names actually used during eval. Omitted when none were used.",
+                    "markdownDescription": "Async dep names actually used during eval. Omitted when none were used.",
                     "type": "array",
                     "items": {
                       "type": "string"
@@ -3579,9 +3851,13 @@
               "type",
               "compositionId"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "Composition reference as authored on disk; the `tree` is inlined server-side.",
+            "markdownDescription": "Composition reference as authored on disk; the `tree` is inlined server-side."
           }
-        ]
+        ],
+        "description": "Input type for JSON files on disk: geoscript assets may have `code` or `file`.",
+        "markdownDescription": "Input type for JSON files on disk: geoscript assets may have `code` or `file`."
       }
     },
     "objects": {
@@ -3595,9 +3871,13 @@
                 "type": "string"
               },
               "asset": {
+                "description": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
+                "markdownDescription": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
                 "type": "string"
               },
               "position": {
+                "description": "World-space position. Default: [0, 0, 0]",
+                "markdownDescription": "World-space position. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -3612,6 +3892,8 @@
                 ]
               },
               "rotation": {
+                "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
+                "markdownDescription": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -3626,6 +3908,8 @@
                 ]
               },
               "scale": {
+                "description": "Per-axis scale. Default: [1, 1, 1]",
+                "markdownDescription": "Per-axis scale. Default: [1, 1, 1]",
                 "type": "array",
                 "items": [
                   {
@@ -3640,12 +3924,18 @@
                 ]
               },
               "castShadow": {
+                "description": "Default: true",
+                "markdownDescription": "Default: true",
                 "type": "boolean"
               },
               "receiveShadow": {
+                "description": "Default: true",
+                "markdownDescription": "Default: true",
                 "type": "boolean"
               },
               "userData": {
+                "description": "Passed through to object.userData; also checked for flags like `nocollide`",
+                "markdownDescription": "Passed through to object.userData; also checked for flags like `nocollide`",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -3653,9 +3943,13 @@
                 "additionalProperties": {}
               },
               "material": {
+                "description": "Key into the top-level `materials` registry. All meshes in this object get this material.",
+                "markdownDescription": "Key into the top-level `materials` registry. All meshes in this object get this material.",
                 "type": "string"
               },
               "inputs": {
+                "description": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
+                "markdownDescription": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -3749,7 +4043,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -3863,7 +4159,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -3931,7 +4229,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -3975,7 +4275,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -4030,37 +4332,57 @@
                 }
               },
               "nocollide": {
+                "description": "If true, this object will not be registered in the collision world",
+                "markdownDescription": "If true, this object will not be registered in the collision world",
                 "type": "boolean"
               },
               "nonPermeable": {
+                "description": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
+                "markdownDescription": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
                 "type": "boolean"
               },
               "parkour": {
+                "description": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
+                "markdownDescription": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
                 "type": "object",
                 "properties": {
                   "checkpoint": {
+                    "description": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
+                    "markdownDescription": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
                     "type": "number"
                   },
                   "win": {
+                    "description": "If true, reaching this object ends the run.",
+                    "markdownDescription": "If true, reaching this object ends the run.",
                     "type": "boolean"
                   },
                   "boostSurface": {
+                    "description": "Per-object boost-surface config; overrides any material-level config on the same object.",
+                    "markdownDescription": "Per-object boost-surface config; overrides any material-level config on the same object.",
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
                         "type": "number",
-                        "minimum": 0
+                        "minimum": 0,
+                        "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                        "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                       },
                       "jumpRetention": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 1
+                        "maximum": 1,
+                        "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                        "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                       },
                       "rampUpSeconds": {
+                        "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                        "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                         "type": "number",
                         "minimum": 0
                       },
                       "followSurfaceSlope": {
+                        "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                        "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                         "type": "boolean"
                       }
                     },
@@ -4071,19 +4393,27 @@
                     "additionalProperties": false
                   },
                   "climb": {
+                    "description": "Per-object climbability config; overrides any material-level config on the same object.",
+                    "markdownDescription": "Per-object climbability config; overrides any material-level config on the same object.",
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
+                        "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                        "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
+                        "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                        "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
+                        "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                        "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                         "type": "number",
                         "minimum": 0
                       }
@@ -4091,6 +4421,8 @@
                     "additionalProperties": false
                   },
                   "entities": {
+                    "description": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
+                    "markdownDescription": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
                     "type": "array",
                     "items": {
                       "oneOf": [
@@ -4157,6 +4489,8 @@
                                       "const": "mesh"
                                     },
                                     "collider": {
+                                      "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                      "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                       "type": "string",
                                       "enum": [
                                         "trimesh",
@@ -4165,6 +4499,8 @@
                                       ]
                                     },
                                     "margin": {
+                                      "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                      "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                       "type": "number"
                                     }
                                   },
@@ -4173,7 +4509,9 @@
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                              "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                             },
                             "baseImpulse": {
                               "type": "number"
@@ -4182,9 +4520,13 @@
                               "type": "number"
                             },
                             "cooldownSeconds": {
+                              "description": "Default: 0.15",
+                              "markdownDescription": "Default: 0.15",
                               "type": "number"
                             },
                             "direction": {
+                              "description": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
+                              "markdownDescription": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
                               "anyOf": [
                                 {
                                   "type": "array",
@@ -4216,7 +4558,9 @@
                             "baseImpulse",
                             "speedScaling"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Launches the player on contact. `direction` is world-space (default straight up).",
+                          "markdownDescription": "Launches the player on contact. `direction` is world-space (default straight up)."
                         },
                         {
                           "type": "object",
@@ -4281,6 +4625,8 @@
                                       "const": "mesh"
                                     },
                                     "collider": {
+                                      "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                      "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                       "type": "string",
                                       "enum": [
                                         "trimesh",
@@ -4289,6 +4635,8 @@
                                       ]
                                     },
                                     "margin": {
+                                      "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                      "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                       "type": "number"
                                     }
                                   },
@@ -4297,7 +4645,9 @@
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                              "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                             },
                             "strength": {
                               "type": "number"
@@ -4327,7 +4677,9 @@
                             "directionalBias",
                             "direction"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Continuously pushes the player while inside. `direction` is world-space.",
+                          "markdownDescription": "Continuously pushes the player while inside. `direction` is world-space."
                         },
                         {
                           "type": "object",
@@ -4337,6 +4689,8 @@
                               "const": "dashToken"
                             },
                             "checkpointIx": {
+                              "description": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
+                              "markdownDescription": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
@@ -4345,9 +4699,13 @@
                           "required": [
                             "kind"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created.",
+                          "markdownDescription": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created."
                         }
-                      ]
+                      ],
+                      "description": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh).",
+                      "markdownDescription": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh)."
                     }
                   }
                 },
@@ -4374,14 +4732,20 @@
                 ]
               },
               "behaviors": {
+                "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
+                "markdownDescription": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
                     "fn": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                      "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                     },
                     "params": {
+                      "description": "Parameters passed to the behavior function.",
+                      "markdownDescription": "Parameters passed to the behavior function.",
                       "type": "object",
                       "propertyNames": {
                         "type": "string"
@@ -4392,27 +4756,41 @@
                   "required": [
                     "fn"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                  "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                 }
               },
               "spawner": {
+                "description": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
+                "markdownDescription": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
                 "type": "object",
                 "properties": {
                   "interval": {
-                    "type": "number"
+                    "type": "number",
+                    "description": "Seconds between spawns.",
+                    "markdownDescription": "Seconds between spawns."
                   },
                   "initialDelay": {
+                    "description": "Seconds before the first spawn. Default: 0",
+                    "markdownDescription": "Seconds before the first spawn. Default: 0",
                     "type": "number"
                   },
                   "behaviors": {
+                    "description": "Behaviors attached to each spawned clone.",
+                    "markdownDescription": "Behaviors attached to each spawned clone.",
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
                         "fn": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                          "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                         },
                         "params": {
+                          "description": "Parameters passed to the behavior function.",
+                          "markdownDescription": "Parameters passed to the behavior function.",
                           "type": "object",
                           "propertyNames": {
                             "type": "string"
@@ -4423,7 +4801,9 @@
                       "required": [
                         "fn"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                      "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                     }
                   }
                 },
@@ -4469,9 +4849,13 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
+                "description": "Default: 1",
+                "markdownDescription": "Default: 1",
                 "type": "number"
               }
             },
@@ -4502,12 +4886,16 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
                 "type": "number"
               },
               "position": {
+                "description": "World-space position (light shines from here toward origin). Default: [0, 1, 0]",
+                "markdownDescription": "World-space position (light shines from here toward origin). Default: [0, 1, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -4522,6 +4910,8 @@
                 ]
               },
               "target": {
+                "description": "World-space target position the light shines toward. Default: [0, 0, 0]",
+                "markdownDescription": "World-space target position the light shines toward. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -4539,9 +4929,13 @@
                 "type": "boolean"
               },
               "shadow": {
+                "description": "Shadow camera + shadow map config. Only applied when `castShadow` is true.",
+                "markdownDescription": "Shadow camera + shadow map config. Only applied when `castShadow` is true.",
                 "type": "object",
                 "properties": {
                   "mapSize": {
+                    "description": "Shadow map resolution. Default: 1024",
+                    "markdownDescription": "Shadow map resolution. Default: 1024",
                     "anyOf": [
                       {
                         "type": "integer",
@@ -4577,38 +4971,60 @@
                     ]
                   },
                   "bias": {
+                    "description": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
+                    "markdownDescription": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
                     "type": "number"
                   },
                   "normalBias": {
+                    "description": "Normal-offset bias. Default: 0",
+                    "markdownDescription": "Normal-offset bias. Default: 0",
                     "type": "number"
                   },
                   "radius": {
+                    "description": "PCF/VSM blur radius. Default: 1",
+                    "markdownDescription": "PCF/VSM blur radius. Default: 1",
                     "type": "number"
                   },
                   "blurSamples": {
+                    "description": "VSM blur sample count. Default: 8",
+                    "markdownDescription": "VSM blur sample count. Default: 8",
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
                   },
                   "near": {
+                    "description": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
+                    "markdownDescription": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
                     "type": "number"
                   },
                   "far": {
+                    "description": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
+                    "markdownDescription": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
                     "type": "number"
                   },
                   "left": {
+                    "description": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "right": {
+                    "description": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "top": {
+                    "description": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "bottom": {
+                    "description": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "auto": {
+                    "description": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
+                    "markdownDescription": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
                     "type": "boolean"
                   }
                 },
@@ -4642,7 +5058,9 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
                 "type": "number"
@@ -4662,18 +5080,26 @@
                 ]
               },
               "distance": {
+                "description": "Maximum range; 0 = unlimited. Default: 0",
+                "markdownDescription": "Maximum range; 0 = unlimited. Default: 0",
                 "type": "number"
               },
               "decay": {
+                "description": "Attenuation exponent. Default: 2",
+                "markdownDescription": "Attenuation exponent. Default: 2",
                 "type": "number"
               },
               "castShadow": {
                 "type": "boolean"
               },
               "shadow": {
+                "description": "Shadow map config. Only applied when `castShadow` is true. Frustum fields are ignored\n(point lights use a cube camera derived from `distance`).",
+                "markdownDescription": "Shadow map config. Only applied when `castShadow` is true. Frustum fields are ignored\n(point lights use a cube camera derived from `distance`).",
                 "type": "object",
                 "properties": {
                   "mapSize": {
+                    "description": "Shadow map resolution. Default: 1024",
+                    "markdownDescription": "Shadow map resolution. Default: 1024",
                     "anyOf": [
                       {
                         "type": "integer",
@@ -4709,38 +5135,60 @@
                     ]
                   },
                   "bias": {
+                    "description": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
+                    "markdownDescription": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
                     "type": "number"
                   },
                   "normalBias": {
+                    "description": "Normal-offset bias. Default: 0",
+                    "markdownDescription": "Normal-offset bias. Default: 0",
                     "type": "number"
                   },
                   "radius": {
+                    "description": "PCF/VSM blur radius. Default: 1",
+                    "markdownDescription": "PCF/VSM blur radius. Default: 1",
                     "type": "number"
                   },
                   "blurSamples": {
+                    "description": "VSM blur sample count. Default: 8",
+                    "markdownDescription": "VSM blur sample count. Default: 8",
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
                   },
                   "near": {
+                    "description": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
+                    "markdownDescription": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
                     "type": "number"
                   },
                   "far": {
+                    "description": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
+                    "markdownDescription": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
                     "type": "number"
                   },
                   "left": {
+                    "description": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "right": {
+                    "description": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "top": {
+                    "description": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "bottom": {
+                    "description": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "auto": {
+                    "description": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
+                    "markdownDescription": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
                     "type": "boolean"
                   }
                 },
@@ -4774,7 +5222,9 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
                 "type": "number"
@@ -4794,6 +5244,8 @@
                 ]
               },
               "target": {
+                "description": "World-space target position the spot light points toward. Default: [0, 0, 0]",
+                "markdownDescription": "World-space target position the spot light points toward. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -4808,9 +5260,13 @@
                 ]
               },
               "angle": {
+                "description": "Half-angle of the cone in radians. Default: π/4",
+                "markdownDescription": "Half-angle of the cone in radians. Default: π/4",
                 "type": "number"
               },
               "penumbra": {
+                "description": "Edge softness 0–1. Default: 0",
+                "markdownDescription": "Edge softness 0–1. Default: 0",
                 "type": "number"
               },
               "distance": {
@@ -4823,9 +5279,13 @@
                 "type": "boolean"
               },
               "shadow": {
+                "description": "Shadow camera + shadow map config. Only applied when `castShadow` is true.\nOrthographic-frustum fields (left/right/top/bottom) are ignored (spot lights use a\nperspective shadow camera derived from `angle`).",
+                "markdownDescription": "Shadow camera + shadow map config. Only applied when `castShadow` is true.\nOrthographic-frustum fields (left/right/top/bottom) are ignored (spot lights use a\nperspective shadow camera derived from `angle`).",
                 "type": "object",
                 "properties": {
                   "mapSize": {
+                    "description": "Shadow map resolution. Default: 1024",
+                    "markdownDescription": "Shadow map resolution. Default: 1024",
                     "anyOf": [
                       {
                         "type": "integer",
@@ -4861,38 +5321,60 @@
                     ]
                   },
                   "bias": {
+                    "description": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
+                    "markdownDescription": "Shadow acne bias. Default: 0 (often needs to be a small negative number like -0.0001)",
                     "type": "number"
                   },
                   "normalBias": {
+                    "description": "Normal-offset bias. Default: 0",
+                    "markdownDescription": "Normal-offset bias. Default: 0",
                     "type": "number"
                   },
                   "radius": {
+                    "description": "PCF/VSM blur radius. Default: 1",
+                    "markdownDescription": "PCF/VSM blur radius. Default: 1",
                     "type": "number"
                   },
                   "blurSamples": {
+                    "description": "VSM blur sample count. Default: 8",
+                    "markdownDescription": "VSM blur sample count. Default: 8",
                     "type": "integer",
                     "exclusiveMinimum": 0,
                     "maximum": 9007199254740991
                   },
                   "near": {
+                    "description": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
+                    "markdownDescription": "Directional/spot-only: near plane of the shadow camera frustum. Default: 0.5",
                     "type": "number"
                   },
                   "far": {
+                    "description": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
+                    "markdownDescription": "Directional/spot-only: far plane of the shadow camera frustum. Default: 500",
                     "type": "number"
                   },
                   "left": {
+                    "description": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: left edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "right": {
+                    "description": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: right edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "top": {
+                    "description": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
+                    "markdownDescription": "Directional-only: top edge of the orthographic shadow camera frustum. Default: 5",
                     "type": "number"
                   },
                   "bottom": {
+                    "description": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
+                    "markdownDescription": "Directional-only: bottom edge of the orthographic shadow camera frustum. Default: -5",
                     "type": "number"
                   },
                   "auto": {
+                    "description": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
+                    "markdownDescription": "Directional-only: auto-fit the frustum, light distance, and normalBias to the scene's\nshadow-casting geometry at load. When true, `position` is treated as direction-only and the\nexplicit `left/right/top/bottom/near/far` fields are ignored. Default: false",
                     "type": "boolean"
                   }
                 },
@@ -4926,7 +5408,9 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "groundColor": {
                 "anyOf": [
@@ -4939,7 +5423,9 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
                 "type": "number"
@@ -4972,7 +5458,9 @@
                     "type": "string",
                     "pattern": "^#[0-9a-fA-F]{6}$"
                   }
-                ]
+                ],
+                "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
               },
               "intensity": {
                 "type": "number"
@@ -4992,6 +5480,8 @@
                 ]
               },
               "target": {
+                "description": "Point the light faces; emits from its local -Z toward here. Default: [0, 0, 0]",
+                "markdownDescription": "Point the light faces; emits from its local -Z toward here. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -5041,7 +5531,9 @@
                   "type": "string",
                   "pattern": "^#[0-9a-fA-F]{6}$"
                 }
-              ]
+              ],
+              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
             },
             "horizonColor": {
               "anyOf": [
@@ -5054,7 +5546,9 @@
                   "type": "string",
                   "pattern": "^#[0-9a-fA-F]{6}$"
                 }
-              ]
+              ],
+              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
             },
             "groundColor": {
               "anyOf": [
@@ -5067,7 +5561,9 @@
                   "type": "string",
                   "pattern": "^#[0-9a-fA-F]{6}$"
                 }
-              ]
+              ],
+              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
             },
             "intensity": {
               "type": "number"
@@ -5208,13 +5704,17 @@
           "type": "string"
         },
         "material": {
+          "description": "Level material for every character mesh; composition assets fall back to their own `materialMap`.",
+          "markdownDescription": "Level material for every character mesh; composition assets fall back to their own `materialMap`.",
           "type": "string"
         }
       },
       "required": [
         "asset"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "The player's character: an asset that renders its mesh(es) plus one polyline per bone chain.",
+      "markdownDescription": "The player's character: an asset that renders its mesh(es) plus one polyline per bone chain."
     },
     "generators": {
       "type": "object",
@@ -5245,6 +5745,8 @@
       "type": "object",
       "properties": {
         "sfxDefs": {
+          "description": "Map of sfx sample names → defs. Names override any builtin with the same key.",
+          "markdownDescription": "Map of sfx sample names → defs. Names override any builtin with the same key.",
           "type": "object",
           "propertyNames": {
             "type": "string"
@@ -5253,19 +5755,27 @@
             "type": "object",
             "properties": {
               "url": {
-                "type": "string"
+                "type": "string",
+                "description": "URL of the audio sample (.ogg/.wav/etc).",
+                "markdownDescription": "URL of the audio sample (.ogg/.wav/etc)."
               },
               "playbackRate": {
+                "description": "Default playback rate when this sample is played. Default: 1",
+                "markdownDescription": "Default playback rate when this sample is played. Default: 1",
                 "type": "number"
               }
             },
             "required": [
               "url"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "A named sample definition: an entry the runtime registers with the SFX\nmanager so subsequent scene-def references can play it by name.  Mirrors the\n`SfxDef` type used by the runtime sound engine.",
+            "markdownDescription": "A named sample definition: an entry the runtime registers with the SFX\nmanager so subsequent scene-def references can play it by name.  Mirrors the\n`SfxDef` type used by the runtime sound engine."
           }
         },
         "spatialLoops": {
+          "description": "Spatial loops started automatically when the level loads.",
+          "markdownDescription": "Spatial loops started automatically when the level loads.",
           "type": "array",
           "items": {
             "type": "object",
@@ -5274,7 +5784,9 @@
                 "type": "string"
               },
               "sfx": {
-                "type": "string"
+                "type": "string",
+                "description": "Name of the sfx sample to loop (key into `sfxDefs` or a builtin).",
+                "markdownDescription": "Name of the sfx sample to loop (key into `sfxDefs` or a builtin)."
               },
               "pos": {
                 "type": "array",
@@ -5288,18 +5800,28 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "description": "World-space position of the emitter.",
+                "markdownDescription": "World-space position of the emitter."
               },
               "gain": {
+                "description": "Linear gain. Default: 1",
+                "markdownDescription": "Linear gain. Default: 1",
                 "type": "number"
               },
               "playbackRate": {
+                "description": "Playback rate. Default: 1",
+                "markdownDescription": "Playback rate. Default: 1",
                 "type": "number"
               },
               "xfade": {
+                "description": "0..1 fraction of the sample for crossfade ramp on each end. Default: 0.1",
+                "markdownDescription": "0..1 fraction of the sample for crossfade ramp on each end. Default: 0.1",
                 "type": "number"
               },
               "filter": {
+                "description": "Optional biquad filter applied to this voice.",
+                "markdownDescription": "Optional biquad filter applied to this voice.",
                 "type": "object",
                 "properties": {
                   "type": {
@@ -5325,12 +5847,18 @@
                 "additionalProperties": false
               },
               "refDistance": {
+                "description": "Distance at which attenuation begins. Default: 1",
+                "markdownDescription": "Distance at which attenuation begins. Default: 1",
                 "type": "number"
               },
               "rolloff": {
+                "description": "Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default: 1",
+                "markdownDescription": "Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default: 1",
                 "type": "number"
               },
               "cullThreshold": {
+                "description": "Linear gain threshold below which mixing is skipped. Default: 0.001",
+                "markdownDescription": "Linear gain threshold below which mixing is skipped. Default: 0.001",
                 "type": "number"
               }
             },
@@ -5339,11 +5867,15 @@
               "sfx",
               "pos"
             ],
-            "additionalProperties": false
+            "additionalProperties": false,
+            "description": "A spatial looped sound source placed in the world.  Plays automatically when\nthe level loads.  The `sfx` field references either a builtin sfx name or\none of the keys in the level def's `audio.sfxDefs` map.",
+            "markdownDescription": "A spatial looped sound source placed in the world.  Plays automatically when\nthe level loads.  The `sfx` field references either a builtin sfx name or\none of the keys in the level def's `audio.sfxDefs` map."
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Audio configuration for a level: scene-specific sfx sample registrations and\npositioned spatial loops that start automatically at load time.  Lives at\n`levelDef.audio` and may be sourced from the optional sidecar `audio.json`.",
+      "markdownDescription": "Audio configuration for a level: scene-specific sfx sample registrations and\npositioned spatial loops that start automatically at load time.  Lives at\n`levelDef.audio` and may be sourced from the optional sidecar `audio.json`."
     },
     "particles": {
       "type": "array",
@@ -5354,14 +5886,20 @@
             "type": "string"
           },
           "enabled": {
+            "description": "Default: true",
+            "markdownDescription": "Default: true",
             "type": "boolean"
           },
           "count": {
             "type": "integer",
             "exclusiveMinimum": 0,
-            "maximum": 9007199254740991
+            "maximum": 9007199254740991,
+            "description": "Particle count at a quality multiplier of 1.",
+            "markdownDescription": "Particle count at a quality multiplier of 1."
           },
           "quality": {
+            "description": "Count multipliers per graphics quality; 0 disables. Default: low 0, medium 1, high 1",
+            "markdownDescription": "Count multipliers per graphics quality; 0 disables. Default: low 0, medium 1, high 1",
             "type": "object",
             "properties": {
               "low": {
@@ -5425,6 +5963,8 @@
                     ]
                   },
                   "offset": {
+                    "description": "Box centre relative to the camera. Exposure-gate maps stay camera-centred, so budget their `extent` for it.",
+                    "markdownDescription": "Box centre relative to the camera. Exposure-gate maps stay camera-centred, so budget their `extent` for it.",
                     "type": "array",
                     "items": [
                       {
@@ -5450,7 +5990,9 @@
                 "properties": {
                   "kind": {
                     "type": "string",
-                    "const": "cameraSlab"
+                    "const": "cameraSlab",
+                    "description": "Follows the camera in XZ only; Y is the fixed world band `centerY ± size.y / 2`.",
+                    "markdownDescription": "Follows the camera in XZ only; Y is the fixed world band `centerY ± size.y / 2`."
                   },
                   "size": {
                     "type": "array",
@@ -5492,6 +6034,8 @@
                     "type": "number"
                   },
                   "offset": {
+                    "description": "XZ of the slab centre relative to the camera.",
+                    "markdownDescription": "XZ of the slab centre relative to the camera.",
                     "type": "array",
                     "items": [
                       {
@@ -5503,6 +6047,8 @@
                     ]
                   },
                   "distributionY": {
+                    "description": "Skews spawn origins along the band instead of spreading them evenly, so a tall band can stay\nsparse where it matters less: `power` 1 is uniform, higher packs harder toward `toward`.\nShapes origins only; long vertical drifts carry particles back out of it.",
+                    "markdownDescription": "Skews spawn origins along the band instead of spreading them evenly, so a tall band can stay\nsparse where it matters less: `power` 1 is uniform, higher packs harder toward `toward`.\nShapes origins only; long vertical drifts carry particles back out of it.",
                     "type": "object",
                     "properties": {
                       "toward": {
@@ -5532,13 +6078,19 @@
                 ],
                 "additionalProperties": false
               }
-            ]
+            ],
+            "description": "The window onto the world-anchored, toroidally repeating particle field. Its faces fade, so any\naxis that follows the camera breathes as the camera moves along it (a jump, for a short box).",
+            "markdownDescription": "The window onto the world-anchored, toroidally repeating particle field. Its faces fade, so any\naxis that follows the camera breathes as the camera moves along it (a jump, for a short box)."
           },
           "lifetime": {
+            "description": "Seconds before a particle respawns at a new origin. Omit for immortal drifters.",
+            "markdownDescription": "Seconds before a particle respawns at a new origin. Omit for immortal drifters.",
             "type": "number",
             "exclusiveMinimum": 0
           },
           "orient": {
+            "description": "Default: `billboard`",
+            "markdownDescription": "Default: `billboard`",
             "type": "string",
             "enum": [
               "billboard",
@@ -5546,10 +6098,14 @@
             ]
           },
           "stretch": {
+            "description": "`velocityStretch` only: seconds of travel the streak spans. Default: 0.05",
+            "markdownDescription": "`velocityStretch` only: seconds of travel the streak spans. Default: 0.05",
             "type": "number",
             "minimum": 0
           },
           "output": {
+            "description": "`scene`: lit, fogged, tone-mapped. `emissive`: bypass buffer, blooms, forces additive blend. Default: `scene`",
+            "markdownDescription": "`scene`: lit, fogged, tone-mapped. `emissive`: bypass buffer, blooms, forces additive blend. Default: `scene`",
             "type": "string",
             "enum": [
               "scene",
@@ -5557,6 +6113,8 @@
             ]
           },
           "light": {
+            "description": "`sunGated`: ambient + directional light, shadow-gated when the light casts. Default: `unlit`",
+            "markdownDescription": "`sunGated`: ambient + directional light, shadow-gated when the light casts. Default: `unlit`",
             "type": "string",
             "enum": [
               "unlit",
@@ -5564,6 +6122,8 @@
             ]
           },
           "blend": {
+            "description": "Default: `premultiplied`",
+            "markdownDescription": "Default: `premultiplied`",
             "type": "string",
             "enum": [
               "premultiplied",
@@ -5571,6 +6131,8 @@
             ]
           },
           "sizePx": {
+            "description": "Projected size clamp in pixels; below `min` the sprite grows and dims to preserve coverage. Default: min 1.5, max 128",
+            "markdownDescription": "Projected size clamp in pixels; below `min` the sprite grows and dims to preserve coverage. Default: min 1.5, max 128",
             "type": "object",
             "properties": {
               "min": {
@@ -5585,10 +6147,14 @@
             "additionalProperties": false
           },
           "softDepth": {
+            "description": "Depth-fades each sprite as an ellipsoid whose depth radius is `softDepth` × its screen radius\n(1 = sphere), by the fraction of its view-ray chord lying between the near plane and the\ngeometry behind it, so large soft sprites don't cut walls in hard lines. Depth-tests per\nfragment in the shader instead of in hardware, so leave it off for dense systems of tiny sprites.",
+            "markdownDescription": "Depth-fades each sprite as an ellipsoid whose depth radius is `softDepth` × its screen radius\n(1 = sphere), by the fraction of its view-ray chord lying between the near plane and the\ngeometry behind it, so large soft sprites don't cut walls in hard lines. Depth-tests per\nfragment in the shader instead of in hardware, so leave it off for dense systems of tiny sprites.",
             "type": "number",
             "exclusiveMinimum": 0
           },
           "renderScale": {
+            "description": "Draw into a buffer this fraction of the viewport and composite it back with a depth-aware\nupsample, capping the fill cost of screen-filling soft sprites. Needs `softDepth`; `scene` output only.",
+            "markdownDescription": "Draw into a buffer this fraction of the viewport and composite it back with a depth-aware\nupsample, capping the fill cost of screen-filling soft sprites. Needs `softDepth`; `scene` output only.",
             "type": "number",
             "exclusiveMinimum": 0,
             "exclusiveMaximum": 1
@@ -5605,9 +6171,13 @@
                       "enum": [
                         "nearFade",
                         "farFade"
-                      ]
+                      ],
+                      "description": "`nearFade`: 0 → 1 across `range` of camera distance; `farFade`: 1 → 0.",
+                      "markdownDescription": "`nearFade`: 0 → 1 across `range` of camera distance; `farFade`: 1 → 0."
                     },
                     "affects": {
+                      "description": "What the gate scales. `density` thins particles stochastically at constant size. Default: `alpha`",
+                      "markdownDescription": "What the gate scales. `density` thins particles stochastically at constant size. Default: `alpha`",
                       "type": "string",
                       "enum": [
                         "alpha",
@@ -5641,9 +6211,13 @@
                       "enum": [
                         "skyExposed",
                         "floorExposed"
-                      ]
+                      ],
+                      "description": "0 → 1 across `range` metres of clearance from the first static surface between the particle and\na horizontal plane: `skyExposed` looks down from `planeY` (rain dies under cover), `floorExposed`\nlooks up from it (dust rising out of a fog floor stops under platforms). Backed by a\ncamera-following height map that systems with identical settings share.",
+                      "markdownDescription": "0 → 1 across `range` metres of clearance from the first static surface between the particle and\na horizontal plane: `skyExposed` looks down from `planeY` (rain dies under cover), `floorExposed`\nlooks up from it (dust rising out of a fog floor stops under platforms). Backed by a\ncamera-following height map that systems with identical settings share."
                     },
                     "affects": {
+                      "description": "What the gate scales. `density` thins particles stochastically at constant size. Default: `alpha`",
+                      "markdownDescription": "What the gate scales. `density` thins particles stochastically at constant size. Default: `alpha`",
                       "type": "string",
                       "enum": [
                         "alpha",
@@ -5666,19 +6240,27 @@
                       "type": "number"
                     },
                     "depth": {
+                      "description": "How far past the plane the map sees. Default: 1024",
+                      "markdownDescription": "How far past the plane the map sees. Default: 1024",
                       "type": "number",
                       "exclusiveMinimum": 0
                     },
                     "extent": {
+                      "description": "World size of the map; needs ~10% headroom over the volume's XZ size. Default: 1.25 × the larger of the two",
+                      "markdownDescription": "World size of the map; needs ~10% headroom over the volume's XZ size. Default: 1.25 × the larger of the two",
                       "type": "number",
                       "exclusiveMinimum": 0
                     },
                     "resolution": {
+                      "description": "Default: 1024",
+                      "markdownDescription": "Default: 1024",
                       "type": "integer",
                       "exclusiveMinimum": 0,
                       "maximum": 9007199254740991
                     },
                     "soften": {
+                      "description": "Per-particle lookup jitter in world units, dithering the map's texel-stepped edges. Default: 1",
+                      "markdownDescription": "Per-particle lookup jitter in world units, dithering the map's texel-stepped edges. Default: 1",
                       "type": "number",
                       "minimum": 0
                     }
@@ -5946,7 +6528,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`).",
+                  "markdownDescription": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`)."
                 }
               },
               "constants": {
@@ -6093,7 +6677,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach.",
+                  "markdownDescription": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach."
                 }
               }
             },
@@ -6120,6 +6706,8 @@
     "objects"
   ],
   "additionalProperties": false,
+  "description": "Schema for level def JSON files on disk.\nGeoscript assets may use either `code` (inline) or `file` (path relative to level dir).\nServer-side loading inlines file refs and then validates against LevelDefSchema.",
+  "markdownDescription": "Schema for level def JSON files on disk.\nGeoscript assets may use either `code` (inline) or `file` (path relative to level dir).\nServer-side loading inlines file refs and then validates against LevelDefSchema.",
   "definitions": {
     "__schema0": {
       "anyOf": [
@@ -6266,9 +6854,13 @@
                     "type": "string"
                   },
                   "asset": {
+                    "description": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
+                    "markdownDescription": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
                     "type": "string"
                   },
                   "position": {
+                    "description": "World-space position. Default: [0, 0, 0]",
+                    "markdownDescription": "World-space position. Default: [0, 0, 0]",
                     "type": "array",
                     "items": [
                       {
@@ -6283,6 +6875,8 @@
                     ]
                   },
                   "rotation": {
+                    "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
+                    "markdownDescription": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
                     "type": "array",
                     "items": [
                       {
@@ -6297,6 +6891,8 @@
                     ]
                   },
                   "scale": {
+                    "description": "Per-axis scale. Default: [1, 1, 1]",
+                    "markdownDescription": "Per-axis scale. Default: [1, 1, 1]",
                     "type": "array",
                     "items": [
                       {
@@ -6311,12 +6907,18 @@
                     ]
                   },
                   "castShadow": {
+                    "description": "Default: true",
+                    "markdownDescription": "Default: true",
                     "type": "boolean"
                   },
                   "receiveShadow": {
+                    "description": "Default: true",
+                    "markdownDescription": "Default: true",
                     "type": "boolean"
                   },
                   "userData": {
+                    "description": "Passed through to object.userData; also checked for flags like `nocollide`",
+                    "markdownDescription": "Passed through to object.userData; also checked for flags like `nocollide`",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -6324,9 +6926,13 @@
                     "additionalProperties": {}
                   },
                   "material": {
+                    "description": "Key into the top-level `materials` registry. All meshes in this object get this material.",
+                    "markdownDescription": "Key into the top-level `materials` registry. All meshes in this object get this material.",
                     "type": "string"
                   },
                   "inputs": {
+                    "description": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
+                    "markdownDescription": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -6420,7 +7026,9 @@
                                       "type": "string",
                                       "pattern": "^#[0-9a-fA-F]{6}$"
                                     }
-                                  ]
+                                  ],
+                                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                                 }
                               ]
                             }
@@ -6534,7 +7142,9 @@
                                 "rot",
                                 "scale"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                              "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                             }
                           },
                           "required": [
@@ -6602,7 +7212,9 @@
                                         "type": "array",
                                         "items": {
                                           "type": "number"
-                                        }
+                                        },
+                                        "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                        "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                       },
                                       "ease": {
                                         "type": "string",
@@ -6646,7 +7258,9 @@
                                 "extend",
                                 "space"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                              "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                             }
                           },
                           "required": [
@@ -6701,37 +7315,57 @@
                     }
                   },
                   "nocollide": {
+                    "description": "If true, this object will not be registered in the collision world",
+                    "markdownDescription": "If true, this object will not be registered in the collision world",
                     "type": "boolean"
                   },
                   "nonPermeable": {
+                    "description": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
+                    "markdownDescription": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
                     "type": "boolean"
                   },
                   "parkour": {
+                    "description": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
+                    "markdownDescription": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
                     "type": "object",
                     "properties": {
                       "checkpoint": {
+                        "description": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
+                        "markdownDescription": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
                         "type": "number"
                       },
                       "win": {
+                        "description": "If true, reaching this object ends the run.",
+                        "markdownDescription": "If true, reaching this object ends the run.",
                         "type": "boolean"
                       },
                       "boostSurface": {
+                        "description": "Per-object boost-surface config; overrides any material-level config on the same object.",
+                        "markdownDescription": "Per-object boost-surface config; overrides any material-level config on the same object.",
                         "type": "object",
                         "properties": {
                           "targetSpeed": {
                             "type": "number",
-                            "minimum": 0
+                            "minimum": 0,
+                            "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                            "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                           },
                           "jumpRetention": {
                             "type": "number",
                             "minimum": 0,
-                            "maximum": 1
+                            "maximum": 1,
+                            "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                            "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                           },
                           "rampUpSeconds": {
+                            "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                            "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                             "type": "number",
                             "minimum": 0
                           },
                           "followSurfaceSlope": {
+                            "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                            "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                             "type": "boolean"
                           }
                         },
@@ -6742,19 +7376,27 @@
                         "additionalProperties": false
                       },
                       "climb": {
+                        "description": "Per-object climbability config; overrides any material-level config on the same object.",
+                        "markdownDescription": "Per-object climbability config; overrides any material-level config on the same object.",
                         "type": "object",
                         "properties": {
                           "maxClimbAngle": {
+                            "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                            "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                             "type": "number",
                             "minimum": 0,
                             "exclusiveMaximum": 1.5707963267948966
                           },
                           "slideMinAngle": {
+                            "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                            "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                             "type": "number",
                             "minimum": 0,
                             "exclusiveMaximum": 1.5707963267948966
                           },
                           "slideMaxSpeed": {
+                            "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                            "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                             "type": "number",
                             "minimum": 0
                           }
@@ -6762,6 +7404,8 @@
                         "additionalProperties": false
                       },
                       "entities": {
+                        "description": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
+                        "markdownDescription": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
                         "type": "array",
                         "items": {
                           "oneOf": [
@@ -6828,6 +7472,8 @@
                                           "const": "mesh"
                                         },
                                         "collider": {
+                                          "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                          "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                           "type": "string",
                                           "enum": [
                                             "trimesh",
@@ -6836,6 +7482,8 @@
                                           ]
                                         },
                                         "margin": {
+                                          "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                          "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                           "type": "number"
                                         }
                                       },
@@ -6844,7 +7492,9 @@
                                       ],
                                       "additionalProperties": false
                                     }
-                                  ]
+                                  ],
+                                  "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                                  "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                                 },
                                 "baseImpulse": {
                                   "type": "number"
@@ -6853,9 +7503,13 @@
                                   "type": "number"
                                 },
                                 "cooldownSeconds": {
+                                  "description": "Default: 0.15",
+                                  "markdownDescription": "Default: 0.15",
                                   "type": "number"
                                 },
                                 "direction": {
+                                  "description": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
+                                  "markdownDescription": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
                                   "anyOf": [
                                     {
                                       "type": "array",
@@ -6887,7 +7541,9 @@
                                 "baseImpulse",
                                 "speedScaling"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Launches the player on contact. `direction` is world-space (default straight up).",
+                              "markdownDescription": "Launches the player on contact. `direction` is world-space (default straight up)."
                             },
                             {
                               "type": "object",
@@ -6952,6 +7608,8 @@
                                           "const": "mesh"
                                         },
                                         "collider": {
+                                          "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                          "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                           "type": "string",
                                           "enum": [
                                             "trimesh",
@@ -6960,6 +7618,8 @@
                                           ]
                                         },
                                         "margin": {
+                                          "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                          "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                           "type": "number"
                                         }
                                       },
@@ -6968,7 +7628,9 @@
                                       ],
                                       "additionalProperties": false
                                     }
-                                  ]
+                                  ],
+                                  "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                                  "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                                 },
                                 "strength": {
                                   "type": "number"
@@ -6998,7 +7660,9 @@
                                 "directionalBias",
                                 "direction"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Continuously pushes the player while inside. `direction` is world-space.",
+                              "markdownDescription": "Continuously pushes the player while inside. `direction` is world-space."
                             },
                             {
                               "type": "object",
@@ -7008,6 +7672,8 @@
                                   "const": "dashToken"
                                 },
                                 "checkpointIx": {
+                                  "description": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
+                                  "markdownDescription": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
                                   "type": "integer",
                                   "minimum": -9007199254740991,
                                   "maximum": 9007199254740991
@@ -7016,9 +7682,13 @@
                               "required": [
                                 "kind"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created.",
+                              "markdownDescription": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created."
                             }
-                          ]
+                          ],
+                          "description": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh).",
+                          "markdownDescription": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh)."
                         }
                       }
                     },
@@ -7045,14 +7715,20 @@
                     ]
                   },
                   "behaviors": {
+                    "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
+                    "markdownDescription": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
                         "fn": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                          "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                         },
                         "params": {
+                          "description": "Parameters passed to the behavior function.",
+                          "markdownDescription": "Parameters passed to the behavior function.",
                           "type": "object",
                           "propertyNames": {
                             "type": "string"
@@ -7063,27 +7739,41 @@
                       "required": [
                         "fn"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                      "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                     }
                   },
                   "spawner": {
+                    "description": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
+                    "markdownDescription": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
                     "type": "object",
                     "properties": {
                       "interval": {
-                        "type": "number"
+                        "type": "number",
+                        "description": "Seconds between spawns.",
+                        "markdownDescription": "Seconds between spawns."
                       },
                       "initialDelay": {
+                        "description": "Seconds before the first spawn. Default: 0",
+                        "markdownDescription": "Seconds before the first spawn. Default: 0",
                         "type": "number"
                       },
                       "behaviors": {
+                        "description": "Behaviors attached to each spawned clone.",
+                        "markdownDescription": "Behaviors attached to each spawned clone.",
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
                             "fn": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                              "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                             },
                             "params": {
+                              "description": "Parameters passed to the behavior function.",
+                              "markdownDescription": "Parameters passed to the behavior function.",
                               "type": "object",
                               "propertyNames": {
                                 "type": "string"
@@ -7094,7 +7784,9 @@
                           "required": [
                             "fn"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                          "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                         }
                       }
                     },

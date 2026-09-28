@@ -1,5 +1,6 @@
 import * as Comlink from 'comlink';
 import GeoscriptWorker from 'src/geoscript/geoscriptWorker.worker?worker';
+import { takePrespawnedGeoscriptWorker } from './prespawnWorker';
 import type { GeoscriptWorkerMethods } from './geoscriptWorker.worker';
 
 export class WorkerManager {
@@ -13,7 +14,7 @@ export class WorkerManager {
   }
 
   private createWorker(): void {
-    this.rawWorker = new GeoscriptWorker();
+    this.rawWorker = takePrespawnedGeoscriptWorker() ?? new GeoscriptWorker();
     this.wrappedWorker = Comlink.wrap<GeoscriptWorkerMethods>(this.rawWorker);
     this.terminated = false;
   }

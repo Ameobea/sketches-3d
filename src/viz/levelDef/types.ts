@@ -40,11 +40,20 @@ const Vec3Tuple = z.tuple([z.number(), z.number(), z.number()]);
 const AssetColliderShapeSchema = z.enum(['trimesh', 'convexHull']);
 export type AssetColliderShape = z.infer<typeof AssetColliderShapeSchema>;
 
+/** Physics defaults applied to every placement of an asset; the object-level fields override. */
+const AssetPhysicsFields = {
+  colliderShape: AssetColliderShapeSchema.optional(),
+  /** If true, placements of this asset are not registered in the collision world. */
+  nocollide: z.boolean().optional(),
+  /** Camera non-permeability default; takes precedence over the material-level flag. */
+  nonPermeable: z.boolean().optional(),
+};
+
 export const GltfAssetDefSchema = z.object({
   type: z.literal('gltf'),
   /** Name of the mesh/object as it appears in the loaded gltf scene */
   meshName: z.string(),
-  colliderShape: AssetColliderShapeSchema.optional(),
+  ...AssetPhysicsFields,
 });
 
 export const GeoscriptAssetMetaSchema = z.object({
@@ -119,7 +128,7 @@ export const GeoscriptAssetDefSchema = z.object({
   includePrelude: z.boolean().optional(),
   /** Values for the program's `input_*` controls, keyed by control name. */
   inputs: InputsJsonSchema.optional(),
-  colliderShape: AssetColliderShapeSchema.optional(),
+  ...AssetPhysicsFields,
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -132,7 +141,7 @@ export const GeoscriptAssetDefFileSchema = z.object({
   includePrelude: z.boolean().optional(),
   /** Values for the program's `input_*` controls, keyed by control name. */
   inputs: InputsJsonSchema.optional(),
-  colliderShape: AssetColliderShapeSchema.optional(),
+  ...AssetPhysicsFields,
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -178,7 +187,7 @@ const CsgTreeNodeSchema: z.ZodType<CsgTreeNode> = z.union([CsgOpNodeSchema, CsgL
 export const CsgAssetDefSchema = z.object({
   type: z.literal('csg'),
   tree: CsgTreeNodeSchema,
-  colliderShape: AssetColliderShapeSchema.optional(),
+  ...AssetPhysicsFields,
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 
@@ -234,7 +243,7 @@ export const GeotoyCompositionAssetDefRawSchema = z.object({
   rootNodeName: z.string().optional(),
   /** Values for the composition's `input_*` controls, keyed by control name. */
   inputs: InputsJsonSchema.optional(),
-  colliderShape: AssetColliderShapeSchema.optional(),
+  ...AssetPhysicsFields,
   _meta: GeoscriptAssetMetaSchema.optional(),
 });
 

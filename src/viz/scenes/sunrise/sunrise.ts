@@ -21,7 +21,7 @@ export const processLoadedScene = (viz: Viz, loadedWorld: THREE.Group, vizConf: 
     metal_thud: {
       url: 'https://i.ameo.link/e13.ogg',
       playbackRate: [0.64, 0.6435],
-      gain: 0.4,
+      gain: 0.3,
       filter: { type: 'bp', freq: 5600, q: 1.2 },
     },
     metal_click: {

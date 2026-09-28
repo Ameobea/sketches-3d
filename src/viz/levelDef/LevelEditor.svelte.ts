@@ -39,6 +39,8 @@ import {
   SELECTION_HIGHLIGHT_MAT,
   assignMaterial,
   isInternalMaterialId,
+  resolveNocollide,
+  resolveNonPermeable,
 } from './levelObjectUtils';
 import { resolveGeoscriptAsset } from './loadLevelDef';
 import { buildMaterial } from 'src/viz/materials';
@@ -1695,14 +1697,18 @@ export class LevelEditor {
     // Asset-less dash-token markers have no collision (and no real geometry) — mirror loadLevelDef's skip.
     if (!hasAsset(levelObj.def)) return;
 
+    const assetDef = this.levelDef.assets[levelObj.def.asset!];
     // The entity's `object` may have been swapped by `replaceLeafInstance`; re-point it
     // at the current scene-graph node before re-adding any physics bodies.
     levelObj.entity.object = levelObj.object;
-    levelObj.entity.nonPermeable = levelObj.def.nonPermeable;
+    levelObj.entity.nonPermeable = resolveNonPermeable(levelObj.def, assetDef);
     // Re-base behaviors off the new local transform so they don't fight authored placement.
     levelObj.entity.refreshBaseTransform();
 
     clearPhysicsBinding(levelObj.object, fpCtx);
+    if (resolveNocollide(levelObj.def, assetDef)) {
+      return;
+    }
     const collisionMeshOverride = this.assetCollisionMeshes.get(levelObj.assetId);
     withWorldSpaceTransform(levelObj.object, mesh =>
       fpCtx.addTriMesh(mesh, 'static', levelObj.entity, collisionMeshOverride)

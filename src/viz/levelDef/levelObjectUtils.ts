@@ -2,9 +2,21 @@ import * as THREE from 'three';
 
 import type { GeneratedObject } from 'src/geoscript/runner/types';
 import { COMP_MATERIAL_PREFIX } from 'src/geoscript/runner/bakeComposition';
-import type { ObjectDef, ObjectGroupDef } from './types';
+import type { AssetDef, ObjectDef, ObjectGroupDef } from './types';
 
 export const LEVEL_PLACEHOLDER_MAT = new THREE.MeshStandardMaterial({ color: 0x888888 });
+
+type AssetPhysicsFlags = Pick<AssetDef, 'nocollide' | 'nonPermeable'> | undefined;
+
+/** Object def, then `userData`, then the asset def; jump pads are pure trigger volumes by default. */
+export const resolveNocollide = (def: ObjectDef, asset: AssetPhysicsFlags): boolean =>
+  def.nocollide ??
+  (def.userData?.nocollide as boolean | undefined) ??
+  asset?.nocollide ??
+  !!def.parkour?.entities?.some(e => e.kind === 'jumpPad');
+
+export const resolveNonPermeable = (def: ObjectDef, asset: AssetPhysicsFlags): boolean | undefined =>
+  def.nonPermeable ?? asset?.nonPermeable;
 
 /** Level-material ids hidden from user-facing pickers: shared library refs and per-composition
  *  auto-imported materials. */

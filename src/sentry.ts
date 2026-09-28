@@ -1,9 +1,11 @@
 import { init, browserTracingIntegration, captureConsoleIntegration } from '@sentry/browser';
 
+const isLocalDev = () => /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+
 let sentryInitialized = false;
 
 export const initSentry = () => {
-  if (sentryInitialized || window.location.href.includes('localhost')) {
+  if (sentryInitialized || isLocalDev()) {
     return;
   }
 

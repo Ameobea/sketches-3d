@@ -17,6 +17,8 @@
             "type": "string"
           },
           "wrapS": {
+            "description": "Default: 'repeat'",
+            "markdownDescription": "Default: 'repeat'",
             "type": "string",
             "enum": [
               "repeat",
@@ -25,6 +27,8 @@
             ]
           },
           "wrapT": {
+            "description": "Default: 'repeat'",
+            "markdownDescription": "Default: 'repeat'",
             "type": "string",
             "enum": [
               "repeat",
@@ -33,6 +37,8 @@
             ]
           },
           "magFilter": {
+            "description": "Default: 'linear' above low graphics quality (customShader snaps to texel centers for the nearest look), else 'nearest'",
+            "markdownDescription": "Default: 'linear' above low graphics quality (customShader snaps to texel centers for the nearest look), else 'nearest'",
             "type": "string",
             "enum": [
               "nearest",
@@ -40,6 +46,8 @@
             ]
           },
           "minFilter": {
+            "description": "Default: 'nearestMipLinear'",
+            "markdownDescription": "Default: 'nearestMipLinear'",
             "type": "string",
             "enum": [
               "nearest",
@@ -49,9 +57,13 @@
             ]
           },
           "anisotropy": {
+            "description": "Default: by graphics quality (low 1 / medium 8 / high 16)",
+            "markdownDescription": "Default: by graphics quality (low 1 / medium 8 / high 16)",
             "type": "number"
           },
           "colorSpace": {
+            "description": "Default: '' (`NoColorSpace`)",
+            "markdownDescription": "Default: '' (`NoColorSpace`)",
             "type": "string",
             "enum": [
               "srgb",
@@ -59,6 +71,8 @@
             ]
           },
           "format": {
+            "description": "Default: 'rgba' (`RGBA8`)",
+            "markdownDescription": "Default: 'rgba' (`RGBA8`)",
             "type": "string",
             "enum": [
               "rgba",
@@ -83,6 +97,8 @@
               "const": "customShader"
             },
             "name": {
+              "description": "Geotoy display + geoscript-reference name; level-def keys materials by record name and ignores this.",
+              "markdownDescription": "Geotoy display + geoscript-reference name; level-def keys materials by record name and ignores this.",
               "type": "string"
             },
             "props": {
@@ -99,7 +115,9 @@
                       "type": "string",
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
-                  ]
+                  ],
+                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                 },
                 "roughness": {
                   "type": "number"
@@ -121,7 +139,9 @@
                       "type": "string",
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
-                  ]
+                  ],
+                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                 },
                 "emissiveIntensity": {
                   "type": "number"
@@ -139,6 +159,8 @@
                   "type": "boolean"
                 },
                 "vertexColors": {
+                  "description": "Multiply the base color by the geometry's `color` attribute (linear RGB/RGBA). On by default;\ngeometries without the attribute are unaffected. `false` ignores the attribute.",
+                  "markdownDescription": "Multiply the base color by the geometry's `color` attribute (linear RGB/RGBA). On by default;\ngeometries without the attribute are unaffected. `false` ignores the attribute.",
                   "type": "boolean"
                 },
                 "transmission": {
@@ -173,7 +195,9 @@
                       "type": "string",
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
-                  ]
+                  ],
+                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                 },
                 "sheenRoughness": {
                   "type": "number"
@@ -221,6 +245,8 @@
                   ]
                 },
                 "uvScale": {
+                  "description": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
+                  "markdownDescription": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
                   "type": "array",
                   "items": [
                     {
@@ -232,6 +258,8 @@
                   ]
                 },
                 "stackIndex": {
+                  "description": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
+                  "markdownDescription": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
                   "type": "number"
                 },
                 "map": {
@@ -256,6 +284,8 @@
                   "type": "string"
                 },
                 "pomHeightMap": {
+                  "description": "Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`.",
+                  "markdownDescription": "Optional heightmap texture sampled during Parallax Occlusion Mapping. Requires `options.pom`.",
                   "type": "string"
                 },
                 "ambientDistanceAmp": {
@@ -310,7 +340,9 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "description": "Like ShaderPropsJsonSchema but the color props accept \"#rrggbb\" strings.",
+              "markdownDescription": "Like ShaderPropsJsonSchema but the color props accept \"#rrggbb\" strings."
             },
             "options": {
               "type": "object",
@@ -335,6 +367,8 @@
                   ]
                 },
                 "vertexAttrs": {
+                  "description": "Custom per-vertex attributes the shaders read, by name and GLSL type. Each is declared as an\n`attribute` in the vertex stage and forwarded to the fragment stage as `v_<name>`.",
+                  "markdownDescription": "Custom per-vertex attributes the shaders read, by name and GLSL type. Each is declared as an\n`attribute` in the vertex stage and forwarded to the fragment stage as `v_<name>`.",
                   "type": "object",
                   "propertyNames": {
                     "type": "string"
@@ -543,7 +577,9 @@
                   "additionalProperties": false
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "description": "Serializable subset of CustomShaderOptions",
+              "markdownDescription": "Serializable subset of CustomShaderOptions"
             },
             "shaders": {
               "type": "object",
@@ -565,7 +601,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "commonShader": {
                   "anyOf": [
@@ -584,7 +622,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "colorShader": {
                   "anyOf": [
@@ -603,7 +643,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "lightAttenuationShader": {
                   "anyOf": [
@@ -622,7 +664,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "normalShader": {
                   "anyOf": [
@@ -641,7 +685,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "stackIndexShader": {
                   "anyOf": [
@@ -660,7 +706,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "roughnessShader": {
                   "anyOf": [
@@ -679,7 +727,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "roughnessReverseColorRamp": {
                   "type": "object",
@@ -767,7 +817,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "metalnessReverseColorRamp": {
                   "type": "object",
@@ -855,7 +907,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "iridescenceShader": {
                   "anyOf": [
@@ -874,7 +928,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "iridescenceReverseColorRamp": {
                   "type": "object",
@@ -962,7 +1018,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "includeNoiseShadersVertex": {
                   "type": "boolean"
@@ -984,7 +1042,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "pomNormalShader": {
                   "anyOf": [
@@ -1003,7 +1063,9 @@
                       ],
                       "additionalProperties": false
                     }
-                  ]
+                  ],
+                  "description": "A GLSL shader snippet as an inline string or a file reference resolved server-side.",
+                  "markdownDescription": "A GLSL shader snippet as an inline string or a file reference resolved server-side."
                 },
                 "customUniforms": {
                   "type": "object",
@@ -1217,7 +1279,9 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`).",
+                    "markdownDescription": "Serializable form of `CustomUniformDef` (see customShader.types). A `sampler2D` value is a\nstring key into the textures registry (in geotoy-format defs, a direct texture URL).\nVector/matrix values are flat number arrays in column-major order (matching THREE's `toArray`)."
                   }
                 },
                 "constants": {
@@ -1364,41 +1428,59 @@
                         ],
                         "additionalProperties": false
                       }
-                    ]
+                    ],
+                    "description": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach.",
+                    "markdownDescription": "Serializable form of `ShaderConstantDef` (see customShader.types). Baked into the fragment GLSL\nas a `#define`; the material's slot GLSL guards its default with `#ifndef` and a value here\noverrides it. Compile-time, so usable in const-expressions/array-sizes a uniform can't reach."
                   }
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "description": "Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`.",
+              "markdownDescription": "Like ShaderShadersJsonSchema but GLSL string fields also accept `{ file: string }`."
             },
             "emissiveBypass": {
               "type": "boolean"
             },
             "inlineEmissiveBypass": {
+              "description": "Two-output material: lit/tone-mapped base + all emissive (uniform/map/`emissiveShader`)\nrouted to the bypass buffer. Requires a pipeline with `emissiveBypass: true`.\nSee `CustomShaderOptions.inlineEmissiveBypass`.",
+              "markdownDescription": "Two-output material: lit/tone-mapped base + all emissive (uniform/map/`emissiveShader`)\nrouted to the bypass buffer. Requires a pipeline with `emissiveBypass: true`.\nSee `CustomShaderOptions.inlineEmissiveBypass`.",
               "type": "boolean"
             },
             "nonPermeable": {
+              "description": "If true, the camera will hard-snap rather than dither through this material, and the\nsoft-occlusion shader effect is disabled for it.",
+              "markdownDescription": "If true, the camera will hard-snap rather than dither through this material, and the\nsoft-occlusion shader effect is disabled for it.",
               "type": "boolean"
             },
             "parkour": {
               "type": "object",
               "properties": {
                 "boostSurface": {
+                  "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                  "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "targetSpeed": {
                       "type": "number",
-                      "minimum": 0
+                      "minimum": 0,
+                      "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                      "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                     },
                     "jumpRetention": {
                       "type": "number",
                       "minimum": 0,
-                      "maximum": 1
+                      "maximum": 1,
+                      "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                      "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                     },
                     "rampUpSeconds": {
+                      "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                      "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                       "type": "number",
                       "minimum": 0
                     },
                     "followSurfaceSlope": {
+                      "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                      "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                       "type": "boolean"
                     }
                   },
@@ -1409,19 +1491,27 @@
                   "additionalProperties": false
                 },
                 "climb": {
+                  "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                  "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "maxClimbAngle": {
+                      "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                      "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMinAngle": {
+                      "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                      "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMaxSpeed": {
+                      "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                      "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                       "type": "number",
                       "minimum": 0
                     }
@@ -1452,6 +1542,8 @@
               ]
             },
             "extends": {
+              "description": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
+              "markdownDescription": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
               "oneOf": [
                 {
                   "type": "object",
@@ -1559,7 +1651,9 @@
                       "type": "string",
                       "pattern": "^#[0-9a-fA-F]{6}$"
                     }
-                  ]
+                  ],
+                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                 },
                 "transparent": {
                   "type": "boolean"
@@ -1586,28 +1680,40 @@
               "type": "boolean"
             },
             "nonPermeable": {
+              "description": "If true, the camera will hard-snap rather than dither through this material.",
+              "markdownDescription": "If true, the camera will hard-snap rather than dither through this material.",
               "type": "boolean"
             },
             "parkour": {
               "type": "object",
               "properties": {
                 "boostSurface": {
+                  "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                  "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "targetSpeed": {
                       "type": "number",
-                      "minimum": 0
+                      "minimum": 0,
+                      "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                      "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                     },
                     "jumpRetention": {
                       "type": "number",
                       "minimum": 0,
-                      "maximum": 1
+                      "maximum": 1,
+                      "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                      "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                     },
                     "rampUpSeconds": {
+                      "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                      "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                       "type": "number",
                       "minimum": 0
                     },
                     "followSurfaceSlope": {
+                      "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                      "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                       "type": "boolean"
                     }
                   },
@@ -1618,19 +1724,27 @@
                   "additionalProperties": false
                 },
                 "climb": {
+                  "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                  "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "maxClimbAngle": {
+                      "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                      "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMinAngle": {
+                      "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                      "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMaxSpeed": {
+                      "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                      "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                       "type": "number",
                       "minimum": 0
                     }
@@ -1677,28 +1791,40 @@
               "type": "boolean"
             },
             "nonPermeable": {
+              "description": "If true, the camera will hard-snap rather than dither through this material.\nThe runtime-provided material must have `userData.nonPermeable = true` set manually.",
+              "markdownDescription": "If true, the camera will hard-snap rather than dither through this material.\nThe runtime-provided material must have `userData.nonPermeable = true` set manually.",
               "type": "boolean"
             },
             "parkour": {
               "type": "object",
               "properties": {
                 "boostSurface": {
+                  "description": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
+                  "markdownDescription": "Default boost-surface config for objects using this material; an object's own\n`parkour.boostSurface` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "targetSpeed": {
                       "type": "number",
-                      "minimum": 0
+                      "minimum": 0,
+                      "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                      "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                     },
                     "jumpRetention": {
                       "type": "number",
                       "minimum": 0,
-                      "maximum": 1
+                      "maximum": 1,
+                      "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                      "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                     },
                     "rampUpSeconds": {
+                      "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                      "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                       "type": "number",
                       "minimum": 0
                     },
                     "followSurfaceSlope": {
+                      "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                      "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                       "type": "boolean"
                     }
                   },
@@ -1709,19 +1835,27 @@
                   "additionalProperties": false
                 },
                 "climb": {
+                  "description": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
+                  "markdownDescription": "Default climbability config for objects using this material; an object's own\n`parkour.climb` overrides this if set.",
                   "type": "object",
                   "properties": {
                     "maxClimbAngle": {
+                      "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                      "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMinAngle": {
+                      "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                      "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                       "type": "number",
                       "minimum": 0,
                       "exclusiveMaximum": 1.5707963267948966
                     },
                     "slideMaxSpeed": {
+                      "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                      "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                       "type": "number",
                       "minimum": 0
                     }
@@ -1755,7 +1889,9 @@
           "required": [
             "type"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "A material whose `THREE.Material` instance is provided at runtime via `LevelLoadHandle.setMaterialFactories`.\nUsed for fully custom materials that can't be described in data (e.g. animated or shader-heavy materials).",
+          "markdownDescription": "A material whose `THREE.Material` instance is provided at runtime via `LevelLoadHandle.setMaterialFactories`.\nUsed for fully custom materials that can't be described in data (e.g. animated or shader-heavy materials)."
         },
         {
           "type": "object",
@@ -1774,7 +1910,9 @@
             "type",
             "materialId"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "description": "Reference a Geotoy library material by id; the server inlines its def (and resolves its\ntexture ids → level `textures` entries) at load time, so the client never sees this variant.",
+          "markdownDescription": "Reference a Geotoy library material by id; the server inlines its def (and resolves its\ntexture ids → level `textures` entries) at load time, so the client never sees this variant."
         }
       ]
     }
@@ -1783,6 +1921,8 @@
     "material"
   ],
   "additionalProperties": false,
+  "description": "File shape for a shared-library material at `src/assets/materials/<sub>/<name>.json`.\nReferenced from a level def as `material: \"__ASSETS__/materials/<sub>/<name>\"`.\n\n`textures` are local to this file; on import their keys are prefixed with the\nlibrary path so they can't collide with the consuming level's textures.",
+  "markdownDescription": "File shape for a shared-library material at `src/assets/materials/<sub>/<name>.json`.\nReferenced from a level def as `material: \"__ASSETS__/materials/<sub>/<name>\"`.\n\n`textures` are local to this file; on import their keys are prefixed with the\nlibrary path so they can't collide with the consuming level's textures.",
   "title": "LibraryMaterialFile",
   "$id": "https://ameo.design/schemas/library-material.json"
 }

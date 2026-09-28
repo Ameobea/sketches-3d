@@ -37,6 +37,15 @@
       },
       "nonPermeable": true
     },
+    "path_floor": {
+      "type": "customShader",
+      "extends": {
+        "type": "composition",
+        "asset": "trench",
+        "name": "default"
+      },
+      "nonPermeable": true
+    },
     "path_wall_triplanar": {
       "type": "customShader",
       "extends": {
@@ -115,35 +124,43 @@
       "type": "geotoyComposition",
       "compositionId": 132,
       "materialMap": {
-        "stone": "path_wall"
-      }
+        "stone": "path_wall",
+        "default": "path_floor"
+      },
+      "_meta": { "runtimeMs": 208.4, "count": 5, "codeHash": "494a0b7e", "asyncDeps": [ "cgal", "clipper2", "uv_unwrap" ] }
     },
     "cliffs": {
       "type": "geotoyComposition",
       "compositionId": 132,
+      "nocollide": true,
       "materialMap": {
         "streaked_cement": "cliffs"
       },
-      "tab": "scene"
+      "tab": "scene",
+      "_meta": { "runtimeMs": 230.3, "count": 5, "codeHash": "46d2885e", "asyncDeps": [ "cgal", "uv_unwrap" ] }
     },
     "vertebrae_monolith": {
       "type": "geotoyComposition",
       "compositionId": 133,
+      "nocollide": true,
       "materialMap": {
         "hex": "hex_patched",
         "core": "core_patched"
-      }
+      },
+      "_meta": { "runtimeMs": 29.1, "count": 5, "codeHash": "13bc1219", "asyncDeps": [ "cgal", "uv_unwrap" ] }
     },
     "bloom_monolith": {
       "type": "geotoyComposition",
-      "compositionId": 134
+      "compositionId": 134,
+      "_meta": { "runtimeMs": 22.3, "count": 5, "codeHash": "28948202", "asyncDeps": [ "cgal", "uv_unwrap" ] }
     },
     "spire": {
       "type": "geotoyComposition",
       "compositionId": 135,
       "materialMap": {
         "default": "spire"
-      }
+      },
+      "_meta": { "runtimeMs": 3.6, "count": 5, "codeHash": "2b5d6", "asyncDeps": [ "cgal" ] }
     },
     "csg_box": {
       "type": "csg",
@@ -556,9 +573,9 @@
     {
       "id": "haze",
       "enabled": true,
-      "count": 220,
+      "count": 620,
       "quality": { "low": 0, "medium": 0.6, "high": 1 },
-      "volume": { "kind": "cameraSlab", "size": [440, 105, 440], "centerY": 2.5, "edgeFade": [80, 25, 80] },
+      "volume": { "kind": "cameraSlab", "size": [1640, 105, 1640], "centerY": 2.5, "edgeFade": [80, 25, 80] },
       "lifetime": 70,
       "output": "scene",
       "light": "unlit",
@@ -571,11 +588,11 @@
         "sprite": { "file": "particles/wisp_sprite.glsl" },
         "customUniforms": {
           "wind": { "type": "vec3", "value": [0.25, 0.05, -0.15] },
-          "wispColor": { "type": "vec3", "value": [0.5, 0.38, 0.42] }
+          "wispColor": { "type": "vec3", "value": [0.3, 0.08, 0.12] }
         },
         "constants": {
-          "WISP_SIZE": { "type": "float", "value": 170 },
-          "WISP_ALPHA": { "type": "float", "value": 0.16 },
+          "WISP_SIZE": { "type": "float", "value": 270 },
+          "WISP_ALPHA": { "type": "float", "value": 0.26 },
           "WISP_MEANDER": { "type": "float", "value": 6 },
           "WISP_EROSION": { "type": "float", "value": 0.9 },
           "WISP_ASPECT": { "type": "float", "value": 1.3 },

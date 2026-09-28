@@ -34,30 +34,23 @@ export const collectLevelDefEagerDeps = (levelDef: LevelDef | null): LevelDefEag
   return out;
 };
 
-export const getScenePreloadUrls = (levelDef: LevelDef | null): string[] => {
-  const urls: string[] = [WASM_ASSET_URLS.ammo, WASM_ASSET_URLS.flightRecorder];
-  if (!levelDef) {
-    return urls;
+/**
+ * Comma-joined eager dep names for the `geoscript-eager-deps` meta the client `init` hook reads to
+ * prespawn the worker; `undefined` when no asset needs the executor (mirrors `needsExecutor`).
+ */
+export const getSceneEagerDepNames = (levelDef: LevelDef | null): string | undefined => {
+  const needsExecutor = Object.values(levelDef?.assets ?? {}).some(
+    a => a.type !== 'gltf' || a.colliderShape === 'convexHull'
+  );
+  if (!needsExecutor) {
+    return undefined;
   }
-
-  urls.push(WASM_ASSET_URLS.geoscriptRepl, WASM_ASSET_URLS.manifold);
-
-  const eager = collectLevelDefEagerDeps(levelDef);
-  if (eager.cgal) {
-    urls.push(WASM_ASSET_URLS.cgal);
-  }
-  if (eager.clipper2) {
-    urls.push(WASM_ASSET_URLS.clipper2);
-  }
-  if (eager.geodesics) {
-    urls.push(WASM_ASSET_URLS.geodesics);
-  }
-  if (eager.uv_unwrap) {
-    urls.push(WASM_ASSET_URLS.uvUnwrap);
-  }
-  if (eager.uv_solvers) {
-    urls.push(WASM_ASSET_URLS.uvSolvers);
-  }
-
-  return urls;
+  return Object.entries(collectLevelDefEagerDeps(levelDef))
+    .filter(([, on]) => on)
+    .map(([name]) => name)
+    .join(',');
 };
+
+/** Only wasm the main thread itself fetches. The geoscript worker fetches its own wasm; a document
+ *  preload of the same URL that's still in flight when the worker asks is a second download. */
+export const getScenePreloadUrls = (): string[] => [WASM_ASSET_URLS.ammo, WASM_ASSET_URLS.flightRecorder];

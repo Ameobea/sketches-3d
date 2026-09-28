@@ -14,16 +14,22 @@
         "type": "object",
         "properties": {
           "url": {
-            "type": "string"
+            "type": "string",
+            "description": "URL of the audio sample (.ogg/.wav/etc).",
+            "markdownDescription": "URL of the audio sample (.ogg/.wav/etc)."
           },
           "playbackRate": {
+            "description": "Default playback rate when this sample is played. Default: 1",
+            "markdownDescription": "Default playback rate when this sample is played. Default: 1",
             "type": "number"
           }
         },
         "required": [
           "url"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A named sample definition: an entry the runtime registers with the SFX\nmanager so subsequent scene-def references can play it by name.  Mirrors the\n`SfxDef` type used by the runtime sound engine.",
+        "markdownDescription": "A named sample definition: an entry the runtime registers with the SFX\nmanager so subsequent scene-def references can play it by name.  Mirrors the\n`SfxDef` type used by the runtime sound engine."
       }
     },
     "spatialLoops": {
@@ -35,7 +41,9 @@
             "type": "string"
           },
           "sfx": {
-            "type": "string"
+            "type": "string",
+            "description": "Name of the sfx sample to loop (key into `sfxDefs` or a builtin).",
+            "markdownDescription": "Name of the sfx sample to loop (key into `sfxDefs` or a builtin)."
           },
           "pos": {
             "type": "array",
@@ -49,18 +57,28 @@
               {
                 "type": "number"
               }
-            ]
+            ],
+            "description": "World-space position of the emitter.",
+            "markdownDescription": "World-space position of the emitter."
           },
           "gain": {
+            "description": "Linear gain. Default: 1",
+            "markdownDescription": "Linear gain. Default: 1",
             "type": "number"
           },
           "playbackRate": {
+            "description": "Playback rate. Default: 1",
+            "markdownDescription": "Playback rate. Default: 1",
             "type": "number"
           },
           "xfade": {
+            "description": "0..1 fraction of the sample for crossfade ramp on each end. Default: 0.1",
+            "markdownDescription": "0..1 fraction of the sample for crossfade ramp on each end. Default: 0.1",
             "type": "number"
           },
           "filter": {
+            "description": "Optional biquad filter applied to this voice.",
+            "markdownDescription": "Optional biquad filter applied to this voice.",
             "type": "object",
             "properties": {
               "type": {
@@ -86,12 +104,18 @@
             "additionalProperties": false
           },
           "refDistance": {
+            "description": "Distance at which attenuation begins. Default: 1",
+            "markdownDescription": "Distance at which attenuation begins. Default: 1",
             "type": "number"
           },
           "rolloff": {
+            "description": "Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default: 1",
+            "markdownDescription": "Attenuation curve exponent: gain = 1 / max(1, dist/ref)^rolloff. Default: 1",
             "type": "number"
           },
           "cullThreshold": {
+            "description": "Linear gain threshold below which mixing is skipped. Default: 0.001",
+            "markdownDescription": "Linear gain threshold below which mixing is skipped. Default: 0.001",
             "type": "number"
           }
         },
@@ -100,7 +124,9 @@
           "sfx",
           "pos"
         ],
-        "additionalProperties": false
+        "additionalProperties": false,
+        "description": "A spatial looped sound source placed in the world.  Plays automatically when\nthe level loads.  The `sfx` field references either a builtin sfx name or\none of the keys in the level def's `audio.sfxDefs` map.",
+        "markdownDescription": "A spatial looped sound source placed in the world.  Plays automatically when\nthe level loads.  The `sfx` field references either a builtin sfx name or\none of the keys in the level def's `audio.sfxDefs` map."
       }
     }
   },

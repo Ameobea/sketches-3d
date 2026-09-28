@@ -312,6 +312,140 @@ const buildTrimeshShape = (
   }
 };
 
+interface SharedTrimesh {
+  bvh: BtBvhTriangleMeshShape;
+  /** Largest |scale| component the BVH's vertices were baked at. */
+  baseScale: number;
+  refs: number;
+  free: () => void;
+  freed: boolean;
+}
+
+const indexIds = new WeakMap<object, number>();
+let nextIndexId = 1;
+const indexIdOf = (index: object | null) => {
+  if (!index) {
+    return 0;
+  }
+  let id = indexIds.get(index);
+  if (id === undefined) {
+    id = nextIndexId++;
+    indexIds.set(index, id);
+  }
+  return id;
+};
+
+/**
+ * Shares one BVH + internal-edge map between every body built from the same vertex data at the
+ * same scale *direction* (sign included, so mirrored placements keep their own flipped winding).
+ * Instances differing only by a uniform factor get a per-body `btScaledBvhTriangleMeshShape`;
+ * uniform scaling preserves every angle the edge map stores, so contacts match a dedicated build.
+ *
+ * Ownership is explicit refcounting on the body-removal path (`destroyShape`), not GC: the owner
+ * of the Wasm memory is the physics world, and bodies routinely outlive their meshes. The
+ * `WeakMap` is purely a lookup index so the cache never pins geometry; each body's cleanup closure
+ * holds its entry directly, so release still works after the source is collected.
+ */
+export class SharedTrimeshCache {
+  private bySource = new WeakMap<object, Map<string, SharedTrimesh>>();
+  private live = new Set<SharedTrimesh>();
+  private sharedPtrs = new Set<number>();
+
+  constructor(
+    private Ammo: AmmoInterface,
+    private btvec3: (x: number, y: number, z: number) => BtVec3
+  ) {}
+
+  /** `versionKey` must change whenever the data behind `source` does. */
+  acquire(
+    source: object,
+    versionKey: string,
+    indices: Uint16Array | Uint32Array | undefined,
+    vertices: Float32Array,
+    scale: THREE.Vector3
+  ): CollisionShapeBuildResult {
+    const maxScale = Math.max(Math.abs(scale.x), Math.abs(scale.y), Math.abs(scale.z));
+    if (maxScale === 0) {
+      return buildTrimeshShape(this.Ammo, indices, vertices, scale);
+    }
+    const key = `${versionKey}|${(scale.x / maxScale).toFixed(6)},${(scale.y / maxScale).toFixed(6)},${(scale.z / maxScale).toFixed(6)}`;
+    let byKey = this.bySource.get(source);
+    if (!byKey) {
+      byKey = new Map();
+      this.bySource.set(source, byKey);
+    }
+    let entry = byKey.get(key);
+    if (!entry) {
+      const built = buildTrimeshShape(this.Ammo, indices, vertices, scale);
+      entry = {
+        bvh: built.shape as BtBvhTriangleMeshShape,
+        baseScale: maxScale,
+        refs: 0,
+        free: () => built.destroyShape!(this.Ammo),
+        freed: false,
+      };
+      byKey.set(key, entry);
+      this.live.add(entry);
+      this.sharedPtrs.add(this.Ammo.getPointer(entry.bvh));
+    }
+    entry.refs += 1;
+
+    const k = maxScale / entry.baseScale;
+    // Decomposed world matrices carry ~1ulp noise; a sub-micron size difference isn't worth a wrapper.
+    const shape =
+      Math.abs(k - 1) < 1e-6
+        ? entry.bvh
+        : new this.Ammo.btScaledBvhTriangleMeshShape(entry.bvh, this.btvec3(k, k, k));
+    const owner = entry;
+    const index = byKey;
+    let released = false;
+    return {
+      shape,
+      destroyShape: Ammo => {
+        if (released) {
+          return;
+        }
+        released = true;
+        if (shape !== owner.bvh) {
+          Ammo.destroy(shape);
+        }
+        owner.refs -= 1;
+        if (owner.refs === 0 && !owner.freed) {
+          this.free(owner);
+          if (index.get(key) === owner) {
+            index.delete(key);
+          }
+        }
+      },
+    };
+  }
+
+  /** Guards the unregistered-shape fallback in `destroyCollisionShape` from freeing shared data. */
+  isShared = (shape: BtCollisionShape) => this.sharedPtrs.has(this.Ammo.getPointer(shape));
+
+  /**
+   * World teardown: frees every entry regardless of refs. Only valid once no body referencing one
+   * will be stepped or queried again; later `destroyShape` calls become no-ops for the shared part.
+   * Returns the number of body references that were never released (leaked bodies).
+   */
+  dispose(): number {
+    let outstanding = 0;
+    for (const entry of this.live) {
+      outstanding += entry.refs;
+      this.free(entry);
+    }
+    this.bySource = new WeakMap();
+    return outstanding;
+  }
+
+  private free(entry: SharedTrimesh) {
+    entry.freed = true;
+    this.live.delete(entry);
+    this.sharedPtrs.delete(this.Ammo.getPointer(entry.bvh));
+    entry.free();
+  }
+}
+
 /**
  * Precomputed collision geometry override for an asset.  When passed to
  * `buildCollisionShapeFromMesh`, it bypasses the visual mesh's own geometry and the
@@ -366,7 +500,8 @@ export const buildCollisionShapeFromMesh = (
   btvec3: (x: number, y: number, z: number) => BtVec3,
   mesh: THREE.Mesh,
   extraScale?: THREE.Vector3,
-  collisionMeshOverride?: CollisionMeshOverride
+  collisionMeshOverride?: CollisionMeshOverride,
+  trimeshCache?: SharedTrimeshCache
 ): CollisionShapeBuildResult => {
   let scale = mesh.scale.clone();
   if (extraScale) {
@@ -374,7 +509,10 @@ export const buildCollisionShapeFromMesh = (
   }
 
   if (collisionMeshOverride) {
-    return buildTrimeshShape(Ammo, collisionMeshOverride.indices, collisionMeshOverride.verts, scale);
+    const { indices, verts } = collisionMeshOverride;
+    return trimeshCache
+      ? trimeshCache.acquire(collisionMeshOverride, '', indices, verts, scale)
+      : buildTrimeshShape(Ammo, indices, verts, scale);
   }
 
   if (mesh.geometry instanceof THREE.BoxGeometry) {
@@ -422,5 +560,10 @@ export const buildCollisionShapeFromMesh = (
     };
   }
 
-  return buildTrimeshShape(Ammo, indices, vertices, scale);
+  const position = geometry.attributes.position;
+  if (!trimeshCache || !(position instanceof THREE.BufferAttribute)) {
+    return buildTrimeshShape(Ammo, indices, vertices, scale);
+  }
+  const versionKey = `${position.version}|${indexIdOf(geometry.index)}|${geometry.index?.version ?? 0}`;
+  return trimeshCache.acquire(position, versionKey, indices, vertices, scale);
 };

@@ -16,9 +16,13 @@
                 "type": "string"
               },
               "asset": {
+                "description": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
+                "markdownDescription": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
                 "type": "string"
               },
               "position": {
+                "description": "World-space position. Default: [0, 0, 0]",
+                "markdownDescription": "World-space position. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -33,6 +37,8 @@
                 ]
               },
               "rotation": {
+                "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
+                "markdownDescription": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
                 "type": "array",
                 "items": [
                   {
@@ -47,6 +53,8 @@
                 ]
               },
               "scale": {
+                "description": "Per-axis scale. Default: [1, 1, 1]",
+                "markdownDescription": "Per-axis scale. Default: [1, 1, 1]",
                 "type": "array",
                 "items": [
                   {
@@ -61,12 +69,18 @@
                 ]
               },
               "castShadow": {
+                "description": "Default: true",
+                "markdownDescription": "Default: true",
                 "type": "boolean"
               },
               "receiveShadow": {
+                "description": "Default: true",
+                "markdownDescription": "Default: true",
                 "type": "boolean"
               },
               "userData": {
+                "description": "Passed through to object.userData; also checked for flags like `nocollide`",
+                "markdownDescription": "Passed through to object.userData; also checked for flags like `nocollide`",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -74,9 +88,13 @@
                 "additionalProperties": {}
               },
               "material": {
+                "description": "Key into the top-level `materials` registry. All meshes in this object get this material.",
+                "markdownDescription": "Key into the top-level `materials` registry. All meshes in this object get this material.",
                 "type": "string"
               },
               "inputs": {
+                "description": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
+                "markdownDescription": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
                 "type": "object",
                 "propertyNames": {
                   "type": "string"
@@ -170,7 +188,9 @@
                                   "type": "string",
                                   "pattern": "^#[0-9a-fA-F]{6}$"
                                 }
-                              ]
+                              ],
+                              "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                              "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                             }
                           ]
                         }
@@ -284,7 +304,9 @@
                             "rot",
                             "scale"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                          "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                         }
                       },
                       "required": [
@@ -352,7 +374,9 @@
                                     "type": "array",
                                     "items": {
                                       "type": "number"
-                                    }
+                                    },
+                                    "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                    "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                   },
                                   "ease": {
                                     "type": "string",
@@ -396,7 +420,9 @@
                             "extend",
                             "space"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                          "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                         }
                       },
                       "required": [
@@ -451,37 +477,57 @@
                 }
               },
               "nocollide": {
+                "description": "If true, this object will not be registered in the collision world",
+                "markdownDescription": "If true, this object will not be registered in the collision world",
                 "type": "boolean"
               },
               "nonPermeable": {
+                "description": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
+                "markdownDescription": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
                 "type": "boolean"
               },
               "parkour": {
+                "description": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
+                "markdownDescription": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
                 "type": "object",
                 "properties": {
                   "checkpoint": {
+                    "description": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
+                    "markdownDescription": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
                     "type": "number"
                   },
                   "win": {
+                    "description": "If true, reaching this object ends the run.",
+                    "markdownDescription": "If true, reaching this object ends the run.",
                     "type": "boolean"
                   },
                   "boostSurface": {
+                    "description": "Per-object boost-surface config; overrides any material-level config on the same object.",
+                    "markdownDescription": "Per-object boost-surface config; overrides any material-level config on the same object.",
                     "type": "object",
                     "properties": {
                       "targetSpeed": {
                         "type": "number",
-                        "minimum": 0
+                        "minimum": 0,
+                        "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                        "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                       },
                       "jumpRetention": {
                         "type": "number",
                         "minimum": 0,
-                        "maximum": 1
+                        "maximum": 1,
+                        "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                        "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                       },
                       "rampUpSeconds": {
+                        "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                        "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                         "type": "number",
                         "minimum": 0
                       },
                       "followSurfaceSlope": {
+                        "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                        "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                         "type": "boolean"
                       }
                     },
@@ -492,19 +538,27 @@
                     "additionalProperties": false
                   },
                   "climb": {
+                    "description": "Per-object climbability config; overrides any material-level config on the same object.",
+                    "markdownDescription": "Per-object climbability config; overrides any material-level config on the same object.",
                     "type": "object",
                     "properties": {
                       "maxClimbAngle": {
+                        "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                        "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMinAngle": {
+                        "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                        "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                         "type": "number",
                         "minimum": 0,
                         "exclusiveMaximum": 1.5707963267948966
                       },
                       "slideMaxSpeed": {
+                        "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                        "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                         "type": "number",
                         "minimum": 0
                       }
@@ -512,6 +566,8 @@
                     "additionalProperties": false
                   },
                   "entities": {
+                    "description": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
+                    "markdownDescription": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
                     "type": "array",
                     "items": {
                       "oneOf": [
@@ -578,6 +634,8 @@
                                       "const": "mesh"
                                     },
                                     "collider": {
+                                      "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                      "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                       "type": "string",
                                       "enum": [
                                         "trimesh",
@@ -586,6 +644,8 @@
                                       ]
                                     },
                                     "margin": {
+                                      "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                      "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                       "type": "number"
                                     }
                                   },
@@ -594,7 +654,9 @@
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                              "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                             },
                             "baseImpulse": {
                               "type": "number"
@@ -603,9 +665,13 @@
                               "type": "number"
                             },
                             "cooldownSeconds": {
+                              "description": "Default: 0.15",
+                              "markdownDescription": "Default: 0.15",
                               "type": "number"
                             },
                             "direction": {
+                              "description": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
+                              "markdownDescription": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
                               "anyOf": [
                                 {
                                   "type": "array",
@@ -637,7 +703,9 @@
                             "baseImpulse",
                             "speedScaling"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Launches the player on contact. `direction` is world-space (default straight up).",
+                          "markdownDescription": "Launches the player on contact. `direction` is world-space (default straight up)."
                         },
                         {
                           "type": "object",
@@ -702,6 +770,8 @@
                                       "const": "mesh"
                                     },
                                     "collider": {
+                                      "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                      "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                       "type": "string",
                                       "enum": [
                                         "trimesh",
@@ -710,6 +780,8 @@
                                       ]
                                     },
                                     "margin": {
+                                      "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                      "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                       "type": "number"
                                     }
                                   },
@@ -718,7 +790,9 @@
                                   ],
                                   "additionalProperties": false
                                 }
-                              ]
+                              ],
+                              "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                              "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                             },
                             "strength": {
                               "type": "number"
@@ -748,7 +822,9 @@
                             "directionalBias",
                             "direction"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Continuously pushes the player while inside. `direction` is world-space.",
+                          "markdownDescription": "Continuously pushes the player while inside. `direction` is world-space."
                         },
                         {
                           "type": "object",
@@ -758,6 +834,8 @@
                               "const": "dashToken"
                             },
                             "checkpointIx": {
+                              "description": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
+                              "markdownDescription": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
                               "type": "integer",
                               "minimum": -9007199254740991,
                               "maximum": 9007199254740991
@@ -766,9 +844,13 @@
                           "required": [
                             "kind"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created.",
+                          "markdownDescription": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created."
                         }
-                      ]
+                      ],
+                      "description": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh).",
+                      "markdownDescription": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh)."
                     }
                   }
                 },
@@ -795,14 +877,20 @@
                 ]
               },
               "behaviors": {
+                "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
+                "markdownDescription": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
                 "type": "array",
                 "items": {
                   "type": "object",
                   "properties": {
                     "fn": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                      "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                     },
                     "params": {
+                      "description": "Parameters passed to the behavior function.",
+                      "markdownDescription": "Parameters passed to the behavior function.",
                       "type": "object",
                       "propertyNames": {
                         "type": "string"
@@ -813,27 +901,41 @@
                   "required": [
                     "fn"
                   ],
-                  "additionalProperties": false
+                  "additionalProperties": false,
+                  "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                  "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                 }
               },
               "spawner": {
+                "description": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
+                "markdownDescription": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
                 "type": "object",
                 "properties": {
                   "interval": {
-                    "type": "number"
+                    "type": "number",
+                    "description": "Seconds between spawns.",
+                    "markdownDescription": "Seconds between spawns."
                   },
                   "initialDelay": {
+                    "description": "Seconds before the first spawn. Default: 0",
+                    "markdownDescription": "Seconds before the first spawn. Default: 0",
                     "type": "number"
                   },
                   "behaviors": {
+                    "description": "Behaviors attached to each spawned clone.",
+                    "markdownDescription": "Behaviors attached to each spawned clone.",
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
                         "fn": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                          "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                         },
                         "params": {
+                          "description": "Parameters passed to the behavior function.",
+                          "markdownDescription": "Parameters passed to the behavior function.",
                           "type": "object",
                           "propertyNames": {
                             "type": "string"
@@ -844,7 +946,9 @@
                       "required": [
                         "fn"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                      "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                     }
                   }
                 },
@@ -891,9 +995,13 @@
                     "type": "string"
                   },
                   "asset": {
+                    "description": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
+                    "markdownDescription": "Key into the top-level `assets` registry. Optional for asset-less parkour markers (`parkour.entities`).",
                     "type": "string"
                   },
                   "position": {
+                    "description": "World-space position. Default: [0, 0, 0]",
+                    "markdownDescription": "World-space position. Default: [0, 0, 0]",
                     "type": "array",
                     "items": [
                       {
@@ -908,6 +1016,8 @@
                     ]
                   },
                   "rotation": {
+                    "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
+                    "markdownDescription": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
                     "type": "array",
                     "items": [
                       {
@@ -922,6 +1032,8 @@
                     ]
                   },
                   "scale": {
+                    "description": "Per-axis scale. Default: [1, 1, 1]",
+                    "markdownDescription": "Per-axis scale. Default: [1, 1, 1]",
                     "type": "array",
                     "items": [
                       {
@@ -936,12 +1048,18 @@
                     ]
                   },
                   "castShadow": {
+                    "description": "Default: true",
+                    "markdownDescription": "Default: true",
                     "type": "boolean"
                   },
                   "receiveShadow": {
+                    "description": "Default: true",
+                    "markdownDescription": "Default: true",
                     "type": "boolean"
                   },
                   "userData": {
+                    "description": "Passed through to object.userData; also checked for flags like `nocollide`",
+                    "markdownDescription": "Passed through to object.userData; also checked for flags like `nocollide`",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -949,9 +1067,13 @@
                     "additionalProperties": {}
                   },
                   "material": {
+                    "description": "Key into the top-level `materials` registry. All meshes in this object get this material.",
+                    "markdownDescription": "Key into the top-level `materials` registry. All meshes in this object get this material.",
                     "type": "string"
                   },
                   "inputs": {
+                    "description": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
+                    "markdownDescription": "Per-object overrides for the asset's `input_*` control values (sparse; merged over the\nasset-level `inputs`). Only valid on geoscript / geotoyComposition assets. Placements with\ndistinct merged inputs resolve to distinct baked variants of the asset.",
                     "type": "object",
                     "propertyNames": {
                       "type": "string"
@@ -1045,7 +1167,9 @@
                                       "type": "string",
                                       "pattern": "^#[0-9a-fA-F]{6}$"
                                     }
-                                  ]
+                                  ],
+                                  "description": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`.",
+                                  "markdownDescription": "Accepts a color as either a plain integer (e.g. 0x303030 → 3158064) or a\nCSS-style 6-digit hex string (e.g. \"#303030\").  No transform here; callers\nthat need an integer must run `normalizeRawDefColors`."
                                 }
                               ]
                             }
@@ -1159,7 +1283,9 @@
                                 "rot",
                                 "scale"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple).",
+                              "markdownDescription": "A parametric input value injected into a geoscript program / composition at bake, keyed by the\n`input_*` control's name. Mirrors the `input_*` builtins; `color` accepts an `[r,g,b]` 0..1 triple,\nan int (0xRRGGBB), or a \"#rrggbb\" hex string (the latter two normalized to a 0..1 triple)."
                             }
                           },
                           "required": [
@@ -1227,7 +1353,9 @@
                                         "type": "array",
                                         "items": {
                                           "type": "number"
-                                        }
+                                        },
+                                        "description": "1 element for scalar ramps, 3 (linear RGB) for color ramps.",
+                                        "markdownDescription": "1 element for scalar ramps, 3 (linear RGB) for color ramps."
                                       },
                                       "ease": {
                                         "type": "string",
@@ -1271,7 +1399,9 @@
                                 "extend",
                                 "space"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous.",
+                              "markdownDescription": "`vec3`/`transform` override a `gizmo(...)`/`gizmo_transform(...)` handle rather than an\n`input_*` control. Keys are bare handle names, or `module/handle`-qualified to target one\ncomposition node when the bare name is ambiguous."
                             }
                           },
                           "required": [
@@ -1326,37 +1456,57 @@
                     }
                   },
                   "nocollide": {
+                    "description": "If true, this object will not be registered in the collision world",
+                    "markdownDescription": "If true, this object will not be registered in the collision world",
                     "type": "boolean"
                   },
                   "nonPermeable": {
+                    "description": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
+                    "markdownDescription": "Overrides the material-level `nonPermeable` flag for this object.\nWhen true, the camera hard-snaps rather than dithering through it.\nWhen false, disables non-permeable behavior even if the material sets it.\nWhen absent, the material's own flag is used.",
                     "type": "boolean"
                   },
                   "parkour": {
+                    "description": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
+                    "markdownDescription": "Parkour-specific metadata: marks this object as a checkpoint or win zone.",
                     "type": "object",
                     "properties": {
                       "checkpoint": {
+                        "description": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
+                        "markdownDescription": "Checkpoint index (0, 1, 2…). Makes this object a mid-level respawn checkpoint.",
                         "type": "number"
                       },
                       "win": {
+                        "description": "If true, reaching this object ends the run.",
+                        "markdownDescription": "If true, reaching this object ends the run.",
                         "type": "boolean"
                       },
                       "boostSurface": {
+                        "description": "Per-object boost-surface config; overrides any material-level config on the same object.",
+                        "markdownDescription": "Per-object boost-surface config; overrides any material-level config on the same object.",
                         "type": "object",
                         "properties": {
                           "targetSpeed": {
                             "type": "number",
-                            "minimum": 0
+                            "minimum": 0,
+                            "description": "Ground walk-speed override while the aux key is held and the player stands on this surface.",
+                            "markdownDescription": "Ground walk-speed override while the aux key is held and the player stands on this surface."
                           },
                           "jumpRetention": {
                             "type": "number",
                             "minimum": 0,
-                            "maximum": 1
+                            "maximum": 1,
+                            "description": "0..1; fraction of live walk velocity locked into external vel on jump from this surface.",
+                            "markdownDescription": "0..1; fraction of live walk velocity locked into external vel on jump from this surface."
                           },
                           "rampUpSeconds": {
+                            "description": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
+                            "markdownDescription": "Seconds to ramp from base walk speed up to `targetSpeed` after the aux key arms boost.\nCurve is a soft-knee smoothstep² (slow start, fast finish, soft top).  Default 0 = snap.",
                             "type": "number",
                             "minimum": 0
                           },
                           "followSurfaceSlope": {
+                            "description": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
+                            "markdownDescription": "If true (default), boost jump-retention launches along the floor's tangent plane (capped\nat ±45°) instead of purely horizontally — so a ramped strip launches you up the ramp.",
                             "type": "boolean"
                           }
                         },
@@ -1367,19 +1517,27 @@
                         "additionalProperties": false
                       },
                       "climb": {
+                        "description": "Per-object climbability config; overrides any material-level config on the same object.",
+                        "markdownDescription": "Per-object climbability config; overrides any material-level config on the same object.",
                         "type": "object",
                         "properties": {
                           "maxClimbAngle": {
+                            "description": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
+                            "markdownDescription": "Max slope angle (radians) the player can stand on. Steeper surfaces never ground the\nplayer — they slide down under gravity — and jumps off them are denied.",
                             "type": "number",
                             "minimum": 0,
                             "exclusiveMaximum": 1.5707963267948966
                           },
                           "slideMinAngle": {
+                            "description": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
+                            "markdownDescription": "Surface angle (radians) at which downhill sliding begins while still grounded. Can\nenable sliding on this surface even when the scene has no global `slopeSlide`.",
                             "type": "number",
                             "minimum": 0,
                             "exclusiveMaximum": 1.5707963267948966
                           },
                           "slideMaxSpeed": {
+                            "description": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
+                            "markdownDescription": "Peak downhill slide speed (units/sec), reached at `maxClimbAngle`.",
                             "type": "number",
                             "minimum": 0
                           }
@@ -1387,6 +1545,8 @@
                         "additionalProperties": false
                       },
                       "entities": {
+                        "description": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
+                        "markdownDescription": "Standalone trigger entities (jump pads, boost zones, dash tokens) at this object's transform.",
                         "type": "array",
                         "items": {
                           "oneOf": [
@@ -1453,6 +1613,8 @@
                                           "const": "mesh"
                                         },
                                         "collider": {
+                                          "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                          "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                           "type": "string",
                                           "enum": [
                                             "trimesh",
@@ -1461,6 +1623,8 @@
                                           ]
                                         },
                                         "margin": {
+                                          "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                          "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                           "type": "number"
                                         }
                                       },
@@ -1469,7 +1633,9 @@
                                       ],
                                       "additionalProperties": false
                                     }
-                                  ]
+                                  ],
+                                  "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                                  "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                                 },
                                 "baseImpulse": {
                                   "type": "number"
@@ -1478,9 +1644,13 @@
                                   "type": "number"
                                 },
                                 "cooldownSeconds": {
+                                  "description": "Default: 0.15",
+                                  "markdownDescription": "Default: 0.15",
                                   "type": "number"
                                 },
                                 "direction": {
+                                  "description": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
+                                  "markdownDescription": "World-space launch direction, or `'matchMeshRotation'` to rotate the pad's local +Y by the\nobject's world rotation (so tilting the mesh tilts the launch). Default: [0, 1, 0]",
                                   "anyOf": [
                                     {
                                       "type": "array",
@@ -1512,7 +1682,9 @@
                                 "baseImpulse",
                                 "speedScaling"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Launches the player on contact. `direction` is world-space (default straight up).",
+                              "markdownDescription": "Launches the player on contact. `direction` is world-space (default straight up)."
                             },
                             {
                               "type": "object",
@@ -1577,6 +1749,8 @@
                                           "const": "mesh"
                                         },
                                         "collider": {
+                                          "description": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
+                                          "markdownDescription": "Collider built from the asset mesh. Default: 'trimesh' (exact, concave-ok); others are cheaper approximations.",
                                           "type": "string",
                                           "enum": [
                                             "trimesh",
@@ -1585,6 +1759,8 @@
                                           ]
                                         },
                                         "margin": {
+                                          "description": "trimesh only: uniform inflation of the sensor volume. Default: 0",
+                                          "markdownDescription": "trimesh only: uniform inflation of the sensor volume. Default: 0",
                                           "type": "number"
                                         }
                                       },
@@ -1593,7 +1769,9 @@
                                       ],
                                       "additionalProperties": false
                                     }
-                                  ]
+                                  ],
+                                  "description": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`.",
+                                  "markdownDescription": "Trigger volume for a parkour entity, placed at the owning object's world transform. `box`/`sphere`\nare explicit primitives sized in world units. `mesh` reuses the object's own asset mesh (full world\ntransform, incl. scale), so the trigger matches a cylindrical/custom asset — requires an `asset`."
                                 },
                                 "strength": {
                                   "type": "number"
@@ -1623,7 +1801,9 @@
                                 "directionalBias",
                                 "direction"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Continuously pushes the player while inside. `direction` is world-space.",
+                              "markdownDescription": "Continuously pushes the player while inside. `direction` is world-space."
                             },
                             {
                               "type": "object",
@@ -1633,6 +1813,8 @@
                                   "const": "dashToken"
                                 },
                                 "checkpointIx": {
+                                  "description": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
+                                  "markdownDescription": "Checkpoint index this token belongs to. Metadata only — respawn is driven by the\ncontroller's per-checkpoint state snapshot, not this field.",
                                   "type": "integer",
                                   "minimum": -9007199254740991,
                                   "maximum": 9007199254740991
@@ -1641,9 +1823,13 @@
                               "required": [
                                 "kind"
                               ],
-                              "additionalProperties": false
+                              "additionalProperties": false,
+                              "description": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created.",
+                              "markdownDescription": "Marks a dash-token spawn point. Realized by the parkour subsystem (not the loader): the\nanimated token + collect ghost are spawned at the object's world position, so `asset` may be\nomitted and no static mesh/collision is created."
                             }
-                          ]
+                          ],
+                          "description": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh).",
+                          "markdownDescription": "A standalone parkour entity riding an object's transform (asset-less marker or on a mesh)."
                         }
                       }
                     },
@@ -1670,14 +1856,20 @@
                     ]
                   },
                   "behaviors": {
+                    "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
+                    "markdownDescription": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
                     "type": "array",
                     "items": {
                       "type": "object",
                       "properties": {
                         "fn": {
-                          "type": "string"
+                          "type": "string",
+                          "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                          "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                         },
                         "params": {
+                          "description": "Parameters passed to the behavior function.",
+                          "markdownDescription": "Parameters passed to the behavior function.",
                           "type": "object",
                           "propertyNames": {
                             "type": "string"
@@ -1688,27 +1880,41 @@
                       "required": [
                         "fn"
                       ],
-                      "additionalProperties": false
+                      "additionalProperties": false,
+                      "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                      "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                     }
                   },
                   "spawner": {
+                    "description": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
+                    "markdownDescription": "Spawner config: this object becomes a template that periodically creates clones.  Mutually exclusive with `behaviors`.",
                     "type": "object",
                     "properties": {
                       "interval": {
-                        "type": "number"
+                        "type": "number",
+                        "description": "Seconds between spawns.",
+                        "markdownDescription": "Seconds between spawns."
                       },
                       "initialDelay": {
+                        "description": "Seconds before the first spawn. Default: 0",
+                        "markdownDescription": "Seconds before the first spawn. Default: 0",
                         "type": "number"
                       },
                       "behaviors": {
+                        "description": "Behaviors attached to each spawned clone.",
+                        "markdownDescription": "Behaviors attached to each spawned clone.",
                         "type": "array",
                         "items": {
                           "type": "object",
                           "properties": {
                             "fn": {
-                              "type": "string"
+                              "type": "string",
+                              "description": "Name of the behavior function (resolved from shared or level-local behaviors).",
+                              "markdownDescription": "Name of the behavior function (resolved from shared or level-local behaviors)."
                             },
                             "params": {
+                              "description": "Parameters passed to the behavior function.",
+                              "markdownDescription": "Parameters passed to the behavior function.",
                               "type": "object",
                               "propertyNames": {
                                 "type": "string"
@@ -1719,7 +1925,9 @@
                           "required": [
                             "fn"
                           ],
-                          "additionalProperties": false
+                          "additionalProperties": false,
+                          "description": "A reference to a behavior function resolved from the virtual:behaviors module.",
+                          "markdownDescription": "A reference to a behavior function resolved from the virtual:behaviors module."
                         }
                       }
                     },

@@ -874,7 +874,8 @@ export class Viz {
       document.visibilityState === 'visible' &&
       document.hasFocus() &&
       !!document.body &&
-      document.body.isConnected
+      document.body.isConnected &&
+      typeof document.body.requestPointerLock === 'function'
     );
   }
 

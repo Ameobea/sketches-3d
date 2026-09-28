@@ -49,7 +49,7 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
   import Viz from 'src/viz/Viz.svelte';
   import type { SceneDef } from 'src/viz/scenes';
   import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
-  import { collectLevelDefEagerDeps } from 'src/viz/levelDef/preloadUrls';
+${entry.useSceneDef ? "  import { GEOSCRIPT_EAGER_DEPS_META } from 'src/geoscript/prespawnWorker';\n" : ''}  import { collectLevelDefEagerDeps } from 'src/viz/levelDef/preloadUrls';
   import type { PageData } from './$types';
 
   const sceneName = '${sceneName}';
@@ -87,7 +87,7 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
   {#each data.preloadUrls ?? [] as url}
     <link rel="preload" as="fetch" crossorigin="anonymous" href={url} />
   {/each}
-</svelte:head>
+${entry.useSceneDef ? '  {#if data.eagerDeps !== undefined}<meta name={GEOSCRIPT_EAGER_DEPS_META} content={data.eagerDeps} />{/if}\n' : ''}</svelte:head>
 
 <Viz {sceneName} userData={data.levelDef ?? undefined} {geoscriptExecutor} {sceneDef} />
 `;
@@ -96,13 +96,18 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
 const generatePageServer = (sceneName: string, entry: SceneRegistryEntry): string => {
   if (entry.useSceneDef) {
     return `${GENERATED_HEADER_TS}import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
-import { getScenePreloadUrls } from 'src/viz/levelDef/preloadUrls';
+import { getSceneEagerDepNames, getScenePreloadUrls } from 'src/viz/levelDef/preloadUrls';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async () => {
   const sceneName = '${sceneName}';
   const levelDef = await loadLevelData(sceneName);
-  return { sceneName, levelDef, preloadUrls: getScenePreloadUrls(levelDef) };
+  return {
+    sceneName,
+    levelDef,
+    preloadUrls: getScenePreloadUrls(),
+    eagerDeps: getSceneEagerDepNames(levelDef),
+  };
 };
 `;
   }
@@ -110,7 +115,7 @@ export const load: PageServerLoad = async () => {
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async () => {
-  return { sceneName: '${sceneName}', levelDef: null, preloadUrls: getScenePreloadUrls(null) };
+  return { sceneName: '${sceneName}', levelDef: null, preloadUrls: getScenePreloadUrls() };
 };
 `;
 };

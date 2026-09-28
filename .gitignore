@@ -48,3 +48,4 @@ GEOSCRIPT_FOR_LLMS.md
 PAPERCUTS.md
 bench_results/
 bench_history
+*.__withDocs__.ts
