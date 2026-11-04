@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { getGeodesicsModule, setGeodesicsWasmURL } from 'src/geoscript/geodesics';
   import { WASM_ASSET_URLS } from 'src/viz/wasmComp/wasmAssetURLs';
 

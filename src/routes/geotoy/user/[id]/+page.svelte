@@ -43,7 +43,7 @@
       {#each compositions as { comp, latest } (comp.id)}
         <li class="composition-item">
           <a
-            href={resolve(`/geotoy/edit/${comp.id}`)}
+            href={resolve(`geotoy/edit/${comp.id}`)}
             tabindex="-1"
             class="thumbnail-link"
             onclick={() =>
@@ -66,7 +66,7 @@
 
           <div class="info">
             <a
-              href={resolve(`/geotoy/edit/${comp.id}`)}
+              href={resolve(`geotoy/edit/${comp.id}`)}
               class="title-text"
               onclick={() =>
                 logGeotoyEvent('browse', 'composition_open', { comp_id: comp.id, source: 'user_page' })}
@@ -89,7 +89,7 @@
           </div>
 
           <div class="actions">
-            <a href={resolve(`/geotoy/history/${comp.id}`)} class="action-link">history</a>
+            <a href={resolve(`geotoy/history/${comp.id}`)} class="action-link">history</a>
             {#if data.isMe}
               <button class="delete-btn" onclick={() => doDeleteComposition(comp.id)}>delete</button>
             {/if}

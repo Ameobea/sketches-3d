@@ -25,7 +25,7 @@ import { logDreamEvent } from 'src/analytics';
 import PlatformColorShader from './shaders/platform/color.frag?raw';
 import PlatformRoughnessShader from './shaders/platform/roughness.frag?raw';
 import { resolve } from '$app/paths';
-import { dev } from '$app/environment';
+import { dev } from '$app/env';
 
 const loadTextures = async () => {
   const loader = new THREE.ImageBitmapLoader();
@@ -360,17 +360,17 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   };
 
   const PortalDefs = {
-    tutorial: { scene: '/tutorial', displayName: 'TUTORIAL' },
-    pylons: { scene: '/pk_pylons', displayName: 'PYLONS' },
-    movementv2: { scene: '/movement_v2', displayName: 'MOVEMENT V2' },
-    plats: { scene: '/plats', displayName: 'PLATS' },
-    cornered: { scene: '/cornered', displayName: 'CORNERED' },
-    stone: { scene: '/stone', displayName: 'STONE' },
-    basalt: { scene: '/basalt', displayName: 'BASALT' },
-    stronghold: { scene: '/stronghold', displayName: 'STRONGHOLD' },
-    pinklights: { scene: '/pinklights', displayName: 'PINKLIGHTS' },
-    smoke: { scene: '/smoke', displayName: 'SMOKE' },
-    bridge2: { scene: '/bridge2', displayName: 'BRIDGE' },
+    tutorial: { scene: 'tutorial', displayName: 'TUTORIAL' },
+    pylons: { scene: 'pk_pylons', displayName: 'PYLONS' },
+    movementv2: { scene: 'movement_v2', displayName: 'MOVEMENT V2' },
+    plats: { scene: 'plats', displayName: 'PLATS' },
+    cornered: { scene: 'cornered', displayName: 'CORNERED' },
+    stone: { scene: 'stone', displayName: 'STONE' },
+    basalt: { scene: 'basalt', displayName: 'BASALT' },
+    stronghold: { scene: 'stronghold', displayName: 'STRONGHOLD' },
+    pinklights: { scene: 'pinklights', displayName: 'PINKLIGHTS' },
+    smoke: { scene: 'smoke', displayName: 'SMOKE' },
+    bridge2: { scene: 'bridge2', displayName: 'BRIDGE' },
   } as const satisfies Record<string, { scene: string; displayName: string }>;
   type PortalKey = keyof typeof PortalDefs;
   const isPortalKey = (key: string): key is PortalKey => key in PortalDefs;
@@ -392,9 +392,9 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
 
       if (def) {
         fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: portal }, () => {
-          logDreamEvent('game', 'portal_travel', { to: def.scene.slice(1) });
-          MetricsAPI.recordPortalTravel(def.scene.slice(1));
-          goto(resolve(def.scene), { keepFocus: true });
+          logDreamEvent('game', 'portal_travel', { to: def.scene });
+          MetricsAPI.recordPortalTravel(def.scene);
+          goto(resolve(def.scene), { reset: false });
         });
       } else {
         portal.visible = false;

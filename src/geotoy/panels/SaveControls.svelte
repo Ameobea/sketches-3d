@@ -96,7 +96,7 @@
           return { type: 'error', msg: compRes.msg };
         }
         const comp = compRes.comp;
-        goto(resolve(`/geotoy/edit/${comp.id}`));
+        goto(resolve(`geotoy/edit/${comp.id}`));
         return { type: 'ok', msg: 'Successfully saved new composition' };
       }
     })();

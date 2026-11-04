@@ -22,23 +22,23 @@
 
 <header class="header">
   {#if showTitleLink}
-    <a href={resolve('/geotoy')} class="title-link"><h1 class="title">geotoy</h1></a>
+    <a href={resolve('geotoy')} class="title-link"><h1 class="title">geotoy</h1></a>
   {:else}
     <h1 class="title">geotoy</h1>
   {/if}
 
   <div class="desktop-nav">
-    <a href={resolve('/geotoy/edit')} onclick={logNewClick}>new</a>
-    <a href={resolve('/geotoy/docs')} onclick={logDocsClick}>docs</a>
+    <a href={resolve('geotoy/edit')} onclick={logNewClick}>new</a>
+    <a href={resolve('geotoy/docs')} onclick={logDocsClick}>docs</a>
     {#if me}
       <span class="logged-in-info">
-        logged in as <a href={resolve(`/geotoy/user/${me.id}`)}>{me.username}</a>
+        logged in as <a href={resolve(`geotoy/user/${me.id}`)}>{me.username}</a>
       </span>
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_missing_attribute -->
       <a class="logout-link" onclick={handleLogout} role="button" tabindex="0">logout</a>
     {:else}
-      <a href={resolve('/geotoy/login')}>login/register</a>
+      <a href={resolve('geotoy/login')}>login/register</a>
     {/if}
   </div>
 
@@ -52,7 +52,7 @@
     <div class="mobile-nav">
       {#if me}
         <span>
-          logged in as <a class="inline-link" href={resolve(`/geotoy/user/${me.id}`)}>
+          logged in as <a class="inline-link" href={resolve(`geotoy/user/${me.id}`)}>
             {me.username}
           </a>
         </span>
@@ -60,10 +60,10 @@
         <!-- svelte-ignore a11y_missing_attribute -->
         <a onclick={handleLogout} role="button" tabindex="0">logout</a>
       {:else}
-        <a href={resolve('/geotoy/login')}>login/register</a>
+        <a href={resolve('geotoy/login')}>login/register</a>
       {/if}
-      <a href={resolve('/geotoy/edit')} onclick={logNewClick}>new</a>
-      <a href={resolve('/geotoy/docs')} onclick={logDocsClick}>docs</a>
+      <a href={resolve('geotoy/edit')} onclick={logNewClick}>new</a>
+      <a href={resolve('geotoy/docs')} onclick={logDocsClick}>docs</a>
     </div>
   {/if}
 </header>

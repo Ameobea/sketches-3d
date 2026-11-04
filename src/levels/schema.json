@@ -200,7 +200,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -262,7 +265,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -293,7 +299,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -307,7 +316,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -321,7 +333,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -361,7 +376,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -643,13 +661,9 @@
                     "type": "number"
                   },
                   "mapDisableDistance": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "number",
+                      "null"
                     ]
                   },
                   "mapDisableDistanceAxes": {
@@ -686,7 +700,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 2,
+                    "maxItems": 2
                   },
                   "stackIndex": {
                     "description": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
@@ -754,7 +771,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 2,
+                        "maxItems": 2
                       },
                       "topFade": {
                         "type": "array",
@@ -765,7 +785,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 2,
+                        "maxItems": 2
                       }
                     },
                     "additionalProperties": false
@@ -946,7 +969,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           },
                           "steps": {
                             "type": "integer",
@@ -1177,7 +1203,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1191,7 +1220,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1267,7 +1299,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1281,7 +1316,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1378,7 +1416,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1392,7 +1433,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1583,7 +1627,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1614,7 +1661,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1648,7 +1698,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 4,
+                              "maxItems": 4
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1791,7 +1844,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             }
                           },
                           "required": [
@@ -1819,7 +1875,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -1850,7 +1909,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 4,
+                              "maxItems": 4
                             }
                           },
                           "required": [
@@ -1970,7 +2032,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "extends": {
                 "description": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
@@ -2203,7 +2268,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               }
             },
             "required": [
@@ -2314,7 +2382,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               }
             },
             "required": [
@@ -2491,7 +2562,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -2553,7 +2627,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -2584,7 +2661,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -2598,7 +2678,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -2612,7 +2695,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -2652,7 +2738,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -2948,7 +3037,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -3010,7 +3102,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -3041,7 +3136,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -3055,7 +3153,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -3069,7 +3170,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -3109,7 +3213,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -3496,7 +3603,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -3558,7 +3668,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -3589,7 +3702,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -3603,7 +3719,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -3617,7 +3736,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -3657,7 +3779,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -3889,7 +4014,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "rotation": {
                 "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
@@ -3905,7 +4033,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "scale": {
                 "description": "Per-axis scale. Default: [1, 1, 1]",
@@ -3921,7 +4052,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "castShadow": {
                 "description": "Default: true",
@@ -4030,7 +4164,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -4092,7 +4229,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -4123,7 +4263,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -4137,7 +4280,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -4151,7 +4297,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -4191,7 +4340,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -4454,7 +4606,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     }
                                   },
                                   "required": [
@@ -4540,7 +4695,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 {
                                   "type": "string",
@@ -4590,7 +4748,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     }
                                   },
                                   "required": [
@@ -4667,7 +4828,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -4729,7 +4893,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "behaviors": {
                 "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
@@ -4907,7 +5074,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "target": {
                 "description": "World-space target position the light shines toward. Default: [0, 0, 0]",
@@ -4923,7 +5093,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "castShadow": {
                 "type": "boolean"
@@ -5077,7 +5250,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "distance": {
                 "description": "Maximum range; 0 = unlimited. Default: 0",
@@ -5241,7 +5417,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "target": {
                 "description": "World-space target position the spot light points toward. Default: [0, 0, 0]",
@@ -5257,7 +5436,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "angle": {
                 "description": "Half-angle of the cone in radians. Default: π/4",
@@ -5477,7 +5659,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "target": {
                 "description": "Point the light faces; emits from its local -Z toward here. Default: [0, 0, 0]",
@@ -5493,7 +5678,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "width": {
                 "type": "number"
@@ -5689,7 +5877,10 @@
                   "minimum": 0,
                   "maximum": 1
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             }
           },
           "additionalProperties": false
@@ -5801,6 +5992,9 @@
                     "type": "number"
                   }
                 ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3,
                 "description": "World-space position of the emitter.",
                 "markdownDescription": "World-space position of the emitter."
               },
@@ -5938,7 +6132,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "edgeFade": {
                     "anyOf": [
@@ -5958,7 +6155,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       }
                     ]
                   },
@@ -5976,7 +6176,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   }
                 },
                 "required": [
@@ -6006,7 +6209,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "edgeFade": {
                     "anyOf": [
@@ -6026,7 +6232,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       }
                     ]
                   },
@@ -6044,7 +6253,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 2,
+                    "maxItems": 2
                   },
                   "distributionY": {
                     "description": "Skews spawn origins along the band instead of spreading them evenly, so a tall band can stay\nsparse where it matters less: `power` 1 is uniform, higher packs harder toward `toward`.\nShapes origins only; long vertical drifts carry particles back out of it.",
@@ -6194,7 +6406,10 @@
                         {
                           "type": "number"
                         }
-                      ]
+                      ],
+                      "additionalItems": false,
+                      "minItems": 2,
+                      "maxItems": 2
                     }
                   },
                   "required": [
@@ -6234,7 +6449,10 @@
                         {
                           "type": "number"
                         }
-                      ]
+                      ],
+                      "additionalItems": false,
+                      "minItems": 2,
+                      "maxItems": 2
                     },
                     "planeY": {
                       "type": "number"
@@ -6401,7 +6619,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 2,
+                          "maxItems": 2
                         },
                         "vertex": {
                           "type": "boolean"
@@ -6432,7 +6653,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         },
                         "vertex": {
                           "type": "boolean"
@@ -6466,7 +6690,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 4,
+                          "maxItems": 4
                         },
                         "vertex": {
                           "type": "boolean"
@@ -6609,7 +6836,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 2,
+                          "maxItems": 2
                         }
                       },
                       "required": [
@@ -6637,7 +6867,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -6668,7 +6901,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 4,
+                          "maxItems": 4
                         }
                       },
                       "required": [
@@ -6741,7 +6977,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             },
             "rotation": {
               "type": "array",
@@ -6755,7 +6994,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             },
             "scale": {
               "type": "array",
@@ -6769,7 +7011,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             }
           },
           "required": [
@@ -6796,7 +7041,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             },
             "rotation": {
               "type": "array",
@@ -6810,7 +7058,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             },
             "scale": {
               "type": "array",
@@ -6824,7 +7075,10 @@
                 {
                   "type": "number"
                 }
-              ]
+              ],
+              "additionalItems": false,
+              "minItems": 3,
+              "maxItems": 3
             }
           },
           "required": [
@@ -6872,7 +7126,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "rotation": {
                     "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
@@ -6888,7 +7145,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "scale": {
                     "description": "Per-axis scale. Default: [1, 1, 1]",
@@ -6904,7 +7164,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "castShadow": {
                     "description": "Default: true",
@@ -7013,7 +7276,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 {
                                   "anyOf": [
@@ -7075,7 +7341,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -7106,7 +7375,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 "rot": {
                                   "type": "array",
@@ -7120,7 +7392,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 "scale": {
                                   "type": "array",
@@ -7134,7 +7409,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 }
                               },
                               "required": [
@@ -7174,7 +7452,10 @@
                                   {
                                     "type": "number"
                                   }
-                                ]
+                                ],
+                                "additionalItems": false,
+                                "minItems": 3,
+                                "maxItems": 3
                               }
                             }
                           },
@@ -7437,7 +7718,10 @@
                                             {
                                               "type": "number"
                                             }
-                                          ]
+                                          ],
+                                          "additionalItems": false,
+                                          "minItems": 3,
+                                          "maxItems": 3
                                         }
                                       },
                                       "required": [
@@ -7523,7 +7807,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     },
                                     {
                                       "type": "string",
@@ -7573,7 +7860,10 @@
                                             {
                                               "type": "number"
                                             }
-                                          ]
+                                          ],
+                                          "additionalItems": false,
+                                          "minItems": 3,
+                                          "maxItems": 3
                                         }
                                       },
                                       "required": [
@@ -7650,7 +7940,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 }
                               },
                               "required": [
@@ -7712,7 +8005,10 @@
                         "minimum": 0,
                         "maximum": 1
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "behaviors": {
                     "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
@@ -7819,7 +8115,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "rotation": {
           "type": "array",
@@ -7833,7 +8132,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "scale": {
           "type": "array",
@@ -7847,7 +8149,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "userData": {
           "type": "object",

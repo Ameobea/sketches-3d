@@ -33,7 +33,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "cameraAngles": {
                 "type": "object",
@@ -84,7 +87,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "orbitTarget": {
                 "type": "array",
@@ -98,7 +104,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               }
             },
             "required": [

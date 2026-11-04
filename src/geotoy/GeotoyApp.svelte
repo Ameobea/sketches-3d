@@ -1305,7 +1305,7 @@
 
     workerManager.terminate();
 
-    goto(resolve('/geotoy'));
+    goto(resolve('geotoy'));
   };
 
   const viewMenuActions = $derived({
@@ -1400,12 +1400,12 @@
       sections: [
         {
           items: [
-            { label: 'docs', action: () => void window.open(resolve('/geotoy/docs'), '_blank') },
+            { label: 'docs', action: () => void window.open(resolve('geotoy/docs'), '_blank') },
             {
               label: 'report bug',
               action: () => void window.open('https://github.com/Ameobea/sketches-3d/issues/new', '_blank'),
             },
-            { label: 'credits', action: () => void window.open(resolve('/geotoy/credits'), '_blank') },
+            { label: 'credits', action: () => void window.open(resolve('geotoy/credits'), '_blank') },
           ],
         },
       ],

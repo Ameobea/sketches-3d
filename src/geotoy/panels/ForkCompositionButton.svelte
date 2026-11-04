@@ -27,10 +27,9 @@
       .then(({ composition: newComp, version: newVersion }) => {
         logGeotoyEvent('composition', 'fork', { comp_id: comp.id });
         showToast({ status: 'success', message: 'Successfully forked composition' });
-        goto(resolve(`/geotoy/edit/${newComp.id}`), {
-          noScroll: true,
-          invalidateAll: true,
-          keepFocus: false,
+        goto(resolve(`geotoy/edit/${newComp.id}`), {
+          reset: false,
+          refreshAll: true,
         }).then(() => onForked(newComp, newVersion));
       })
       .catch(err => {

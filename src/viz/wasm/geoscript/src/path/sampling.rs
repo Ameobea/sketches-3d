@@ -2,6 +2,7 @@
 //! are separate: a polygon joint must bound refinement even when it isn't a crease.
 
 use super::{Path, PathKind, LAZY_CLOSED_EPSILON};
+use crate::dmath;
 use crate::{ErrorStack, EvalCtx, Vec2};
 
 pub(crate) struct SampledSubpath {
@@ -100,9 +101,7 @@ impl Sampler<'_> {
         continue;
       }
       if let Some(prev) = previous {
-        turn += (prev.x * edge.y - prev.y * edge.x)
-          .abs()
-          .atan2(prev.dot(&edge));
+        turn += dmath::atan2_64((prev.x * edge.y - prev.y * edge.x).abs(), prev.dot(&edge));
       }
       previous = Some(edge);
     }

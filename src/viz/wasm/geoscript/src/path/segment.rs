@@ -3,6 +3,7 @@ use std::f32::consts::PI;
 
 use nalgebra::{Matrix3, Vector3};
 
+use crate::dmath;
 use crate::{ErrorStack, Vec2};
 
 pub(crate) const CURVE_TABLE_SAMPLES: usize = 32;
@@ -152,7 +153,7 @@ impl PathSegment {
         theta_start,
         ..
       } => {
-        let (sin_theta, cos_theta) = theta_start.sin_cos();
+        let (sin_theta, cos_theta) = dmath::sin_cos(*theta_start);
         let x = rx * cos_theta;
         let y = ry * sin_theta;
         Vec2::new(
@@ -551,8 +552,8 @@ pub(crate) fn arc_aabb(
     return (min, max);
   }
 
-  let theta_x = (-ry * sin_phi).atan2(rx * cos_phi);
-  let theta_y = (ry * cos_phi).atan2(rx * sin_phi);
+  let theta_x = dmath::atan2(-ry * sin_phi, rx * cos_phi);
+  let theta_y = dmath::atan2(ry * cos_phi, rx * sin_phi);
 
   let two_pi = std::f32::consts::TAU;
   let theta_end = theta_start + theta_delta;
@@ -687,7 +688,7 @@ pub(crate) fn transform_segment(
       let cos_a = m[(0, 0)];
       let sin_a = m[(1, 0)];
       let scale = (cos_a * cos_a + sin_a * sin_a).sqrt();
-      let rot_angle = sin_a.atan2(cos_a);
+      let rot_angle = dmath::atan2(sin_a, cos_a);
 
       let new_center = apply_transform_to_point(m, *center);
       let new_end = apply_transform_to_point(m, *end);
@@ -695,10 +696,10 @@ pub(crate) fn transform_segment(
       let new_ry = ry * scale;
 
       // Compose the rotation into the existing ellipse rotation (phi)
-      let old_phi = sin_phi.atan2(*cos_phi);
+      let old_phi = dmath::atan2(*sin_phi, *cos_phi);
       let new_phi = old_phi + rot_angle;
-      let new_cos_phi = new_phi.cos();
-      let new_sin_phi = new_phi.sin();
+      let new_cos_phi = dmath::cos(new_phi);
+      let new_sin_phi = dmath::sin(new_phi);
 
       let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         arc_point(
@@ -735,7 +736,7 @@ pub(crate) fn angle_between(a: Vec2, b: Vec2) -> f32 {
     return 0.0;
   }
   let cos = (a.dot(&b) / (la * lb)).clamp(-1.0, 1.0);
-  cos.acos()
+  dmath::acos(cos)
 }
 
 pub(crate) fn segment_turning_angle(seg: &PathSegment) -> f32 {
@@ -805,7 +806,7 @@ pub(crate) fn arc_point(
   t: f32,
 ) -> Vec2 {
   let theta = theta_start + theta_delta * t;
-  let (sin_theta, cos_theta) = theta.sin_cos();
+  let (sin_theta, cos_theta) = dmath::sin_cos(theta);
   let x = rx * cos_theta;
   let y = ry * sin_theta;
   let px = cos_phi * x - sin_phi * y + center.x;
@@ -834,8 +835,8 @@ pub(crate) fn build_arc_segment(
   }
 
   let phi = x_axis_rotation.to_radians();
-  let cos_phi = phi.cos();
-  let sin_phi = phi.sin();
+  let cos_phi = dmath::cos(phi);
+  let sin_phi = dmath::sin(phi);
   let dx = (start.x - end.x) / 2.0;
   let dy = (start.y - end.y) / 2.0;
   let x1p = cos_phi * dx + sin_phi * dy;
@@ -872,8 +873,8 @@ pub(crate) fn build_arc_segment(
 
   let v1 = Vec2::new((x1p - cxp) / rx, (y1p - cyp) / ry);
   let v2 = Vec2::new((-x1p - cxp) / rx, (-y1p - cyp) / ry);
-  let theta_start = v1.y.atan2(v1.x);
-  let mut theta_delta = (v1.x * v2.y - v1.y * v2.x).atan2(v1.x * v2.x + v1.y * v2.y);
+  let theta_start = dmath::atan2(v1.y, v1.x);
+  let mut theta_delta = dmath::atan2(v1.x * v2.y - v1.y * v2.x, v1.x * v2.x + v1.y * v2.y);
 
   if !sweep && theta_delta > 0. {
     theta_delta -= 2. * PI;
@@ -1007,7 +1008,7 @@ impl PathSegment {
         radii: Vector::new(*rx, *ry),
         start_angle: Angle::radians(*theta_start),
         sweep_angle: Angle::radians(*theta_delta),
-        x_rotation: Angle::radians(sin_phi.atan2(*cos_phi)),
+        x_rotation: Angle::radians(dmath::atan2(*sin_phi, *cos_phi)),
       };
       let tx = |p: Point<f32>| apply_transform_to_point(m, Vec2::new(p.x, p.y));
       arc.for_each_cubic_bezier(&mut |c| {

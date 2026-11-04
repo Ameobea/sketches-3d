@@ -136,7 +136,7 @@
             on:click={() => {
               ctx.onResume();
               viz.maybeResumeViz(true);
-              void goto('/nexus', { keepFocus: true }).then(() => {
+              void goto('/nexus', { reset: false }).then(() => {
                 ctx.onResume();
                 viz.maybeResumeViz(true);
               });

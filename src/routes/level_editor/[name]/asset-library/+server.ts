@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 
 import { getAssetsDir } from 'src/viz/levelDef/levelPaths.server';
@@ -62,5 +61,5 @@ export const GET: RequestHandler = () => {
   // the constructed __ASSETS__ paths are correct.
   const folders = scanDir(meshesDir, 'meshes');
 
-  return json({ folders });
+  return Response.json({ folders });
 };

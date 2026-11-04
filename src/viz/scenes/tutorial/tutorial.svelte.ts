@@ -185,13 +185,13 @@ const setupScene = (
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: nextLevelTP }, () => {
       logDreamEvent('game', 'portal_travel', { to: 'nexus' });
       MetricsAPI.recordPortalTravel('nexus');
-      goto(resolve('/nexus'), { keepFocus: true });
+      goto(resolve('nexus'), { reset: false });
     });
 
     fpCtx.addPlayerRegionContactCb({ type: 'convexHull', mesh: backToNexusTP }, () => {
       logDreamEvent('game', 'portal_travel', { to: 'movement_v2' });
       MetricsAPI.recordPortalTravel('movement_v2');
-      goto(resolve('/movement_v2'), { keepFocus: true });
+      goto(resolve('movement_v2'), { reset: false });
     });
   });
 

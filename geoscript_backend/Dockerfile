@@ -1,4 +1,4 @@
-FROM debian:12.11-slim AS builder
+FROM debian:12-slim AS builder
 
 RUN apt-get update && apt-get install -y curl build-essential pkg-config libssl-dev
 
@@ -13,7 +13,7 @@ ADD . .
 
 RUN RUSTFLAGS="--cfg tokio_unstable --cfg foundations_unstable" cargo build --release
 
-FROM debian:12.11-slim
+FROM debian:12-slim
 
 RUN apt-get update && apt-get install -y libssl-dev ca-certificates && update-ca-certificates
 

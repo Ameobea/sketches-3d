@@ -41,9 +41,9 @@
     <div class="notice">
       you must be logged in to save/share compositions
       <div>
-        <a href={resolve('/geotoy/login')}>log in</a>
+        <a href={resolve('geotoy/login')}>log in</a>
         /
-        <a href={resolve('/geotoy/register')}>register</a>
+        <a href={resolve('geotoy/register')}>register</a>
       </div>
     </div>
   {/if}
@@ -53,9 +53,7 @@
       {#if onForked && loggedIn}
         <ForkCompositionButton {comp} {onForked} variant="link" />
       {/if}
-      <a class="link" href={resolve(`/geotoy/history/${comp.id}`)} target="_blank" rel="noreferrer">
-        history
-      </a>
+      <a class="link" href={resolve(`geotoy/history/${comp.id}`)} target="_blank" rel="noreferrer">history</a>
     </div>
   {/if}
 </div>

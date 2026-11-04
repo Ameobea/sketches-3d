@@ -11,7 +11,7 @@
     <div class="value" id="composition-details-title">{comp.title}</div>
     <label class="label" for="composition-details-author">Author:</label>
     <div class="value" id="composition-details-author">
-      <a href={resolve(`/geotoy/user/${comp.author_id}`)}>{comp.author_username}</a>
+      <a href={resolve(`geotoy/user/${comp.author_id}`)}>{comp.author_username}</a>
     </div>
     <label class="label" for="composition-details-description">Description:</label>
     <div class="value description" id="composition-details-description">{comp.description}</div>

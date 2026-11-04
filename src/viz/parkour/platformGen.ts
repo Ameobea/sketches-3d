@@ -3,7 +3,7 @@ import type { SceneConfig } from '../scenes';
 import { DefaultMoveSpeed } from '../sceneDefaults';
 import { DefaultExternalVelocityAirDampingFactor } from '../clientDefaults';
 import { DefaultGravity, DefaultJumpSpeed } from '../conf';
-import { dev } from '$app/environment';
+import { dev } from '$app/env';
 
 export interface JumpSimParams {
   /** Gravity magnitude, units/s². ParkourManager default: 30 */

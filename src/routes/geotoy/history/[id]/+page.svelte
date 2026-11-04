@@ -30,12 +30,12 @@
       <h2>revision history: {data.composition.title}</h2>
       <div class="meta-info">
         <span>
-          by <a href={resolve(`/geotoy/user/${data.composition.author_id}`)}>
+          by <a href={resolve(`geotoy/user/${data.composition.author_id}`)}>
             {data.composition.author_username}
           </a>
         </span>
         <span class="separator">•</span>
-        <a href={resolve(`/geotoy/edit/${data.composition.id}`)}>view latest</a>
+        <a href={resolve(`geotoy/edit/${data.composition.id}`)}>view latest</a>
       </div>
     </div>
 
@@ -44,7 +44,7 @@
         {@const isLatest = index === 0}
         <li class="version-item">
           <a
-            href={resolve(`/geotoy/edit/${data.composition.id}?version_id=${version.id}`)}
+            href={resolve(`geotoy/edit/${data.composition.id}?version_id=${version.id}`)}
             tabindex="-1"
             class="thumbnail-link"
           >
@@ -65,7 +65,7 @@
 
           <div class="info">
             <a
-              href={resolve(`/geotoy/edit/${data.composition.id}?version_id=${version.id}`)}
+              href={resolve(`geotoy/edit/${data.composition.id}?version_id=${version.id}`)}
               class="version-link"
             >
               {version.id}

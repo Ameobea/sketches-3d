@@ -119,7 +119,7 @@ const initTerrain = async (
   );
   viz.scene.add(terrain);
   viz.registerBeforeRenderCb(() => terrain.update());
-  viz.collisionWorldLoadedCbs.push(fpCtx => terrain.initializeCollision(fpCtx));
+  return terrain;
 };
 
 export const processLoadedScene = async (
@@ -188,7 +188,7 @@ export const processLoadedScene = async (
     totemRoughness: 'https://i.ameo.link/blb.jpg',
   });
 
-  initTerrain(
+  const terrainPromise = initTerrain(
     viz,
     texturesPromise.then(
       ({ goldFleckedObsidianColor, goldFleckedObsidianNormal, goldFleckedObsidianRoughness }) => ({
@@ -197,6 +197,10 @@ export const processLoadedScene = async (
         goldFleckedObsidianRoughness,
       })
     )
+  );
+  // Must be pushed synchronously: the cb list is drained once, and physics can't tick before the heightfield exists.
+  viz.collisionWorldLoadedCbs.push(fpCtx =>
+    viz.registerPhysicsStartupBarrier(terrainPromise.then(t => t.initializeCollision(fpCtx)))
   );
 
   const monolithBase = loadedWorld.getObjectByName('monolith_base') as THREE.Mesh;
@@ -494,7 +498,7 @@ export const processLoadedScene = async (
   exitPortal.userData.noLight = true;
   exitPortal.userData.noCollide = true;
   viz.scene.add(exitPortal);
-  const nextLevelURL = '/construction';
+  const nextLevelURL = 'construction';
   viz.registerBeforeRenderCb(curTimeSeconds => {
     const addedRotation = 0.015 * (Math.sin(curTimeSeconds) * 0.5 + 0.5) + 0.02;
     exitPortal.rotation.y += addedRotation;
@@ -518,7 +522,7 @@ export const processLoadedScene = async (
         logDreamEvent('stone', 'level_complete', { play_time_seconds: Math.round(curTimeSeconds) });
         logDreamEvent('game', 'portal_travel', { to: 'construction' });
         MetricsAPI.recordPortalTravel('construction');
-        goto(resolve(nextLevelURL), { keepFocus: true });
+        goto(resolve(nextLevelURL), { reset: false });
       }
     );
   });

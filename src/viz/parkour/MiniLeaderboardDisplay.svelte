@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { API, getUser, IsLoggedIn } from 'src/api/client';
   import { onMount } from 'svelte';
 

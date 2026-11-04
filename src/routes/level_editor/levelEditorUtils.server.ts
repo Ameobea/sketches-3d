@@ -1,6 +1,6 @@
 import { writeFileSync } from 'fs';
 
-import { dev } from '$app/environment';
+import { dev } from '$app/env';
 import { error } from '@sveltejs/kit';
 
 import { formatLevelJson } from 'src/viz/levelDef/formatLevelJson';

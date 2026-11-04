@@ -1,6 +1,6 @@
 <script lang="ts">
   import * as OrbitControls from 'three/examples/jsm/controls/OrbitControls.js';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
 
   import Viz from 'src/viz/Viz.svelte';
   import {

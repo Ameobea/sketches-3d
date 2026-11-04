@@ -34,7 +34,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "rotation": {
                 "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
@@ -50,7 +53,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "scale": {
                 "description": "Per-axis scale. Default: [1, 1, 1]",
@@ -66,7 +72,10 @@
                   {
                     "type": "number"
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "castShadow": {
                 "description": "Default: true",
@@ -175,7 +184,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -237,7 +249,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -268,7 +283,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -282,7 +300,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -296,7 +317,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -336,7 +360,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -599,7 +626,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     }
                                   },
                                   "required": [
@@ -685,7 +715,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 {
                                   "type": "string",
@@ -735,7 +768,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     }
                                   },
                                   "required": [
@@ -812,7 +848,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -874,7 +913,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "behaviors": {
                 "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
@@ -1013,7 +1055,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "rotation": {
                     "description": "Euler rotation in radians, YXZ order. Default: [0, 0, 0]",
@@ -1029,7 +1074,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "scale": {
                     "description": "Per-axis scale. Default: [1, 1, 1]",
@@ -1045,7 +1093,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "castShadow": {
                     "description": "Default: true",
@@ -1154,7 +1205,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 {
                                   "anyOf": [
@@ -1216,7 +1270,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -1247,7 +1304,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 "rot": {
                                   "type": "array",
@@ -1261,7 +1321,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 },
                                 "scale": {
                                   "type": "array",
@@ -1275,7 +1338,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 }
                               },
                               "required": [
@@ -1315,7 +1381,10 @@
                                   {
                                     "type": "number"
                                   }
-                                ]
+                                ],
+                                "additionalItems": false,
+                                "minItems": 3,
+                                "maxItems": 3
                               }
                             }
                           },
@@ -1578,7 +1647,10 @@
                                             {
                                               "type": "number"
                                             }
-                                          ]
+                                          ],
+                                          "additionalItems": false,
+                                          "minItems": 3,
+                                          "maxItems": 3
                                         }
                                       },
                                       "required": [
@@ -1664,7 +1736,10 @@
                                         {
                                           "type": "number"
                                         }
-                                      ]
+                                      ],
+                                      "additionalItems": false,
+                                      "minItems": 3,
+                                      "maxItems": 3
                                     },
                                     {
                                       "type": "string",
@@ -1714,7 +1789,10 @@
                                             {
                                               "type": "number"
                                             }
-                                          ]
+                                          ],
+                                          "additionalItems": false,
+                                          "minItems": 3,
+                                          "maxItems": 3
                                         }
                                       },
                                       "required": [
@@ -1791,7 +1869,10 @@
                                     {
                                       "type": "number"
                                     }
-                                  ]
+                                  ],
+                                  "additionalItems": false,
+                                  "minItems": 3,
+                                  "maxItems": 3
                                 }
                               },
                               "required": [
@@ -1853,7 +1934,10 @@
                         "minimum": 0,
                         "maximum": 1
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 3,
+                    "maxItems": 3
                   },
                   "behaviors": {
                     "description": "Behaviors attached to this entity at load time.  Mutually exclusive with `spawner`.",
@@ -1960,7 +2044,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "rotation": {
           "type": "array",
@@ -1974,7 +2061,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "scale": {
           "type": "array",
@@ -1988,7 +2078,10 @@
             {
               "type": "number"
             }
-          ]
+          ],
+          "additionalItems": false,
+          "minItems": 3,
+          "maxItems": 3
         },
         "userData": {
           "type": "object",

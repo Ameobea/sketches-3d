@@ -67,3 +67,27 @@ pub fn pow64(x: f64, y: f64) -> f64 {
     x.powf(y)
   }
 }
+
+#[inline(always)]
+pub fn sin_cos64(x: f64) -> (f64, f64) {
+  #[cfg(not(target_arch = "wasm32"))]
+  {
+    (libm::sin(x), libm::cos(x))
+  }
+  #[cfg(target_arch = "wasm32")]
+  {
+    x.sin_cos()
+  }
+}
+
+#[inline(always)]
+pub fn atan2_64(y: f64, x: f64) -> f64 {
+  #[cfg(not(target_arch = "wasm32"))]
+  {
+    libm::atan2(y, x)
+  }
+  #[cfg(target_arch = "wasm32")]
+  {
+    y.atan2(x)
+  }
+}

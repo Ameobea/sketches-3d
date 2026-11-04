@@ -13,7 +13,7 @@
   let codemirrorContainer = $state<HTMLDivElement | null>(null);
   let editorView = $state<EditorView | null>(null);
 
-  let editUrl = $derived(`/geotoy/edit/${data.composition.id}` as const);
+  let editUrl = $derived(`geotoy/edit/${data.composition.id}` as const);
 
   $effect(() => {
     if (editorView || !codemirrorContainer) {

@@ -24,6 +24,7 @@ pub(crate) use sampling::SampledSubpath;
 pub(crate) use segment::*;
 pub(crate) use subpath::Subpath;
 
+use crate::dmath;
 use crate::{ErrorStack, EvalCtx, Value, Vec2};
 
 const LAZY_LENGTH_SAMPLES: usize = 512;
@@ -830,7 +831,7 @@ impl Path {
               radii: Vector::new(*rx, *ry),
               start_angle: Angle::radians(*theta_start),
               sweep_angle: Angle::radians(*theta_delta),
-              x_rotation: Angle::radians(sin_phi.atan2(*cos_phi)),
+              x_rotation: Angle::radians(dmath::atan2(*sin_phi, *cos_phi)),
             };
             arc.for_each_cubic_bezier(&mut |c| {
               builder.cubic_bezier_to(c.ctrl1, c.ctrl2, c.to);

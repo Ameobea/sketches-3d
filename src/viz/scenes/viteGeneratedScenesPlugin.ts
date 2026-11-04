@@ -43,7 +43,7 @@ const generatePageSvelte = (sceneName: string, entry: SceneRegistryEntry): strin
   const { modulePath, ...sceneDefData } = entry;
   return `${GENERATED_HEADER_SVELTE}<script lang="ts">
   import { processLoadedScene } from '${modulePath}';
-  import { browser } from '$app/environment';
+  import { browser } from '$app/env';
   import { onDestroy } from 'svelte';
 
   import Viz from 'src/viz/Viz.svelte';

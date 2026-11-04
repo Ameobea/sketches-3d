@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 
-import { dev } from '$app/environment';
+import { dev } from '$app/env';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { GeoscriptJob } from 'src/geoscript/geoscriptExecutor';
 import type { Viz } from 'src/viz';

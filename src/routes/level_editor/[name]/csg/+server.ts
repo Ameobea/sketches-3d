@@ -1,4 +1,4 @@
-import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { error, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
 import type { CsgTreeNode, ObjectDef, ObjectGroupDef } from 'src/viz/levelDef/types';
@@ -132,7 +132,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
   }
 
   level.save();
-  return json({ csgAssetName, tree, primaryId: primary.id, deletedIds }, { status: 201 });
+  return Response.json({ csgAssetName, tree, primaryId: primary.id, deletedIds }, { status: 201 });
 };
 
 /** Update a CSG asset's tree */

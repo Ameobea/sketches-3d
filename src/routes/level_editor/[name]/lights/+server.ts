@@ -1,4 +1,4 @@
-import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { error, type RequestHandler } from '@sveltejs/kit';
 
 import { LightDefSchema } from 'src/viz/levelDef/types';
 import type { LightDef } from 'src/viz/levelDef/types';
@@ -34,7 +34,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
 
   level.def.lights.push(parseResult.data);
   level.save();
-  return json(parseResult.data, { status: 201 });
+  return Response.json(parseResult.data, { status: 201 });
 };
 
 /** Update light properties (color, intensity, position, etc.) */

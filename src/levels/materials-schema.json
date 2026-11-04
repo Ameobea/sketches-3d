@@ -196,7 +196,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             {
                               "anyOf": [
@@ -258,7 +261,10 @@
                             {
                               "type": "number"
                             }
-                          ]
+                          ],
+                          "additionalItems": false,
+                          "minItems": 3,
+                          "maxItems": 3
                         }
                       },
                       "required": [
@@ -289,7 +295,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "rot": {
                               "type": "array",
@@ -303,7 +312,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "scale": {
                               "type": "array",
@@ -317,7 +329,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -357,7 +372,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           }
                         }
                       },
@@ -639,13 +657,9 @@
                     "type": "number"
                   },
                   "mapDisableDistance": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
-                        "type": "null"
-                      }
+                    "type": [
+                      "number",
+                      "null"
                     ]
                   },
                   "mapDisableDistanceAxes": {
@@ -682,7 +696,10 @@
                       {
                         "type": "number"
                       }
-                    ]
+                    ],
+                    "additionalItems": false,
+                    "minItems": 2,
+                    "maxItems": 2
                   },
                   "stackIndex": {
                     "description": "Uniform stack-interpolation index t ∈ [0,1]; only meaningful when a texture slot\nreferences a stack. Ignored when `shaders.stackIndexShader` is set.",
@@ -750,7 +767,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 2,
+                        "maxItems": 2
                       },
                       "topFade": {
                         "type": "array",
@@ -761,7 +781,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 2,
+                        "maxItems": 2
                       }
                     },
                     "additionalProperties": false
@@ -942,7 +965,10 @@
                               {
                                 "type": "number"
                               }
-                            ]
+                            ],
+                            "additionalItems": false,
+                            "minItems": 3,
+                            "maxItems": 3
                           },
                           "steps": {
                             "type": "integer",
@@ -1173,7 +1199,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1187,7 +1216,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1263,7 +1295,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1277,7 +1312,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1374,7 +1412,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "colorB_srgb": {
                         "type": "array",
@@ -1388,7 +1429,10 @@
                           {
                             "type": "number"
                           }
-                        ]
+                        ],
+                        "additionalItems": false,
+                        "minItems": 3,
+                        "maxItems": 3
                       },
                       "vMin": {
                         "type": "number"
@@ -1579,7 +1623,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1610,7 +1657,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1644,7 +1694,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 4,
+                              "maxItems": 4
                             },
                             "vertex": {
                               "type": "boolean"
@@ -1787,7 +1840,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 2,
+                              "maxItems": 2
                             }
                           },
                           "required": [
@@ -1815,7 +1871,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 3,
+                              "maxItems": 3
                             }
                           },
                           "required": [
@@ -1846,7 +1905,10 @@
                                 {
                                   "type": "number"
                                 }
-                              ]
+                              ],
+                              "additionalItems": false,
+                              "minItems": 4,
+                              "maxItems": 4
                             }
                           },
                           "required": [
@@ -1966,7 +2028,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               },
               "extends": {
                 "description": "Inherit from another material and deep-merge this def's fields over it (arrays/scalars replace,\nobjects merge per-key, incl. `props`/`options.pom`/`shaders.customUniforms`/`shaders.constants`).\nResolved server-side into a fully-flattened def; `extends` is stripped before the client sees it.",
@@ -2199,7 +2264,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               }
             },
             "required": [
@@ -2310,7 +2378,10 @@
                     "minimum": 0,
                     "maximum": 1
                   }
-                ]
+                ],
+                "additionalItems": false,
+                "minItems": 3,
+                "maxItems": 3
               }
             },
             "required": [

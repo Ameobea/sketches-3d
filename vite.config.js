@@ -1,3 +1,6 @@
+import adapter from '@sveltejs/adapter-node';
+import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
+import { fileURLToPath } from 'node:url';
 import { execSync } from 'child_process';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
@@ -24,7 +27,19 @@ const config = defineConfig({
     // Must run before `sveltekit()` so its `config()` hook writes the
     // `src/routes/(generated)/` tree before SvelteKit walks the routes dir.
     generatedScenesPlugin(),
-    sveltekit(),
+
+    sveltekit({
+      preprocess: vitePreprocess({ script: true }),
+      alias: { src: fileURLToPath(new URL('./src', import.meta.url)) },
+      inlineStyleThreshold: 2048 * 2,
+      prerender: { concurrency: 6 },
+      adapter: adapter({
+        out: 'build',
+        // Emit brotli-q11 + gzip-9 sidecars; nginx serves them via `brotli_static`/`gzip_static`
+        // instead of its low-quality dynamic brotli (~30% larger on the big wasm/JS blobs).
+        precompress: true,
+      }),
+    }),
     devtoolsJson(),
     crossOriginIsolation(),
     behaviorsPlugin(),

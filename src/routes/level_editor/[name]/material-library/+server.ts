@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
 
-import { json } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 
 import { getAssetsDir } from 'src/viz/levelDef/levelPaths.server';
@@ -46,5 +45,5 @@ const scanDir = (
 export const GET: RequestHandler = () => {
   guardDev();
   const { subfolders } = scanDir(join(getAssetsDir(), 'materials'), 'materials');
-  return json({ folders: subfolders });
+  return Response.json({ folders: subfolders });
 };

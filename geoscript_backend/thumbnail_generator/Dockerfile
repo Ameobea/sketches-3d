@@ -1,25 +1,21 @@
-# Use the official Puppeteer image, pinning to a specific version
-FROM ghcr.io/puppeteer/puppeteer:25.8.0
+# Mirrors ghcr.io/puppeteer/puppeteer's recipe on an unpinned Node base; that image pins a Node
+# digest and lags Node security releases.
+FROM node:24-bookworm-slim
 
-# The official image runs as the non-root 'pptruser'.
-# We will set the working directory inside the user's home.
+ENV LANG=en_US.UTF-8 DBUS_SESSION_BUS_ADDRESS=autolaunch: PUPPETEER_CACHE_DIR=/home/pptruser/.cache/puppeteer
+RUN groupadd -r pptruser && useradd -u 10042 -rm -g pptruser -G audio,video pptruser
+
 WORKDIR /home/pptruser/app
+COPY --chown=pptruser:pptruser package.json package-lock.json ./
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends fonts-freefont-ttf dbus dbus-x11 unzip \
+  && npm ci --omit=dev \
+  && npx puppeteer browsers install chrome --install-deps \
+  && chown -R pptruser:pptruser /home/pptruser \
+  && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies for sharp
-USER root
-RUN apt-get update && apt-get install -y libvips-dev
 USER pptruser
+COPY --chown=pptruser:pptruser . .
 
-# Copy the package.json and install dependencies.
-# npm will use the browser provided by the image instead of downloading a new one.
-COPY package.json .
-RUN npm install
-
-# Copy the rest of the application code (including TypeScript file)
-COPY . .
-
-# Expose the port the app runs on
 EXPOSE 5812
-
-# Run the script. This overrides the default CMD of the base image.
 CMD [ "npm", "start" ]

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { basename, join } from 'path';
 
-import { error, json } from '@sveltejs/kit';
+import { error } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 
 import { getAssetsDir } from 'src/viz/levelDef/levelPaths.server';
@@ -45,7 +45,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     ([, def]) => def.type === 'geoscript' && 'file' in def && def.file === body.file
   );
   if (existing) {
-    return json({ id: existing[0], code });
+    return Response.json({ id: existing[0], code });
   }
 
   // Generate a unique ID from the filename stem.
@@ -60,5 +60,5 @@ export const POST: RequestHandler = async ({ params, request }) => {
   level.def.assets[id] = { type: 'geoscript', file: body.file };
   level.save();
 
-  return json({ id, code }, { status: 201 });
+  return Response.json({ id, code }, { status: 201 });
 };

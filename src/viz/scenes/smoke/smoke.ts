@@ -306,7 +306,7 @@ export const processLoadedScene = async (
       () => {
         logDreamEvent('game', 'portal_travel', { to: 'cave' });
         MetricsAPI.recordPortalTravel('cave');
-        goto(resolve('/cave'), { keepFocus: true });
+        goto(resolve('cave'), { reset: false });
       }
     )
   );

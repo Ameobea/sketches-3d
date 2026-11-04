@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { dev } from '$app/environment';
+import { dev } from '$app/env';
 
 import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';

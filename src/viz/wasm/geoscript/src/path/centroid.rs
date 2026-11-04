@@ -3,6 +3,7 @@
 use std::f64::consts::FRAC_PI_2;
 
 use super::segment::*;
+use crate::dmath;
 use crate::Vec2;
 
 const GL_X: [f64; 8] = [
@@ -107,7 +108,7 @@ pub(crate) fn segment_moments(seg: &PathSegment) -> (f64, f64, f64) {
       for i in 0..pieces {
         let (t0, t1) = (i as f64 / pieces as f64, (i + 1) as f64 / pieces as f64);
         let m = gauss_moments(t0, t1, |t| {
-          let (s, c) = (ts + td * t).sin_cos();
+          let (s, c) = dmath::sin_cos64(ts + td * t);
           let (x, y, dx, dy) = (rx * c, ry * s, -rx * s * td, ry * c * td);
           (
             cp * x - sp * y + cx,

@@ -1,20 +1,11 @@
 {
-  "extends": "./.svelte-kit/tsconfig.json",
+  "extends": "$app/tsconfig",
   "compilerOptions": {
-    "allowJs": true,
     "checkJs": false,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "skipLibCheck": true,
     "sourceMap": true,
     "strict": true,
-    "noUnusedLocals": true,
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true
+    "noUnusedLocals": true
   },
-  // Excludes must be listed here explicitly — TypeScript does not merge them with the extended config.
-  // Copied from .svelte-kit/tsconfig.json and extended with wasm build artifact directories.
   "exclude": [
     "node_modules/**",
     "src/service-worker.js",
@@ -33,5 +24,6 @@
     "src/viz/wasmComp/**",
     "src/ammojs/**",
     "src/geodesics/geodesics.js"
-  ]
+  ],
+  "include": ["src", "vite.config.js"]
 }

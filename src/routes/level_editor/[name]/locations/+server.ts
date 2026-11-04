@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { error, type RequestHandler } from '@sveltejs/kit';
 
 import { formatLevelJson } from 'src/viz/levelDef/formatLevelJson';
 import { getLevelDir } from 'src/viz/levelDef/levelPaths.server';
@@ -37,7 +37,7 @@ const writeLocations = (name: string, file: LocationsFile) => {
 export const GET: RequestHandler = async ({ params }) => {
   guardDev();
   const name = validateName(params.name);
-  return json(readLocations(name));
+  return Response.json(readLocations(name));
 };
 
 /** Upsert a single bookmark by slot. */
@@ -58,5 +58,5 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   existing.sort((a, b) => a.slot - b.slot);
 
   writeLocations(name, { ...locations, editor_bookmarks: existing });
-  return json({ ok: true });
+  return Response.json({ ok: true });
 };

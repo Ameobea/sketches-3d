@@ -42,7 +42,7 @@
       <div class="composition-tile">
         <div class="composition-title">
           <a
-            href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+            href={resolve(`geotoy/edit/${composition.comp.id}`)}
             onclick={() => logOpen(composition.comp.id)}
           >
             {composition.comp.title}
@@ -51,7 +51,7 @@
         {#if composition.latest.thumbnail_url}
           <a
             class="thumb-link"
-            href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+            href={resolve(`geotoy/edit/${composition.comp.id}`)}
             onclick={() => logOpen(composition.comp.id)}
           >
             <img
@@ -61,7 +61,7 @@
               crossorigin="anonymous"
               loading="lazy"
             />
-            {#if navTargetPath === resolve(`/geotoy/edit/${composition.comp.id}`)}
+            {#if navTargetPath === resolve(`geotoy/edit/${composition.comp.id}`)}
               <div class="loading-overlay"><Spinner size={62} /></div>
             {/if}
           </a>
@@ -73,7 +73,7 @@
             <div>Thumbnail generating or not available</div>
             <div style="font-size: 16px; margin-top: 4px;">
               <a
-                href={resolve(`/geotoy/edit/${composition.comp.id}`)}
+                href={resolve(`geotoy/edit/${composition.comp.id}`)}
                 onclick={() => logOpen(composition.comp.id)}
               >
                 Open
@@ -93,7 +93,7 @@
         {/if}
         <div class="composition-author">
           author:
-          <a href={resolve(`/geotoy/user/${composition.comp.author_id}`)}>
+          <a href={resolve(`geotoy/user/${composition.comp.author_id}`)}>
             {composition.comp.author_username}
           </a>
         </div>
@@ -136,7 +136,7 @@
       Geoscript and Geotoy by <a target="_blank" href="https://cprimozic.net">Casey Primozic</a>
     </span>
     <span><a target="_blank" href="https://github.com/ameobea/sketches-3d">100% Free + Open Source</a></span>
-    <span><a href={resolve('/geotoy/credits')}>Credits + Acknowledgements</a></span>
+    <span><a href={resolve('geotoy/credits')}>Credits + Acknowledgements</a></span>
   </footer>
 </div>
 

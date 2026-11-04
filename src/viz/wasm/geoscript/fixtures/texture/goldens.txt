@@ -140,6 +140,6 @@
 15_path_raster sdf[0] 64x64x1 hash=840dca70108b9d6d mean=0.108055 min=-0.082055 max=0.342505
 15_path_raster uv[0] 64x32x2 hash=d65158951a700f2c mean=0.250351 min=-0.541548 max=1.000000
 15_path_raster sdf_open[0] 64x32x1 hash=2cb326ec0a0e21d1 mean=0.230051 min=0.000137 max=0.541901
-15_path_raster tiled_fill[0] 32x32x1 hash=78b9958fb0241396 mean=0.155972 min=0.000000 max=1.000000
-15_path_raster tiled_sdf[0] 32x32x1 hash=47163ef33a60a823 mean=0.011271 min=-0.077385 max=0.132098
+15_path_raster tiled_fill[0] 32x32x1 hash=55a86c425d011246 mean=0.155972 min=0.000000 max=1.000000
+15_path_raster tiled_sdf[0] 32x32x1 hash=4fb8ffe0f226bf76 mean=0.011271 min=-0.077385 max=0.132098
 15_path_raster fit[0] 32x32x1 hash=78541e2f11531165 mean=0.212500 min=0.000000 max=1.000000

@@ -1,4 +1,4 @@
-import { error, json, type RequestHandler } from '@sveltejs/kit';
+import { error, type RequestHandler } from '@sveltejs/kit';
 
 import { loadLevelData } from 'src/viz/levelDef/loadLevelData.server';
 import { libraryMaterialExists } from 'src/viz/levelDef/libraryMaterials.server';
@@ -80,7 +80,7 @@ export const PATCH: RequestHandler = async ({ params, request }) => {
     }
     objDef.id = resolvedId;
     level.save();
-    return json({ resolvedId });
+    return Response.json({ resolvedId });
   }
 
   level.save();
@@ -205,7 +205,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     };
     level.def.objects.push(newGroup);
     level.save();
-    return json(newGroup, { status: 201 });
+    return Response.json(newGroup, { status: 201 });
   }
 
   if (body.type === 'group_paste') {
@@ -267,7 +267,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
         : level.def.objects.length);
     insertNodeAtPlacement(level.def.objects, newDef, body.parentId, insertIndex);
     level.save();
-    return json(newDef, { status: 201 });
+    return Response.json(newDef, { status: 201 });
   }
 
   if (body.type === 'restore_subtree') {
@@ -309,7 +309,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
         : level.def.objects.length);
     insertNodeAtPlacement(level.def.objects, body.def, body.parentId, insertIndex);
     level.save();
-    return json(body.def, { status: 201 });
+    return Response.json(body.def, { status: 201 });
   }
 
   if (body.type === 'reparent') {
@@ -421,7 +421,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     error(404, `Target group "${body.parentId}" not found`);
   }
   level.save();
-  return json(newObj, { status: 201 });
+  return Response.json(newObj, { status: 201 });
 };
 
 /**
@@ -507,5 +507,5 @@ export const PUT: RequestHandler = async ({ params, request }) => {
   parentArray.splice(insertIdx, 0, newGroup);
 
   level.save();
-  return json(newGroup, { status: 201 });
+  return Response.json(newGroup, { status: 201 });
 };
