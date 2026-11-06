@@ -34,7 +34,7 @@ export const processLoadedScene = async (
       normalMap: groundTextureNormal,
       roughnessMap: groundTextureRoughness,
       // metalness: 0.9,
-      uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      uvTransform: new THREE.Matrix3().makeScale(9.8982, 9.8982),
       // color: new THREE.Color(0x222222),
     },
     {},

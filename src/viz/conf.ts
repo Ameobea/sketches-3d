@@ -2,6 +2,7 @@ import * as DetectGPU from 'detect-gpu';
 
 import { SoftOcclusionEnabled } from './sceneDefaults';
 import { mergeDeep } from './util/util';
+import { captureQuality, isCapture } from './capture';
 import { rwritable, type TransparentWritable } from './util/TransparentWritable';
 
 export const DefaultSceneName = 'bridge';
@@ -132,7 +133,19 @@ export const loadVizConfig = (): VizConfig => {
   const vizConfig = JSON.parse(globalThis.localStorage?.getItem('vizConfig') ?? '{}') as VizConfig;
   const merged = mergeDeep(buildDefaultVizConfig(), vizConfig);
   delete (merged.gameplay as GameplaySettings & { easyModeMovement?: boolean }).easyModeMovement;
-  return merged;
+  return isCapture ? mergeDeep(merged, buildCaptureVizConfig()) : merged;
+};
+
+const buildCaptureVizConfig = () => {
+  const quality = { low: GraphicsQuality.Low, med: GraphicsQuality.Medium, high: GraphicsQuality.High }[
+    captureQuality
+  ];
+  if (!quality) throw new Error(`invalid quality=${captureQuality}; expected low|med|high`);
+  return {
+    graphics: { quality, fov: DEFAULT_FOV, gamma: 1, showFPSStats: false },
+    audio: { globalVolume: 0, musicVolume: 0, sfxVolume: 0 },
+    gameplay: { thirdPersonXray: false },
+  };
 };
 
 const ANISOTROPY_BY_QUALITY: Record<GraphicsQuality, number> = {
@@ -153,7 +166,7 @@ export const getDefaultMagFilter = (): 'linear' | 'nearest' =>
   loadVizConfig().graphics.quality > GraphicsQuality.Low ? 'linear' : 'nearest';
 
 export const getVizConfig = async (): Promise<TransparentWritable<VizConfig>> => {
-  if (localStorage.getItem('vizConfig')) {
+  if (isCapture || localStorage.getItem('vizConfig')) {
     const vizConfig = loadVizConfig();
     return rwritable(vizConfig);
   }

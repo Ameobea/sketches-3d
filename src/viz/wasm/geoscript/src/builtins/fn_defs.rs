@@ -9768,7 +9768,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: ""
           },
         ],
-        description: "Returns the number of elements in a sequence.  This will fully evaluate the sequence.  Calling this with an infinite sequence will result in the program hanging or crashing.",
+        description: "Returns the number of elements in a sequence.  This will fully evaluate the sequence unless its length is known up front, in which case `map` callbacks are not run (so their side effects are skipped).  Calling this with an infinite sequence will result in the program hanging or crashing.",
         return_type: &[ArgType::Int],
       },
       FnSignature {
@@ -10714,7 +10714,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Optional cap on total points across all subpaths after adaptive materialization, including lazy paths. A cap may sacrifice the curve-angle tolerance."
           },
         ],
-        description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from path inputs) are extruded independently; closed paths are not supported and trigger an error.",
+        description: "Sweeps a path along an `up` vector to produce a triangle-strip surface mesh.  Each point along the path is duplicated at `+up` to form the top edge of the strip.\n\nMultiple subpaths (from path inputs) are extruded independently; closed subpaths wrap into a seamless loop.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -11826,10 +11826,10 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("meshopt".to_owned())),
-            description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates manifold output and may reduce less to preserve topology. Manifold uses the existing solid-library simplifier. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
+            description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates output topology and may reduce less to preserve it; open meshes (terrain, grids) are supported. Manifold uses the existing solid-library simplifier and requires a closed mesh. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
           },
         ],
-        description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Output is checked for manifold topology; self-intersection freedom is not guaranteed by this check.",
+        description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Closed inputs yield Manifold-importable output; open inputs are only checked for manifold edges (each edge shared by at most two consistently wound faces). Self-intersection freedom is not guaranteed.",
         return_type: &[ArgType::Mesh],
       },
       FnSignature {
@@ -13117,7 +13117,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(DirectionalLight::default().color as i64)),
-            description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+            description: "Color of the light in hex format (like 0xffffff) or a linear `vec3` (like `vec3(1., 1., 1.)`, clamped to [0, 1])"
           },
           ArgDef {
             name: "intensity",
@@ -13198,7 +13198,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(AmbientLight::default().color as i64)),
-            description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+            description: "Color of the light in hex format (like 0xffffff) or a linear `vec3` (like `vec3(1., 1., 1.)`, clamped to [0, 1])"
           },
           ArgDef {
             name: "intensity",
@@ -13224,14 +13224,14 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(HemisphereLight::default().sky_color as i64)),
-            description: "Color of the light coming from above (the sky), in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+            description: "Color of the light coming from above (the sky), in hex format (like 0xffffff) or a linear `vec3` (like `vec3(1., 1., 1.)`, clamped to [0, 1])"
           },
           ArgDef {
             name: "ground_color",
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(HemisphereLight::default().ground_color as i64)),
-            description: "Color of the light coming from below (the ground), in hex format (like 0x444444) or webgl format (like `vec3(0.2, 0.2, 0.2)`)"
+            description: "Color of the light coming from below (the ground), in hex format (like 0x444444) or a linear `vec3` (like `vec3(0.2, 0.2, 0.2)`, clamped to [0, 1])"
           },
           ArgDef {
             name: "intensity",
@@ -13257,7 +13257,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Int, ArgType::Vec3),
             default_value: DefaultValue::Optional(|| Value::Int(RectAreaLight::default().color as i64)),
-            description: "Color of the light in hex format (like 0xffffff) or webgl format (like `vec3(1., 1., 1.)`)"
+            description: "Color of the light in hex format (like 0xffffff) or a linear `vec3` (like `vec3(1., 1., 1.)`, clamped to [0, 1])"
           },
           ArgDef {
             name: "intensity",
@@ -13885,7 +13885,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             description: "Fallback critical point resolution when inputs lack topology data."
           },
         ],
-        description: "Interpolates between two paths, returning a new path. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation.",
+        description: "Interpolates between two paths, returning a new path. At each `t`, the output point is `lerp(path_a(t), path_b(t), mix)`. Critical points from both input paths are merged to preserve sharp features during interpolation. Multi-subpath inputs are lerped pairwise, subpath by subpath, into a group; their subpath counts must match.",
         return_type: &[ArgType::Path],
       }
     ]

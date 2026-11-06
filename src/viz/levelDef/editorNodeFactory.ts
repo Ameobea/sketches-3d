@@ -7,7 +7,12 @@ import type { LevelDef, ObjectDef, ObjectGroupDef } from './types';
 import type { LevelObject, LevelGroup, LevelSceneNode, CompositionNode } from './levelSceneTypes';
 import { isLevelGroup, isCompositionNode } from './levelSceneTypes';
 import { isObjectGroup, isGeneratedDef, hasAsset } from './levelDefTreeUtils';
-import { LEVEL_PLACEHOLDER_MAT, applyTransform, instantiateLevelObject } from './levelObjectUtils';
+import {
+  LEVEL_PLACEHOLDER_MAT,
+  applyTransform,
+  buildMarkerMesh,
+  instantiateLevelObject,
+} from './levelObjectUtils';
 import { Entity } from '../sceneRuntime/Entity';
 
 /**
@@ -38,10 +43,12 @@ const effectiveAssetIdOf = (ctx: BuildCtx, def: ObjectDef): string =>
  * Call attachSubtree to register the result with the editor.
  */
 export function buildLeafNode(ctx: BuildCtx, assetId: string, def: ObjectDef): LevelObject {
-  const clone = instantiateLevelObject(ctx.prototypes.get(assetId)!, def, {
-    builtMaterials: ctx.builtMaterials,
-    fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
-  });
+  const clone = hasAsset(def)
+    ? instantiateLevelObject(ctx.prototypes.get(assetId)!, def, {
+        builtMaterials: ctx.builtMaterials,
+        fallbackMaterial: LEVEL_PLACEHOLDER_MAT,
+      })
+    : buildMarkerMesh(def);
   const entity = new Entity(ctx.viz, def.id, clone);
   if (def.nonPermeable !== undefined) {
     entity.nonPermeable = def.nonPermeable;
@@ -74,16 +81,10 @@ export function buildGroupSubtree(ctx: BuildCtx, def: ObjectGroupDef): LevelGrou
       const child = buildGroupSubtree(ctx, childDef);
       groupObj.add(child.object);
       levelGroup.children.push(child);
-    } else if (!hasAsset(childDef)) {
-      // dash-token marker: the clone serializes its def + reload re-materializes it; only live
-      // in-editor spawn (token visual + physics ghost, from the parkour subsystem) is skipped.
-      continue;
-    } else if (ctx.compositionBaked?.has(effectiveAssetIdOf(ctx, childDef))) {
+    } else if (hasAsset(childDef) && ctx.levelDef?.assets[childDef.asset]?.type === 'geotoyComposition') {
       const child = buildCompositionGroupFromCtx(ctx, childDef);
-      if (child) {
-        groupObj.add(child.object);
-        levelGroup.children.push(child);
-      }
+      groupObj.add(child.object);
+      levelGroup.children.push(child);
     } else {
       const leaf = buildLeafNode(ctx, effectiveAssetIdOf(ctx, childDef), childDef);
       groupObj.add(leaf.object);
@@ -172,17 +173,12 @@ export function buildCompositionGroup(
 
 /**
  * Build a composition placement group from the editor's `BuildCtx` — resolves the cached baked
- * meshes and the asset's material-name map. Returns null if the asset has no baked meshes.
+ * meshes and the asset's material-name map. An unbaked asset yields a part-less placement.
  */
-export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): LevelGroup | null {
-  const assetId = objDef.asset;
-  if (assetId === undefined) return null;
+export function buildCompositionGroupFromCtx(ctx: BuildCtx, objDef: ObjectDef): LevelGroup {
+  const assetId = objDef.asset!;
   // Baked meshes live under the effective (variant) id; the materialMap under the authored id.
-  const baked = ctx.compositionBaked?.get(effectiveAssetIdOf(ctx, objDef));
-  if (!baked) {
-    console.warn(`[editorNodeFactory] No baked meshes for composition asset "${assetId}"`);
-    return null;
-  }
+  const baked = ctx.compositionBaked?.get(effectiveAssetIdOf(ctx, objDef)) ?? [];
   const asset = ctx.levelDef?.assets[assetId];
   const materialMap = asset?.type === 'geotoyComposition' ? asset.materialMap : undefined;
   const names = new Set(Object.keys(ctx.levelDef?.materials ?? {}));

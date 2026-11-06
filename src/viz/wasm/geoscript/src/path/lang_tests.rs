@@ -300,3 +300,50 @@ fn dropped_kwargs_are_rejected() {
     assert!(format!("{err}").len() > 0, "{src}");
   }
 }
+
+/// Segmentless leaves (trailing moves, zero-radius circles) and multi-subpath groups: evaluation,
+/// budgeted sampling, trimming and frames stay within each subpath.
+#[test]
+fn degenerate_leaves_and_subpath_boundaries() {
+  let ctx = parse_and_eval_program(
+    r#"
+tp = path() | move(0, 0) | line(1, 0) | move(5, 5)
+trailing = tp(1)
+zc = path([circle(v2(0), 1), circle(v2(5, 0), 0)])
+zero_circle = zc(1)
+m = tessellate_path(path([circle(v2(0), 1), path() | move(5, 5)]), sample_count=10)
+cubic = path() | move(0, 0) | cubic_bezier(v2(1, 1), v2(1, 1), v2(2, 0))
+cubic_segs = len(path_segments(discretize_path(cubic)))
+g = path([catmull_rom([v2(0,0), v2(1,1), v2(2,0)], 0.5, false), catmull_rom([v2(5,0), v2(6,1), v2(7,0)], 0.5, false)])
+trimmed = discretize_path(trim_path(g, 0, 1))
+tangent = path_frame(0.4996, path([circle(v2(0), 1), circle(v2(10, 0), 1)])).tangent
+"#,
+  )
+  .unwrap();
+  assert!(close(v(&ctx, "trailing"), Vec2::new(1., 0.)));
+  assert!(close(v(&ctx, "zero_circle"), Vec2::new(1., 0.)));
+  assert!(ctx.get_global("cubic_segs").unwrap().as_int().unwrap() > 8);
+  assert_eq!(subpath_count(&ctx, "trimmed"), 2);
+  assert!(v(&ctx, "tangent").y > 0.99);
+}
+
+#[test]
+fn lerp_paths_pairs_subpaths() {
+  let ctx = parse_and_eval_program(
+    r#"
+a = path([circle(v2(0), 1), circle(v2(10, 0), 1)])
+b = path([rect(v2(0), 2), rect(v2(10, 0), 2)])
+m = discretize_path(lerp_paths(a, b, 0.5))
+p0 = m(0.25)
+p1 = m(0.75)
+"#,
+  )
+  .unwrap();
+  assert_eq!(subpath_count(&ctx, "m"), 2);
+  assert!(v(&ctx, "p0").x < 2. && v(&ctx, "p1").x > 8.);
+  let err = parse_and_eval_program(
+    "lerp_paths(path([circle(v2(0), 1), circle(v2(5, 0), 1)]), circle(v2(0), 2), 0.5)",
+  )
+  .unwrap_err();
+  assert!(format!("{err}").contains("subpath counts differ"), "{err}");
+}

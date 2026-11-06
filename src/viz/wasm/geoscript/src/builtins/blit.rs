@@ -373,35 +373,19 @@ fn blend_run<F: Fn(f32, f32) -> f32>(dst: &mut [f32], src: &[f32], alpha: Option
   }
 }
 
-/// Straight-alpha `over` into an RGBA base: the output alpha couples all four channels, so
-/// this can't decompose into independent per-channel runs like the other modes.
-fn rgba_over_run(
-  base_planes: &mut [Vec<f32>],
-  bo: usize,
-  stamp: &[Rc<Vec<f32>>],
-  so: usize,
-  len: usize,
-  val_ch: usize,
-  alpha_ix: usize,
-) {
-  let (rgb, rest) = base_planes.split_at_mut(3);
-  let ba_plane = &mut rest[0];
-  for i in 0..len {
-    let sa = eff_alpha(stamp[alpha_ix][so + i]);
-    if sa <= 0. {
-      continue;
+/// Straight-alpha `over` of one texel into an RGBA base: the output alpha couples all four
+/// channels, so this can't decompose into independent per-channel runs like the other modes.
+#[inline(always)]
+fn over_texel(base_planes: &mut [Vec<f32>], o: usize, sa: f32, sv: impl Fn(usize) -> f32) {
+  let ba = base_planes[3][o];
+  let out_a = sa + ba * (1. - sa);
+  if out_a > 1e-8 {
+    for c in 0..3 {
+      let b = base_planes[c][o];
+      base_planes[c][o] = (sv(c) * sa + b * ba * (1. - sa)) / out_a;
     }
-    let ba = ba_plane[bo + i];
-    let out_a = sa + ba * (1. - sa);
-    if out_a > 1e-8 {
-      for (c, plane) in rgb.iter_mut().enumerate() {
-        let sv = stamp[if val_ch == 1 { 0 } else { c }][so + i];
-        let b = plane[bo + i];
-        plane[bo + i] = (sv * sa + b * ba * (1. - sa)) / out_a;
-      }
-    }
-    ba_plane[bo + i] = out_a;
   }
+  base_planes[3][o] = out_a;
 }
 
 /// The 1:1 aligned blit: no affine per pixel, no taps, no normalize. Iterates exactly the
@@ -439,7 +423,7 @@ fn blit_aligned(
   }
   let bvc = if bch == 4 { 3 } else { bch };
   let alpha_ix = sch - 1;
-  let rgba_over = bch == 4 && blend == BlendMode::Over;
+  let rgba_over = bch == 4 && blend == BlendMode::Over && has_alpha;
 
   for y in ylo..yhi {
     let sy = (y + al.dy) as usize;
@@ -453,7 +437,14 @@ fn blit_aligned(
       let alpha = has_alpha.then(|| &stamp_planes[alpha_ix][so..so + len]);
 
       if rgba_over {
-        rgba_over_run(base_planes, bo, stamp_planes, so, len, val_ch, alpha_ix);
+        for i in 0..len {
+          let sa = eff_alpha(stamp_planes[alpha_ix][so + i]);
+          if sa > 0. {
+            over_texel(base_planes, bo + i, sa, |c| {
+              stamp_planes[if val_ch == 1 { 0 } else { c }][so + i]
+            });
+          }
+        }
       } else {
         for c in 0..bvc {
           let src = &stamp_planes[if val_ch == 1 { 0 } else { c }][so..so + len];
@@ -661,17 +652,9 @@ pub(crate) fn blit_into(
       let o = wy * bw + wx;
       let bvc = if bch == 4 { 3 } else { bch };
       if bch == 4 && blend == BlendMode::Over {
-        // Proper straight-alpha over for an RGBA base
-        let ba = base_planes[3][o];
-        let out_a = sa + ba * (1. - sa);
-        if out_a > 1e-8 {
-          for c in 0..3 {
-            let sv = vals[if val_ch == 1 { 0 } else { c }];
-            let b = base_planes[c][o];
-            base_planes[c][o] = (sv * sa + b * ba * (1. - sa)) / out_a;
-          }
-        }
-        base_planes[3][o] = out_a;
+        over_texel(base_planes, o, sa, |c| {
+          vals[if val_ch == 1 { 0 } else { c }]
+        });
       } else {
         for c in 0..bvc {
           let sv = vals[if val_ch == 1 { 0 } else { c }];
@@ -965,6 +948,40 @@ full = blit(texture(2, 2, |uv| v2(0.2, 1.)) | trans_global(0.5, 0.5), base, filt
         (px - 0.2).abs() < 1e-6,
         "alpha 1: stamp must replace, got {px}"
       );
+    }
+  }
+
+  /// Alpha-less stamps replace covered texels opaquely, on both the aligned and filtered paths.
+  #[test]
+  fn alphaless_stamp_over_rgba_base() {
+    let ctx = parse_and_eval_program(
+      r#"
+base = texture(16, 16, |uv| v4(uv.x, 0.5, 0.2, 0.))
+rgb = texture(4, 4, |uv| v3(uv.y, 1., 0.))
+gray = texture(4, 4, |uv| 0.25)
+rgb_aligned = blit(rgb | scale(0.25) | trans_global(0.5, 0.5), base, filter="nearest")
+rgb_general = blit(rgb | scale(0.25 * 1.001) | trans_global(0.5, 0.5), base, filter="nearest")
+gray_aligned = blit(gray | scale(0.25) | trans_global(0.5, 0.5), base, filter="nearest")
+gray_general = blit(gray | scale(0.25 * 1.001) | trans_global(0.5, 0.5), base, filter="nearest")
+comp = composite(texture(16, 16, |uv| v3(1., 1., 0.)), base)
+"#,
+    )
+    .unwrap();
+    let alpha_sum = |n: &str| -> f32 {
+      get_tex(&ctx, n)
+        .as_interleaved()
+        .chunks(4)
+        .map(|p| p[3])
+        .sum()
+    };
+    for (name, want) in [
+      ("rgb_aligned", 16.),
+      ("rgb_general", 16.),
+      ("gray_aligned", 16.),
+      ("gray_general", 16.),
+      ("comp", 256.),
+    ] {
+      assert_eq!(alpha_sum(name), want, "{name}");
     }
   }
 

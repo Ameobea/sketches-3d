@@ -13,8 +13,6 @@ const vec3[2] FOG_COLOR_RAMP = vec3[2](
   vec3(0.11, 0.11, 0.14)
 );
 
-#include <packing>
-
 float getFogFactor(float dist) {
   // linear
   // return 1. - (dist - cameraNear) / (cameraFar - cameraNear);
@@ -24,7 +22,7 @@ float getFogFactor(float dist) {
 }
 
 void main() {
-  float unpackedDistance = unpackRGBAToDepth(texture2D(sceneDistance, vUv));
+  float unpackedDistance = texture2D(sceneDistance, vUv).r;
   vec4 diffuse = texture2D(sceneDiffuse, vUv);
 
   if (unpackedDistance > 0.99) {

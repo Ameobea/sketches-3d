@@ -188,8 +188,7 @@ export class TreeState {
     const parentId = opts.parentId ?? this.state.tree.rootId;
     const parent = this.state.tree.nodes[parentId];
     const index = parent.children.indexOf(id);
-    const nodeDef = $state.snapshot(this.state.tree.nodes[id]);
-    this.undoSystem.push({ type: 'createNode', nodeDef, parentId, index });
+    this.undoSystem.push({ type: 'createNode', id, parentId, index });
     this.recomputeDirty();
     return id;
   }

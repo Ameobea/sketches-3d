@@ -137,21 +137,23 @@ test('deleteSubtree: undo restores the whole subtree at the correct index', () =
   assert.deepEqual(tree.nodes[tree.rootId].children, [b, c]);
 });
 
-test('createNode: undo deletes the new node; redo recreates with the same id', () => {
+test('createNode: undo deletes the new node; redo restores it with post-creation edits', () => {
   const tree = buildEmptyTree();
   const sys = buildGeotoyUndoSystem();
   const id = opsCreateNode(tree, { name: 'a', transform: buildIdentityTransform() });
   const parentId = tree.rootId;
   const index = tree.nodes[parentId].children.indexOf(id);
-  const nodeDef = structuredClone(tree.nodes[id]);
-  sys.push({ type: 'createNode', nodeDef, parentId, index });
+  sys.push({ type: 'createNode', id, parentId, index });
+  tree.nodes[id].source = 'box(1) | render';
+  const child = opsCreateNode(tree, { name: 'child', parentId: id });
+  const edited = structuredClone(tree);
 
   apply(sys, tree, 'undo');
   assert.equal(id in tree.nodes, false);
+  assert.equal(child in tree.nodes, false);
 
   apply(sys, tree, 'redo');
-  assert.equal(id in tree.nodes, true);
-  assert.equal(tree.nodes[id]?.name, 'a');
+  assert.ok(treesEqual(tree, edited));
 });
 
 test('reparent: undo restores the original parent and child-index', () => {

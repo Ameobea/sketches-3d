@@ -601,13 +601,15 @@ export const getComposition = (
     baseURL
   );
 
+export type VersionSummary = Pick<CompositionVersion, 'id' | 'created_at' | 'thumbnail_url'>;
+
 export const getCompositionHistory = (
   id: number,
   fetch: typeof globalThis.fetch = globalThis.fetch,
   sessionID?: string,
   adminToken?: string
-): Promise<CompositionVersion[]> =>
-  apiFetch<CompositionVersion[]>(
+): Promise<VersionSummary[]> =>
+  apiFetch<VersionSummary[]>(
     `/compositions/${id}/history${adminToken ? `?admin_token=${encodeURIComponent(adminToken)}` : ''}`,
     sessionID ? { headers: { session_id: sessionID } } : {},
     fetch
@@ -645,9 +647,6 @@ export const forkComposition = (
   apiFetch<{ composition: Composition; version: CompositionVersion }>(`/compositions/${id}/fork`, {
     method: 'POST',
   });
-
-export const listCompositionVersions = (id: number): Promise<number[]> =>
-  apiFetch<number[]>(`/compositions/${id}/versions`);
 
 export const getCompositionLatest = (
   id: number,
@@ -724,11 +723,6 @@ const createTextureParams = ({ name, description, isShared, tags }: CreateTextur
 export const listTextures = (
   fetch: typeof globalThis.fetch = globalThis.fetch
 ): Promise<TextureDescriptor[]> => apiFetch<TextureDescriptor[]>('/textures', {}, fetch);
-
-export const getTexture = (
-  id: TextureID,
-  fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<TextureDescriptor> => apiFetch<TextureDescriptor>(`/textures/${id}`, {}, fetch);
 
 export const createTexture = (
   meta: CreateTextureMeta,
@@ -837,27 +831,6 @@ export const getMaterial = (
     fetch,
     false,
     baseUrl
-  );
-
-export const updateMaterial = (
-  id: number,
-  body: Partial<{
-    name: string;
-    description: string;
-    materialDefinition: MaterialDef;
-    isShared: boolean;
-    tags: string[];
-  }>,
-  fetch: typeof globalThis.fetch = globalThis.fetch
-): Promise<MaterialDescriptor> =>
-  apiFetch<MaterialDescriptor>(
-    `/materials/${id}`,
-    {
-      method: 'PUT',
-      body: JSON.stringify(body),
-      headers: { 'Content-Type': 'application/json' },
-    },
-    fetch
   );
 
 export const deleteMaterial = (

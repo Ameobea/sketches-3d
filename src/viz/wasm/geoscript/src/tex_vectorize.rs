@@ -570,6 +570,7 @@ struct EffectFence {
   next_render_id: u32,
   unnamed_gizmos: u32,
   gizmo_reads: Option<fxhash::FxHashSet<String>>,
+  module_prints: Option<usize>,
   default_material: Option<Rc<crate::materials::Material>>,
   sharp_angle: f32,
   curve_angle: f32,
@@ -589,6 +590,7 @@ impl EffectFence {
       next_render_id: ctx.next_render_id.get(),
       unnamed_gizmos: ctx.current_module_unnamed_gizmo_count.get(),
       gizmo_reads: ctx.current_module_gizmo_reads.borrow().clone(),
+      module_prints: ctx.current_module_prints.borrow().as_ref().map(Vec::len),
       default_material: ctx.default_material.borrow().clone(),
       sharp_angle: *ctx.sharp_angle_threshold_degrees.borrow(),
       curve_angle: *ctx.default_curve_angle_degrees.borrow(),
@@ -620,6 +622,12 @@ impl EffectFence {
     }
     ctx.set_rng_state(self.rng.clone());
     ctx.prints.borrow_mut().truncate(self.prints);
+    if let (Some(own), Some(len)) = (
+      ctx.current_module_prints.borrow_mut().as_mut(),
+      self.module_prints,
+    ) {
+      own.truncate(len);
+    }
     ctx.rendered_meshes.inner.borrow_mut().truncate(self.meshes);
     ctx.rendered_lights.inner.borrow_mut().truncate(self.lights);
     ctx.rendered_paths.inner.borrow_mut().truncate(self.paths);
@@ -4124,16 +4132,17 @@ fn exec(
         let ramp = inner.as_any().downcast_ref::<RampCallable>();
         let filled = match (ramp, &d.args[..]) {
           (Some(ramp), [arg]) if arg.len() == 1 => match ex.resolve(arg[0]) {
-            RSrc::S(xs) => ramp.fill_planes(xs, &mut outs),
+            RSrc::S(xs) => {
+              ramp.fill_planes(xs, &mut outs);
+              true
+            }
             RSrc::K(k) => {
-              let ok = ramp.fill_planes(&[k], &mut outs);
-              if ok {
-                for o in &mut outs {
-                  let v = o[0];
-                  o.resize(n, v);
-                }
+              ramp.fill_planes(&[k], &mut outs);
+              for o in &mut outs {
+                let v = o[0];
+                o.resize(n, v);
               }
-              ok
+              true
             }
           },
           _ => false,
@@ -5895,8 +5904,8 @@ h = texture(16, 16, |uv| fbm(pos=uv * 3.) * 0.5 + 0.5)
   }
 
   /// Ramps in texel bodies take the whole-plane sweep (`RampCallable::fill_planes`), which
-  /// must match scalar `sample` bit-for-bit for LUT and exact ramps, feed downstream ops, and
-  /// leave custom-ease ramps on the per-texel loop.
+  /// must match the scalar path bit-for-bit for LUT, exact and custom-ease ramps, and feed
+  /// downstream ops.
   #[test]
   fn ramp_plane_fast_path_matches_scalar() {
     let src = r#"

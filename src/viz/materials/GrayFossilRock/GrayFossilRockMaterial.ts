@@ -30,7 +30,7 @@ export const buildGrayFossilRockMaterial = async (
       map: platformDiffuse,
       roughness: 0.9,
       metalness: 0.5,
-      uvTransform: new THREE.Matrix3().scale(98.073, 98.073),
+      uvTransform: new THREE.Matrix3().makeScale(98.073, 98.073),
       normalMap: platformNormal,
       normalScale: 1,
       normalMapType: THREE.TangentSpaceNormalMap,

@@ -642,3 +642,34 @@ fn eval_many_matches_eval_at() {
     assert!(path.eval_many(&[], &ctx).unwrap().is_empty());
   }
 }
+
+#[test]
+fn orient_rings_follows_fill_rule() {
+  use crate::builtins::offset_path::orient_rings;
+  let sq = |c: Vec2, h: f32| vec![c + v(-h, -h), c + v(h, -h), c + v(h, h), c + v(-h, h)];
+  let rev = |mut r: Vec<Vec2>| {
+    r.reverse();
+    r
+  };
+  let ccw =
+    |r: &Vec<Vec2>| r[0].perp(&r[1]) + r[1].perp(&r[2]) + r[2].perp(&r[3]) + r[3].perp(&r[0]) > 0.;
+
+  let mut nested = vec![sq(v(0., 0.), 3.), sq(v(0., 0.), 2.), sq(v(0., 0.), 1.)];
+  orient_rings(&mut nested, super::FillRule::EvenOdd);
+  assert_eq!(
+    nested.iter().map(ccw).collect::<Vec<_>>(),
+    [true, false, true]
+  );
+
+  let mut islands = vec![sq(v(-3., 0.), 1.), rev(sq(v(3., 0.), 1.))];
+  orient_rings(&mut islands, super::FillRule::EvenOdd);
+  assert!(islands.iter().all(ccw));
+
+  let mut lone_cw = vec![rev(sq(v(0., 0.), 1.))];
+  orient_rings(&mut lone_cw, super::FillRule::EvenOdd);
+  assert_eq!(lone_cw, [rev(sq(v(0., 0.), 1.))]);
+
+  let mut solid = vec![sq(v(0., 0.), 2.), sq(v(0., 0.), 1.)];
+  orient_rings(&mut solid, super::FillRule::NonZero);
+  assert_eq!(solid, [sq(v(0., 0.), 2.)]);
+}

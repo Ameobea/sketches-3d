@@ -318,9 +318,6 @@ export interface CustomShaderOptions {
    * exclusive with `disableToneMapping` (whole-mesh bypass).
    */
   inlineEmissiveBypass?: boolean;
-  // TODO: This is a shocking hack and should be removed
-  disabledDirectionalLightIndices?: number[];
-  disabledSpotLightIndices?: number[];
   /**
    * If true, applies a stable per-mesh random offset to texture sampling. Works with both
    * `useGeneratedUVs` (offsets `vUv`) and `useTriplanarMapping`.

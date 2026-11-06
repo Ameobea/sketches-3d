@@ -14,7 +14,7 @@ pub(crate) mod subpath;
 #[cfg(test)]
 mod tests;
 
-use std::{cell::OnceCell, cmp::Ordering, fmt, hash::Hasher, rc::Rc};
+use std::{cell::OnceCell, fmt, hash::Hasher, rc::Rc};
 
 use nalgebra::Matrix3;
 
@@ -197,15 +197,21 @@ impl Group {
     }
   }
 
+  fn child_len(&self, ix: usize) -> f32 {
+    self.cumulative_lengths[ix] - self.child_start(ix)
+  }
+
+  /// Skips zero-length children (segmentless leaves) sitting on the boundary.
   fn locate(&self, target: f32) -> usize {
-    let ix = match self
+    let n = self.children.len();
+    let mut ix = self
       .cumulative_lengths
-      .binary_search_by(|len| len.partial_cmp(&target).unwrap_or(Ordering::Less))
-    {
-      Ok(ix) => ix,
-      Err(ix) => ix,
-    };
-    ix.min(self.children.len() - 1)
+      .partition_point(|&l| l < target)
+      .min(n - 1);
+    while ix + 1 < n && self.child_len(ix) <= LENGTH_EPSILON {
+      ix += 1;
+    }
+    ix
   }
 
   fn eval_raw(&self, t: f32, ctx: &EvalCtx) -> Result<Vec2, ErrorStack> {
@@ -219,7 +225,7 @@ impl Group {
     match &child.kind {
       PathKind::Subpath(sp) => Ok(sp.sample_by_length(local_len.clamp(0., sp.total_length()))),
       _ => {
-        let len = self.cumulative_lengths[ix] - self.child_start(ix);
+        let len = self.child_len(ix);
         let local_t = if len <= LENGTH_EPSILON {
           0.
         } else {
@@ -644,6 +650,29 @@ impl Path {
     Some(spans)
   }
 
+  /// `t ± dt` sample window for a central difference, kept inside the subpath containing `t`
+  /// (wrapping around closed ones).
+  pub(crate) fn diff_window(&self, t: f32, dt: f32) -> (f32, f32) {
+    let spans = self.subpath_t_spans().unwrap_or_else(|| vec![(0., 1.)]);
+    let ix = spans
+      .iter()
+      .position(|&(s, e)| e >= t && e > s)
+      .unwrap_or(spans.len() - 1);
+    let (s, e) = spans[ix];
+    if e - s <= 2. * dt {
+      return (s, e);
+    }
+    let closed = self
+      .subpath_topology()
+      .is_some_and(|topo| topo.get(ix).is_some_and(|tp| tp.closed));
+    if closed {
+      let wrap = |x: f32| s + (x - s).rem_euclid(e - s);
+      return (wrap(t - dt), wrap(t + dt));
+    }
+    let lo = (t - dt).clamp(s, e - 2. * dt);
+    (lo, lo + 2. * dt)
+  }
+
   /// One `(points, closed)` polyline per subpath in world space. Concrete leaves flatten
   /// adaptively (chords turn at most `angle_tolerance`, sag at most `max_sagitta`); lazy leaves
   /// refine from `lazy_count` uniform seeds plus all known critical/structural boundaries.
@@ -764,7 +793,11 @@ impl Path {
       return Ok(natural);
     }
 
-    let leaves = self.leaves();
+    let leaves: Vec<_> = self
+      .leaves()
+      .into_iter()
+      .filter(|sp| !sp.is_degenerate())
+      .collect();
     let n_subpaths = leaves.len();
     let free_budget = limit.saturating_sub(n_subpaths);
     let n_dense = recommended_n_dense(limit, n_subpaths);
@@ -917,6 +950,9 @@ impl Path {
   /// wrapper otherwise. Partially covered subpaths become open.
   pub(crate) fn trimmed(self: &Rc<Path>, start_t: f32, end_t: f32) -> Path {
     if !self.is_concrete() {
+      if let PathKind::Group(g) = &self.kind {
+        return self.trimmed_group(g, start_t, end_t);
+      }
       let mut p = Path::lazy(Rc::new(lazy::Trimmed::new(Rc::clone(self), start_t, end_t)));
       p.fill_rule = self.fill_rule;
       return p;
@@ -966,6 +1002,51 @@ impl Path {
       ))));
     }
     Path::concrete_group(out, self.fill_rule)
+  }
+
+  /// Trims each overlapped child separately so subpaths stay distinct.
+  fn trimmed_group(&self, g: &Group, start_t: f32, end_t: f32) -> Path {
+    let (lo, hi) = if self.reverse {
+      (1. - end_t, 1. - start_t)
+    } else {
+      (start_t, end_t)
+    };
+    let (lo, hi) = (lo * g.total_length, hi * g.total_length);
+    let (mut children, mut lengths) = (Vec::new(), Vec::new());
+    for (ix, child) in g.children.iter().enumerate() {
+      let (cs, len) = (g.child_start(ix), g.child_len(ix));
+      let (a, b) = (lo.max(cs), hi.min(cs + len));
+      if b - a <= LENGTH_EPSILON {
+        continue;
+      }
+      let trimmed = child.trimmed((a - cs) / len, (b - cs) / len);
+      match &trimmed.kind {
+        PathKind::Group(tg) if trimmed.is_concrete() => {
+          children.extend(tg.children.iter().cloned());
+          lengths.extend((0..tg.children.len()).map(|i| tg.child_len(i)));
+        }
+        _ => {
+          children.push(Rc::new(trimmed));
+          lengths.push(b - a);
+        }
+      }
+    }
+    let mut p = if children.iter().all(|c| c.is_concrete()) {
+      Path::concrete_group(children, None)
+    } else {
+      Path::with_kind(PathKind::Group(Group::from_lengths(
+        children,
+        lengths.into_iter(),
+      )))
+    };
+    if self.has_transform {
+      p = p.transformed(&self.transform);
+    }
+    if self.reverse {
+      p = p.reversed();
+    }
+    p.fill_rule = self.fill_rule;
+    p
   }
 
   /// Every user callable reachable through lazy leaves.

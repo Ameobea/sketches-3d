@@ -40,7 +40,7 @@ export const processLoadedScene = async (
       metalness: 0.18,
       roughness: 0.92,
       map: towerPlinthPedestalTextureCombinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.08, 0.08),
+      uvTransform: new THREE.Matrix3().makeScale(0.08, 0.08),
       mapDisableDistance: null,
       normalScale: 5.2,
       useDisplacementNormals: true,

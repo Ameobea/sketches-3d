@@ -17,7 +17,7 @@ export const processLoadedScene = async (
   const loader = new THREE.ImageBitmapLoader();
   const debugMatPromise = buildGrayFossilRockMaterial(
     loader,
-    { uvTransform: new THREE.Matrix3().scale(0.2, 0.2), color: 0xcccccc },
+    { uvTransform: new THREE.Matrix3().makeScale(0.2, 0.2), color: 0xcccccc },
     {},
     { useGeneratedUVs: false, useTriplanarMapping: true, tileBreaking: undefined }
   );

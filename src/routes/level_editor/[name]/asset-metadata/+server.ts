@@ -3,12 +3,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import type { GeoscriptAssetMeta } from 'src/viz/levelDef/types';
 import { guardDev, openLevel, validateName } from '../../levelEditorUtils.server';
 
-/**
- * Updates `_meta` blocks in level asset definitions.
- *
- * Body: `{ [assetId]: GeoscriptAssetMeta | null }` — null removes the field.
- * Dev only.
- */
+/** Body: `{ [assetId]: GeoscriptAssetMeta | null }`; null removes the entry. */
 export const POST: RequestHandler = async ({ params, request }) => {
   guardDev();
   const name = validateName(params.name);
@@ -27,6 +22,6 @@ export const POST: RequestHandler = async ({ params, request }) => {
     }
   }
 
-  store.save();
+  store.saveMeta();
   return new Response(null, { status: 204 });
 };

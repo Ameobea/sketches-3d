@@ -308,7 +308,7 @@ export class ParticlePass extends HijackedMRTPass {
     outputBuffer: THREE.WebGLRenderTarget
   ): void {
     const { fpCtx } = this.viz;
-    this.frame.time = fpCtx?.getPhysicsTime() ?? this.viz.clock.getElapsedTime();
+    this.frame.time = fpCtx?.getPhysicsTime() ?? this.viz.clock.getElapsed();
     const playerPos = fpCtx?.playerController.getPosition();
     if (playerPos) this.frame.playerPos.set(playerPos.x(), playerPos.y(), playerPos.z());
     this.frame.viewportHeight = renderer.getDrawingBufferSize(this.size).y;

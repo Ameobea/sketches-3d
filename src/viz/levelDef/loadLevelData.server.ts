@@ -4,9 +4,9 @@ import { dev } from '$app/env';
 
 import type { GeneratorFn } from './generatorTypes';
 import { GENERATED_NODE_USERDATA_KEY, isObjectGroup } from './levelDefTreeUtils';
-import { getAssetsDir } from './levelPaths.server';
+import { resolveFileRef } from './levelPaths.server';
 import { readLevelSourceFiles } from './levelSourceFiles.server';
-import { SHADER_GLSL_FIELDS, resolveGlslPath } from './shaderFiles.server';
+import { SHADER_GLSL_FIELDS } from './shaderFiles.server';
 import { PARTICLE_GLSL_FIELDS } from 'src/viz/particles/schema';
 import { resolveExternalParent, resolveLibraryMaterials } from './libraryMaterials.server';
 import { inlineGeotoyMaterialTextures, resolveGeotoyMaterial } from './geotoyMaterials.server';
@@ -524,10 +524,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
     Promise.all(
       Object.entries(withLibrary.assets).map(async ([assetId, assetDef]) => {
         if (assetDef.type === 'geoscript' && 'file' in assetDef) {
-          const codePath = assetDef.file.startsWith('__ASSETS__/')
-            ? join(getAssetsDir(), assetDef.file.slice('__ASSETS__/'.length))
-            : join(levelDir, assetDef.file);
-          const code = readFileSync(codePath, 'utf-8');
+          const code = readFileSync(resolveFileRef(levelDir, assetDef.file), 'utf-8');
           const { file: _file, ...rest } = assetDef;
           return [assetId, { ...rest, type: 'geoscript' as const, code }];
         }
@@ -555,7 +552,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
             for (const field of SHADER_GLSL_FIELDS) {
               const val = shaders[field];
               if (val !== null && typeof val === 'object' && 'file' in val) {
-                shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
+                shaders[field] = readFileSync(resolveFileRef(levelDir, val.file), 'utf-8');
               }
             }
             return [matId, { ...matDef, shaders }];
@@ -592,7 +589,7 @@ export const loadLevelData = async (name: string): Promise<LevelDef> => {
       for (const field of PARTICLE_GLSL_FIELDS) {
         const val = shaders[field];
         if (typeof val === 'object')
-          shaders[field] = readFileSync(resolveGlslPath(levelDir, val.file), 'utf-8');
+          shaders[field] = readFileSync(resolveFileRef(levelDir, val.file), 'utf-8');
       }
       return { ...sys, shaders };
     }),

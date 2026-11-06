@@ -40,7 +40,6 @@ extern "C" {
     merge_to: &[u32],
   ) -> isize;
   fn drop_mesh_handle(handle: usize);
-  pub fn drop_all_mesh_handles();
   fn get_last_err() -> String;
 }
 

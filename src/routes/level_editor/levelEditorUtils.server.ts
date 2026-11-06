@@ -4,7 +4,7 @@ import { dev } from '$app/env';
 import { error } from '@sveltejs/kit';
 
 import { formatLevelJson } from 'src/viz/levelDef/formatLevelJson';
-import { readLevelSourceFiles } from 'src/viz/levelDef/levelSourceFiles.server';
+import { readLevelSourceFiles, writeAssetMeta } from 'src/viz/levelDef/levelSourceFiles.server';
 import type { LevelDefRaw } from 'src/viz/levelDef/types';
 
 export const guardDev = () => {
@@ -25,6 +25,8 @@ export const validateName = (name: string | undefined): string => {
 export interface LevelStore {
   def: LevelDefRaw;
   save(): void;
+  /** Persists only the assets' `_meta` (to the gitignored sidecar), leaving tracked files untouched. */
+  saveMeta(): void;
 }
 
 /**
@@ -49,10 +51,34 @@ export const openLevel = (name: string): LevelStore => {
     throw err;
   }
   if (!source) error(404, `Level "${name}" not found`);
-  const { def, defPath, materialsFilePath, objectsFilePath } = source;
+  const {
+    def,
+    defPath,
+    materialsFilePath,
+    objectsFilePath,
+    audioFilePath,
+    metaFilePath,
+    ownAudio,
+    injectedAssetIds,
+  } = source;
+
+  const saveMeta = () => writeAssetMeta(metaFilePath, def.assets);
 
   const save = () => {
-    const defToWrite = { ...def };
+    saveMeta();
+    const defToWrite = {
+      ...def,
+      assets: Object.fromEntries(
+        Object.entries(def.assets as Record<string, { _meta?: unknown }>)
+          .filter(([id]) => !injectedAssetIds.has(id))
+          .map(([id, { _meta, ...a }]) => [id, a])
+      ),
+    };
+
+    if (audioFilePath) {
+      if (ownAudio) defToWrite.audio = ownAudio;
+      else delete defToWrite.audio;
+    }
 
     if (materialsFilePath) {
       writeFileSync(
@@ -78,5 +104,5 @@ export const openLevel = (name: string): LevelStore => {
     writeFileSync(defPath, formatLevelJson(defToWrite));
   };
 
-  return { def, save };
+  return { def, save, saveMeta };
 };

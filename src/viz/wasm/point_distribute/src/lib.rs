@@ -108,6 +108,8 @@ pub struct MeshSurfaceSampler<'a, T = ()> {
   mesh: MeshImpl<'a, T>,
   distribution: Vec<f32>,
   rng: Option<Pcg32>,
+  transform: nalgebra::Matrix4<f32>,
+  normal_mat: nalgebra::Matrix3<f32>,
 }
 
 impl<'a, T> MeshSurfaceSampler<'a, T> {
@@ -120,8 +122,13 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
       common::maybe_init_rng();
     }
 
+    let mesh: MeshImpl<'a, T> = mesh.into();
+    let transform = mesh.transform().unwrap_or(nalgebra::Matrix4::identity());
+    let linear = transform.fixed_view::<3, 3>(0, 0).into_owned();
     let mut samp = MeshSurfaceSampler {
-      mesh: mesh.into(),
+      normal_mat: linear.try_inverse().map_or(linear, |inv| inv.transpose()),
+      transform,
+      mesh,
       distribution: Vec::new(),
       rng: rng_seed.map(|seed| {
         rand_pcg::Pcg32::from_seed(unsafe {
@@ -144,13 +151,6 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
     Ok(samp)
   }
 
-  fn transform_matrix(&self) -> nalgebra::Matrix4<f32> {
-    self
-      .mesh
-      .transform()
-      .unwrap_or(nalgebra::Matrix4::identity())
-  }
-
   /// Returns `(position, normal)`.
   pub fn sample(&mut self) -> (Point3<f32>, Vector3<f32>) {
     let face_index = self.sample_face_index();
@@ -166,27 +166,11 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
   }
 
   pub fn sample_face_index(&mut self) -> usize {
-    let rand: f32 = self.rand().random();
-    let cumulative_total = *self.distribution.last().expect("distribution is empty");
-    self.binary_search(rand * cumulative_total)
-  }
-
-  pub fn binary_search(&self, x: f32) -> usize {
-    let mut start = 0;
-    let mut end = self.distribution.len() - 1;
-    let mut index = 0;
-    while start <= end {
-      let mid = (start + end) / 2;
-      if mid == 0 || (self.distribution[mid - 1] <= x && self.distribution[mid] > x) {
-        index = mid;
-        break;
-      } else if x < self.distribution[mid] {
-        end = mid - 1;
-      } else {
-        start = mid + 1;
-      }
-    }
-    index
+    let x = self.rand().random::<f32>() * self.distribution.last().unwrap();
+    self
+      .distribution
+      .partition_point(|&d| d <= x)
+      .min(self.distribution.len() - 1)
   }
 
   /// Returns `(position, normal)`.
@@ -202,25 +186,52 @@ impl<'a, T> MeshSurfaceSampler<'a, T> {
 
     let position: Point3<f32> =
       (tri.a.scale(u) + tri.b.scale(v) + tri.c.scale(1. - (u + v))).into();
-    let transform = self.transform_matrix();
-    let transformed_position = transform.transform_point(&position);
+    let transformed_position = self.transform.transform_point(&position);
 
     let normal = self
       .mesh
       .get_normals(face_index, u, v)
       .unwrap_or_else(|| self.mesh.get_face(face_index).normal());
 
-    // Compute transformed normal by multiplying the normal vector with the inverse
-    // transpose of the 3x3 submatrix used to transform points.
-    let transform_3x3 = transform
-      .fixed_view::<3, 3>(0, 0)
-      .try_inverse()
-      .unwrap()
-      .transpose();
-    let transformed_normal = transform_3x3 * normal;
-
-    (transformed_position, transformed_normal)
+    (transformed_position, self.normal_mat * normal)
   }
+}
+
+#[test]
+fn samples_are_area_weighted() {
+  let tri = |x: f32, s: f32| {
+    [
+      Vector3::new(x, 0., 0.),
+      Vector3::new(x + s, 0., 0.),
+      Vector3::new(x, s, 0.),
+    ]
+  };
+  let histogram = |sizes: &[f32]| {
+    let verts: Vec<_> = sizes
+      .iter()
+      .enumerate()
+      .flat_map(|(i, &s)| tri(10. * i as f32, s))
+      .collect();
+    let mesh = Mesh {
+      vertices: &verts,
+      normals: None,
+      transform: None,
+    };
+    let mut samp = MeshSurfaceSampler::<()>::new(mesh, Some(7)).unwrap();
+    let mut counts = vec![0usize; sizes.len()];
+    for _ in 0..8000 {
+      counts[samp.sample_face_index()] += 1;
+    }
+    counts
+  };
+
+  let counts = histogram(&[1., 4., 1., 4.]);
+  for (&n, s) in counts.iter().zip([1., 16., 1., 16.]) {
+    let expected = 8000. * s / 34.;
+    assert!((n as f32 - expected).abs() < 0.15 * expected, "{counts:?}");
+  }
+  let counts = histogram(&[1., 1.]);
+  assert!(counts[0].abs_diff(counts[1]) < 400, "{counts:?}");
 }
 
 #[cfg(target_arch = "wasm32")]

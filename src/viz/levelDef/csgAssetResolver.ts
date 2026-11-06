@@ -12,14 +12,14 @@ import type { CsgResolveRuntime } from './csgResolveRuntime';
  * tree, building a new prototype, and swapping all live level objects that use
  * the asset to the new geometry.
  *
- * Multiple rapid requests are coalesced — only the latest queued request
- * actually performs a full resolve.
+ * Rapid requests for the same asset are coalesced — only its latest queued
+ * request actually performs a full resolve.
  */
 export class CsgAssetResolver {
-  private assetResolveRequestId = 0;
-  private assetResolveLatestQueuedRequestId = 0;
-  private assetResolveQueuedAssetId: string | null = null;
-  private assetResolveDrainPromise: Promise<void> | null = null;
+  private requestId = 0;
+  private latestRequestIdByAsset = new Map<string, number>();
+  private queuedAssetIds = new Set<string>();
+  private drainPromise: Promise<void> | null = null;
 
   /**
    * The level object currently being edited in CSG mode (may change between
@@ -39,7 +39,7 @@ export class CsgAssetResolver {
 
   /**
    * Queue a full re-resolve of the given CSG asset.
-   * Multiple rapid calls coalesce: only the most recent resolve actually runs.
+   * Rapid calls for the same asset coalesce: only the most recent resolve actually runs.
    *
    * @param editingLevelObj  The level object currently open in CSG edit mode
    *                         (null when called outside active edit mode).
@@ -51,28 +51,23 @@ export class CsgAssetResolver {
     editingLevelObj: LevelObject | null = null,
     selectedNodePath: string | null = null
   ): Promise<void> {
-    this.assetResolveQueuedAssetId = assetId;
+    this.queuedAssetIds.add(assetId);
+    this.latestRequestIdByAsset.set(assetId, ++this.requestId);
     this.editingLevelObj = editingLevelObj;
     this.selectedNodePath = selectedNodePath;
-
-    const requestId = ++this.assetResolveRequestId;
-    this.assetResolveLatestQueuedRequestId = requestId;
-
-    if (!this.assetResolveDrainPromise) {
-      this.assetResolveDrainPromise = this.drainQueue();
-    }
-
-    await this.assetResolveDrainPromise;
+    this.drainPromise ??= this.drainQueue();
+    await this.drainPromise;
   }
 
   private async drainQueue(): Promise<void> {
-    while (this.assetResolveQueuedAssetId) {
-      const assetId = this.assetResolveQueuedAssetId;
-      const requestId = this.assetResolveLatestQueuedRequestId;
-      this.assetResolveQueuedAssetId = null;
-      await this.performResolve(assetId, requestId);
+    try {
+      for (const assetId of this.queuedAssetIds) {
+        this.queuedAssetIds.delete(assetId);
+        await this.performResolve(assetId, this.latestRequestIdByAsset.get(assetId)!);
+      }
+    } finally {
+      this.drainPromise = null;
     }
-    this.assetResolveDrainPromise = null;
   }
 
   private async performResolve(assetId: string, requestId: number): Promise<void> {
@@ -103,8 +98,8 @@ export class CsgAssetResolver {
       return;
     }
 
-    // Bail if a newer request has been queued since we started.
-    if (requestId !== this.assetResolveLatestQueuedRequestId) return;
+    const superseded = () => requestId !== this.latestRequestIdByAsset.get(assetId);
+    if (superseded()) return;
 
     const meshes = meshesFromRunObjects(result.objects, LEVEL_PLACEHOLDER_MAT);
     if (meshes.length === 0) {
@@ -124,8 +119,7 @@ export class CsgAssetResolver {
     // ensures syncPhysics uses the new hull rather than a stale one.
     if (this.editor.resolveAssetPrototype) {
       await this.editor.resolveAssetPrototype(assetId, newPrototype);
-      // Re-check supersession after the await — a newer resolve may have queued.
-      if (requestId !== this.assetResolveLatestQueuedRequestId) return;
+      if (superseded()) return;
     } else {
       this.editor.prototypes.set(assetId, newPrototype);
     }

@@ -49,7 +49,7 @@ fn octaves_2d(
       };
       let o = Oct2 {
         scale,
-        off: seed_offset_2d(seed + i as u32),
+        off: seed_offset_2d(seed.wrapping_add(i as u32)),
         amp,
         period,
         period_f: period as f32,
@@ -295,7 +295,10 @@ fn accum_octave3(o: Oct3, xs: &[f32], ys: &[f32], zs: &[f32], out: &mut [f32]) {
       let (cx, cy) = (nx[l] as isize, ny[l] as isize);
       let (p00, p10) = (perm2(cx, cy), perm2(cx + 1, cy));
       let (p01, p11) = (perm2(cx, cy + 1), perm2(cx + 1, cy + 1));
-      let (q0, q1) = ((nz[l] & 0xff) as usize, ((nz[l] + 1) & 0xff) as usize);
+      let (q0, q1) = (
+        (nz[l] & 0xff) as usize,
+        (nz[l].wrapping_add(1) & 0xff) as usize,
+      );
       for (k, p) in [
         p00 ^ q0,
         p10 ^ q0,
@@ -347,7 +350,7 @@ pub fn fbm_3d_batch(
     .map(|i| {
       let o = Oct3 {
         scale: freq,
-        off: seed_offset_3d(seed + i as u32),
+        off: seed_offset_3d(seed.wrapping_add(i as u32)),
         amp,
       };
       freq *= lacunarity;

@@ -10,7 +10,7 @@ use crate::{
 };
 
 pub fn lerp_paths_impl(
-  _ctx: &EvalCtx,
+  ctx: &EvalCtx,
   _def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -29,12 +29,35 @@ pub fn lerp_paths_impl(
     .ok_or_else(|| ErrorStack::new("lerp_paths: `sample_count` must be an integer"))?
     as usize;
 
-  Ok(Value::Path(Rc::new(Path::lazy(Rc::new(LerpPath::new(
-    Rc::clone(path_a),
-    Rc::clone(path_b),
-    mix,
-    sample_count,
-  ))))))
+  let lerp = |a: &Rc<Path>, b: &Rc<Path>| {
+    Rc::new(Path::lazy(Rc::new(LerpPath::new(
+      Rc::clone(a),
+      Rc::clone(b),
+      mix,
+      sample_count,
+    ))))
+  };
+  let (subs_a, subs_b) = (path_a.subpaths(), path_b.subpaths());
+  if subs_a.len() == 1 && subs_b.len() == 1 {
+    return Ok(Value::Path(lerp(path_a, path_b)));
+  }
+  if subs_a.len() != subs_b.len() {
+    return Err(ErrorStack::new(format!(
+      "lerp_paths: subpath counts differ ({} vs {}); multi-subpath inputs are lerped pairwise",
+      subs_a.len(),
+      subs_b.len()
+    )));
+  }
+  let pairs = subs_a
+    .iter()
+    .zip(&subs_b)
+    .map(|(a, b)| lerp(a, b))
+    .collect();
+  Ok(Value::Path(Rc::new(Path::group_items(
+    pairs,
+    path_a.fill_rule.or(path_b.fill_rule),
+    ctx,
+  )?)))
 }
 
 pub fn critical_points_impl(

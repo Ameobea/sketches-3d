@@ -11,7 +11,11 @@ uniform vec2 pPxRange;
 uniform float pViewportHeight;
 uniform vec3 pAmbient;
 uniform vec3 pSunColor;
-uniform sampler2D pSunShadowMap;
+#ifdef SUN_SHADOW_COMPARE
+uniform highp sampler2DShadow pSunShadowMap;
+#else
+uniform highp sampler2D pSunShadowMap;
+#endif
 uniform mat4 pSunShadowMatrix;
 uniform float pSunShadowOn;
 
@@ -48,12 +52,15 @@ struct Particle {
 
 //__MOTION__
 
-#include <packing>
 float pSunVisibility(vec3 worldPos) {
   vec4 sc = pSunShadowMatrix * vec4(worldPos, 1.0);
   vec3 c = (sc.xyz / sc.w) * 0.5 + 0.5;
   if (pSunShadowOn < 0.5 || any(lessThan(c, vec3(0.0))) || any(greaterThan(c, vec3(1.0)))) return 1.0;
-  return step(c.z - 0.002, unpackRGBAToDepth(texture2D(pSunShadowMap, c.xy)));
+#ifdef SUN_SHADOW_COMPARE
+  return texture(pSunShadowMap, vec3(c.xy, c.z - 0.002));
+#else
+  return step(c.z - 0.002, texture(pSunShadowMap, c.xy).r);
+#endif
 }
 
 // Metres of free space between `wpos` and the first surface a HeightField saw past its plane.

@@ -95,7 +95,7 @@ export const processLoadedScene = async (
     {
       map: buildingTexture,
       metalness: 0.99,
-      uvTransform: new THREE.Matrix3().scale(1.8900348, 1.8900348),
+      uvTransform: new THREE.Matrix3().makeScale(1.8900348, 1.8900348),
     },
     {
       roughnessShader: `

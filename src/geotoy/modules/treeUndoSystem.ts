@@ -14,7 +14,7 @@ import type {
 import { cloneTransform3 } from 'src/geoscript/geotoyAPIClient';
 
 import { UndoSystem } from 'src/viz/util/undoSystem';
-import { createNode as opsCreateNode, deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
+import { deleteNode as opsDeleteNode, reparent as opsReparent } from './treeOps';
 
 export type GeotoyUndoEntry =
   | { type: 'transform'; id: string; instanceId: string; before: Transform3; after: Transform3 }
@@ -34,7 +34,8 @@ export type GeotoyUndoEntry =
     }
   | { type: 'addInstance'; nodeId: string; instance: Instance }
   | { type: 'removeInstance'; nodeId: string; instance: Instance; index: number }
-  | { type: 'createNode'; nodeDef: NodeDef; parentId: string; index: number }
+  // `nodes` is captured at undo time: post-creation source edits aren't undo-tracked
+  | { type: 'createNode'; id: string; parentId: string; index: number; nodes?: Record<string, NodeDef> }
   | {
       type: 'deleteSubtree';
       rootId: string;
@@ -61,7 +62,8 @@ export const captureSubtreeNodes = (tree: TreeDef, id: string): Record<string, N
     const cur = stack.pop()!;
     const node = tree.nodes[cur];
     if (!node) continue;
-    out[cur] = structuredClone(node);
+    // `tree` may be a $state proxy, which structuredClone rejects
+    out[cur] = JSON.parse(JSON.stringify(node));
     for (const cid of node.children) stack.push(cid);
   }
   return out;
@@ -153,27 +155,14 @@ export const applyGeotoyUndoEntry = (
     }
     case 'createNode': {
       if (direction === 'undo') {
-        if (!tree.nodes[entry.nodeDef.id]) return {};
-        opsDeleteNode(tree, entry.nodeDef.id);
+        if (!tree.nodes[entry.id]) return {};
+        entry.nodes = captureSubtreeNodes(tree, entry.id);
+        opsDeleteNode(tree, entry.id);
         return { selectAfter: tree.nodes[entry.parentId] ? entry.parentId : tree.rootId };
       }
-      if (tree.nodes[entry.nodeDef.id]) return {};
-      const def = entry.nodeDef;
-      opsCreateNode(tree, {
-        id: def.id,
-        name: def.name,
-        source: def.source,
-        parentId: entry.parentId,
-        index: entry.index,
-      });
-      // createNode seeds a single identity instance and no handles/disabled;
-      // carry the captured node's full placement state over.
-      const created = tree.nodes[def.id];
-      created.instances = structuredClone(def.instances);
-      if (def.handles) created.handles = structuredClone(def.handles);
-      if (def.controls) created.controls = structuredClone(def.controls);
-      if (def.disabled) created.disabled = true;
-      return { selectAfter: def.id };
+      if (tree.nodes[entry.id] || !entry.nodes) return {};
+      restoreSubtree(tree, entry.id, entry.nodes, entry.parentId, entry.index);
+      return { selectAfter: entry.id };
     }
     case 'deleteSubtree': {
       if (direction === 'undo') {

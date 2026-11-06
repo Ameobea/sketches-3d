@@ -396,8 +396,7 @@ pub(crate) fn bake_ao_impl(
         "bake_ao: refine={tol} is below the sampling noise floor at {samples} samples \
          (~{floor:.3}); using {floor:.3}.  Raise `samples` to refine finer."
       );
-      ctx.prints.borrow_mut().push(msg.clone());
-      (ctx.log_fn)(&msg);
+      ctx.push_print(msg);
     }
     let min_edge = match arg_refs[7].resolve(args, kwargs) {
       Value::Nil => diag * 0.01,

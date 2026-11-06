@@ -66,6 +66,8 @@ pub struct GeoscriptReplCtx {
   pub last_root_bindings: Option<Vec<(Sym, Value)>>,
   /// Value of the last top-level statement of the last successful eval.
   pub last_value: Option<Value>,
+  /// Fallback for meshes with no material and no script `set_default_material` in effect.
+  pub host_default_material: Option<Rc<Material>>,
 }
 
 impl Default for GeoscriptReplCtx {
@@ -77,6 +79,7 @@ impl Default for GeoscriptReplCtx {
       output_meshes: Vec::new(),
       last_root_bindings: None,
       last_value: None,
+      host_default_material: None,
     }
   }
 }
@@ -126,12 +129,14 @@ impl GeoscriptReplCtx {
       });
       self.output_meshes.push(OutputMesh {
         mesh: owned_mesh,
-        material: match &mesh_handle.material {
-          Some(mat) => match &**mat {
-            Material::External(name) => Some(name.clone()),
-          },
-          None => None,
-        },
+        material: mesh_handle
+          .material
+          .as_ref()
+          .or(rendered.default_material.as_ref())
+          .or(self.host_default_material.as_ref())
+          .map(|mat| match &**mat {
+            Material::External(name) => name.clone(),
+          }),
         source_module: rendered.source_module,
         mesh_id: rendered.mesh_id,
       });
@@ -265,7 +270,6 @@ pub fn geoscript_repl_eval(ctx: *mut GeoscriptReplCtx, root_module: Option<Strin
     ctx.last_result = Err(err);
     return;
   }
-  ctx.geo_ctx.prints.borrow_mut().clear();
   ctx.last_root_bindings = None;
   ctx.last_value = None;
   let ambient = ctx.geo_ctx.ambient_scope_for_current();
@@ -426,14 +430,8 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.output_meshes.clear();
   ctx.last_root_bindings = None;
   ctx.last_value = None;
-  ctx.geo_ctx.prints.borrow_mut().clear();
-
-  ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_textures.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
+  ctx.geo_ctx.clear_run_outputs();
+  ctx.geo_ctx.default_material.replace(None);
 
   // Eval-scoped trackers: clear in case the previous run was interrupted mid-eval.
   ctx.geo_ctx.modules_in_flight.borrow_mut().clear();
@@ -441,12 +439,12 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   *ctx.geo_ctx.current_module_exports.borrow_mut() = None;
   *ctx.geo_ctx.current_module_imports.borrow_mut() = None;
   *ctx.geo_ctx.current_module_gizmo_reads.borrow_mut() = None;
+  *ctx.geo_ctx.current_module_prints.borrow_mut() = None;
   ctx.geo_ctx.current_module_unnamed_gizmo_count.set(0);
   ctx.geo_ctx.current_module_read_settings.set(false);
   // Gizmo inputs are eval-scoped host state; the runner re-pushes them each run.
   ctx.geo_ctx.gizmo_values.borrow_mut().clear();
   ctx.geo_ctx.injected_texture_params.borrow_mut().clear();
-  ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
 
   ctx.geo_ctx.globals = Scope::default_globals(&ctx.geo_ctx.interned_symbols);
   *ctx.geo_ctx.ambient_scope.borrow_mut() = None;
@@ -458,8 +456,7 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   #[cfg(target_arch = "wasm32")]
   geoscript::reset_async_dep_bits();
 
-  *ctx.geo_ctx.sharp_angle_threshold_degrees.borrow_mut() = 45.8366;
-  *ctx.geo_ctx.default_curve_angle_degrees.borrow_mut() = 1.0;
+  ctx.geo_ctx.reset_ambient_settings();
 
   // TODO: drop `MeshHandle`s no longer referenced by either the const-eval
   // cache or the module-exports cache.
@@ -557,16 +554,9 @@ pub fn geoscript_repl_set_ambient_scope_from_sources(
   result?;
   ctx.geo_ctx.set_ambient_scope(scope);
 
-  // Renders fired inside prelude / `_globals` aren't part of the user-visible
-  // composition; drop them so they don't leak into the next eval.
-  ctx.geo_ctx.rendered_meshes.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_lights.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_paths.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_textures.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_gizmos.inner.borrow_mut().clear();
-  ctx.geo_ctx.rendered_controls.inner.borrow_mut().clear();
-  // Ambient discarded any replayed side effects; let them fire again in `_root`.
-  ctx.geo_ctx.replayed_this_run.borrow_mut().clear();
+  // Prelude / `_globals` outputs aren't part of the user-visible composition, and replayed
+  // side effects must fire again in `_root`.
+  ctx.geo_ctx.clear_run_outputs();
   *ctx.geo_ctx.last_ambient_hash.borrow_mut() = Some(new_hash);
 
   Ok(())
@@ -603,6 +593,7 @@ pub fn geoscript_repl_set_tab_ambient_scopes(
     for i in 0..tab_ids.len() {
       let tab_id = &tab_ids[i];
       geo.reset_rng_to_default();
+      geo.reset_ambient_settings();
       let prev_module = geo
         .current_module
         .borrow_mut()
@@ -630,15 +621,7 @@ pub fn geoscript_repl_set_tab_ambient_scopes(
   })();
   *geo.ambient_scope.borrow_mut() = prev_single;
 
-  // Prelude/`_globals` renders aren't part of the user-visible composition; drop them and
-  // let replayed side effects fire again during the eval proper.
-  geo.rendered_meshes.inner.borrow_mut().clear();
-  geo.rendered_lights.inner.borrow_mut().clear();
-  geo.rendered_paths.inner.borrow_mut().clear();
-  geo.rendered_textures.inner.borrow_mut().clear();
-  geo.rendered_gizmos.inner.borrow_mut().clear();
-  geo.rendered_controls.inner.borrow_mut().clear();
-  geo.replayed_this_run.borrow_mut().clear();
+  geo.clear_run_outputs();
 
   result
 }
@@ -805,16 +788,10 @@ pub fn geoscript_repl_get_rendered_mesh_material(
   mesh_ix: usize,
 ) -> String {
   let ctx = unsafe { &*ctx };
-  let mesh = &ctx.output_meshes[mesh_ix];
-  mesh
+  ctx.output_meshes[mesh_ix]
     .material
     .clone()
-    .unwrap_or_else(|| match &*ctx.geo_ctx.default_material.borrow() {
-      Some(mat) => match &**mat {
-        Material::External(name) => name.clone(),
-      },
-      None => String::new(),
-    })
+    .unwrap_or_default()
 }
 
 #[wasm_bindgen]
@@ -1382,10 +1359,7 @@ pub fn geoscript_repl_get_rendered_control(
 #[wasm_bindgen]
 pub fn geoscript_set_default_material(ctx: *mut GeoscriptReplCtx, material_name: Option<String>) {
   let ctx = unsafe { &mut *ctx };
-  ctx
-    .geo_ctx
-    .default_material
-    .replace(material_name.map(|material_name| Rc::new(Material::External(material_name))));
+  ctx.host_default_material = material_name.map(|name| Rc::new(Material::External(name)));
 }
 
 #[wasm_bindgen]
@@ -1407,10 +1381,7 @@ pub fn geoscript_set_materials(
   }
   ctx.geo_ctx.materials = new_materials;
   if ctx.geo_ctx.materials.len() == 1 {
-    ctx
-      .geo_ctx
-      .default_material
-      .replace(ctx.geo_ctx.materials.values().next().cloned());
+    ctx.host_default_material = ctx.geo_ctx.materials.values().next().cloned();
   }
   Ok(())
 }
@@ -1468,6 +1439,7 @@ mod tests {
       source_module: None,
       mesh_id: 0,
       export_attrs: Rc::from(Vec::new()),
+      default_material: None,
     });
     ctx.convert_rendered_meshes();
     ctx.output_meshes[0].mesh.vertices.len() / 3
@@ -2110,5 +2082,27 @@ mod tests {
     set_tab_ambients(p, &[("t", "k = 3")]);
     let json = eval_last_value(p, "k * 2", "t:_root");
     assert!(json.contains("6"), "{json}");
+  }
+
+  #[test]
+  fn default_material_applies_to_later_renders_and_resets_per_run() {
+    let mut ctx = GeoscriptReplCtx::default();
+    let p: *mut GeoscriptReplCtx = &mut ctx;
+    geoscript_set_default_material(p, Some("host".to_owned()));
+    geoscript_set_materials(p, vec!["host".to_owned(), "x".to_owned()]).unwrap();
+    let mut run = |src: &str| {
+      geoscript_repl_reset(p);
+      geoscript_repl_parse_program(p, src.to_owned(), None);
+      geoscript_repl_eval(p, None);
+      unsafe { (*p).last_result.as_ref().unwrap() };
+      (0..geoscript_repl_get_rendered_mesh_count(p))
+        .map(|i| geoscript_repl_get_rendered_mesh_material(p, i))
+        .collect::<Vec<_>>()
+    };
+    assert_eq!(
+      run("box(1) | render\nset_default_material('x')\nbox(2) | render"),
+      ["host", "x"]
+    );
+    assert_eq!(run("box(1) | render"), ["host"]);
   }
 }

@@ -156,9 +156,13 @@ pub fn get_async_dep_bits() -> u32 {
 #[grammar = "src/geoscript.pest"]
 pub struct GSParser;
 
+/// Closure frames. In a browser worker, V8's native stack limit (not the wasm shadow stack) cuts
+/// recursion off at ~330-370 frames with an opaque `RangeError`; this errors cleanly first.
+const MAX_CALL_DEPTH: u32 = 300;
+const CALL_DEPTH_EXCEEDED: &str = "Maximum call depth exceeded";
+
 lazy_static::lazy_static! {
   static ref PRATT_PARSER: PrattParser<Rule> = PrattParser::new()
-    .op(Op::infix(Rule::range_inclusive_op, Assoc::Left) | Op::infix(Rule::range_op, Assoc::Left))
     .op(Op::infix(Rule::or_op, Assoc::Left) | Op::infix(Rule::nullish_op, Assoc::Left))
     .op(Op::infix(Rule::and_op, Assoc::Left))
     .op(Op::infix(Rule::pipeline_op, Assoc::Left) | Op::infix(Rule::map_op, Assoc::Left))
@@ -169,6 +173,11 @@ lazy_static::lazy_static! {
         | Op::infix(Rule::lte_op, Assoc::Left)
         | Op::infix(Rule::gt_op, Assoc::Left)
         | Op::infix(Rule::gte_op, Assoc::Left)
+    )
+    .op(
+      Op::infix(Rule::range_inclusive_op, Assoc::Left)
+        | Op::infix(Rule::range_op, Assoc::Left)
+        | Op::postfix(Rule::open_range_op)
     )
     .op(
       Op::infix(Rule::add_op, Assoc::Left)
@@ -204,16 +213,23 @@ impl ErrorStack {
     }
   }
 
+  fn is_call_depth_exceeded(&self) -> bool {
+    self.errors.len() == 1 && self.errors[0].starts_with(CALL_DEPTH_EXCEEDED)
+  }
+
+  /// Call-depth errors stay one line rather than gaining a frame per recursive call.
   #[cold]
   pub fn wrap(mut self, msg: impl Into<String>) -> Self {
-    self.errors.push(msg.into());
+    if !self.is_call_depth_exceeded() {
+      self.errors.push(msg.into());
+    }
     self
   }
 
-  /// Attach a source location to this error. Preserves the innermost (first set) location.
+  /// Preserves the innermost (first set) location, except call-depth errors keep the outermost.
   #[cold]
   pub fn with_loc(mut self, line: u32, col: u32) -> Self {
-    if self.loc.is_none() {
+    if self.loc.is_none() || self.is_call_depth_exceeded() {
       self.loc = Some((line, col));
     }
     self
@@ -492,6 +508,38 @@ pub(crate) fn arg_is_side_effectful(value: &Value) -> bool {
   matches!(value, Value::Callable(callable) if callable.is_side_effectful())
 }
 
+fn builtin_reads_ctx_settings(name: &str) -> bool {
+  matches!(
+    name,
+    "tessellate_path"
+      | "embed_path"
+      | "fan_fill"
+      | "extrude_path"
+      | "offset_path"
+      | "discretize_path"
+      | "path_union"
+      | "path_intersect"
+      | "path_difference"
+      | "path_xor"
+      | "path_intersects"
+      | "compute_uvs"
+      | "compute_normals"
+      | "bake_ao"
+      | "simplify"
+      | "rasterize_path"
+      | "path_sdf"
+      | "path_uv"
+      | "fit_path"
+      | "simplify_path"
+      | "alpha_wrap_2d"
+      | "warp"
+      | "map"
+      | "extrude"
+      | "extrude_along_normals"
+      | "render_path"
+  )
+}
+
 impl Callable {
   pub fn is_side_effectful(&self) -> bool {
     match self {
@@ -553,23 +601,7 @@ impl Callable {
   pub fn reads_ctx_settings(&self) -> bool {
     match self {
       Callable::Builtin { fn_entry_ix, .. } => {
-        let name = fn_sigs().entries[*fn_entry_ix].0;
-        matches!(
-          name,
-          "tessellate_path"
-            | "embed_path"
-            | "fan_fill"
-            | "extrude_path"
-            | "offset_path"
-            | "discretize_path"
-            | "path_union"
-            | "path_intersect"
-            | "path_difference"
-            | "path_xor"
-            | "path_intersects"
-            | "compute_uvs"
-            | "compute_normals"
-        )
+        builtin_reads_ctx_settings(fn_sigs().entries[*fn_entry_ix].0)
       }
       Callable::PartiallyAppliedFn(paf) => paf.inner.reads_ctx_settings(),
       Callable::Closure(_) => true,
@@ -1448,6 +1480,7 @@ const CONST_EVAL_CACHE_MAX_BYTES: usize = 512 * 1024 * 1024;
 pub(crate) struct ConstEvalCacheHit {
   pub value: Value,
   pub rng_end_state: Option<Pcg32>,
+  pub prints: Vec<String>,
 }
 
 pub struct ConstEvalCacheEntry {
@@ -1459,6 +1492,8 @@ pub struct ConstEvalCacheEntry {
   /// Inputs whose addresses this entry's key names (see [`EvalCtx::memoize_control_builtin`]),
   /// held so a freed allocation can't be recycled under a still-live key.
   _pins: Vec<Value>,
+  /// Diagnostics the computation printed, re-emitted on a hit.
+  prints: Vec<String>,
 }
 
 pub struct ConstEvalCache {
@@ -1571,29 +1606,25 @@ impl ConstEvalCache {
 
   pub(crate) fn get(&mut self, key: u128) -> Option<ConstEvalCacheHit> {
     let stamp = self.tick();
-    let (value, rng_end_state) = {
-      let entry = self.entries.get_mut(&key)?;
-      entry.last_access = stamp;
-      (entry.value.clone(), entry.rng_end_state.clone())
+    let entry = self.entries.get_mut(&key)?;
+    entry.last_access = stamp;
+    let hit = ConstEvalCacheHit {
+      value: entry.value.clone(),
+      rng_end_state: entry.rng_end_state.clone(),
+      prints: entry.prints.clone(),
     };
     self.access_queue.push_back((key, stamp));
     self.maybe_compact();
-    Some(ConstEvalCacheHit {
-      value,
-      rng_end_state,
-    })
+    Some(hit)
   }
 
-  pub(crate) fn insert(&mut self, key: u128, value: Value, rng_end_state: Option<Pcg32>) {
-    self.insert_pinned(key, value, rng_end_state, Vec::new())
-  }
-
-  pub(crate) fn insert_pinned(
+  pub(crate) fn insert(
     &mut self,
     key: u128,
     value: Value,
     rng_end_state: Option<Pcg32>,
     pins: Vec<Value>,
+    prints: Vec<String>,
   ) {
     if self.max_entries == 0 {
       return;
@@ -1611,6 +1642,7 @@ impl ConstEvalCache {
         entry.rng_end_state = rng_end_state;
         entry.last_access = stamp;
         entry._pins = pins;
+        entry.prints = prints;
         self.release(&stale);
       }
       None => {
@@ -1622,6 +1654,7 @@ impl ConstEvalCache {
             last_access: stamp,
             retained_ids,
             _pins: pins,
+            prints,
           },
         );
       }
@@ -1963,13 +1996,11 @@ impl ArgType {
       }
     }
 
-    // check if both int and float match
-    if valid_types & (ArgType::Int.as_bitflags() | ArgType::Float.as_bitflags()) != 0 {
-      types.push(ArgType::Numeric);
-    } else if valid_types & ArgType::Int.as_bitflags() != 0 {
-      types.push(ArgType::Int);
-    } else if valid_types & ArgType::Float.as_bitflags() != 0 {
-      types.push(ArgType::Float);
+    match valid_types & NUMERIC_FLAG {
+      NUMERIC_FLAG => types.push(ArgType::Numeric),
+      INT_FLAG => types.push(ArgType::Int),
+      FLOAT_FLAG => types.push(ArgType::Float),
+      _ => {}
     }
 
     types
@@ -2342,6 +2373,8 @@ pub struct RenderedMesh {
   pub mesh_id: u32,
   /// Custom attribute names from `render(attrs=)`; well-known attrs export regardless.
   pub export_attrs: Rc<[String]>,
+  /// `set_default_material` in effect at `render()` time.
+  pub default_material: Option<Rc<Material>>,
 }
 
 /// `source_module` serves cross-run cache dedupe (when two cached entries both
@@ -2741,6 +2774,7 @@ pub struct ModuleExportsCacheEntry {
   pub own_textures: Vec<RenderedTexture>,
   pub own_gizmos: Vec<RenderedGizmo>,
   pub own_controls: Vec<RenderedControl>,
+  pub own_prints: Vec<String>,
   pub rng_state_at_start: Pcg32,
   pub rng_state_at_end: Pcg32,
   /// Ambient (sharp, curve) threshold values when the body started / finished evaluating.
@@ -2749,6 +2783,8 @@ pub struct ModuleExportsCacheEntry {
   /// `rng_state_at_end`.
   pub settings_at_start: (f32, f32),
   pub settings_at_end: (f32, f32),
+  pub default_material_at_start: Option<Rc<Material>>,
+  pub default_material_at_end: Option<Rc<Material>>,
   /// Whether the body (or a fold it triggered) consumed the ambient settings.
   pub read_settings: bool,
   pub direct_imports: Vec<(String, u64)>,
@@ -2763,9 +2799,10 @@ const MODULE_CACHE_MAX_ENTRIES: usize = 200;
 
 pub struct TabAmbient {
   pub scope: Rc<Scope>,
-  /// RNG state after this tab's ambient sources evaluated; the start-of-stream for the
-  /// tab's root module.
+  /// RNG and (sharp, curve) threshold state after this tab's ambient sources evaluated; the
+  /// starting state for the tab's root module.
   pub rng_after: Pcg32,
+  pub settings_after: (f32, f32),
 }
 
 pub struct EvalCtx {
@@ -2838,6 +2875,7 @@ pub struct EvalCtx {
   /// Monotonic id counter for renders/lights/paths. Preserved across `reset` so
   /// fresh pushes can't collide with cached-replay ids.
   pub next_render_id: Cell<u32>,
+  pub(crate) call_depth: Cell<u32>,
   /// Host-injected gizmo values: `module name -> handleId -> Value` (Vec3 or Mat4).
   /// Replaces the entire map per run (set via the wasm boundary before eval); a
   /// missing entry means the call falls back to its `default`/zero.
@@ -2849,6 +2887,9 @@ pub struct EvalCtx {
   /// Handle ids read by the currently-evaluating module body, accumulated for the
   /// cache entry's `gizmo_reads`. `None` outside module eval.
   pub current_module_gizmo_reads: RefCell<Option<FxHashSet<String>>>,
+  /// Prints emitted by the currently-evaluating module body itself (not replayed imports), for
+  /// the cache entry's `own_prints`. `None` outside module eval.
+  pub current_module_prints: RefCell<Option<Vec<String>>>,
   /// Whether the currently-evaluating module body consumed the ambient threshold settings.
   /// Saved/restored per module eval; feeds the cache entry's `read_settings`.
   pub current_module_read_settings: Cell<bool>,
@@ -2917,9 +2958,11 @@ impl Default for EvalCtx {
       replayed_this_run: RefCell::new(FxHashSet::default()),
       last_ambient_hash: RefCell::new(None),
       next_render_id: Cell::new(1),
+      call_depth: Cell::new(0),
       gizmo_values: RefCell::new(FxHashMap::default()),
       injected_texture_params: RefCell::new(FxHashMap::default()),
       current_module_gizmo_reads: RefCell::new(None),
+      current_module_prints: RefCell::new(None),
       current_module_read_settings: Cell::new(false),
       current_module_unnamed_gizmo_count: Cell::new(0),
       prints: RefCell::new(Vec::new()),
@@ -3509,20 +3552,20 @@ impl EvalCtx {
     // of encoding/decoding intermediate meshes
     if let Callable::Builtin { fn_entry_ix, .. } = &**callable {
       let builtin_name = fn_sigs().entries[*fn_entry_ix].0;
-      if matches!(builtin_name, "union" | "difference" | "intersect") {
-        let combined_iter = ChainSeq::new(
-          self,
+      let chained = || ChainSeq {
+        inner: [
           Rc::new(EagerSeq {
-            inner: Rc::new(vec![initial_val, Value::Sequence(seq)]),
-          }),
-        )
-        .map_err(|err| {
-          err.wrap("Internal error creating chained sequence when folding mesh boolean op")
-        })?;
+            inner: Rc::new(vec![initial_val.clone()]),
+          }) as Rc<dyn Sequence>,
+          Rc::clone(&seq),
+        ]
+        .into(),
+      };
+      if matches!(builtin_name, "union" | "difference" | "intersect") {
         return eval_mesh_boolean(
           1,
           &[ArgRef::Positional(0), ArgRef::Positional(1)],
-          &[Value::Sequence(Rc::new(combined_iter))],
+          &[Value::Sequence(Rc::new(chained()))],
           EMPTY_KWARGS,
           self,
           MeshBooleanOp::from_str(builtin_name),
@@ -3531,16 +3574,7 @@ impl EvalCtx {
         .map_err(|err| err.wrap("Error invoking mesh boolean op in `fold`"));
       }
       if builtin_name == "path_union" {
-        let combined_iter = ChainSeq::new(
-          self,
-          Rc::new(EagerSeq {
-            inner: Rc::new(vec![initial_val, Value::Sequence(seq)]),
-          }),
-        )
-        .map_err(|err| {
-          err.wrap("Internal error creating chained sequence when folding `path_union`")
-        })?;
-        return builtins::path_boolean::path_union_seq(self, Rc::new(combined_iter))
+        return builtins::path_boolean::path_union_seq(self, Rc::new(chained()))
           .map_err(|err| err.wrap("Error invoking `path_union` in `fold`"));
       }
     }
@@ -3743,7 +3777,24 @@ impl EvalCtx {
           any_args_valid = true;
           arg.clone()
         }
-        ArgumentSource::Default => self.eval_expr_env(param.default_val.as_ref().unwrap(), env)?,
+        ArgumentSource::Default => {
+          match (
+            param.type_hint,
+            self.eval_expr_env(param.default_val.as_ref().unwrap(), env)?,
+          ) {
+            (Some(ArgType::Float), Value::Int(i)) => Value::Float(i as f32),
+            (Some(hint), val) => {
+              hint.validate_val(&val).map_err(|err| {
+                err.wrap(format!(
+                  "Type error for default of closure arg `{:?}`",
+                  param.ident.debug(self)
+                ))
+              })?;
+              val
+            }
+            (None, val) => val,
+          }
+        }
         ArgumentSource::Missing => {
           invalid_arg_ix.get_or_insert(param_ix);
           continue;
@@ -3836,13 +3887,22 @@ impl EvalCtx {
       captures: &closure.captures,
       self_ref: callable,
     };
+    let depth = self.call_depth.get();
+    if depth >= MAX_CALL_DEPTH {
+      return Err(ErrorStack::new(format!(
+        "{CALL_DEPTH_EXCEEDED} ({MAX_CALL_DEPTH}); is there unbounded recursion?"
+      )));
+    }
+    self.call_depth.set(depth + 1);
     // fast path for the dominant single-expression body shape; general bodies go through
     // the shared statement driver
     let out = if let [Statement::Expr(expr)] = &closure.body.0[..] {
-      self.eval_expr_env(expr, &env)?
+      self.eval_expr_env(expr, &env)
     } else {
-      self.eval_statements(&closure.body.0, &env)?
+      self.eval_statements(&closure.body.0, &env)
     };
+    self.call_depth.set(depth);
+    let out = out?;
     if let Some(return_type_hint) = closure.return_type_hint {
       return_type_hint.validate_val(&out)?;
     }
@@ -4133,13 +4193,14 @@ impl EvalCtx {
     *self.ambient_scope.borrow_mut() = None;
   }
 
-  /// Records the tab's ambient scope along with the RNG state its construction ended on.
+  /// Records the tab's ambient scope along with the RNG/settings state its construction ended on.
   pub fn install_tab_ambient(&self, tab_id: &str, scope: Scope) {
     self.ambient_scopes.borrow_mut().insert(
       tab_id.to_owned(),
       TabAmbient {
         scope: Rc::new(scope),
         rng_after: self.rng_state(),
+        settings_after: self.ambient_settings(),
       },
     );
   }
@@ -4227,11 +4288,12 @@ impl EvalCtx {
     // An input the cache doesn't already hold is rebuilt from scratch next run, at a new
     // address — the entry could never hit, and would only push out ones that can.
     if self.const_eval_cache.borrow().holds(addr) {
-      self.const_eval_cache.borrow_mut().insert_pinned(
+      self.const_eval_cache.borrow_mut().insert(
         key,
         value.clone(),
         None,
         vec![input.clone()],
+        Vec::new(),
       );
     }
     Ok(value)
@@ -4283,10 +4345,39 @@ impl EvalCtx {
     *self.sharp_angle_threshold_degrees.borrow()
   }
 
+  pub fn push_print(&self, msg: String) {
+    (self.log_fn)(&msg);
+    if let Some(own) = self.current_module_prints.borrow_mut().as_mut() {
+      own.push(msg.clone());
+    }
+    self.prints.borrow_mut().push(msg);
+  }
+
   /// Records that the current computation consumed the ambient settings (also called by the
   /// const-eval cache when a fold's key depends on them, since a cache hit skips the impl read).
   pub fn mark_settings_read(&self) {
     self.current_module_read_settings.set(true);
+  }
+
+  pub fn set_ambient_settings(&self, (sharp, curve): (f32, f32)) {
+    *self.sharp_angle_threshold_degrees.borrow_mut() = sharp;
+    *self.default_curve_angle_degrees.borrow_mut() = curve;
+  }
+
+  pub fn reset_ambient_settings(&self) {
+    self.set_ambient_settings((45.8366, 1.0));
+  }
+
+  /// Drops every per-run output buffer (prints, rendered outputs) and the replayed-module set.
+  pub fn clear_run_outputs(&self) {
+    self.prints.borrow_mut().clear();
+    self.rendered_meshes.inner.borrow_mut().clear();
+    self.rendered_lights.inner.borrow_mut().clear();
+    self.rendered_paths.inner.borrow_mut().clear();
+    self.rendered_textures.inner.borrow_mut().clear();
+    self.rendered_gizmos.inner.borrow_mut().clear();
+    self.rendered_controls.inner.borrow_mut().clear();
+    self.replayed_this_run.borrow_mut().clear();
   }
 
   fn ambient_settings(&self) -> (f32, f32) {
@@ -4607,20 +4698,27 @@ impl EvalCtx {
     // is why the recursive call in the cache-validation loop needs no further qualification.
     let module_name: &str = &qualified;
 
-    // Tab-root modules run on their own tab's RNG stream (the state its ambient
-    // construction ended on) and restore the importer's stream afterward, so a tab's
-    // draws are independent of which other tabs the run happens to include.
-    let saved_rng = module_name.strip_suffix(":_root").map(|prefix| {
-      let saved = self.rng_state();
+    // Tab-root modules run on their own tab's RNG stream and thresholds (the state its ambient
+    // construction ended on) and restore the importer's afterward, so a tab's output is
+    // independent of which other tabs the run happens to include.
+    let saved = module_name.strip_suffix(":_root").map(|prefix| {
+      let saved = (self.rng_state(), self.ambient_settings());
       match self.ambient_scopes.borrow().get(prefix) {
-        Some(amb) => self.set_rng_state(amb.rng_after.clone()),
-        None => self.reset_rng_to_default(),
+        Some(amb) => {
+          self.set_rng_state(amb.rng_after.clone());
+          self.set_ambient_settings(amb.settings_after);
+        }
+        None => {
+          self.reset_rng_to_default();
+          self.reset_ambient_settings();
+        }
       }
       saved
     });
     let result = self.resolve_qualified_module(module_name, as_written);
-    if let Some(saved) = saved_rng {
-      self.set_rng_state(saved);
+    if let Some((rng, settings)) = saved {
+      self.set_rng_state(rng);
+      self.set_ambient_settings(settings);
     }
     result
   }
@@ -4696,8 +4794,9 @@ impl EvalCtx {
       // Bodies that consumed the ambient thresholds require the current values to match what
       // they originally saw; settings-free bodies hit unconditionally.
       let settings_ok = !entry.read_settings || self.ambient_settings() == entry.settings_at_start;
+      let material_ok = *self.default_material.borrow() == entry.default_material_at_start;
 
-      if !stale && rng_ok && gizmos_ok && settings_ok {
+      if !stale && rng_ok && gizmos_ok && settings_ok && material_ok {
         for mesh in &entry.own_renders {
           self.rendered_meshes.push(mesh.clone());
         }
@@ -4716,11 +4815,20 @@ impl EvalCtx {
         for control in &entry.own_controls {
           self.push_rendered_control(control.clone());
         }
+        for msg in &entry.own_prints {
+          (self.log_fn)(msg);
+        }
+        self
+          .prints
+          .borrow_mut()
+          .extend(entry.own_prints.iter().cloned());
         self.set_rng_state(entry.rng_state_at_end.clone());
         // Replay the body's outgoing threshold state so its own setter calls (not part of the
         // recorded render side effects) still take hold for the rest of the run.
-        *self.sharp_angle_threshold_degrees.borrow_mut() = entry.settings_at_end.0;
-        *self.default_curve_angle_degrees.borrow_mut() = entry.settings_at_end.1;
+        self.set_ambient_settings(entry.settings_at_end);
+        self
+          .default_material
+          .replace(entry.default_material_at_end.clone());
         #[cfg(target_arch = "wasm32")]
         or_async_dep_bit(entry.own_async_deps_bitmask);
 
@@ -4789,6 +4897,7 @@ impl EvalCtx {
       prev_module: Option<String>,
       prev_imports: Option<Vec<(String, u64)>>,
       prev_gizmo_reads: Option<FxHashSet<String>>,
+      prev_prints: Option<Vec<String>>,
       prev_unnamed_gizmo_count: u32,
       prev_read_settings: bool,
     }
@@ -4798,6 +4907,7 @@ impl EvalCtx {
         *self.ctx.current_module.borrow_mut() = self.prev_module.take();
         *self.ctx.current_module_imports.borrow_mut() = self.prev_imports.take();
         *self.ctx.current_module_gizmo_reads.borrow_mut() = self.prev_gizmo_reads.take();
+        *self.ctx.current_module_prints.borrow_mut() = self.prev_prints.take();
         self
           .ctx
           .current_module_unnamed_gizmo_count
@@ -4823,12 +4933,14 @@ impl EvalCtx {
         .current_module_gizmo_reads
         .borrow_mut()
         .replace(FxHashSet::default()),
+      prev_prints: self.current_module_prints.borrow_mut().replace(Vec::new()),
       prev_unnamed_gizmo_count: self.current_module_unnamed_gizmo_count.replace(0),
       prev_read_settings: self.current_module_read_settings.replace(false),
     };
 
     let rng_at_start = self.rng_state();
     let settings_at_start = self.ambient_settings();
+    let default_material_at_start = self.default_material.borrow().clone();
 
     // Snapshot side-effect buffers BEFORE optimize: fold-time-executed `input_*`
     // statements push their controls during `optimize_ast`, and those must land in the
@@ -4970,6 +5082,11 @@ impl EvalCtx {
         (h, hash)
       })
       .collect();
+    let own_prints = self
+      .current_module_prints
+      .borrow_mut()
+      .take()
+      .unwrap_or_default();
     let rng_at_end = self.rng_state();
     let settings_at_end = self.ambient_settings();
     let read_settings = self.current_module_read_settings.get();
@@ -5000,10 +5117,13 @@ impl EvalCtx {
       own_textures,
       own_gizmos,
       own_controls,
+      own_prints,
       rng_state_at_start: rng_at_start,
       rng_state_at_end: rng_at_end,
       settings_at_start,
       settings_at_end,
+      default_material_at_start,
+      default_material_at_end: self.default_material.borrow().clone(),
       read_settings,
       direct_imports,
       gizmo_reads,
@@ -5621,6 +5741,14 @@ const PARSER_PARITY_CASES: &[(&str, ParseOutcome)] = &[
   ("{ [1 + 2]: 3, a: 4 }", ParseOutcome::Ok(1)),
   ("{ [k]: 1, *rest }", ParseOutcome::Ok(1)),
   ("{ []: 1 }", ParseOutcome::Err("")),
+  // Closure params
+  ("f = |a, b| a", ParseOutcome::Ok(1)),
+  ("f = |a b| a", ParseOutcome::Err("")),
+  ("f = |x = if c { 1 } else { 2 }| x", ParseOutcome::Ok(1)),
+  // Ranges and escapes
+  ("0..n-1 | f", ParseOutcome::Ok(1)),
+  ("a.. | take(3)", ParseOutcome::Ok(1)),
+  ("x = \"a\\n\\t\\\\b\"", ParseOutcome::Ok(1)),
 ];
 
 #[cfg(test)]
@@ -6360,9 +6488,23 @@ a = a | sum
 b = b | sum
 c = c | sum
 d = d | sum
+
+e = 0..end-2 | sum
+f = start..3 | sum
+g = 1 + 1..end | sum
+h = start.. | take(3) | sum
+i = 0..=end-2 | sum
+j = 0.. -> |x| { x * 2 } | take(2) | sum
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
+  for (name, expected) in [("e", 3), ("f", 3), ("g", 9), ("h", 3), ("i", 6), ("j", 2)] {
+    assert_eq!(
+      ctx.get_global(name).unwrap().as_int(),
+      Some(expected),
+      "{name}"
+    );
+  }
 
   let a = &ctx.get_global("a").unwrap();
   let a = a.as_int().expect("Expected result to be an Int");
@@ -7098,6 +7240,7 @@ c = "'as\"df'"
 a = "asdf"
 b = '"as"df"'
 d = 'as\'df'
+e = "a\nb\t\\"
 "#;
 
   let ctx = parse_and_eval_program(src).unwrap();
@@ -7118,6 +7261,7 @@ d = 'as\'df'
   assert_eq!(b, "\"as\"df\"");
   assert_eq!(c, "'as\"df'");
   assert_eq!(d, "as'df");
+  assert_eq!(ctx.get_global("e").unwrap().as_str().unwrap(), "a\nb\t\\");
 }
 
 #[test]
@@ -8619,18 +8763,25 @@ render(m)
 }
 
 #[test]
-fn test_extrude_path_closed_errors() {
+fn test_extrude_path_closed_wraps() {
   let src = r#"
+up = vec3(0, 1, 0)
 p = path() | move(0, 0) | line(1, 0) | line(1, 1) | line(0, 1) | close_all
-m = extrude_path(p, up=vec3(0, 1, 0))
-render(m)
+render(extrude_path(p, up=up))
+pts = [vec2(0, 0), vec2(1, 0), vec2(1, 1), vec2(0, 1)]
+render(extrude_path(catmull_rom(pts, closed=true), up=up, sample_count=12))
 "#;
 
-  let err = parse_and_eval_program(src).expect_err("expected closed-path error");
-  assert!(
-    format!("{err:?}").contains("closed"),
-    "expected error to mention closed; got: {err:?}"
-  );
+  let ctx = parse_and_eval_program(src).unwrap();
+  let rendered = ctx.rendered_meshes.into_inner();
+  assert_eq!(rendered.len(), 2);
+  for rendered in rendered {
+    let mesh = &rendered.mesh.mesh;
+    assert_eq!(mesh.faces.len(), mesh.vertices.len());
+    assert!(mesh.edges.values().all(|e| e.faces.len() <= 2));
+    let boundary = mesh.edges.values().filter(|e| e.faces.len() == 1).count();
+    assert_eq!(boundary, mesh.faces.len());
+  }
 }
 
 #[test]
@@ -8809,10 +8960,13 @@ fn test_random_module_cache_requires_matching_rng_state() {
     own_textures: Vec::new(),
     own_gizmos: Vec::new(),
     own_controls: Vec::new(),
+    own_prints: Vec::new(),
     rng_state_at_start: rng_start,
     rng_state_at_end: rng_end,
     settings_at_start: (45.8366, 1.0),
     settings_at_end: (45.8366, 1.0),
+    default_material_at_start: None,
+    default_material_at_end: None,
     read_settings: false,
     direct_imports: Vec::new(),
     gizmo_reads: Vec::new(),
@@ -8891,6 +9045,125 @@ fn test_module_cache_validates_threshold_reads() {
 
 /// A module that never consumes the ambient settings stays cached across runs with different
 /// threshold values at its import point.
+/// Source-text scan: any builtin whose impl reaches a ctx-settings accessor (through same-crate
+/// helper fns, matched by name) must be in `builtin_reads_ctx_settings`, or folds of it would
+/// be cached without the thresholds in their key.
+#[test]
+fn test_reads_ctx_settings_covers_accessor_callers() {
+  let mut src = String::new();
+  let mut dirs = vec![std::path::PathBuf::from(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/src"
+  ))];
+  while let Some(dir) = dirs.pop() {
+    for entry in std::fs::read_dir(dir).unwrap() {
+      let path = entry.unwrap().path();
+      if path.is_dir() {
+        dirs.push(path);
+      } else if path.extension().is_some_and(|e| e == "rs") {
+        src += &std::fs::read_to_string(path).unwrap();
+      }
+    }
+  }
+
+  let mut regions: Vec<(String, String)> = Vec::new();
+  for line in src.lines() {
+    let t = line.trim_start();
+    let fn_name = t
+      .strip_prefix("pub(crate) fn ")
+      .or_else(|| t.strip_prefix("pub fn "))
+      .or_else(|| t.strip_prefix("fn "))
+      .map(|r| {
+        r.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+          .next()
+          .unwrap()
+          .to_owned()
+      });
+    let builtin = t
+      .strip_prefix('"')
+      .filter(|r| r.contains("=> builtin_fn!("))
+      .map(|r| format!("\"{}", &r[..r.find('"').unwrap()]));
+    match fn_name.or(builtin) {
+      Some(name) => regions.push((name, String::new())),
+      None => {
+        if let Some((_, body)) = regions.last_mut() {
+          *body += line;
+          *body += "\n";
+        }
+      }
+    }
+  }
+
+  let calls = |body: &str, name: &str| {
+    body.match_indices(&format!("{name}(")).any(|(i, _)| {
+      !body[..i]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_' || c == '"')
+    })
+  };
+  let mut readers: FxHashSet<String> = [
+    "read_sharp_angle_threshold_degrees",
+    "resolve_curve_angle_degrees",
+  ]
+  .into_iter()
+  .map(String::from)
+  .collect();
+  let mut defs: FxHashMap<&str, usize> = FxHashMap::default();
+  for (name, _) in &regions {
+    *defs.entry(name).or_default() += 1;
+  }
+  // Generic helper names (`new`, `eval`, ...) collide across impls; only propagate through
+  // uniquely-named fns, and only a few hops deep.
+  for _ in 0..4 {
+    let new: Vec<String> = regions
+      .iter()
+      .filter(|(name, body)| {
+        !readers.contains(name)
+          && (name.starts_with('"') || defs[name.as_str()] == 1)
+          && readers.iter().any(|r| calls(body, r))
+      })
+      .map(|(name, _)| name.clone())
+      .collect();
+    readers.extend(new);
+  }
+
+  let mut missing: Vec<&str> = readers
+    .iter()
+    .filter_map(|r| r.strip_prefix('"'))
+    .filter(|name| !builtin_reads_ctx_settings(name))
+    .collect();
+  missing.sort();
+  assert!(
+    missing.is_empty(),
+    "missing from `builtin_reads_ctx_settings`: {missing:?}"
+  );
+}
+
+#[test]
+fn test_call_depth_guard() {
+  for src in [
+    "f = |x| f(x + 1)\n\nf(0)",
+    "f = |x| [x] | map(|y| f(y + 1)) | collect\n\nf(0)",
+  ] {
+    let err = format!("{}", parse_and_eval_program(src).err().unwrap());
+    assert!(
+      err.starts_with("at line 3") && err.contains("Maximum call depth"),
+      "{err}"
+    );
+    assert!(err.lines().count() <= 2, "{err}");
+  }
+  let src = format!(
+    "g = |x| if x > 0 {{ g(x - 1) + 1 }} else {{ 0 }}\nx = g({})",
+    MAX_CALL_DEPTH - 10
+  );
+  let ctx = parse_and_eval_program(src).unwrap();
+  assert_eq!(
+    ctx.get_global("x").unwrap().as_int(),
+    Some(MAX_CALL_DEPTH as i64 - 10)
+  );
+}
+
 #[test]
 fn test_module_cache_retained_when_settings_unread() {
   let ctx = EvalCtx::default();
@@ -9075,6 +9348,9 @@ fn test_unnamed_gizmo_positional_ids() {
   .unwrap();
   assert_eq!(ctx.get_global("ra").unwrap().as_vec3().unwrap().x, 1.);
   assert_eq!(ctx.get_global("rb").unwrap().as_vec3().unwrap().x, 2.);
+
+  assert!(parse_and_eval_program("0..2 -> || { gizmo() } | collect").is_err());
+  assert!(parse_and_eval_program("0..2 -> || { gizmo('g') } | collect").is_ok());
 }
 
 #[test]
@@ -9860,10 +10136,13 @@ fn test_cached_cycle_validation_walk_errors() {
       own_textures: Vec::new(),
       own_gizmos: Vec::new(),
       own_controls: Vec::new(),
+      own_prints: Vec::new(),
       rng_state_at_start: rng.clone(),
       rng_state_at_end: rng.clone(),
       settings_at_start: (45.8366, 1.0),
       settings_at_end: (45.8366, 1.0),
+      default_material_at_start: None,
+      default_material_at_end: None,
       read_settings: false,
       direct_imports: vec![(dep.0.to_owned(), dep.1)],
       gizmo_reads: Vec::new(),
@@ -9969,4 +10248,88 @@ fn test_parse_without_prelude_resets_source_map_offset() {
 
   parse_program_maybe_with_prelude(&ctx, "x = 1".to_string(), false).unwrap();
   assert_eq!(ctx.source_map.borrow().prelude_line_count, 0);
+}
+
+#[test]
+fn test_closure_default_hint_checked() {
+  let eval = |src: &str| {
+    let ctx = parse_and_eval_program(src)?;
+    Ok::<_, ErrorStack>(ctx.get_global("y").unwrap())
+  };
+  for src in [
+    "f = |x: int = 1.5| x + 1\ny = f()",
+    "f = |x: vec3 = 1| normalize(x)\ny = f()",
+  ] {
+    let err = eval(src).unwrap_err();
+    assert!(
+      format!("{err}").contains("Type error for default"),
+      "{src}: {err}"
+    );
+  }
+  assert!(matches!(
+    eval("f = |x: float = 1| -x\ny = f()").unwrap(),
+    Value::Float(-1.)
+  ));
+}
+
+#[test]
+fn test_keyword_prefixed_identifiers() {
+  let ctx = parse_and_eval_program(
+    "trueish = 1\nnil_x = 2\nexported = 3\nreturned = 4\nbreakpoint = 5\niffy = 6\nsum = trueish \
+     + nil_x + exported + returned + breakpoint + iffy",
+  )
+  .unwrap();
+  assert_eq!(ctx.get_global("sum").unwrap().as_int(), Some(21));
+  assert!(ctx.get_global("ed").is_none());
+}
+
+#[test]
+fn test_shorthand_closure_body_ends_at_semicolon() {
+  let ctx =
+    parse_and_eval_program("g = |a| a + 1; y = g(1)\nf = |x| { h = || x; h() }\nz = f(7)").unwrap();
+  assert_eq!(ctx.get_global("y").unwrap().as_int(), Some(2));
+  assert_eq!(ctx.get_global("z").unwrap().as_int(), Some(7));
+}
+
+#[test]
+fn test_every_builtin_def_has_impl() {
+  for (name, _) in fn_sigs().entries.iter() {
+    assert!(
+      builtins::BUILTIN_FN_IMPLS.contains_key(name),
+      "`{name}` has no impl"
+    );
+  }
+  let ctx = parse_and_eval_program("a = xor(true, false)\nb = xor(true, true)").unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_bool(), Some(true));
+  assert_eq!(ctx.get_global("b").unwrap().as_bool(), Some(false));
+}
+
+#[test]
+fn test_rand_degenerate_ranges() {
+  let ctx = parse_and_eval_program(
+    "a = randf(2.5, 2.5)\nb = srandf(1, 2.5, 2.5)\nc = randv(vec3(0, 0, 0), vec3(1, 0, 1))\nd = \
+     srandv(1, vec3(0, 3, 0), vec3(1, 3, 1))",
+  )
+  .unwrap();
+  assert_eq!(ctx.get_global("a").unwrap().as_float(), Some(2.5));
+  assert_eq!(ctx.get_global("b").unwrap().as_float(), Some(2.5));
+  assert_eq!(ctx.get_global("c").unwrap().as_vec3().unwrap().y, 0.);
+  assert_eq!(ctx.get_global("d").unwrap().as_vec3().unwrap().y, 3.);
+  assert!(parse_and_eval_program("a = randf(2, 1)").is_err());
+}
+
+#[test]
+fn test_list_from_bitflags_numeric_kinds() {
+  assert!(matches!(
+    ArgType::list_from_bitflags(INT_FLAG)[..],
+    [ArgType::Int]
+  ));
+  assert!(matches!(
+    ArgType::list_from_bitflags(FLOAT_FLAG)[..],
+    [ArgType::Float]
+  ));
+  assert!(matches!(
+    ArgType::list_from_bitflags(NUMERIC_FLAG)[..],
+    [ArgType::Numeric]
+  ));
 }

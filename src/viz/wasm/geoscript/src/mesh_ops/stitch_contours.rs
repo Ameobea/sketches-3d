@@ -83,6 +83,8 @@ pub fn stitch_contours<'a>(
     last_contour_verts.push(start_verts[start_verts.len() - 1]);
   }
 
+  let mismatch =
+    || ErrorStack::new("`stitch_contours` requires all contours to have the same length");
   'outer: loop {
     for ix0 in 0..frontier_verts.len() - 1 {
       let ix1 = ix0 + 1;
@@ -90,7 +92,12 @@ pub fn stitch_contours<'a>(
       let v0_1 = if ix0 == 0 {
         let vtx = match next_vtx(&mut mesh, ix0, &mut contours[ix0])? {
           Some(v) => v,
-          None => break 'outer,
+          None => {
+            if contours[1..].iter_mut().any(|c| c.next().is_some()) {
+              return Err(mismatch());
+            }
+            break 'outer;
+          }
         };
         if cap_start {
           first_contour_verts.push(vtx);
@@ -100,10 +107,7 @@ pub fn stitch_contours<'a>(
         new_frontier_verts[ix0]
       };
       let v1_0 = frontier_verts[ix1];
-      let v1_1 = match next_vtx(&mut mesh, ix1, &mut contours[ix1])? {
-        Some(v) => v,
-        None => break 'outer,
-      };
+      let v1_1 = next_vtx(&mut mesh, ix1, &mut contours[ix1])?.ok_or_else(mismatch)?;
       if ix1 == frontier_verts.len() - 1 && cap_end {
         last_contour_verts.push(v1_1);
       }

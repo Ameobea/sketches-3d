@@ -97,8 +97,13 @@ export const trace_geodesic_path = (
       vec_startPosWorld,
       vec_upDirectionWorld
     );
-    const out = from_vec_f32(computed.projectedPositions).slice();
-    return out;
+    // embind vector properties return fresh heap copies owned by the caller
+    const positions = computed.projectedPositions;
+    try {
+      return from_vec_f32(positions).slice();
+    } finally {
+      positions.delete();
+    }
   } catch (err) {
     LastError = err instanceof Error ? err.message : String(err);
     return new Float32Array(1);

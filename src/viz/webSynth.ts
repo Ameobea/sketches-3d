@@ -1,5 +1,6 @@
 import { applyAudioSettings } from '.';
 import { loadVizConfig } from './conf';
+import { isCapture } from './capture';
 
 let ctx: AudioContext | null = null;
 
@@ -13,6 +14,9 @@ export const setGlobalVolume = (volume: number) => {
 };
 
 export const initWebSynth = (args: { compositionIDToLoad?: number }) => {
+  if (isCapture) {
+    return new Promise<never>(() => {});
+  }
   if (!ctx) {
     ctx = new AudioContext();
     (window as any).setGlobalVolume = setGlobalVolume;

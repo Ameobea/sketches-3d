@@ -7,7 +7,6 @@ import proceduralMaterialPatternCode from './proceduralMaterialPattern.glsl?raw'
 import proceduralMaterialGridCode from './proceduralMaterialGrid.glsl?raw';
 import softOcclusionPreamble from './softOcclusionPreamble.frag?raw';
 import softOcclusionDiscard from './softOcclusionDiscard.frag?raw';
-import CustomLightsFragmentBegin from './customLightsFragmentBegin.frag?raw';
 import GeneratedUVsFragment from './generatedUVs.vert?raw';
 import depthExactVertexBody from './depthExactVertex.glsl?raw';
 import noiseShaders from './noise.frag?raw';
@@ -76,17 +75,15 @@ const buildTileBreakSampleExpr = (
     ? /* glsl */ `textureNoTileNeyret(${sampler}, ${uv}, ${mean})`
     : /* glsl */ `texture2D(${sampler}, ${uv})`;
 
-/** A three ShaderChunk with `pattern` swapped in place; throws if a three upgrade changed
- *  the chunk so the texture-stack splices can't silently no-op. */
-const spliceChunk = (chunk: string, pattern: string, replacement: string): string => {
-  const src = THREE.ShaderChunk[chunk as keyof typeof THREE.ShaderChunk] as string;
-  if (!src.includes(pattern)) {
-    throw new Error(
-      `three chunk "${chunk}" no longer contains \`${pattern}\`; update the texture-stack splice`
-    );
-  }
-  return src.replaceAll(pattern, replacement);
+/** Throws on a miss so three upgrades that change a spliced chunk fail loudly instead of silently no-oping. */
+const splice = (src: string, pattern: string | RegExp, replacement: string): string => {
+  const out = src.replaceAll(pattern, replacement);
+  if (out === src) throw new Error(`three chunk no longer contains \`${pattern}\`; update the splice`);
+  return out;
 };
+
+const spliceChunk = (chunk: keyof typeof THREE.ShaderChunk, pattern: string, replacement: string) =>
+  splice(THREE.ShaderChunk[chunk] as string, pattern, replacement);
 
 const STACK_HELPERS_GLSL = /* glsl */ `
 precision highp sampler2DArray;
@@ -353,50 +350,53 @@ const buildTextureDisableFragment = (
   `;
 };
 
-const buildLightsFragmentBegin = (
-  disabledDirectionalLightIndices: number[] | undefined,
-  disabledSpotLightIndices: number[] | undefined,
-  ambientLightScale: number,
-  ambientDistanceAmp: AmbientDistanceAmpParams | undefined
-): string => {
-  let frag = CustomLightsFragmentBegin.replace(
-    '__DIR_LIGHTS_DISABLE__',
-    (() => {
-      if (!disabledDirectionalLightIndices) {
-        return '0';
-      }
+const CSM_LIGHT_FRAGMENT = /* glsl */ `
+		#ifdef USE_CSM
+		{
+			int _csmCascade;
+			float _csmShadow = ( directLight.visible && receiveShadow ) ? sampleCsm( vWorldPos, vWorldNormal, vViewPosition.z, _csmCascade ) : 1.0;
+			totalShadow *= _csmShadow;
+			directLight.color *= _csmShadow;
+			if ( csmParams.w > 0.5 ) {
+				directLight.color *= _csmCascade == 0 ? vec3( 1.5, 0.5, 0.5 )
+					: _csmCascade == 1 ? vec3( 0.5, 1.5, 0.5 )
+					: _csmCascade == 2 ? vec3( 0.5, 0.5, 1.5 )
+					: vec3( 1.5, 1.5, 0.5 );
+			}
+		}
+		#endif`;
 
-      return disabledDirectionalLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-    })()
-  )
-    .replace(
-      '__SPOT_LIGHTS_DISABLE__',
-      (() => {
-        if (!disabledSpotLightIndices) {
-          return '0';
-        }
-
-        return disabledSpotLightIndices.map(i => `UNROLLED_LOOP_INDEX == ${i.toFixed(0)}`).join(' || ');
-      })()
-    )
-    .replaceAll('__AMBIENT_LIGHT_SCALE__', ambientLightScale.toFixed(4))
-    .replace('__USE_AMBIENT_LIGHT_DISTANCE_AMP__', ambientDistanceAmp ? '1' : '0');
-
-  if (ambientDistanceAmp) {
-    frag = frag
-      .replace(
-        '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_START_DISTANCE__',
-        ambientDistanceAmp.falloffStartDistance.toFixed(4)
-      )
-      .replace(
-        '__AMBIENT_LIGHT_DISTANCE_AMP_FALLOFF_END_DISTANCE__',
-        ambientDistanceAmp.falloffEndDistance.toFixed(4)
-      )
-      .replace('__AMBIENT_LIGHT_DISTANCE_AMP_EXPONENT__', (ambientDistanceAmp.exponent ?? 1).toFixed(4))
-      .replace('__AMBIENT_LIGHT_DISTANCE_AMP_FACTOR__', ambientDistanceAmp.ampFactor.toFixed(4));
-  }
-
-  return frag;
+const buildLightsFragmentBegin = (ambientLightScale: number, amp: AmbientDistanceAmpParams | undefined) => {
+  const scale = ambientLightScale.toFixed(4);
+  const ampFrag = amp
+    ? /* glsl */ `
+	irradiance *= 1.0 + pow(1.0 - smoothstep(${amp.falloffStartDistance.toFixed(4)}, ${amp.falloffEndDistance.toFixed(4)}, distanceToCamera), ${(amp.exponent ?? 1).toFixed(4)}) * ${amp.ampFactor.toFixed(4)};`
+    : '';
+  const splices: [string | RegExp, string][] = [
+    [
+      'RE_Direct( directLight,',
+      'directLight.color *= softenTerminator( normalize( nonPerturbedNormal ), directLight.direction );\n\t\tRE_Direct( directLight,',
+    ],
+    // `totalShadow` feeds the fog shadow tint and player shadow
+    [
+      /directLight\.color \*= (\( directLight\.visible && receiveShadow \) \?[^\n]*: 1\.0);/g,
+      '{ float _s = $1; totalShadow *= _s; directLight.color *= _s; }',
+    ],
+    [
+      'getDirectionalLightInfo( directionalLight, directLight );',
+      `getDirectionalLightInfo( directionalLight, directLight );\n${CSM_LIGHT_FRAGMENT}`,
+    ],
+    [
+      'vec3 irradiance = getAmbientLightIrradiance( ambientLightColor );',
+      `vec3 irradiance = getAmbientLightIrradiance( ambientLightColor ) * ${scale};${ampFrag}`,
+    ],
+    [
+      'getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal );',
+      `getHemisphereLightIrradiance( hemisphereLights[ i ], geometryNormal ) * ${scale};`,
+    ],
+  ];
+  const src = splices.reduce((src, [p, r]) => splice(src, p, r), THREE.ShaderChunk.lights_fragment_begin);
+  return `float totalShadow = 1.;\n${src}`;
 };
 
 export interface PlayerShadowParams {
@@ -496,8 +496,6 @@ const applySceneEnvironmentToMaterial = (mat: CustomShaderMaterial) => {
   mat.envMap = envMap;
   mat.uniforms.envMap.value = envMap;
   mat.uniforms.envMapIntensity.value = intensity;
-  // PMREM output is a render-target texture (not a CubeTexture), so no flip.
-  mat.uniforms.flipEnvMap.value = 1;
 };
 
 export const setSceneEnvironment = (
@@ -789,25 +787,20 @@ float orenNayarDiffuseFactor(vec3 N, vec3 V, vec3 L, float dotNL, float roughnes
 }
 `;
 
-const STOCK_DIRECT_DIFFUSE_LINE =
-  'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor );';
+const STOCK_DIRECT_DIFFUSE_LINE = 'vec3 diffuseBRDF = BRDF_Lambert( material.diffuseContribution );';
 
-// Patches stock `RE_Direct_Physical` to scale only the *direct* diffuse lobe by Oren-Nayar.
-// Indirect/IBL diffuse stays Lambert. Throws loudly if a Three upgrade moves the target line.
-const buildPhysicalParsFragment = (useOrenNayarDiffuse: boolean | undefined): string => {
-  if (!useOrenNayarDiffuse) {
-    return '#include <lights_physical_pars_fragment>';
-  }
-  const chunk = THREE.ShaderChunk.lights_physical_pars_fragment;
-  if (!chunk.includes(STOCK_DIRECT_DIFFUSE_LINE)) {
-    throw new Error('Oren-Nayar patch: direct-diffuse line not found in lights_physical_pars_fragment');
-  }
-  const patched = chunk.replace(
-    STOCK_DIRECT_DIFFUSE_LINE,
-    'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseColor ) * orenNayarDiffuseFactor( geometryNormal, geometryViewDir, directLight.direction, dotNL, material.roughness );'
-  );
-  return `${OREN_NAYAR_DIFFUSE_HELPER}\n${patched}`;
-};
+// Scales only the direct diffuse lobe; indirect/IBL diffuse stays Lambert.
+const buildPhysicalParsFragment = (useOrenNayarDiffuse: boolean | undefined): string =>
+  useOrenNayarDiffuse
+    ? `${OREN_NAYAR_DIFFUSE_HELPER}\n${spliceChunk(
+        'lights_physical_pars_fragment',
+        STOCK_DIRECT_DIFFUSE_LINE,
+        STOCK_DIRECT_DIFFUSE_LINE.replace(
+          ';',
+          ' * orenNayarDiffuseFactor( geometryNormal, geometryViewDir, directLight.direction, dotNL, material.roughness );'
+        )
+      )}`
+    : '#include <lights_physical_pars_fragment>';
 
 export const buildCustomShaderArgs = (
   {
@@ -880,8 +873,6 @@ export const buildCustomShaderArgs = (
     readRoughnessMapFromRChannel,
     disableToneMapping: _disableToneMapping,
     inlineEmissiveBypass,
-    disabledDirectionalLightIndices,
-    disabledSpotLightIndices,
     randomizeUVOffset,
     useGeneratedUVs,
     useWorldSpaceUVs,
@@ -1853,7 +1844,6 @@ ${stackMap ? spliceChunk('map_pars_fragment', 'uniform sampler2D map;', 'uniform
 #include <lightmap_pars_fragment>
 #include <emissivemap_pars_fragment>
 #include <iridescence_fragment>
-#include <cube_uv_reflection_fragment>
 #include <envmap_common_pars_fragment>
 #include <envmap_physical_pars_fragment>
 ${enableFog ? '#include <fog_pars_fragment>' : ''}
@@ -2254,8 +2244,7 @@ void main() {
   ${buildRunIridescenceShaderFragment(iridescenceShader)}
   ${iridescenceReverseColorRamp ? 'material.iridescence = iridescenceFromColor(sampledDiffuseColor_.rgb);' : ''}
 
-	// #include <lights_fragment_begin>
-  ${buildLightsFragmentBegin(disabledDirectionalLightIndices, disabledSpotLightIndices, ambientLightScale, ambientDistanceAmp)}
+  ${buildLightsFragmentBegin(ambientLightScale, ambientDistanceAmp)}
 	#include <lights_fragment_maps>
 	#include <lights_fragment_end>
 
@@ -2276,12 +2265,7 @@ void main() {
 	vec3 outgoingLight = totalDiffuse + totalSpecular${inlineEmissiveBypass ? '' : ' + totalEmissiveRadiance'};
 
 	#ifdef USE_SHEEN
-
-		// Sheen energy compensation approximation calculation can be found at the end of
-		// https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
-		float sheenEnergyComp = 1. - 0.157 * max3(material.sheenColor);
-
-		outgoingLight = outgoingLight * sheenEnergyComp + sheenSpecularDirect + sheenSpecularIndirect;
+		outgoingLight += sheenSpecularDirect + sheenSpecularIndirect;
 	#endif
 
 	#ifdef USE_CLEARCOAT
@@ -2404,6 +2388,15 @@ export class CustomShaderMaterial extends THREE.ShaderMaterial {
     (this.uniforms.diffuse as any).value = color;
   }
 }
+
+// `object.id` follows async load order; name + world position is stable across loads
+const stableObjectSeed = (o: THREE.Object3D) => {
+  const e = o.matrixWorld.elements;
+  let h = 2166136261;
+  for (const c of `${o.name}|${e[12].toFixed(2)}|${e[13].toFixed(2)}|${e[14].toFixed(2)}`)
+    h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return (h >>> 0) / 4294967296;
+};
 
 export const buildCustomShader = (
   props: CustomShaderProps = {},
@@ -2568,11 +2561,10 @@ export const buildCustomShader = (
   if (opts?.randomizeUVOffset) {
     mat.onBeforeRender = (_renderer, _scene, _camera, _geometry, object) => {
       const explicit = (object as { userData?: { uvOffsetSeed?: number } }).userData?.uvOffsetSeed;
-      const seed =
+      mat.uniforms.uvOffsetSeed.value =
         typeof explicit === 'number' && Number.isFinite(explicit)
           ? explicit
-          : ((object.id * 2654435761) >>> 0) / 4294967296;
-      mat.uniforms.uvOffsetSeed.value = seed;
+          : (object.userData.uvOffsetSeed = stableObjectSeed(object));
       // this is needed, otherwise this won't be set properly when the order of objects changes and stuff like that
       mat.uniformsNeedUpdate = true;
     };

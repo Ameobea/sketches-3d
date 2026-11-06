@@ -13,7 +13,7 @@ export const runtimeMaterialFor = (
   return entry ? (entry.material ?? HiddenMat) : FallbackMat;
 };
 
-/** Detach a run object (and a directional/spot light's target) and release its geometry.
+/** Detach a run object (and a directional/spot light's target) and release its geometry/shadow map.
  *  Materials belong to the material runtime and are never disposed here. */
 export const removeRenderedObject = (parent: THREE.Object3D, obj: RenderedObject) => {
   parent.remove(obj);
@@ -24,6 +24,7 @@ export const removeRenderedObject = (parent: THREE.Object3D, obj: RenderedObject
     parent.remove(obj.userData.geotoyTarget);
   }
   if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) obj.geometry.dispose();
+  else if (obj instanceof THREE.Light) obj.dispose();
 };
 
 let pomRescanQueued = false;

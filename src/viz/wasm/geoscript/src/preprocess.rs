@@ -567,9 +567,9 @@ impl<'a> Scanner<'a> {
       {
         self.insert_at_current(";");
       }
-      // Closure body termination on `,` / `)` / `]` / `}`.
+      // Closure body termination on `,` / `;` / `)` / `]` / `}`.
       match b {
-        b',' => {
+        b',' | b';' => {
           while let Some(top) = self.closure_stack.last() {
             if self.paren_bracket_nesting == top.base_paren && self.curly_nesting == top.base_curly
             {

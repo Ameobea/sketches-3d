@@ -40,8 +40,8 @@ const buildSemanticLinter = (
       const diagnostics: Diagnostic[] = [];
       for (const d of result.diagnostics) {
         const from = lcToPos(view.state.doc, d.start_line, d.start_col);
-        let to = lcToPos(view.state.doc, d.end_line, d.end_col);
-        if (from === 0 && to === 0) continue;
+        if (from === null) continue;
+        let to = lcToPos(view.state.doc, d.end_line, d.end_col) ?? from;
         // Ensure the span is at least 1 char wide so the squiggle is visible
         if (to <= from) to = Math.min(from + 1, view.state.doc.length);
 
@@ -80,7 +80,8 @@ const buildHoverExtension = (
     if (!info) return null;
 
     const from = lcToPos(view.state.doc, info.start_line, info.start_col);
-    const to = lcToPos(view.state.doc, info.end_line, info.end_col);
+    if (from === null) return null;
+    const to = lcToPos(view.state.doc, info.end_line, info.end_col) ?? from;
 
     return {
       pos: from,

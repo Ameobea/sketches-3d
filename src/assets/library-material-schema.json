@@ -241,8 +241,8 @@
                   ]
                 },
                 "uvScale": {
-                  "description": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
-                  "markdownDescription": "Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.\nShorthand for the most common uvTransform use case.",
+                  "description": "Uniform UV scale applied as `uvTransform = Matrix3.makeScale(x, y)`.\nShorthand for the most common uvTransform use case.",
+                  "markdownDescription": "Uniform UV scale applied as `uvTransform = Matrix3.makeScale(x, y)`.\nShorthand for the most common uvTransform use case.",
                   "type": "array",
                   "items": [
                     {

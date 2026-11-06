@@ -1,7 +1,8 @@
 p = trace_svg_path(
-  "M14.18 9.31L8.52 9.31L8.52 24L6.12 24L6.12 9.31L0.46 9.31L0.46 7.2L14.18 7.2Z",
-  center=true
+  "M14.18 9.31L8.52 9.31L8.52 24L6.12 24L6.12 9.31L0.46 9.31L0.46 7.2L14.18 7.2Z"
 )
+[lo, hi] = path_aabb(p)
+p = translate(-(lo + hi) / 2, p)
 
 spine_bevel_exponent = 8
 

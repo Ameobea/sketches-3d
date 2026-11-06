@@ -285,7 +285,7 @@ pub fn fbm_2d_tileable(
   for octave_ix in 0..octaves {
     let cells = (period * freq).round().max(1.);
     value += periodic_perlin_noise_2d(
-      seed + octave_ix as u32,
+      seed.wrapping_add(octave_ix as u32),
       cells as isize,
       pos * (cells / period),
     ) * amp;
@@ -310,7 +310,7 @@ fn fbm_generic<P: Copy + Mul<f32, Output = P>>(
   let mut amp = 1.;
 
   for octave_ix in 0..octaves {
-    value += perlin_fn(seed + octave_ix as u32, pos * freq) * amp;
+    value += perlin_fn(seed.wrapping_add(octave_ix as u32), pos * freq) * amp;
     freq *= lacunarity;
     amp *= persistence;
   }
@@ -391,14 +391,15 @@ pub fn curl_noise_3d(
   let eps_y = Vec3::new(0., CURL_EPSILON, 0.);
   let eps_z = Vec3::new(0., 0., CURL_EPSILON);
 
+  let (s1, s2) = (seed.wrapping_add(1), seed.wrapping_add(2));
   let f_dy = (fbm(seed, pos + eps_y) - fbm(seed, pos - eps_y)) / (2. * CURL_EPSILON);
   let f_dz = (fbm(seed, pos + eps_z) - fbm(seed, pos - eps_z)) / (2. * CURL_EPSILON);
 
-  let g_dx = (fbm(seed + 1, pos + eps_x) - fbm(seed + 1, pos - eps_x)) / (2. * CURL_EPSILON);
-  let g_dz = (fbm(seed + 1, pos + eps_z) - fbm(seed + 1, pos - eps_z)) / (2. * CURL_EPSILON);
+  let g_dx = (fbm(s1, pos + eps_x) - fbm(s1, pos - eps_x)) / (2. * CURL_EPSILON);
+  let g_dz = (fbm(s1, pos + eps_z) - fbm(s1, pos - eps_z)) / (2. * CURL_EPSILON);
 
-  let h_dx = (fbm(seed + 2, pos + eps_x) - fbm(seed + 2, pos - eps_x)) / (2. * CURL_EPSILON);
-  let h_dy = (fbm(seed + 2, pos + eps_y) - fbm(seed + 2, pos - eps_y)) / (2. * CURL_EPSILON);
+  let h_dx = (fbm(s2, pos + eps_x) - fbm(s2, pos - eps_x)) / (2. * CURL_EPSILON);
+  let h_dy = (fbm(s2, pos + eps_y) - fbm(s2, pos - eps_y)) / (2. * CURL_EPSILON);
 
   Vec3::new(h_dy - g_dz, f_dz - h_dx, g_dx - f_dy)
 }
@@ -566,8 +567,8 @@ fn worley_2d(
 
   let half = frac.map(|x| x > 0.5);
 
-  let near = half.map(|x| x as isize) + cell;
-  let far = half.map(|x| !x as isize) + cell;
+  let near = cell.zip_map(&half, |c, h| c.wrapping_add(h as isize));
+  let far = cell.zip_map(&half, |c, h| c.wrapping_add(!h as isize));
 
   let mut seed_cell = near;
   let seed_index = hash_permtable(&PERLIN_PERM_TABLE, near.as_slice());
@@ -632,8 +633,8 @@ fn worley_3d(
 
   let half = frac.map(|x| x > 0.5);
 
-  let near = half.map(|x| x as isize) + cell;
-  let far = half.map(|x| !x as isize) + cell;
+  let near = cell.zip_map(&half, |c, h| c.wrapping_add(h as isize));
+  let far = cell.zip_map(&half, |c, h| c.wrapping_add(!h as isize));
 
   let mut seed_cell = near;
   let seed_index = hash_permtable(&PERLIN_PERM_TABLE, near.as_slice());

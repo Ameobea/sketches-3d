@@ -103,10 +103,18 @@ export const unwrap_uvs = (
     if (error) {
       return error;
     }
-    lastUvs = from_vec_f32(output.uvs);
-    lastVerts = from_vec_f32(output.verts);
-    lastIndices = from_vec_u32(output.indices);
-    lastTangents = from_vec_f32(output.tangents);
+    // embind vector properties return fresh heap copies owned by the caller
+    const take = <T>(vec: any, from: (vec: any) => T): T => {
+      try {
+        return from(vec);
+      } finally {
+        vec.delete();
+      }
+    };
+    lastUvs = take(output.uvs, from_vec_f32);
+    lastVerts = take(output.verts, from_vec_f32);
+    lastIndices = take(output.indices, from_vec_u32);
+    lastTangents = take(output.tangents, from_vec_f32);
     return '';
   } catch (err) {
     return err instanceof Error ? err.message : String(err);

@@ -1,11 +1,4 @@
-p = build_path(
-  path {
-    move(-1, 0)
-    line(1, 0)
-  },
-  center=true,
-  reverse=false
-)
+p = path() | move(-1, 0) | line(1, 0)
 p = offset_path(p, delta=1, end_type='superellipse', superellipse_exponent=5)
 
 spine_bevel_exponent = 5

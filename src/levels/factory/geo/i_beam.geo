@@ -1,10 +1,10 @@
 set_sharp_angle_threshold(0)
 
-p = build_path(path {
-  rect(v2(0, -1.25), v2(2.4, 0.35))
-  rect(v2(0, 1.25), v2(2.4, 0.35))
+p = path([
+  rect(v2(0, -1.25), v2(2.4, 0.35)),
+  rect(v2(0, 1.25), v2(2.4, 0.35)),
   rect(v2(0), v2(0.3, 2.5))
-}, center=true)
+])
 p = path_union(p, p)
   | offset_path(join_type='bevel', delta=0.18)
   | offset_path(join_type='miter', delta=-0.18)

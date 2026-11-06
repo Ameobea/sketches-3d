@@ -218,65 +218,23 @@ export const cgal_clear_output_mesh = (): void => {
   OutputMesh = null;
 };
 
-export const cgal_catmull_smooth_mesh = (verts: Float32Array, indices: Uint32Array, iterations: number) => {
-  if (!CGALWasm.isSome()) {
-    throw new Error('CGALWasm not initialized');
-  }
+const smoothMesh =
+  (method: 'catmull_smooth' | 'loop_smooth' | 'dooSabin_smooth' | 'sqrt_smooth', label: string) =>
+  (verts: Float32Array, indices: Uint32Array, iterations: number) => {
+    const mesh = buildCGALPolymesh(verts, indices);
+    if (!mesh) {
+      return;
+    }
+    mesh[method](iterations);
 
-  const mesh = buildCGALPolymesh(verts, indices);
-  if (!mesh) {
-    return;
-  }
-  mesh.catmull_smooth(iterations);
+    setOutputMeshFromCGALMesh(mesh, label);
+    mesh.delete();
+  };
 
-  setOutputMeshFromCGALMesh(mesh, 'catmull-clark smoothing');
-  mesh.delete();
-};
-
-export const cgal_loop_smooth_mesh = (verts: Float32Array, indices: Uint32Array, iterations: number) => {
-  if (!CGALWasm.isSome()) {
-    throw new Error('CGALWasm not initialized');
-  }
-
-  const mesh = buildCGALPolymesh(verts, indices);
-  if (!mesh) {
-    return;
-  }
-  mesh.loop_smooth(iterations);
-
-  setOutputMeshFromCGALMesh(mesh, 'loop smoothing');
-  mesh.delete();
-};
-
-export const cgal_doosabin_smooth_mesh = (verts: Float32Array, indices: Uint32Array, iterations: number) => {
-  if (!CGALWasm.isSome()) {
-    throw new Error('CGALWasm not initialized');
-  }
-
-  const mesh = buildCGALPolymesh(verts, indices);
-  if (!mesh) {
-    return;
-  }
-  mesh.dooSabin_smooth(iterations);
-
-  setOutputMeshFromCGALMesh(mesh, 'doo-sabin smoothing');
-  mesh.delete();
-};
-
-export const cgal_sqrt_smooth_mesh = (verts: Float32Array, indices: Uint32Array, iterations: number) => {
-  if (!CGALWasm.isSome()) {
-    throw new Error('CGALWasm not initialized');
-  }
-
-  const mesh = buildCGALPolymesh(verts, indices);
-  if (!mesh) {
-    return;
-  }
-  mesh.sqrt_smooth(iterations);
-
-  setOutputMeshFromCGALMesh(mesh, 'sqrt3 smoothing');
-  mesh.delete();
-};
+export const cgal_catmull_smooth_mesh = smoothMesh('catmull_smooth', 'catmull-clark smoothing');
+export const cgal_loop_smooth_mesh = smoothMesh('loop_smooth', 'loop smoothing');
+export const cgal_doosabin_smooth_mesh = smoothMesh('dooSabin_smooth', 'doo-sabin smoothing');
+export const cgal_sqrt_smooth_mesh = smoothMesh('sqrt_smooth', 'sqrt3 smoothing');
 
 export const cgal_remesh_planar_patches = (
   verts: Float32Array,

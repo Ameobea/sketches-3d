@@ -207,7 +207,7 @@ export const ShaderPropsJsonSchema = z.object({
   mapDisableTransitionThreshold: z.number().optional(),
   side: z.enum(['front', 'back', 'double']).optional(),
   /**
-   * Uniform UV scale applied as `uvTransform = Matrix3.scale(x, y)`.
+   * Uniform UV scale applied as `uvTransform = Matrix3.makeScale(x, y)`.
    * Shorthand for the most common uvTransform use case.
    */
   uvScale: Vec2.optional(),

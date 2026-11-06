@@ -9,10 +9,6 @@ use crate::{
   ArgRef, Callable, DynamicCallable, ErrorStack, EvalCtx, Sym, Value, Vec2,
 };
 
-// ── 2D ──────────────────────────────────────────────────────────────────────
-
-// ── 3D ──────────────────────────────────────────────────────────────────────
-
 pub(crate) struct CatmullRomCallable3D {
   points: Vec<Vec3>,
   tension: f32,

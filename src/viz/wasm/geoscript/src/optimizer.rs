@@ -37,16 +37,19 @@ const FLOAT_ASSOC_FOLDING_ENABLED: bool = true;
 
 /// Which pieces of ambient interpreter state a hashed computation transitively consumes.  `rng`
 /// mirrors the historical `uses_rng` flag; `settings` covers the sharp/curve angle thresholds.
-#[derive(Clone, Copy, Default)]
+/// `pins` collects every input hashed by address: the entry keeps them alive so a freed
+/// allocation can't be recycled under a still-live key.
+#[derive(Default)]
 struct Uses {
   rng: bool,
   settings: bool,
+  pins: Vec<Value>,
 }
 
-#[derive(Clone, Copy)]
 struct ConstEvalCacheLookup {
   key: u128,
   uses: Uses,
+  prints_start: usize,
 }
 
 fn const_eval_cache_lookup_with(
@@ -81,7 +84,11 @@ fn const_eval_cache_lookup_with(
       .hash(&mut hasher);
   }
   let key = hasher.finish128().as_u128();
-  Some(ConstEvalCacheLookup { key, uses })
+  Some(ConstEvalCacheLookup {
+    key,
+    uses,
+    prints_start: ctx.prints.borrow().len(),
+  })
 }
 
 /// True when executing this fold would consume ambient state the optimizer can no longer prove
@@ -107,24 +114,36 @@ fn ambient_fold_blocked(
   }
 }
 
-fn const_eval_cache_get(ctx: &EvalCtx, lookup: ConstEvalCacheLookup) -> Option<Value> {
+fn const_eval_cache_get(ctx: &EvalCtx, lookup: &ConstEvalCacheLookup) -> Option<Value> {
   let hit = ctx.const_eval_cache.borrow_mut().get(lookup.key)?;
   if let Some(rng_end_state) = hit.rng_end_state {
     ctx.set_rng_state(rng_end_state);
+  }
+  for msg in hit.prints {
+    ctx.push_print(msg);
   }
   Some(hit.value)
 }
 
 fn const_eval_cache_store(ctx: &EvalCtx, lookup: ConstEvalCacheLookup, value: Value) {
+  let prints = ctx
+    .prints
+    .borrow()
+    .get(lookup.prints_start..)
+    .unwrap_or_default()
+    .to_vec();
   let rng_end_state = if lookup.uses.rng {
     Some(ctx.rng_state())
   } else {
     None
   };
-  ctx
-    .const_eval_cache
-    .borrow_mut()
-    .insert(lookup.key, value, rng_end_state);
+  ctx.const_eval_cache.borrow_mut().insert(
+    lookup.key,
+    value,
+    rng_end_state,
+    lookup.uses.pins,
+    prints,
+  );
 }
 
 pub(crate) fn can_const_eval_callable(callable: &Callable, allow_rng_const_eval: bool) -> bool {
@@ -955,18 +974,20 @@ fn hash_callable(
     Callable::Dynamic { inner, .. } => {
       if inner.content_hash(hasher).is_none() {
         (Rc::as_ptr(callable) as usize).hash(hasher);
+        uses.pins.push(Value::Callable(Rc::clone(callable)));
       }
       Some(())
     }
     _ => {
       (Rc::as_ptr(callable) as usize).hash(hasher);
+      uses.pins.push(Value::Callable(Rc::clone(callable)));
       Some(())
     }
   }
 }
 
 thread_local! {
-  static SEQ_USES_MEMO: RefCell<FxHashMap<usize, (Rc<dyn crate::Sequence>, Uses)>> =
+  static SEQ_USES_MEMO: RefCell<FxHashMap<usize, (Rc<dyn crate::Sequence>, bool, bool)>> =
     RefCell::new(FxHashMap::default());
 }
 
@@ -977,9 +998,9 @@ thread_local! {
 /// this sits on the fold key-hashing hot path.
 fn seq_consumption_uses(seq: &Rc<dyn crate::Sequence>, uses: &mut Uses) {
   let key = Rc::as_ptr(seq) as *const () as usize;
-  if let Some(hit) = SEQ_USES_MEMO.with(|m| m.borrow().get(&key).map(|(_, u)| *u)) {
-    uses.rng |= hit.rng;
-    uses.settings |= hit.settings;
+  if let Some((rng, settings)) = SEQ_USES_MEMO.with(|m| m.borrow().get(&key).map(|e| (e.1, e.2))) {
+    uses.rng |= rng;
+    uses.settings |= settings;
     return;
   }
   let mut own = Uses::default();
@@ -994,7 +1015,10 @@ fn seq_consumption_uses(seq: &Rc<dyn crate::Sequence>, uses: &mut Uses) {
       }
     }
   }
-  SEQ_USES_MEMO.with(|m| m.borrow_mut().insert(key, (Rc::clone(seq), own)));
+  SEQ_USES_MEMO.with(|m| {
+    m.borrow_mut()
+      .insert(key, (Rc::clone(seq), own.rng, own.settings))
+  });
   uses.rng |= own.rng;
   uses.settings |= own.settings;
 }
@@ -1148,7 +1172,7 @@ fn const_eval_call_value(
   if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
     return Ok(None);
   }
-  if let Some(lookup) = cache_lookup {
+  if let Some(lookup) = &cache_lookup {
     if let Some(cached) = const_eval_cache_get(ctx, lookup) {
       return Ok(Some(cached));
     }
@@ -1196,6 +1220,7 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     }
     Value::Mesh(mesh) => {
       (Rc::as_ptr(mesh) as usize).hash(hasher);
+      uses.pins.push(value.clone());
     }
     Value::Callable(callable) => {
       // Closure bodies are walked with tracking on, so their rng/settings usage propagates
@@ -1208,12 +1233,14 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     }
     Value::Sequence(seq) => {
       (Rc::as_ptr(seq) as *const () as usize).hash(hasher);
+      uses.pins.push(value.clone());
       // consumption-precise: only ambient state the seq would actually read when consumed
       // poisons the key (opaque seqs poison both flags)
       seq_consumption_uses(seq, uses);
     }
     Value::Map(map) => {
       (Rc::as_ptr(map) as *const () as usize).hash(hasher);
+      uses.pins.push(value.clone());
     }
     Value::Mat4(mat) => {
       // Hashed by contents rather than `Rc` address: mat4s are cheap to hash and are produced by
@@ -1224,18 +1251,21 @@ fn hash_value(value: &Value, hasher: &mut SipHasher, uses: &mut Uses) -> Option<
     }
     Value::Material(material) => {
       (Rc::as_ptr(material) as usize).hash(hasher);
+      uses.pins.push(value.clone());
     }
     Value::Light(light) => {
       (light.as_ref() as *const _ as usize).hash(hasher);
     }
     Value::Texture(tex) => {
       (Rc::as_ptr(tex) as usize).hash(hasher);
+      uses.pins.push(value.clone());
     }
     // Concrete trees key by content so folds stay stable across runs; lazy ones by identity,
     // with their driving closures walked for rng/settings usage.
     Value::Path(path) => {
       if !path.content_hash(hasher) {
         (Rc::as_ptr(path) as usize).hash(hasher);
+        uses.pins.push(value.clone());
       }
       for c in path.closures() {
         uses.rng |= callable_requires_rng_state(&c);
@@ -1493,7 +1523,8 @@ fn try_identity_peephole(
   // Only 0/1 literals can match an identity; bail before the type inference + subtree cloning
   // below, which would otherwise tax every one-literal binop in the program.
   let lit = lhs_lit.as_ref().or(rhs_lit.as_ref()).unwrap();
-  if !is_scalar_zero(lit) && !is_scalar_one(lit) {
+  let lit_is_zero = is_scalar_zero(lit);
+  if !lit_is_zero && !is_scalar_one(lit) {
     return None;
   }
 
@@ -1546,9 +1577,8 @@ fn try_identity_peephole(
       {
         return Some(rhs.clone());
       }
-      if rhs_lit.as_ref().is_some_and(is_scalar_zero)
-        || lhs_lit.as_ref().is_some_and(is_scalar_zero)
-      {
+      let discarded = if rhs_lit.is_some() { lhs } else { rhs };
+      if lit_is_zero && is_effect_free(discarded) {
         if let Some(zero) = result_ty.and_then(typed_zero) {
           return Some(zero.into_literal_expr(loc));
         }
@@ -1559,7 +1589,7 @@ fn try_identity_peephole(
       {
         return Some(lhs.clone());
       }
-      if lhs_lit.as_ref().is_some_and(is_scalar_zero) {
+      if lhs_lit.as_ref().is_some_and(is_scalar_zero) && is_effect_free(rhs) {
         if let Some(zero) = result_ty.and_then(typed_zero) {
           return Some(zero.into_literal_expr(loc));
         }
@@ -1568,6 +1598,16 @@ fn try_identity_peephole(
     _ => {}
   }
   None
+}
+
+/// Conservative syntactic check for an operand an identity peephole may discard outright.
+fn is_effect_free(expr: &Expr) -> bool {
+  match expr {
+    Expr::Ident { .. } | Expr::Literal { .. } => true,
+    Expr::StaticFieldAccess { lhs, .. } | Expr::PrefixOp { expr: lhs, .. } => is_effect_free(lhs),
+    Expr::BinOp { lhs, rhs, .. } => is_effect_free(lhs) && is_effect_free(rhs),
+    _ => false,
+  }
 }
 
 /// Optimize the body of a compiler-synthesized closure (e.g. an autodiff derivative).  Seeds the
@@ -1739,7 +1779,7 @@ fn fold_constants<'a>(
       if ambient_fold_blocked(ctx, &cache_lookup, allow_rng_const_eval) {
         return Ok(());
       }
-      if let Some(lookup) = cache_lookup {
+      if let Some(lookup) = &cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(expr_loc);
           return Ok(());
@@ -1796,7 +1836,7 @@ fn fold_constants<'a>(
         op_discriminant.hash(hasher);
         hash_expr(inner, hasher, uses, ExprHashConfig::const_eval())
       });
-      if let Some(lookup) = cache_lookup {
+      if let Some(lookup) = &cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(expr_loc);
           return Ok(());
@@ -1848,7 +1888,7 @@ fn fold_constants<'a>(
         }
         Some(())
       });
-      if let Some(lookup) = cache_lookup {
+      if let Some(lookup) = &cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(*loc);
           return Ok(());
@@ -1884,7 +1924,7 @@ fn fold_constants<'a>(
         field.hash(hasher);
         hash_expr(lhs, hasher, uses, ExprHashConfig::const_eval())
       });
-      if let Some(lookup) = cache_lookup {
+      if let Some(lookup) = &cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(*loc);
           return Ok(());
@@ -1945,7 +1985,7 @@ fn fold_constants<'a>(
           None => Some(()),
         }
       });
-      if let Some(lookup) = cache_lookup {
+      if let Some(lookup) = &cache_lookup {
         if let Some(cached) = const_eval_cache_get(ctx, lookup) {
           *expr = cached.into_literal_expr(*loc);
           return Ok(());
@@ -1993,7 +2033,6 @@ fn fold_constants<'a>(
               }
             },
             // calling a closure argument or dynamic captured variable
-            TrackedValueRef::Arg => (),
             TrackedValueRef::Dyn => (),
           }
         } else {
@@ -2151,7 +2190,6 @@ fn fold_constants<'a>(
                     .unwrap();
                 }
               },
-              TrackedValueRef::Arg => None,
               TrackedValueRef::Dyn => None,
             }
           } else {
@@ -2353,7 +2391,7 @@ fn fold_constants<'a>(
             }
             Some(())
           });
-        if let Some(lookup) = cache_lookup {
+        if let Some(lookup) = &cache_lookup {
           if let Some(cached) = const_eval_cache_get(ctx, lookup) {
             *expr = cached.into_literal_expr(*loc);
             return Ok(());
@@ -2446,7 +2484,7 @@ fn fold_constants<'a>(
             }
             Some(())
           });
-        if let Some(lookup) = cache_lookup {
+        if let Some(lookup) = &cache_lookup {
           if let Some(cached) = const_eval_cache_get(ctx, lookup) {
             *expr = cached.into_literal_expr(*loc);
             return Ok(());
@@ -2676,7 +2714,7 @@ fn optimize_statement<'a>(
 
       let Some(rhs) = rhs.as_literal() else {
         for name in lhs.iter_idents() {
-          local_scope.set(name, TrackedValue::Arg);
+          local_scope.set(name, TrackedValue::Dyn);
         }
         return Ok(());
       };
@@ -3010,8 +3048,9 @@ fn run_const_folding_pass(ctx: &EvalCtx, ast: &mut Program) -> Result<(), ErrorS
         fold_exec_input_stmt(ctx, &mut local_scope, expr)?;
       }
       TopLevelStatement::Import { .. } => {
-        // The module body may mutate thresholds when it evaluates at import time.
+        // The module body evaluates at import time and may mutate thresholds or the rng.
         ctx.fold_settings_unknown.set(true);
+        ctx.fold_rng_unknown.set(true);
       }
       _ => {}
     }
@@ -4587,6 +4626,103 @@ mesh = f()
 "#,
     );
     assert_eq!(direct, via_closure);
+  }
+
+  /// Mirrors `geoscript_repl_eval`: per-run reset, optimize, then eval against the ambient scope.
+  fn repl_run(ctx: &EvalCtx, src: &str) -> Value {
+    ctx.clear_run_outputs();
+    repl_reset(ctx);
+    *ctx.current_module.borrow_mut() = Some("_root".to_owned());
+    let mut ast = parse_program_src(ctx, src).unwrap();
+    optimize_ast(ctx, &mut ast).unwrap();
+    let base = ctx
+      .ambient_scope_for_current()
+      .unwrap_or_else(|| Rc::new(crate::Scope::default_globals(&ctx.interned_symbols)));
+    let (out, _) = crate::eval_resolved_program(ctx, &ast, &base).unwrap();
+    *ctx.current_module.borrow_mut() = None;
+    out
+  }
+
+  // Ambient values are rebuilt each run and the old allocation freed; a recycled address must
+  // not hit an entry keyed on the previous run's value.
+  #[test]
+  fn recycled_ambient_allocation_misses_cache() {
+    let ctx = EvalCtx::default();
+    for (ambient, x0) in [
+      ("n = { print(1); 1 }\nm = box(n)", -0.5),
+      ("n = { print(1); 2 }\nm = box(n)", -1.),
+      ("n = { print(1); 1 }\nm = icosphere(n, 1)", -0.5257311),
+    ] {
+      ctx.clear_ambient_scope();
+      repl_reset(&ctx);
+      let scope = ctx.evaluate_module_to_scope(ambient).unwrap();
+      ctx.set_ambient_scope(scope);
+      repl_run(&ctx, "render(m | flip_normals)");
+      let meshes = ctx.rendered_meshes.inner.borrow();
+      let pos = meshes[0]
+        .mesh
+        .mesh
+        .vertices
+        .values()
+        .next()
+        .unwrap()
+        .position;
+      assert_eq!(pos.x, x0, "{ambient}");
+    }
+  }
+
+  // Cached folds of threshold readers must key on the thresholds.
+  #[test]
+  fn bake_ao_seam_split_honors_threshold_change() {
+    let ctx = EvalCtx::default();
+    let body = "m = bake_ao(cylinder(1, 1, 12), samples=4, refine=0.5, split_seams=true)\nlen(m)";
+    let fresh = repl_run(&EvalCtx::default(), body);
+    repl_run(&ctx, &format!("set_sharp_angle_threshold(5)\n{body}"));
+    assert_eq!(format!("{:?}", repl_run(&ctx, body)), format!("{fresh:?}"));
+  }
+
+  // Imported module bodies run at eval time: their rng use and prints must be reproduced on
+  // every run, cached or not.
+  #[test]
+  fn imports_order_rng_and_replay_prints() {
+    let ctx = EvalCtx::default();
+    ctx.module_sources.borrow_mut().insert(
+      "m".to_owned(),
+      "print(\"hi\")\nexport x = randf()".to_owned(),
+    );
+    let unseeded = format!("{:?}", repl_run(&ctx, "[randf(), randf()]"));
+    for _ in 0..2 {
+      let out = repl_run(&ctx, "import { x } from \"m\"\ny = randf()\n[x, y]");
+      assert_eq!(format!("{out:?}"), unseeded);
+      assert_eq!(*ctx.prints.borrow(), ["String(hi)"]);
+    }
+  }
+
+  // Warnings a builtin prints while const folding reach the output, including on cache hits.
+  #[test]
+  fn fold_time_warnings_survive_cache_hits() {
+    let ctx = EvalCtx::default();
+    for _ in 0..2 {
+      repl_run(&ctx, "m = bake_ao(box(1), samples=4, refine=0.001)");
+      let prints = ctx.prints.borrow();
+      assert!(
+        prints.len() == 1 && prints[0].contains("noise floor"),
+        "{prints:?}"
+      );
+    }
+  }
+
+  // `x * 0` must not discard an operand that registers controls/gizmos or renders.
+  #[test]
+  fn mul_zero_keeps_effectful_operand() {
+    let ctx = EvalCtx::default();
+    repl_run(
+      &ctx,
+      "a = input_float(\"k\", 1.0) * 0\nb = 0 * gizmo(\"g\").x\nc = { render(box(1)); 2.0 } * 0",
+    );
+    assert_eq!(ctx.rendered_controls.len(), 1);
+    assert_eq!(ctx.rendered_gizmos.len(), 1);
+    assert_eq!(ctx.rendered_meshes.len(), 1);
   }
 }
 

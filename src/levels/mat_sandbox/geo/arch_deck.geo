@@ -2,7 +2,7 @@
 // analytic UVs (U = arc length along the arch, V = around the slab cross-section), so a
 // UV-keyed surface material can lay grate ticks that follow the curve instead of a
 // world-axis projection.
-profile = trace_svg_path('M -0.2 -2 L 0.2 -2 L 0.2 2 L -0.2 2 Z', center=true)
+profile = trace_svg_path('M -0.2 -2 L 0.2 -2 L 0.2 2 L -0.2 2 Z')
 
 export mesh = rail_sweep(
   spine_resolution=96,

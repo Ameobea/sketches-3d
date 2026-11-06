@@ -36,7 +36,7 @@ impl Triangle {
   }
 
   pub fn area(&self) -> f32 {
-    0.5 * self.normal().magnitude()
+    0.5 * (self.b - self.a).cross(&(self.c - self.a)).magnitude()
   }
 
   pub fn center(&self) -> Vector3<f32> {

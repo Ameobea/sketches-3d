@@ -1,4 +1,5 @@
-import { EffectComposer, RenderPass } from 'postprocessing';
+import { RenderPass } from 'postprocessing';
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import * as THREE from 'three';
 
 import type { SceneConfig } from '.';
@@ -28,6 +29,7 @@ const initScene = async (loadedWorld: THREE.Group) => {
 export class DepthPass extends RenderPass {
   constructor(scene: THREE.Scene, camera: THREE.Camera, overrideMaterial: THREE.Material) {
     super(scene, camera, overrideMaterial);
+    this.ignoreBackground = true;
   }
 
   render(
@@ -74,7 +76,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   viz.renderer.autoClear = false;
   viz.renderer.autoClearDepth = false;
 
-  const composer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
+  const composer = new StableDepthEffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
   const depthPass = new DepthPass(viz.scene, viz.camera, new THREE.MeshBasicMaterial());
   // The depth pre pass must render to the same framebuffer as the main render pass so that the depth buffer is shared
   depthPass.renderToScreen = true;

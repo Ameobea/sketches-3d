@@ -147,7 +147,7 @@ export class LevelEditor {
   private orbitControls: OrbitControls | null = null;
   private transformHandler: TransformHandler | null = null;
   /** Three.js scene fog stashed on enter, restored on exit. */
-  private savedSceneFog: THREE.FogBase | null = null;
+  private savedSceneFog: THREE.Fog | THREE.FogExp2 | null = null;
   /** Public accessor for transform controls (used by CsgEditController). */
   get transformControls() {
     return this.transformHandler;
@@ -1284,7 +1284,15 @@ export class LevelEditor {
     before: InputValueJson | undefined;
   } | null = null;
   private inputsUndoTimer = 0;
-  private inputsSaveTimer = 0;
+  private inputsSavePending: { node: LevelSceneNode; timer: number } | null = null;
+
+  private flushInputsSave() {
+    const p = this.inputsSavePending;
+    if (!p) return;
+    clearTimeout(p.timer);
+    this.inputsSavePending = null;
+    void this.api.saveInputs(p.node.id, this.paramInputsDef(p.node)?.inputs);
+  }
 
   private flushInputsUndo() {
     const p = this.inputsUndoPending;
@@ -1319,8 +1327,9 @@ export class LevelEditor {
 
     clearTimeout(this.inputsUndoTimer);
     this.inputsUndoTimer = window.setTimeout(() => this.flushInputsUndo(), 400);
-    clearTimeout(this.inputsSaveTimer);
-    this.inputsSaveTimer = window.setTimeout(() => void this.api.saveInputs(node.id, def.inputs), 400);
+    if (this.inputsSavePending?.node !== node) this.flushInputsSave();
+    else clearTimeout(this.inputsSavePending.timer);
+    this.inputsSavePending = { node, timer: window.setTimeout(() => this.flushInputsSave(), 400) };
   }
 
   private async onAddGroupClick() {
@@ -1491,6 +1500,9 @@ export class LevelEditor {
 
     node.id = resolvedId;
     node.def.id = resolvedId;
+    if (isCompositionNode(node)) node.compositionDef.id = resolvedId;
+    else if (!isLevelGroup(node) && this.allLevelObjects.delete(oldId))
+      this.allLevelObjects.set(resolvedId, node);
 
     this.nodeById.delete(oldId);
     this.nodeById.set(resolvedId, node);

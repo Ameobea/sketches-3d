@@ -1,5 +1,7 @@
 import { type Disposable, Pass } from 'postprocessing';
 import * as THREE from 'three';
+import { shadowDepthSource, toggleDefine } from 'src/viz/helpers/lights';
+import { mulberry32 } from 'src/viz/util/util';
 
 import VolumetricFragmentShader from './volumetric.frag?raw';
 import VolumetricVertexShader from './volumetric.vert?raw';
@@ -251,9 +253,10 @@ export class VolumetricPass extends Pass implements Disposable {
 
     this.updateUniforms();
 
+    const rng = mulberry32(0x5eed);
     const noise = new Uint8Array(64 * 64 * 64);
     for (let i = 0; i < noise.length; i++) {
-      noise[i] = Math.random() * 255;
+      noise[i] = rng() * 255;
     }
     this.noiseTexture3D = new THREE.Data3DTexture(noise, 64, 64, 64);
     this.noiseTexture3D.format = THREE.RedFormat;
@@ -279,6 +282,17 @@ export class VolumetricPass extends Pass implements Disposable {
     _stencilTest?: boolean | undefined
   ): void {
     this.updateUniforms();
+    const shadow = this.shadowLight?.shadow;
+    const src = shadow && shadowDepthSource(renderer, shadow);
+    if (src) {
+      toggleDefine(this.material, 'SHADOW_COMPARE', src.compare);
+      this.material.uniforms.shadowMap.value = src.texture;
+      this.material.uniforms.shadowMatrix.value
+        .copy(shadow.camera.projectionMatrix)
+        .multiply(shadow.camera.matrixWorldInverse);
+      this.material.uniforms.shadowCameraNear.value = shadow.camera.near;
+      this.material.uniforms.shadowCameraFar.value = shadow.camera.far;
+    }
     this.material.uniforms.sceneDiffuse.value = inputBuffer.texture;
     this.material.uniforms.curTimeSeconds.value = this.curTimeSeconds;
 
@@ -330,16 +344,6 @@ export class VolumetricPass extends Pass implements Disposable {
     this.material.uniforms.ambientLightIntensity.value =
       this.params.ambientLightIntensity ?? this.ambientLight?.intensity ?? 0;
     this.material.uniforms.noiseTexture.value = this.noiseTexture3D;
-
-    if (this.shadowLight?.shadow?.map) {
-      const shadow = this.shadowLight.shadow;
-      this.material.uniforms.shadowMap.value = shadow.map!.texture;
-      this.material.uniforms.shadowMatrix.value
-        .copy(shadow.camera.projectionMatrix)
-        .multiply(shadow.camera.matrixWorldInverse);
-      this.material.uniforms.shadowCameraNear.value = shadow.camera.near;
-      this.material.uniforms.shadowCameraFar.value = shadow.camera.far;
-    }
 
     for (const [key, value] of Object.entries(this.params)) {
       if (

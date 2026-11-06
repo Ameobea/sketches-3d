@@ -34,6 +34,7 @@
     type TreeKind,
   } from 'src/geoscript/geotoyAPIClient';
   import { GeotoyPersistence } from 'src/geotoy/modules/persistence.svelte';
+  import { clearSavedState } from 'src/geotoy/modules/compositionStorage';
   import { GeotoyKeymap } from 'src/geotoy/modules/keymap';
   import {
     buildCoreKeymap,
@@ -254,30 +255,30 @@
     wasNarrow = narrow;
   });
 
+  const adoptSavedVersion = (comp: Composition, version: CompositionVersion) => {
+    clearSavedState(userData);
+    userData = { ...userData!, initialComposition: { comp, version } };
+    tabs.markAllSaved();
+    persistence.markClean();
+  };
+
   const handleForkedComposition = async (newComp: Composition, newVersion: CompositionVersion) => {
     if (!userData?.me) {
       return;
     }
-    const newUserData: GeoscriptPlaygroundUserData = {
+    userData = {
       initialComposition: { comp: newComp, version: newVersion },
       workerManager: userData.workerManager,
       me: userData.me,
       renderMode: userData.renderMode,
     };
-    const forkedFrom = userData?.initialComposition?.comp;
-    await persistence.saveVersion(
-      newComp,
-      {
-        title: forkedFrom?.title ?? 'untitled (fork)',
-        description: forkedFrom?.description ?? '',
-        isShared: forkedFrom?.is_shared ?? false,
-        tags: forkedFrom?.tags ?? [],
-      },
-      newUserData
-    );
-    userData = newUserData;
-    tabs.markAllSaved();
-    persistence.markClean();
+    const res = await persistence.saveVersion(newComp, {
+      title: newComp.title,
+      description: newComp.description,
+      isShared: newComp.is_shared,
+      tags: newComp.tags,
+    });
+    if (res.type === 'ok') adoptSavedVersion(res.comp, res.version);
   };
 
   let size = $state(storedPanelSize(untrack(() => layoutOrientation)));
@@ -1422,10 +1423,7 @@
     activeTreeId={persistence.activeTreeId}
     materials={persistence.materialDefinitions}
     {collectTabMeta}
-    onSave={() => {
-      persistence.markClean();
-      tabs.markAllSaved();
-    }}
+    onSave={adoptSavedVersion}
     {userData}
   />
 {/snippet}

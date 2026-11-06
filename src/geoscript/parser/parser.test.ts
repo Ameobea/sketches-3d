@@ -118,6 +118,14 @@ const CASES: Case[] = [
   { src: '{ [1 + 2]: 3, a: 4 }', expected: { ok: 1 } },
   { src: '{ [k]: 1, *rest }', expected: { ok: 1 } },
   { src: '{ []: 1 }', expected: { err: true } },
+  // Closure params
+  { src: 'f = |a, b| a', expected: { ok: 1 } },
+  { src: 'f = |a b| a', expected: { err: true } },
+  { src: 'f = |x = if c { 1 } else { 2 }| x', expected: { ok: 1 } },
+  // Ranges and escapes
+  { src: '0..n-1 | f', expected: { ok: 1 } },
+  { src: 'a.. | take(3)', expected: { ok: 1 } },
+  { src: 'x = "a\\n\\t\\\\b"', expected: { ok: 1 } },
 ];
 
 interface LezerResult {

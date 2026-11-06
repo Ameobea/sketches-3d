@@ -1,7 +1,6 @@
 use std::rc::Rc;
 use std::str::FromStr;
 
-#[cfg(target_arch = "wasm32")]
 use mesh::linked_mesh::Mat4;
 use mesh::linked_mesh::Vec3;
 use mesh::linked_mesh::{Channel, FaceKey, VertexKey};
@@ -11,6 +10,38 @@ use wasm_bindgen::prelude::wasm_bindgen;
 
 use crate::ErrorStack;
 use crate::MeshHandle;
+
+/// Clone of `m.mesh` plus the frame (transform, inverse) other meshes get appended into. A
+/// singular transform (e.g. zero scale) is baked in so the frame stays invertible.
+pub(crate) fn mesh_append_base(m: &MeshHandle) -> (LinkedMesh<()>, Mat4, Mat4) {
+  let mut mesh = (*m.mesh).clone();
+  match m.transform.try_inverse() {
+    Some(inv) => (mesh, m.transform, inv),
+    None => {
+      mesh.bake_transform(m.transform);
+      (mesh, Mat4::identity(), Mat4::identity())
+    }
+  }
+}
+
+/// After moving or adding vertices of `src` to get `mesh`: drops cached displacement normals and
+/// rebuilds a complete authored shading-normal set if `src` had one (the renderer would otherwise
+/// use it verbatim).
+pub(crate) fn refresh_stale_normals(
+  src: &LinkedMesh<()>,
+  mesh: &mut LinkedMesh<()>,
+  ctx: &crate::EvalCtx,
+) {
+  mesh.displacement_normals.clear();
+  mesh.edge_displacement_normals.clear();
+  if !src.shading_normals.is_empty() && src.shading_normals.len() == src.vertices.len() {
+    mesh.recompute_shading_normals_preserving_seams(
+      ctx.read_sharp_angle_threshold_degrees().to_radians(),
+    );
+  } else {
+    mesh.shading_normals.clear();
+  }
+}
 
 #[cfg(target_arch = "wasm32")]
 #[inline]
@@ -246,8 +277,36 @@ pub(crate) fn with_transferred_attrs(
   if !src.mesh.vertex_channels.is_empty() {
     let transform = out.transform;
     transfer_attrs_into(src, Rc::make_mut(&mut out.mesh), &transform)?;
+    // A handle built before the transfer has no lanes for the new channels.
+    out.manifold_handle = Rc::new(crate::ManifoldHandle::new_empty());
   }
   Ok(out)
+}
+
+/// Positions + indices for CGAL with attribute-seam duplicates welded, which CGAL would otherwise
+/// see as open boundaries. Attributes are re-transferred onto the output.
+#[cfg(target_arch = "wasm32")]
+fn cgal_input(mesh: &LinkedMesh<()>) -> (Vec<f32>, Vec<u32>) {
+  let mut ix_of = fxhash::FxHashMap::default();
+  let mut verts = Vec::with_capacity(mesh.vertices.len() * 3);
+  let mut indices = Vec::with_capacity(mesh.faces.len() * 3);
+  for face in mesh.faces.values() {
+    for &vk in &face.vertices {
+      indices.push(*ix_of.entry(vk).or_insert_with(|| {
+        verts.extend_from_slice(mesh.vertices[vk].position.as_slice());
+        (verts.len() / 3 - 1) as u32
+      }));
+    }
+  }
+  super::slivers::weld_coincident_vertices(&verts, &indices).unwrap_or((verts, indices))
+}
+
+#[cfg(target_arch = "wasm32")]
+fn cgal_result(src: &MeshHandle) -> Result<MeshHandle, ErrorStack> {
+  with_transferred_attrs(
+    src,
+    read_cgal_output_mesh(src.transform, src.material.clone())?,
+  )
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -292,7 +351,16 @@ fn simplify_manifold(mesh: &MeshHandle, tolerance: f32) -> Result<MeshHandle, Er
 
   use crate::ManifoldHandle;
 
-  let encoded_output = simplify(mesh.get_or_create_handle()?, tolerance);
+  let handle = mesh.get_or_create_handle().map_err(|err| {
+    if mesh.mesh.edges.values().any(|edge| edge.faces.len() == 1) {
+      err.wrap(
+        "engine=\"manifold\" requires a closed mesh; use engine=\"meshopt\" for open surfaces",
+      )
+    } else {
+      err
+    }
+  })?;
+  let encoded_output = simplify(handle, tolerance);
 
   let layout = mesh.manifold_handle.layout();
   let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded_output);
@@ -346,8 +414,6 @@ pub fn split_mesh_by_plane(
 ) -> Result<(MeshHandle, MeshHandle), ErrorStack> {
   use crate::ManifoldHandle;
 
-  verify_cgal_loaded()?;
-
   let handle = mesh.get_or_create_handle()?;
   let layout = mesh.manifold_handle.layout();
   split_by_plane(
@@ -359,32 +425,21 @@ pub fn split_mesh_by_plane(
     plane_offset,
   );
 
-  let a = get_split_output(0);
-  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&a);
-  let a = MeshHandle {
-    mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
-      &out, &layout, false,
-    )),
-    transform: Mat4::identity(),
-    manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
-    aabb: mesh.aabb.clone(),
-    bvh: mesh.bvh.clone(),
-    material: mesh.material.clone(),
+  let half = |ix: usize| {
+    let encoded = get_split_output(ix);
+    let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded);
+    MeshHandle {
+      mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
+        &out, &layout, false,
+      )),
+      transform: Mat4::identity(),
+      manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
+      aabb: Default::default(),
+      bvh: Default::default(),
+      material: mesh.material.clone(),
+    }
   };
-  let b = get_split_output(1);
-  let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&b);
-  let b = MeshHandle {
-    mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
-      &out, &layout, false,
-    )),
-    transform: Mat4::identity(),
-    manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
-    aabb: mesh.aabb.clone(),
-    bvh: mesh.bvh.clone(),
-    material: mesh.material.clone(),
-  };
-
-  Ok((a, b))
+  Ok((half(0), half(1)))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -412,30 +467,16 @@ pub fn alpha_wrap_mesh(
   seeds: &[Vec3],
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-
-  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
-
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
-  let in_indices = unsafe {
-    std::slice::from_raw_parts(
-      raw_mesh.indices.as_ptr() as *const u32,
-      raw_mesh.indices.len(),
-    )
-  };
-
+  let (verts, indices) = cgal_input(&mesh.mesh);
   cgal_alpha_wrap_mesh(
-    &raw_mesh.vertices,
-    in_indices,
+    &verts,
+    &indices,
     relative_alpha,
     relative_offset,
     manifold,
     vec3s_as_f32s(seeds),
   );
-
-  with_transferred_attrs(
-    mesh,
-    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
-  )
+  cgal_result(mesh)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -483,36 +524,15 @@ pub fn smooth_mesh(
   iterations: u32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-
-  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
-
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
-  let in_indices = unsafe {
-    std::slice::from_raw_parts(
-      raw_mesh.indices.as_ptr() as *const u32,
-      raw_mesh.indices.len(),
-    )
+  let (verts, indices) = cgal_input(&mesh.mesh);
+  let smooth = match smooth_type {
+    SmoothType::CatmullClark => cgal_catmull_smooth_mesh,
+    SmoothType::Loop => cgal_loop_smooth_mesh,
+    SmoothType::DooSabin => cgal_doosabin_smooth_mesh,
+    SmoothType::Sqrt => cgal_sqrt_smooth_mesh,
   };
-
-  match smooth_type {
-    SmoothType::CatmullClark => {
-      cgal_catmull_smooth_mesh(&raw_mesh.vertices, in_indices, iterations);
-    }
-    SmoothType::Loop => {
-      cgal_loop_smooth_mesh(&raw_mesh.vertices, in_indices, iterations);
-    }
-    SmoothType::DooSabin => {
-      cgal_doosabin_smooth_mesh(&raw_mesh.vertices, in_indices, iterations);
-    }
-    SmoothType::Sqrt => {
-      cgal_sqrt_smooth_mesh(&raw_mesh.vertices, in_indices, iterations);
-    }
-  }
-
-  with_transferred_attrs(
-    mesh,
-    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
-  )
+  smooth(&verts, &indices, iterations);
+  cgal_result(mesh)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -568,34 +588,9 @@ pub fn remesh_planar_patches(
   least_squares: bool,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-
-  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
-
-  assert_eq!(std::mem::size_of::<usize>(), std::mem::size_of::<u32>());
-  let in_indices = unsafe {
-    std::slice::from_raw_parts(
-      raw_mesh.indices.as_ptr() as *const u32,
-      raw_mesh.indices.len(),
-    )
-  };
-
-  // Attribute seams reach here as coincident duplicate vertices with open edges between them;
-  // CGAL then segments planar patches across sheets it can't stitch back together.
-  let (vertices, indices) =
-    crate::mesh_ops::slivers::weld_coincident_vertices(&raw_mesh.vertices, in_indices)
-      .unwrap_or_else(|| (raw_mesh.vertices.clone(), in_indices.to_vec()));
-  cgal_remesh_planar_patches(
-    &vertices,
-    &indices,
-    max_angle_deg,
-    max_offset,
-    least_squares,
-  );
-
-  with_transferred_attrs(
-    mesh,
-    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
-  )
+  let (verts, indices) = cgal_input(&mesh.mesh);
+  cgal_remesh_planar_patches(&verts, &indices, max_angle_deg, max_offset, least_squares);
+  cgal_result(mesh)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -620,31 +615,17 @@ pub fn isotropic_remesh(
   sharp_angle_threshold_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-
-  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
-
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
-  let in_indices = unsafe {
-    std::slice::from_raw_parts(
-      raw_mesh.indices.as_ptr() as *const u32,
-      raw_mesh.indices.len(),
-    )
-  };
-
+  let (verts, indices) = cgal_input(&mesh.mesh);
   cgal_remesh_isotropic(
-    &raw_mesh.vertices,
-    in_indices,
+    &verts,
+    &indices,
     target_edge_length,
     max_iterations,
     protect_borders,
     auto_sharp_edges,
     sharp_angle_threshold_degrees,
   );
-
-  with_transferred_attrs(
-    mesh,
-    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
-  )
+  cgal_result(mesh)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -670,45 +651,19 @@ pub fn delaunay_remesh(
   sharp_angle_threshold_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-
-  let raw_mesh = mesh.mesh.to_raw_indexed(false, false, true);
-
-  assert_eq!(std::mem::size_of::<u32>(), std::mem::size_of::<u32>());
-  let in_indices = unsafe {
-    std::slice::from_raw_parts(
-      raw_mesh.indices.as_ptr() as *const u32,
-      raw_mesh.indices.len(),
-    )
-  };
-
+  let (verts, indices) = cgal_input(&mesh.mesh);
   cgal_remesh_delaunay(
-    &raw_mesh.vertices,
-    in_indices,
+    &verts,
+    &indices,
     target_edge_length,
     facet_distance,
     auto_sharp_edges,
     sharp_angle_threshold_degrees,
   );
-
-  // sometimes the normals get flipped in delaunay remeshing; re-orient connected components
-  // outward.
-  //
-  // This kinda works, the only for the components that are manifold - and manifoldness isn't
-  // guaranteed.
-  let mut out_mesh = read_raw_cgal_output_mesh()?;
-  out_mesh.orient_connected_components_outward();
-
-  with_transferred_attrs(
-    mesh,
-    MeshHandle {
-      mesh: Rc::new(out_mesh),
-      transform: mesh.transform,
-      manifold_handle: mesh.manifold_handle.clone(),
-      aabb: mesh.aabb.clone(),
-      bvh: mesh.bvh.clone(),
-      material: mesh.material.clone(),
-    },
-  )
+  let mut out = read_cgal_output_mesh(mesh.transform, mesh.material.clone())?;
+  // Delaunay remeshing sometimes flips components (only manifold ones can be re-oriented).
+  Rc::make_mut(&mut out.mesh).orient_connected_components_outward();
+  with_transferred_attrs(mesh, out)
 }
 
 #[cfg(not(target_arch = "wasm32"))]

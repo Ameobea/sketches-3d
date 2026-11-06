@@ -1,0 +1,69 @@
+{
+  "scenes": [
+    {
+      "name": "factory",
+      "poses": [
+        "spawn",
+        { "name": "bm7", "pos": [-169.1648, 104.2574, -283.0007], "rot": [-0.039, -4.7204, 0], "feet": true },
+        { "name": "bm5", "pos": [87.7712, 98.1342, -243.4011], "rot": [-0.4879, -3.7408, 0], "feet": true }
+      ]
+    },
+    {
+      "name": "sunrise",
+      "poses": [
+        "spawn",
+        { "name": "bm1", "pos": [171.0332, 118.418, 164.3651], "rot": [0.0406, -2.1387, 0], "feet": true },
+        { "name": "haze", "pos": [-60.85, 95, -30.91], "rot": [-0.25, 2.4, 0] }
+      ]
+    },
+    {
+      "name": "boost_nova",
+      "poses": [
+        "spawn",
+        { "name": "bm1", "pos": [-33.8227, 16.749, -1.9581], "rot": [-0.2976, 1.8619, 0], "feet": true },
+        { "name": "bm2", "pos": [6.0938, 85.2856, 17.4535], "rot": [-0.6981, 1.7094, 0], "feet": true }
+      ]
+    },
+    {
+      "name": "city",
+      "poses": [
+        "spawn",
+        { "name": "back", "pos": [-48, 9.5, -14], "rot": [0.05, 3.14, 0] },
+        { "name": "overview", "pos": [-48, 45, -14], "rot": [-0.45, 0.8, 0] }
+      ]
+    },
+    { "name": "csm_test", "poses": ["spawn", "overview"] },
+    { "name": "smoke", "poses": ["room", "torch", "jump", "outside"] },
+    { "name": "stone", "poses": ["spawn", "outside", "top", "two"] },
+    {
+      "name": "t",
+      "poses": [
+        "spawn",
+        { "name": "bm1", "pos": [66.1749, 63.558, -8.0545], "rot": [-1.3011, 3.1722, 0], "feet": true },
+        { "name": "bm6", "pos": [64.9648, 29.1996, -85.0208], "rot": [-1.2155, 1.6445, 0], "feet": true }
+      ]
+    },
+    { "name": "plats", "poses": ["spawn", "2", "end"] },
+    {
+      "name": "csgSandbox",
+      "poses": ["spawn", { "name": "close", "pos": [8, 19, 8], "rot": [-0.6, 0.785, 0] }]
+    },
+    {
+      "name": "tessellationSandbox",
+      "poses": ["spawn", { "name": "down", "pos": [0, 14, 0], "rot": [-0.7, 2.6, 0] }]
+    },
+    { "name": "rainy", "frames": 16, "poses": ["spawn", "greenhouse", "tree", "corner"] },
+    { "name": "chasms", "poses": ["spawn", "bridge", "conn", "tower"] },
+    { "name": "bridge2", "poses": ["spawn", "bridgeEnd", "monolith", "puz"] },
+    {
+      "name": "bridge",
+      "poses": ["spawn", { "name": "above", "pos": [48.18, 60, 8.6], "rot": [-0.6, 1.4, 0] }]
+    },
+    { "name": "holes", "poses": ["spawn"] },
+    { "name": "nexus", "poses": ["spawn"] },
+    { "name": "basalt", "poses": ["spawn"] },
+    { "name": "pk_pylons", "poses": ["3"] },
+    { "name": "godrays_test", "poses": ["spawn"] }
+  ],
+  "geotoy": [16, 50, 63, 62, 134, 65, 115, 97, 140, 136]
+}

@@ -6,7 +6,7 @@ use nalgebra::Matrix4;
 use nanoserde::SerJson;
 use strum::IntoEnumIterator;
 
-use crate::{ErrorStack, Value};
+use crate::{color::linear_channel_to_srgb, ErrorStack, Value};
 
 fn parse_color_value(color: &Value) -> Result<u32, ErrorStack> {
   match color {
@@ -19,13 +19,13 @@ fn parse_color_value(color: &Value) -> Result<u32, ErrorStack> {
     }
     Value::Vec3(v) => {
       if v.x < 0. || v.y < 0. || v.z < 0. {
-        return Err(ErrorStack::new("Color vector values should all be [0, 1]"));
+        return Err(ErrorStack::new(
+          "Color vector components cannot be negative",
+        ));
       }
 
-      let r = (v.x * 255.).clamp(0., 255.) as u32;
-      let g = (v.y * 255.).clamp(0., 255.) as u32;
-      let b = (v.z * 255.).clamp(0., 255.) as u32;
-      Ok((r << 16) | (g << 8) | b)
+      let enc = |c: f32| (linear_channel_to_srgb(c.min(1.)) * 255. + 0.5) as u32;
+      Ok((enc(v.x) << 16) | (enc(v.y) << 8) | enc(v.z))
     }
     _ => Err(ErrorStack::new("Invalid color value, expected int or vec3")),
   }
@@ -437,4 +437,22 @@ impl Light {
       Light::RectArea(r) => &mut r.transform,
     }
   }
+}
+
+#[test]
+fn light_vec3_color_is_srgb_encoded() {
+  let ctx = crate::parse_and_eval_program(
+    "a = ambient_light(color=srgb(0x808080))\nb = ambient_light(color=vec3(0.5, 2, 0))",
+  )
+  .unwrap();
+  let color = |name: &str| match ctx.get_global(name) {
+    Some(Value::Light(l)) => match *l {
+      Light::Ambient(a) => a.color,
+      _ => unreachable!(),
+    },
+    _ => unreachable!(),
+  };
+  assert_eq!(color("a"), 0x808080);
+  assert_eq!(color("b"), 0xbcff00);
+  assert!(crate::parse_and_eval_program("ambient_light(color=vec3(-0.1, 0, 0))").is_err());
 }

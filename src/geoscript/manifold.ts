@@ -50,11 +50,6 @@ export const drop_mesh_handle = (handle: number) => {
   MeshHandles.delete(handle);
 };
 
-export const drop_all_mesh_handles = () => {
-  MeshHandles.forEach(mesh => mesh.delete());
-  MeshHandles.clear();
-};
-
 const HEADER_WORDS = 6;
 
 // Layout is documented on the Rust side: `mesh_boolean.rs::decode_manifold_output`.

@@ -250,12 +250,8 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
       let lhs = lhs.as_mesh().unwrap();
       let rhs = rhs.as_mesh().unwrap();
 
-      let mut combined = (*lhs.mesh).clone();
-      // rhs local -> world -> lhs local
-      combined.append(
-        &rhs.mesh,
-        &(lhs.transform.try_inverse().unwrap() * rhs.transform),
-      );
+      let (mut combined, transform, inv) = crate::mesh_ops::mesh_ops::mesh_append_base(lhs);
+      combined.append(&rhs.mesh, &(inv * rhs.transform));
 
       let maybe_combined_aabb = match (&*lhs.aabb.borrow(), &*rhs.aabb.borrow()) {
         (Some(a), Some(b)) => Some(a.union(b)),
@@ -264,7 +260,7 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(combined),
-        transform: lhs.transform,
+        transform,
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(maybe_combined_aabb),
         bvh: RefCell::new(None),
@@ -1021,6 +1017,7 @@ pub(crate) fn warp_impl(
         })?;
         new_mesh.vertices[vtx_key].position = *warped_pos;
       }
+      crate::mesh_ops::mesh_ops::refresh_stale_normals(&mesh.mesh, &mut new_mesh, ctx);
 
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(new_mesh),
@@ -2190,15 +2187,14 @@ fn randv_impl(
     0 => {
       let min = arg_refs[0].resolve(args, kwargs).as_vec3().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
-      if min == max {
-        return Ok(Value::Vec3(*min));
-      } else if min.x > max.x || min.y > max.y || min.z > max.z {
+      if min.x > max.x || min.y > max.y || min.z > max.z {
         return Err(invalid_bounds_err(min, max));
       }
+      let rng = ctx.rng();
       Ok(Value::Vec3(Vec3::new(
-        ctx.rng().random_range(min.x..max.x),
-        ctx.rng().random_range(min.y..max.y),
-        ctx.rng().random_range(min.z..max.z),
+        rand_f32(rng, min.x, max.x),
+        rand_f32(rng, min.y, max.y),
+        rand_f32(rng, min.z, max.z),
       )))
     }
     1 => {
@@ -2243,15 +2239,14 @@ fn srandv_impl(
     0 => {
       let min = arg_refs[1].resolve(args, kwargs).as_vec3().unwrap();
       let max = arg_refs[2].resolve(args, kwargs).as_vec3().unwrap();
-      if min == max {
-        return Ok(Value::Vec3(*min));
-      } else if min.x > max.x || min.y > max.y || min.z > max.z {
+      if min.x > max.x || min.y > max.y || min.z > max.z {
         return Err(invalid_bounds_err(min, max));
       }
+      let rng = &mut rng;
       Ok(Value::Vec3(Vec3::new(
-        rng.random_range(min.x..max.x),
-        rng.random_range(min.y..max.y),
-        rng.random_range(min.z..max.z),
+        rand_f32(rng, min.x, max.x),
+        rand_f32(rng, min.y, max.y),
+        rand_f32(rng, min.z, max.z),
       )))
     }
     1 => {
@@ -2277,6 +2272,21 @@ fn srandv_impl(
   }
 }
 
+/// `min..max`, collapsing an empty range to `min` instead of panicking.
+fn rand_f32(rng: &mut Pcg32, min: f32, max: f32) -> f32 {
+  if min < max {
+    rng.random_range(min..max)
+  } else {
+    min
+  }
+}
+
+fn invalid_randf_range(min: f32, max: f32) -> ErrorStack {
+  ErrorStack::new(format!(
+    "Invalid range for randf: min ({min}) must be less than or equal to max ({max})"
+  ))
+}
+
 fn randf_impl(
   ctx: &EvalCtx,
   def_ix: usize,
@@ -2288,7 +2298,10 @@ fn randf_impl(
     0 => {
       let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(ctx.rng().random_range(min..max)))
+      if min > max {
+        return Err(invalid_randf_range(min, max));
+      }
+      Ok(Value::Float(rand_f32(ctx.rng(), min, max)))
     }
     1 => Ok(Value::Float(ctx.rng().random())),
     _ => unimplemented!(),
@@ -2308,7 +2321,10 @@ fn srandf_impl(
     0 => {
       let min = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[2].resolve(args, kwargs).as_float().unwrap();
-      Ok(Value::Float(rng.random_range(min..max)))
+      if min > max {
+        return Err(invalid_randf_range(min, max));
+      }
+      Ok(Value::Float(rand_f32(&mut rng, min, max)))
     }
     1 => Ok(Value::Float(rng.random())),
     _ => unimplemented!(),
@@ -3474,8 +3490,7 @@ fn embed_path_impl(
             ""
           },
         );
-        ctx.prints.borrow_mut().push(msg.clone());
-        (ctx.log_fn)(&msg);
+        ctx.push_print(msg);
       };
       // Vertex index -> bitmask of guards whose zero set the refiner pinned that vertex onto.
       let crease_bits_map = |uvs: &[Vec2], crease: &CreaseUvs| -> FxHashMap<usize, u16> {
@@ -4472,11 +4487,8 @@ fn extrude_path_impl(
         }
         vec![(points, false)]
       } else if let Some(path) = path_val.as_path() {
-        let mut raw = path.sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?;
-        if !path.is_concrete() {
-          raw.iter_mut().for_each(|(_, closed)| *closed = false);
-        }
-        raw
+        path
+          .sample_subpaths_with_limit(curve_angle_radians, sample_count, ctx)?
           .into_iter()
           .map(|(pts, closed)| {
             (
@@ -4492,10 +4504,8 @@ fn extrude_path_impl(
         )));
       };
 
-      let mesh =
-        extrude_path(subpaths, up, flipped).map_err(|err| err.wrap("Error in `extrude_path`"))?;
       Ok(Value::Mesh(Rc::new(MeshHandle {
-        mesh: Rc::new(mesh),
+        mesh: Rc::new(extrude_path(subpaths, up, flipped)),
         transform: Matrix4::identity(),
         manifold_handle: Rc::new(ManifoldHandle::new_empty()),
         aabb: RefCell::new(None),
@@ -4558,7 +4568,7 @@ fn trace_geodesic_path_impl(
           .unwrap_or((vertices, indices));
       let (vertices, indices) =
         crate::mesh_ops::slivers::collapse_sliver_triangles(&vertices, &indices, 1e-5);
-      let mut out_points = trace_geodesic_path(
+      let out_points = trace_geodesic_path(
         &vertices,
         &indices,
         path_slice,
@@ -4572,24 +4582,17 @@ fn trace_geodesic_path_impl(
         return Err(ErrorStack::new(err).wrap("Error calling geodesic path tracing kernel"));
       }
 
-      assert_eq!(out_points.len() % 3, 0);
-      if out_points.capacity() % 3 != 0 {
-        out_points.shrink_to_fit();
-      }
-      let mut out_points_v3: Vec<Vec3> = unsafe {
-        Vec::from_raw_parts(
-          out_points.as_ptr() as *mut Vec3,
-          out_points.len() / 3,
-          out_points.capacity() / 3,
-        )
-      };
-      std::mem::forget(out_points);
-
-      if world_space {
-        for vtx in &mut out_points_v3 {
-          *vtx = (mesh.transform * vtx.push(1.)).xyz();
-        }
-      }
+      let out_points_v3: Vec<Vec3> = out_points
+        .chunks_exact(3)
+        .map(|c| {
+          let v = Vec3::new(c[0], c[1], c[2]);
+          if world_space {
+            (mesh.transform * v.push(1.)).xyz()
+          } else {
+            v
+          }
+        })
+        .collect();
 
       Ok(Value::Sequence(Rc::new(IteratorSeq {
         inner: out_points_v3.into_iter().map(|v| Ok(Value::Vec3(v))),
@@ -5194,6 +5197,7 @@ fn extrude_impl(
         }
       }
 
+      crate::mesh_ops::mesh_ops::refresh_stale_normals(&mesh.mesh, &mut out_mesh, ctx);
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(out_mesh),
         transform: mesh.transform,
@@ -5252,6 +5256,7 @@ fn extrude_along_normals_impl(
         }
       }
 
+      crate::mesh_ops::mesh_ops::refresh_stale_normals(&mesh.mesh, &mut out_mesh, ctx);
       Ok(Value::Mesh(Rc::new(MeshHandle {
         mesh: Rc::new(out_mesh),
         transform: mesh.transform,
@@ -6350,13 +6355,19 @@ fn point_distribute_impl(
 
 /// The handle's stable id: the first string arg if given (literal or runtime-computed),
 /// else a per-module positional `@N` counted across all unnamed gizmo-family calls.
-fn resolve_gizmo_handle_id(ctx: &EvalCtx, name_val: &Value) -> String {
+fn resolve_gizmo_handle_id(ctx: &EvalCtx, name_val: &Value) -> Result<String, ErrorStack> {
   if let Some(s) = name_val.as_str() {
-    return s.to_owned();
+    return Ok(s.to_owned());
+  }
+  // `@N` ids count calls in eval order, which the editor's lexical scan can't follow into closures.
+  if ctx.call_depth.get() > 0 {
+    return Err(ErrorStack::new(
+      "Gizmos created inside a function must be named (pass a string as the first argument)",
+    ));
   }
   let n = ctx.current_module_unnamed_gizmo_count.get();
   ctx.current_module_unnamed_gizmo_count.set(n + 1);
-  format!("@{n}")
+  Ok(format!("@{n}"))
 }
 
 fn record_gizmo_read(ctx: &EvalCtx, handle_id: &str) {
@@ -6421,7 +6432,7 @@ fn gizmo_impl(
   let default = arg_refs[3].resolve(args, kwargs).as_vec3().copied();
   let ghost = resolve_ghost_flag(arg_refs[4].resolve(args, kwargs));
 
-  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val)?;
   let module = ctx.current_module.borrow().clone();
 
   // delta (default) ⇒ stored offset, zero until dragged; absolute ⇒ the value itself.
@@ -6452,7 +6463,7 @@ fn gizmo_nd_impl(
   args: &[Value],
   kwargs: &FxHashMap<Sym, Value>,
   mask: [bool; 3],
-) -> Vec3 {
+) -> Result<Vec3, ErrorStack> {
   let name_val = arg_refs[0].resolve(args, kwargs);
   let origin = arg_refs[1]
     .resolve(args, kwargs)
@@ -6462,7 +6473,7 @@ fn gizmo_nd_impl(
   let absolute = arg_refs[2].resolve(args, kwargs).as_bool().unwrap_or(false);
   let ghost = resolve_ghost_flag(arg_refs[5].resolve(args, kwargs));
 
-  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val)?;
   let module = ctx.current_module.borrow().clone();
 
   let value = match injected_gizmo_value(ctx, &module, &handle_id) {
@@ -6487,7 +6498,7 @@ fn gizmo_nd_impl(
     axes: mask,
     ghost,
   });
-  value
+  Ok(value)
 }
 
 fn gizmo2d_impl(
@@ -6504,7 +6515,7 @@ fn gizmo2d_impl(
     .filter(|m| m.iter().filter(|b| **b).count() == 2)
     .unwrap_or([true, false, true]);
   let a = axis_indices(&mask);
-  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask);
+  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask)?;
   Ok(Value::Vec2(Vec2::new(value[a[0]], value[a[1]])))
 }
 
@@ -6522,7 +6533,7 @@ fn gizmo1d_impl(
     .filter(|m| m.iter().filter(|b| **b).count() == 1)
     .unwrap_or([false, true, false]);
   let a = axis_indices(&mask);
-  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask);
+  let value = gizmo_nd_impl(ctx, arg_refs, args, kwargs, mask)?;
   Ok(Value::Float(value[a[0]]))
 }
 
@@ -6537,7 +6548,7 @@ fn gizmo_transform_impl(
   let default = arg_refs[1].resolve(args, kwargs).as_mat4().copied();
   let ghost = resolve_ghost_flag(arg_refs[2].resolve(args, kwargs));
 
-  let handle_id = resolve_gizmo_handle_id(ctx, name_val);
+  let handle_id = resolve_gizmo_handle_id(ctx, name_val)?;
   let module = ctx.current_module.borrow().clone();
 
   let mat = match injected_gizmo_value(ctx, &module, &handle_id) {
@@ -6851,6 +6862,7 @@ fn render_impl(
       source_module: ctx.current_module.borrow().clone(),
       mesh_id: ctx.next_render_id(),
       export_attrs: Rc::clone(&export_attrs),
+      default_material: ctx.default_material.borrow().clone(),
     });
     Ok(())
   };
@@ -6991,8 +7003,7 @@ fn print_impl(
     (true, false) => formatted_kwargs,
     (true, true) => String::new(),
   };
-  ctx.prints.borrow_mut().push(msg.clone());
-  (ctx.log_fn)(&msg);
+  ctx.push_print(msg);
   Ok(Value::Nil)
 }
 
@@ -8958,15 +8969,7 @@ fn path_frame_impl(
   let path = expect_path(arg_refs[1].resolve(args, kwargs), "path_frame")?;
   let inward_normal = arg_refs[2].resolve(args, kwargs).as_bool().unwrap();
 
-  let dt = FRAME_FINITE_DIFF_DT;
-  let (lo, hi) = if t_in <= dt {
-    (0.0, 2.0 * dt)
-  } else if t_in >= 1.0 - dt {
-    (1.0 - 2.0 * dt, 1.0)
-  } else {
-    (t_in - dt, t_in + dt)
-  };
-
+  let (lo, hi) = path.diff_window(t_in, FRAME_FINITE_DIFF_DT);
   let sample = |t: f32| -> Result<Vec2, ErrorStack> {
     path
       .eval_at(t, ctx)
@@ -9387,9 +9390,8 @@ fn join_meshes(
     }
   };
 
-  let out_transform = base.transform;
-  let out_transform_inv = out_transform.try_inverse().unwrap();
-  let mut combined = (*base.mesh).clone();
+  let (mut combined, out_transform, out_transform_inv) =
+    crate::mesh_ops::mesh_ops::mesh_append_base(&base);
 
   for val in iter {
     let rhs = match val? {
@@ -10642,6 +10644,11 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
     let lhs = arg_refs[0].resolve(args, kwargs);
     let rhs = arg_refs[1].resolve(args, kwargs);
     or_impl(def_ix, lhs, rhs)
+  }),
+  "xor" => builtin_fn!(xor, |_def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
+    let a = arg_refs[0].resolve(args, kwargs).as_bool().unwrap();
+    let b = arg_refs[1].resolve(args, kwargs).as_bool().unwrap();
+    Ok(Value::Bool(a != b))
   }),
   "not" => builtin_fn!(not, |def_ix, arg_refs: &[ArgRef], args, kwargs, _ctx| {
     let val = arg_refs[0].resolve(args, kwargs);

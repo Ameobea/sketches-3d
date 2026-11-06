@@ -36,7 +36,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
   const groundNormalTexture = await generateNormalMapFromTexture(groundTexture);
 
   const ground = loadedWorld.getObjectByName('ground001')! as THREE.Mesh;
-  const groundUVTransform = new THREE.Matrix3().scale(3 * 32, 4 * 32);
+  const groundUVTransform = new THREE.Matrix3().makeScale(3 * 32, 4 * 32);
   const groundMaterial = buildCustomShader(
     {
       color: new THREE.Color(0x3232cc),
@@ -84,7 +84,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
       color: new THREE.Color(0xffffff),
       map: texture,
       normalMap: normalTexture,
-      uvTransform: new THREE.Matrix3().scale(3 * 1, 4 * 1),
+      uvTransform: new THREE.Matrix3().makeScale(3 * 1, 4 * 1),
     },
     {
       customVertexFragment: PillarVertexShaderFragment,

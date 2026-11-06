@@ -41,7 +41,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
     'https://i.ameo.link/aba.png'
   );
 
-  const srcData: ImageBitmap = groundTexture.source.data;
+  const srcData = groundTexture.source.data as ImageBitmap;
   const canvas = document.createElement('canvas');
   canvas.width = srcData.width;
   canvas.height = srcData.height;
@@ -51,7 +51,7 @@ export const processLoadedScene = async (viz: Viz, loadedWorld: THREE.Group): Pr
 
   const groundNormalTexture = await generateNormalMapFromTexture(groundTexture);
 
-  const uvTransform = new THREE.Matrix3().scale(64, 64);
+  const uvTransform = new THREE.Matrix3().makeScale(64, 64);
   const groundMaterial = buildCustomShader(
     {
       map: groundTexture,

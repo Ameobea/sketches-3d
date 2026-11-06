@@ -66,7 +66,7 @@ export const processLoadedScene = async (
             roughnessMap: gemRoughness,
             metalness: 0.7,
             roughness: 1.5,
-            uvTransform: new THREE.Matrix3().scale(0.02, 0.02),
+            uvTransform: new THREE.Matrix3().makeScale(0.02, 0.02),
             iridescence: 0.6,
             mapDisableDistance: null,
           },

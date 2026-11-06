@@ -8,6 +8,7 @@ import {
   updateComposition,
   type Composition,
   type CompositionDoc,
+  type CompositionVersion,
   COMPOSITION_METADATA_VERSION,
   defaultTabMetadata,
   readVersionMetadata,
@@ -116,8 +117,19 @@ const resolveActiveTreeId = (doc: CompositionDoc, metadataActiveId: string | und
     ? metadataActiveId
     : defaultTreeEntry(doc).id;
 
+/** Older versions only, so browsing history doesn't discard a newer version's unsaved draft. */
+const pruneOlderDrafts = (compId: number, versionId: number) => {
+  const re = new RegExp(`^geotoy2:\\w+-${compId}-(\\d+)$`);
+  for (const key of Object.keys(localStorage)) {
+    const v = re.exec(key)?.[1];
+    if (v && +v < versionId) localStorage.removeItem(key);
+  }
+};
+
 export const loadState = (userData: GeoscriptPlaygroundUserData | undefined): PlaygroundState => {
   const suffix = getLocalStorageKeySuffix(userData);
+  const init = userData?.initialComposition;
+  if (init) pruneOlderDrafts(init.comp.id, init.version.id);
 
   const savedDoc = parseDocOrNull(localStorage.getItem(`${KEY_DOC}${suffix}`));
   const savedMaterialsRaw = localStorage.getItem(`${KEY_MATERIALS}${suffix}`);
@@ -205,12 +217,13 @@ export const saveNewVersion = async (
   activeTreeId: string,
   materials: MaterialDefinitions,
   tabMeta: Record<string, TabMetadata>,
-  { title, description, isShared, tags }: CompositionMeta,
-  userData?: GeoscriptPlaygroundUserData
-): Promise<{ type: 'ok' } | { type: 'error'; msg: string }> => {
+  { title, description, isShared, tags }: CompositionMeta
+): Promise<
+  { type: 'ok'; comp: Composition; version: CompositionVersion } | { type: 'error'; msg: string }
+> => {
   try {
     const metadata = buildCompositionVersionMetadata(activeTreeId, materials, tabMeta);
-    await Promise.all([
+    const [version, updated] = await Promise.all([
       createCompositionVersion(comp.id, { tree: currentDoc, metadata }),
       updateComposition(comp.id, ['title', 'description', 'is_shared', 'tags'], {
         title,
@@ -219,8 +232,7 @@ export const saveNewVersion = async (
         tags,
       }),
     ]);
-    saveState({ doc: currentDoc, activeTreeId, materials, tabMeta }, userData);
-    return { type: 'ok' };
+    return { type: 'ok', comp: updated, version };
   } catch (error) {
     console.error('Error saving changes:', error);
     if (error instanceof APIError) {

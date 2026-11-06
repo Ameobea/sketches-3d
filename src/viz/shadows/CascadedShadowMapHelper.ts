@@ -25,9 +25,8 @@ export class CascadedShadowMapHelper extends THREE.Group {
     }
   }
 
-  dispose() {
-    for (const helper of this.helpers) {
-      helper.dispose();
-    }
+  override dispose() {
+    for (const helper of this.helpers) helper.dispose();
+    super.dispose();
   }
 }

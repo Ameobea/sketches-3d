@@ -32,9 +32,9 @@ export class CsmDebugBlit {
         uniform sampler2DArray uDepth;
         uniform float uLayer;
         varying vec2 vUv;
-        const vec4 UnpackFactors = (255.0 / 256.0) / vec4(256.0 * 256.0 * 256.0, 256.0 * 256.0, 256.0, 1.0);
+        #include <packing>
         void main() {
-          float d = dot(texture(uDepth, vec3(vUv, uLayer)), UnpackFactors);
+          float d = unpackRGBAToDepth(texture(uDepth, vec3(vUv, uLayer)));
           gl_FragColor = vec4(vec3(d), 1.0);
         }`,
     });

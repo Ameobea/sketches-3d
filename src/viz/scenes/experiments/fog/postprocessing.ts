@@ -1,4 +1,5 @@
-import { EffectComposer, EffectPass, SMAAEffect, SMAAPreset } from 'postprocessing';
+import { EffectPass, SMAAEffect, SMAAPreset } from 'postprocessing';
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
@@ -7,7 +8,7 @@ import { DepthPass, MainRenderPass } from 'src/viz/passes/depthPrepass';
 import { VolumetricPass } from 'src/viz/shaders/volumetric/volumetric';
 
 export const configurePostprocessing = (viz: Viz, quality: GraphicsQuality) => {
-  const effectComposer = new EffectComposer(viz.renderer, {
+  const effectComposer = new StableDepthEffectComposer(viz.renderer, {
     multisampling: 0,
     frameBufferType: THREE.HalfFloatType,
   });

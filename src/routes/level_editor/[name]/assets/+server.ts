@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'fs';
-import { basename, join } from 'path';
+import { basename } from 'path';
 
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from '@sveltejs/kit';
 
-import { getAssetsDir } from 'src/viz/levelDef/levelPaths.server';
+import { getAssetsDir, resolveInside } from 'src/viz/levelDef/levelPaths.server';
 
 import { guardDev, openLevel, validateName } from '../../levelEditorUtils.server';
 
@@ -29,8 +29,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     error(400, 'file must start with __ASSETS__/');
   }
 
-  const relativePath = body.file.slice('__ASSETS__/'.length);
-  const filePath = join(getAssetsDir(), relativePath);
+  const filePath = resolveInside(getAssetsDir(), body.file.slice('__ASSETS__/'.length));
 
   if (!existsSync(filePath)) {
     error(404, `Asset file not found: ${body.file}`);

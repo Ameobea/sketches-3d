@@ -161,8 +161,25 @@ export const POST: RequestHandler = async ({ params, request }) => {
         index?: number;
       };
 
+  const requestedIds =
+    body.type === 'restore_subtree'
+      ? flattenAllNodes([body.def]).map(n => n.id)
+      : 'id' in body && body.id
+        ? [body.id]
+        : [];
+  if (new Set(requestedIds).size !== requestedIds.length)
+    error(400, 'Duplicate node ids in restored subtree');
+  // Generator output only exists in the merged level; load it before `openLevel` so no await
+  // separates reading the level files from `save()`.
+  const mergedLevel = requestedIds.length ? await loadLevelData(name) : null;
+
   const level = openLevel(name);
   const allNodes = flattenAllNodes(level.def.objects);
+  for (const id of requestedIds) {
+    if (findNodeById(mergedLevel!.objects, id) || allNodes.some(n => n.id === id)) {
+      error(409, `Node "${id}" already exists in level "${name}"`);
+    }
+  }
 
   // Asset IDs may be slash-separated (e.g. `center_fenced_ring/bottom`) when
   // discovered from a subdir of `geo/`. Strip the directory parts so derived
@@ -172,17 +189,8 @@ export const POST: RequestHandler = async ({ params, request }) => {
     return slash === -1 ? assetId : assetId.slice(slash + 1);
   };
 
-  const resolveId = async (stem: string, requestedId?: string): Promise<string> => {
-    if (requestedId) {
-      const mergedLevel = await loadLevelData(name);
-      if (findNodeById(mergedLevel.objects, requestedId)) {
-        error(409, `Node "${requestedId}" already exists in level "${name}"`);
-      }
-      if (allNodes.some(n => n.id === requestedId)) {
-        error(409, `Node "${requestedId}" already exists in level "${name}"`);
-      }
-      return requestedId;
-    }
+  const resolveId = (stem: string, requestedId?: string): string => {
+    if (requestedId) return requestedId;
     const prefix = `${stem}_`;
     let maxN = -1;
     for (const n of allNodes) {
@@ -195,7 +203,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
   };
 
   if (body.type === 'group') {
-    const id = await resolveId('group', body.id);
+    const id = resolveId('group', body.id);
     const newGroup = {
       id,
       children: [] as import('src/viz/levelDef/types').ObjectGroupDef['children'],
@@ -271,20 +279,6 @@ export const POST: RequestHandler = async ({ params, request }) => {
   }
 
   if (body.type === 'restore_subtree') {
-    const subtreeNodes = flattenAllNodes([body.def]);
-    const subtreeIds = new Set<string>();
-    for (const node of subtreeNodes) {
-      if (subtreeIds.has(node.id)) error(400, `Duplicate node id "${node.id}" in restored subtree`);
-      subtreeIds.add(node.id);
-    }
-
-    const mergedLevel = await loadLevelData(name);
-    for (const node of subtreeNodes) {
-      if (findNodeById(mergedLevel.objects, node.id)) {
-        error(409, `Node "${node.id}" already exists in level "${name}"`);
-      }
-    }
-
     for (const leaf of flattenLeaves([body.def])) {
       if (leaf.asset !== undefined && !level.def.assets[leaf.asset]) {
         error(400, `Unknown asset "${leaf.asset}" in restored subtree`);
@@ -398,7 +392,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
     error(400, `Unknown material "${body.material}"`);
   }
 
-  const id = await resolveId(assetIdToNodeStem(body.asset), body.id);
+  const id = resolveId(assetIdToNodeStem(body.asset), body.id);
 
   const newObj: ObjectDef = {
     id,
@@ -430,7 +424,7 @@ export const POST: RequestHandler = async ({ params, request }) => {
  * Body: { nodeIds: string[], position: [number, number, number] }
  *
  * All nodes must be siblings (same parent array). The new group is inserted
- * where the first listed node was, and each node's local position is adjusted
+ * at the lowest index among them, and each node's local position is adjusted
  * to preserve world-space placement.
  */
 export const PUT: RequestHandler = async ({ params, request }) => {
@@ -471,8 +465,7 @@ export const PUT: RequestHandler = async ({ params, request }) => {
     groupId = `group_${n}`;
   }
 
-  // Compute the insertion index (where the first selected node was)
-  const firstIdx = parentArray.indexOf(lookups[0]!.node);
+  const firstIdx = Math.min(...lookups.map(l => parentArray.indexOf(l!.node)));
 
   // Remove nodes from parent array (iterate in reverse to preserve indices)
   const nodesToGroup = lookups.map(l => l!.node);
@@ -502,9 +495,7 @@ export const PUT: RequestHandler = async ({ params, request }) => {
     scale: [1, 1, 1] as [number, number, number],
   };
 
-  // Insert where the first node was
-  const insertIdx = Math.min(firstIdx, parentArray.length);
-  parentArray.splice(insertIdx, 0, newGroup);
+  parentArray.splice(firstIdx, 0, newGroup);
 
   level.save();
   return Response.json(newGroup, { status: 201 });

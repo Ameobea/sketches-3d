@@ -3,7 +3,7 @@ use crate::{
   compositions::{
     create_composition, create_composition_version, delete_composition, fork_composition,
     get_composition, get_composition_history, get_composition_latest, get_composition_version,
-    list_composition_versions, list_my_compositions, list_public_compositions, update_composition,
+    list_my_compositions, list_public_compositions, update_composition,
   },
   db::get_db_pool,
   server::instrument_handler,
@@ -61,13 +61,6 @@ pub fn compositions_routes() -> Router {
       get(instrument_handler(
         "get_composition_history",
         get_composition_history,
-      )),
-    )
-    .route(
-      "/{id}/versions",
-      get(instrument_handler(
-        "list_composition_versions",
-        list_composition_versions,
       )),
     )
     .route(

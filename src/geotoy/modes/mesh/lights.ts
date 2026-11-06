@@ -1,6 +1,10 @@
 import * as THREE from 'three';
 
-import { deriveDirectionalShadowNormalBias, fitDirectionalShadowFrustumToBox } from 'src/viz/helpers/lights';
+import {
+  deriveDirectionalShadowNormalBias,
+  fitDirectionalShadowFrustumToBox,
+  PcfSoftShadowRadius,
+} from 'src/viz/helpers/lights';
 import type { RenderedObject } from 'src/geoscript/runner/types';
 
 export interface ShadowMapSize {
@@ -84,7 +88,8 @@ export const buildLight = (light: Light, renderMode: boolean): THREE.Light => {
         mapHeight = Math.min(512, mapHeight);
       }
       directionalLight.shadow.mapSize.set(mapWidth, mapHeight);
-      directionalLight.shadow.radius = dirLight.shadow_map_radius;
+      // `shadow_map_radius` (default 4, sized for VSM) was ignored by PCFSoft through r181
+      directionalLight.shadow.radius = PcfSoftShadowRadius;
       directionalLight.shadow.blurSamples = dirLight.shadow_map_blur_samples;
       directionalLight.shadow.bias = dirLight.shadow_map_bias;
       directionalLight.shadow.mapSize.width = dirLight.shadow_map_size.width;

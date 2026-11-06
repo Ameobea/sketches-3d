@@ -1,11 +1,5 @@
-p = build_path(
-  path {
-    circle(center=v2(0), radius=0.5)
-  },
-  center=true,
-  reverse=false
-)
-p = path_scale(4, p)
+p = circle(center=v2(0), radius=0.5)
+p = scale(4, p)
 
 spine_bevel_exponent = 5
 

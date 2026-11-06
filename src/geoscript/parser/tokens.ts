@@ -4,7 +4,7 @@
  */
 
 import { ExternalTokenizer } from '@lezer/lr';
-import { Float, TightLBrack, TightLParen } from './geoscript.terms';
+import { Float, OpenRange, TightLBrack, TightLParen } from './geoscript.terms';
 
 const Dot = 46;
 const LBrack = 91;
@@ -42,6 +42,26 @@ export const literalTokens = new ExternalTokenizer((input, _stack) => {
   if (isFloat) {
     input.acceptToken(Float);
   }
+});
+
+const isOperandStart = (ch: number, next: number) =>
+  /[\w@([{"']/.test(String.fromCharCode(ch)) ||
+  ch == 43 ||
+  (ch == 45 && next != 62) ||
+  (ch == 33 && next != 61);
+
+export const openRangeTokens = new ExternalTokenizer((input) => {
+  if (input.next != Dot || input.peek(1) != Dot) return;
+  let i = 2;
+  if (input.peek(i) == 61) return;
+  while (true) {
+    const ch = input.peek(i);
+    if (ch == Space || ch == Tab || ch == LF || ch == CR) i++;
+    else if (ch == 47 && input.peek(i + 1) == 47) {
+      while (input.peek(i) >= 0 && input.peek(i) != LF) i++;
+    } else break;
+  }
+  if (!isOperandStart(input.peek(i), input.peek(i + 1))) input.acceptToken(OpenRange, 2);
 });
 
 // Diverges from the Pest runtime: Pest rejects `arr [0]` outright, but here we

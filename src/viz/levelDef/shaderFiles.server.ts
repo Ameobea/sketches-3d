@@ -1,18 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
 
-import { getAssetsDir } from './levelPaths.server';
+import { resolveFileRef } from './levelPaths.server';
 import { SHADER_SLOT_KEYS } from 'src/viz/materials/schema';
 import type { MaterialDef, MaterialDefRaw } from './types';
 
 /** Shader fields that may be externalized to `.glsl` files via `{ file }` in the raw def. */
 export const SHADER_GLSL_FIELDS = SHADER_SLOT_KEYS;
-
-/** Resolves a shader `file` reference to an absolute path (`__ASSETS__/` → shared assets dir). */
-export const resolveGlslPath = (levelDir: string, file: string): string =>
-  file.startsWith('__ASSETS__/')
-    ? join(getAssetsDir(), file.slice('__ASSETS__/'.length))
-    : join(levelDir, file);
 
 const isFileRef = (v: unknown): v is { file: string } =>
   typeof v === 'object' && v !== null && 'file' in v && typeof (v as { file: unknown }).file === 'string';
@@ -51,7 +44,7 @@ export const externalizeShaderFiles = (
     const incomingVal = shaders[field];
     if (!isFileRef(prevVal) || typeof incomingVal !== 'string') continue;
 
-    const path = resolveGlslPath(levelDir, prevVal.file);
+    const path = resolveFileRef(levelDir, prevVal.file);
     if (!existsSync(path)) continue; // referenced file is gone; leave the GLSL inline
 
     if (readFileSync(path, 'utf-8') !== incomingVal) writeFileSync(path, incomingVal, 'utf-8');

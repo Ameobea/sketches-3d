@@ -30,9 +30,11 @@ uniform float curTimeSeconds;
 #endif
 
 #ifdef USE_SHADOW_MAP
-#include <packing>
-
-uniform sampler2D shadowMap;
+#ifdef SHADOW_COMPARE
+uniform highp sampler2DShadow shadowMap;
+#else
+uniform highp sampler2D shadowMap;
+#endif
 uniform mat4 shadowMatrix;
 uniform float shadowCameraNear;
 uniform float shadowCameraFar;
@@ -50,13 +52,7 @@ vec3 projectToShadowMapUV(vec3 worldPos) {
   return lightSpacePos.xyz;
 }
 
-/**
- * Returns 0. if the position is in shadow, 1. if lit.
- *
- * TODO: Investigate small PCF kernel (2x2) for softer volumetric shadows.
- * The raymarch integration already provides some natural softening across steps,
- * so this may not be necessary.
- */
+// 0 = shadowed, 1 = lit.
 float sampleShadow(vec3 worldPos) {
   vec3 shadowCoord = projectToShadowMapUV(worldPos);
 
@@ -67,12 +63,13 @@ float sampleShadow(vec3 worldPos) {
     return 1.;
   }
 
-  float shadowMapDepth = unpackRGBAToDepth(texture2D(shadowMap, shadowCoord.xy));
-  float lightSpaceDepth = shadowCameraNear + (shadowCameraFar - shadowCameraNear) * shadowMapDepth;
-  float fragDepth = shadowCameraNear + (shadowCameraFar - shadowCameraNear) * shadowCoord.z;
-
-  float inShadow = float(fragDepth - lightSpaceDepth > shadowBias);
-  return 1. - inShadow;
+  // Ortho shadow camera: depth is linear, so the world-space bias maps to a constant NDC offset.
+  float ref = shadowCoord.z - shadowBias / (shadowCameraFar - shadowCameraNear);
+#ifdef SHADOW_COMPARE
+  return texture(shadowMap, vec3(shadowCoord.xy, ref));
+#else
+  return step(ref, texture(shadowMap, shadowCoord.xy).r);
+#endif
 }
 #endif
 

@@ -10,8 +10,6 @@ import {
 import type { PageServerLoad } from './$types';
 import { error } from '@sveltejs/kit';
 
-const BASE_URL = 'https://3d.ameo.design/geotoy_api';
-
 interface EmbedData {
   composition: Composition;
   version: CompositionVersion;
@@ -40,10 +38,10 @@ export const load: PageServerLoad = async ({ fetch, params, url }): Promise<Embe
   const showDescription = url.searchParams.get('description') === '1';
 
   const [comp, version] = await Promise.allSettled([
-    getComposition(id, fetch, undefined, undefined, BASE_URL),
+    getComposition(id, fetch),
     typeof versionID === 'number'
-      ? getCompositionVersion(id, versionID, fetch, undefined, undefined, BASE_URL)
-      : getCompositionLatest(id, fetch, undefined, undefined, BASE_URL),
+      ? getCompositionVersion(id, versionID, fetch)
+      : getCompositionLatest(id, fetch),
   ]);
 
   if (comp.status === 'rejected') {

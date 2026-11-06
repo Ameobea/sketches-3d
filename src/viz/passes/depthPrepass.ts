@@ -31,6 +31,8 @@ export class DepthPass extends RenderPass implements Resizable {
     plainDepthMaterial?: THREE.Material
   ) {
     super(scene, camera, overrideMaterial);
+    // three >= r175 exempts background meshes from `overrideMaterial`, so they'd paint the sky.
+    this.ignoreBackground = true;
     this.clearPass.setClearFlags(false, true, false);
     overrideMaterial.colorWrite = false;
     if (plainDepthMaterial) plainDepthMaterial.colorWrite = false;
@@ -134,12 +136,13 @@ export class DepthPass extends RenderPass implements Resizable {
         c.visible = false;
       });
 
-      const savedOverride = this.scene.overrideMaterial;
+      const { overrideMaterial: savedOverride, background } = this.scene;
       this.scene.overrideMaterial = this.plainDepthMaterial;
-      const target = this.renderTarget ?? inputBuffer;
-      renderer.setRenderTarget(target);
+      this.scene.background = null;
+      renderer.setRenderTarget(this.renderTarget ?? inputBuffer);
       renderer.render(this.scene, this.camera);
       this.scene.overrideMaterial = savedOverride;
+      this.scene.background = background;
 
       for (const obj of restoreVisibility.keys()) obj.visible = true;
     }

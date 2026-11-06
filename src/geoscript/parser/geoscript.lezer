@@ -1,17 +1,16 @@
 @precedence {
   call
-  unary
   fieldAccess @left
+  unary
   mul @left
   add @left
-  bitAnd @left
+  range @left
   compare @left
+  bitAnd @left
+  bitOr @left
   and @left
   or @left
-  nullish @left
-  bitOr @left
   assign @right
-  range @left
   return @left
   break @left
   cond
@@ -75,7 +74,7 @@ Expr {
   BinaryExpr |
   StaticFieldAccessExpr |
   FieldAccessExpr |
-  RangeExpr { Expr !range (".." | "..=") Expr? } |
+  RangeExpr { Expr !range ((".." | "..=") Expr | OpenRange) } |
   CallExpr |
   literal |
   Identifier |
@@ -105,7 +104,7 @@ BinaryExpr {
   Expr !compare CompareOp Expr |
   Expr !and LogicalAndOp Expr |
   Expr !or LogicalOrOp Expr |
-  Expr !nullish NullishOp Expr
+  Expr !or NullishOp Expr
 }
 
 StaticFieldAccessExpr {
@@ -127,10 +126,11 @@ StringLiteral[isolate] { SingleQuoteStringLiteral | DoubleQuoteStringLiteral }
 escapedBackslash { "\\\\" }
 escapedDoubleQuote { "\\\"" }
 escapedSingleQuote { "\\'" }
+escapedWhitespace { "\\n" | "\\t" }
 
 @skip {} {
-  DoubleQuoteStringLiteral[isolate] { '"' (escapedBackslash | escapedDoubleQuote | doubleQuoteStringContent)* '"' }
-  SingleQuoteStringLiteral[isolate] { "'" (escapedBackslash | escapedSingleQuote | singleQuoteStringContent)* "'" }
+  DoubleQuoteStringLiteral[isolate] { '"' (escapedBackslash | escapedDoubleQuote | escapedWhitespace | doubleQuoteStringContent)* '"' }
+  SingleQuoteStringLiteral[isolate] { "'" (escapedBackslash | escapedSingleQuote | escapedWhitespace | singleQuoteStringContent)* "'" }
 }
 
 commaSep<Expr> { commaSep1<Expr>? }
@@ -142,6 +142,8 @@ MapSplat { "*" Expr }
 MapEntry { MapKV | MapSplat }
 
 @external tokens literalTokens from "./tokens" { Float }
+// `..` not followed by an operand, mirroring Pest's `open_range_op` lookahead.
+@external tokens openRangeTokens from "./tokens" { OpenRange }
 // Emitted only when `[`/`(` directly follows a non-whitespace char — see `tokens.ts`.
 @external tokens tightPostfixTokens from "./tokens" { TightLBrack, TightLParen }
 

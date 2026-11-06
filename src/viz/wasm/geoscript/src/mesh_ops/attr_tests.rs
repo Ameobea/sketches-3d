@@ -343,3 +343,54 @@ fine = floor | bake_ao(samples=64, occluders=lid, refine=0.06, min_edge=0.5)
   assert!(seam_edges > 24, "{seam_edges}");
   assert!(twins.values().all(|&n| n == 2), "unmatched seam edges");
 }
+
+#[test]
+fn degenerate_inputs_stay_finite() {
+  let ctx = parse_and_eval_program(
+    r#"
+flat = box(1) | scale(1, 0, 1)
+zero = box(1) | scale(0)
+sum = flat + flat
+joined = join([zero, zero])
+pts = flat | point_distribute(10, world_space=true) | collect
+pinched = parametric_surface(u_res=4, v_res=4, adaptive_u_sampling=true, adaptive_v_sampling=true, generator=|u, v| v3(0, 0, 0))
+pipe = extrude_pipe(radius=1, path=[v3(0,0,0), v3(0,1,0), v3(0,1,0), v3(0,2,0)])
+"#,
+  )
+  .unwrap();
+  for name in ["sum", "joined", "pipe"] {
+    let v = ctx.get_global(name).unwrap();
+    let m = v.as_mesh().unwrap();
+    assert!(!m.mesh.vertices.is_empty(), "{name}");
+    let finite = |p: &nalgebra::Vector3<f32>| p.iter().all(|c| c.is_finite());
+    assert!(
+      m.mesh.vertices.values().all(|v| finite(&v.position)),
+      "{name}"
+    );
+  }
+}
+
+#[test]
+fn edits_refresh_authored_normals() {
+  let ctx = parse_and_eval_program(
+    "s = icosphere(1, 3) | compute_normals
+     warped = s | warp(|p| p + v3(sin(p.y * 2) * 2, 0, 0))
+     shell = s | extrude_along_normals(-0.2)
+     slab = grid(1, 4) | compute_normals | extrude(v3(0, -0.5, 0))",
+  )
+  .unwrap();
+  for name in ["warped", "shell", "slab"] {
+    let v = ctx.get_global(name).unwrap();
+    let m = &v.as_mesh().unwrap().mesh;
+    let mut fresh = (**m).clone();
+    fresh.shading_normals.clear();
+    fresh.compute_vertex_displacement_normals();
+    assert_eq!(m.shading_normals.len(), m.vertices.len(), "{name}");
+    for (k, n) in m.shading_normals.iter() {
+      assert!(
+        n.dot(&fresh.displacement_normal(k).unwrap()) > 0.9,
+        "{name}"
+      );
+    }
+  }
+}

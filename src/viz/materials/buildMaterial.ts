@@ -98,7 +98,7 @@ const resolveShaderProps = (
   }
 
   if (propsJson.uvScale !== undefined) {
-    props.uvTransform = new THREE.Matrix3().scale(propsJson.uvScale[0], propsJson.uvScale[1]);
+    props.uvTransform = new THREE.Matrix3().makeScale(propsJson.uvScale[0], propsJson.uvScale[1]);
   }
 
   return props;

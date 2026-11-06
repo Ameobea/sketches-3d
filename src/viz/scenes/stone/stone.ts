@@ -84,7 +84,7 @@ const initTerrain = async (
         roughnessMap: t.goldFleckedObsidianRoughness,
         metalness: 0.3,
         roughness: 0.97,
-        uvTransform: new THREE.Matrix3().scale(0.35, 0.35),
+        uvTransform: new THREE.Matrix3().makeScale(0.35, 0.35),
         iridescence: 0.2,
         mapDisableDistance: null,
         color: new THREE.Color(0xaaaaaa),
@@ -212,7 +212,7 @@ export const processLoadedScene = async (
         roughnessMap: t.goldTextureRoughness,
         metalness: 0.99,
         roughness: 0.87,
-        uvTransform: new THREE.Matrix3().scale(0.35, 0.35),
+        uvTransform: new THREE.Matrix3().makeScale(0.35, 0.35),
       },
       {},
       { useTriplanarMapping: true }
@@ -255,7 +255,7 @@ export const processLoadedScene = async (
       roughnessMap: glossyBlackBricksRoughness,
       metalness: 0.7,
       roughness: 0.7,
-      uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+      uvTransform: new THREE.Matrix3().makeScale(0.1, 0.1),
       iridescence: 0.2,
     },
     {},
@@ -285,7 +285,7 @@ export const processLoadedScene = async (
       roughnessMap: goldFleckedObsidianRoughness,
       metalness: 0.99,
       roughness: 0.87,
-      uvTransform: new THREE.Matrix3().scale(10.35, 10.35),
+      uvTransform: new THREE.Matrix3().makeScale(10.35, 10.35),
       iridescence: 0.1,
       mapDisableDistance: null,
       color: new THREE.Color(0xaaaaaa),
@@ -299,6 +299,7 @@ export const processLoadedScene = async (
   stairsPointLight.castShadow = true;
   stairsPointLight.shadow.mapSize.width = 512;
   stairsPointLight.shadow.mapSize.height = 512;
+  stairsPointLight.shadow.bias = -0.002;
   stairsPointLight.shadow.camera.near = 0.5;
   stairsPointLight.shadow.camera.far = 50;
   stairsPointLight.position.set(-296.092529296875, 44.4, 271.1970947265625);
@@ -308,6 +309,7 @@ export const processLoadedScene = async (
   stairsBottomPointLight.castShadow = true;
   stairsBottomPointLight.shadow.mapSize.width = 512;
   stairsBottomPointLight.shadow.mapSize.height = 512;
+  stairsBottomPointLight.shadow.bias = -0.002;
   stairsBottomPointLight.shadow.camera.near = 0.5;
   stairsBottomPointLight.shadow.camera.far = 180;
   stairsBottomPointLight.position.set(-239, 1.5, 259);
@@ -331,7 +333,7 @@ export const processLoadedScene = async (
       roughnessMap: gemRoughness,
       metalness: 0.9,
       roughness: 1.5,
-      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
+      uvTransform: new THREE.Matrix3().makeScale(0.4, 0.4),
       iridescence: 0.4,
       color: new THREE.Color(stairsPointLight.color),
       ambientLightScale: 80,
@@ -372,7 +374,7 @@ export const processLoadedScene = async (
       roughnessMap: goldFleckedObsidianRoughness,
       metalness: 0.99,
       roughness: 0.87,
-      uvTransform: new THREE.Matrix3().scale(10.35, 10.35),
+      uvTransform: new THREE.Matrix3().makeScale(10.35, 10.35),
       iridescence: 0.1,
       mapDisableDistance: null,
       color: new THREE.Color(0xaaaaaa),
@@ -398,7 +400,7 @@ export const processLoadedScene = async (
       // roughnessMap: totemRoughness,
       metalness: 0.2,
       roughness: 0.8,
-      uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
+      uvTransform: new THREE.Matrix3().makeScale(0.5, 0.5),
       ambientLightScale: 4,
       // ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
     },
@@ -484,7 +486,7 @@ export const processLoadedScene = async (
       roughnessMap: gemRoughness,
       metalness: 0.9,
       roughness: 1.5,
-      uvTransform: new THREE.Matrix3().scale(0.9, 0.9),
+      uvTransform: new THREE.Matrix3().makeScale(0.9, 0.9),
       iridescence: 0.3,
       color: new THREE.Color(0xee1111),
       ambientLightScale: 30,
@@ -518,7 +520,7 @@ export const processLoadedScene = async (
         ),
       },
       () => {
-        const curTimeSeconds = viz.clock.getElapsedTime();
+        const curTimeSeconds = viz.clock.getElapsed();
         logDreamEvent('stone', 'level_complete', { play_time_seconds: Math.round(curTimeSeconds) });
         logDreamEvent('game', 'portal_travel', { to: 'construction' });
         MetricsAPI.recordPortalTravel('construction');
@@ -548,7 +550,7 @@ export const processLoadedScene = async (
       return;
     }
     totemCollected[i] = true;
-    lastTotemPickupTimeSeconds = viz.clock.getElapsedTime();
+    lastTotemPickupTimeSeconds = viz.clock.getElapsed();
 
     const totem = totems[i];
     totem.visible = false;

@@ -19,6 +19,9 @@ const HEARTBEAT_MS = 1_000;
 
 export type FrameGovernorTier = 'render' | 'watch' | 'sleep' | 'suspended';
 
+// @types/three 0.180 omits the runtime `Material.id`.
+type MaterialWithId = THREE.Material & { readonly id: number };
+
 const TEX_SLOTS = [
   'map',
   'normalMap',
@@ -284,7 +287,7 @@ export class FrameGovernor {
     }
     // Staged first for the same reason `tick` does it: the before-render callbacks write the
     // state being hashed.
-    const curTimeSeconds = this.viz.clock.getElapsedTime();
+    const curTimeSeconds = this.viz.clock.update().getElapsed();
     const now = performance.now();
     // One delta for both halves of the frame, so before- and after-render callbacks agree.
     const deltaTime = Math.min((now - this.lastPresentMs) / 1000, MAX_FRAME_DELTA_SECONDS);
@@ -347,7 +350,7 @@ export class FrameGovernor {
     h.u32(bg instanceof THREE.Color ? bg.getHex() : bg ? bg.id : 0);
     h.u32(scene.environment ? scene.environment.id : 0);
     h.f(scene.environmentIntensity ?? 1);
-    h.u32(scene.overrideMaterial ? scene.overrideMaterial.id : 0);
+    h.u32(scene.overrideMaterial ? (scene.overrideMaterial as MaterialWithId).id : 0);
     const fog = scene.fog;
     if (fog) {
       h.u32(fog.color.getHex());
@@ -430,7 +433,7 @@ export class FrameGovernor {
 
   private hashMaterial(m: THREE.Material) {
     const h = this.hasher;
-    h.u32(m.id);
+    h.u32((m as MaterialWithId).id);
     h.u32(m.version);
     h.u32(m.visible ? 1 : 0);
     h.f(m.opacity);

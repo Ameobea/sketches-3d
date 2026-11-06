@@ -277,3 +277,28 @@ return 2.0 }"#;
     Some("int | float")
   );
 }
+
+#[test]
+fn no_false_errors_on_union_returns_or_variadic_calls() {
+  let ctx = AnalysisCtx::new();
+  for src in [
+    "f = |x|: float { sigmoid(x) }",
+    "f = |x|: mesh { box(1) | union(x) | translate(0, 1, 0) }",
+    "f = |a| a + 1\ng = |a| a * 2\nh = compose(f, g)",
+    "print(1, 2, 3)",
+  ] {
+    let errs: Vec<_> = ctx
+      .analyze(src, true, "")
+      .diagnostics
+      .into_iter()
+      .filter(|d| d.severity == crate::DiagnosticSeverity::Error)
+      .map(|d| d.message)
+      .collect();
+    assert!(errs.is_empty(), "{src}: {errs:?}");
+  }
+  assert!(ctx
+    .analyze("f = |x|: mesh { 1 }", true, "")
+    .diagnostics
+    .iter()
+    .any(|d| d.message.contains("return type mismatch")));
+}

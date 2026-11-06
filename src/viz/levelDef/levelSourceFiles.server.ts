@@ -3,7 +3,9 @@ import { join } from 'path';
 
 import { formatLevelJson } from './formatLevelJson';
 import { getLevelDir } from './levelPaths.server';
-import type { LevelDefRaw } from './types';
+import type { GeoscriptAssetMeta, LevelDefRaw } from './types';
+
+type MetaHolder = { _meta?: GeoscriptAssetMeta };
 
 export interface LevelSourceFiles {
   levelDir: string;
@@ -11,7 +13,13 @@ export interface LevelSourceFiles {
   materialsFilePath?: string;
   objectsFilePath?: string;
   audioFilePath?: string;
+  /** Gitignored per-asset `_meta` store; merged into `def.assets[id]._meta` on read. */
+  metaFilePath: string;
   def: LevelDefRaw;
+  /** `def.json`'s own `audio`, before `audio.json` is merged in. */
+  ownAudio?: LevelDefRaw['audio'];
+  /** Asset ids auto-injected from `geo/` rather than declared in `def.json`. */
+  injectedAssetIds: Set<string>;
 }
 
 interface ReadLevelSourceFilesOpts {
@@ -66,6 +74,7 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
     def.objects = [...merged.values()];
   }
 
+  const ownAudio = def.audio;
   if (audioFilePath) {
     const audio = JSON.parse(readFileSync(audioFilePath, 'utf-8')) as Record<string, unknown> & {
       sfxDefs?: NonNullable<LevelDefRaw['audio']>['sfxDefs'];
@@ -82,6 +91,16 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
     };
   }
 
+  for (const [id, asset] of Object.entries(def.assets ?? {})) {
+    if ('file' in asset && asset.file.startsWith('geo/') && !existsSync(join(levelDir, asset.file))) {
+      console.warn(
+        `[readLevelSourceFiles] Dropping asset "${id}" of level "${name}": ${asset.file} not found`
+      );
+      delete def.assets[id];
+    }
+  }
+
+  const injectedAssetIds = new Set<string>();
   const geoDir = join(levelDir, 'geo');
   if (existsSync(geoDir)) {
     def.assets ??= {};
@@ -97,11 +116,21 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
           const id = relFromGeo ? `${relFromGeo}/${stem}` : stem;
           if (!(id in def.assets!)) {
             def.assets![id] = { type: 'geoscript', file: `geo/${id}.geo` };
+            injectedAssetIds.add(id);
           }
         }
       }
     };
     walk(geoDir, '');
+  }
+
+  const metaFilePath = join(levelDir, '.meta.json');
+  if (existsSync(metaFilePath)) {
+    const metas = JSON.parse(readFileSync(metaFilePath, 'utf-8')) as Record<string, GeoscriptAssetMeta>;
+    for (const [id, meta] of Object.entries(metas)) {
+      const asset = def.assets?.[id];
+      if (asset) (asset as MetaHolder)._meta = meta;
+    }
   }
 
   return {
@@ -110,6 +139,19 @@ export const readLevelSourceFiles = (name: string, opts: ReadLevelSourceFilesOpt
     materialsFilePath,
     objectsFilePath,
     audioFilePath,
+    metaFilePath,
     def,
+    ownAudio,
+    injectedAssetIds,
   };
+};
+
+export const writeAssetMeta = (metaFilePath: string, assets: LevelDefRaw['assets']): void => {
+  const metas = Object.fromEntries(
+    Object.entries(assets as Record<string, MetaHolder>).flatMap(([id, { _meta }]) =>
+      _meta ? [[id, _meta]] : []
+    )
+  );
+  if (Object.keys(metas).length || existsSync(metaFilePath))
+    writeFileSync(metaFilePath, JSON.stringify(metas, null, 2) + '\n');
 };

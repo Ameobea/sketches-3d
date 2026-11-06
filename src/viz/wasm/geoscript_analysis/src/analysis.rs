@@ -734,11 +734,6 @@ impl<'a> AnalysisWalker<'a> {
 
   fn walk_binop(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> AbstractType {
     match op {
-      BinOp::Range | BinOp::RangeInclusive => {
-        self.walk_expr(lhs);
-        self.walk_expr(rhs);
-        return AbstractType::Concrete(ArgType::Sequence);
-      }
       BinOp::Map => {
         let lhs_ty = self.walk_expr(lhs);
         let rhs_ty = self.walk_expr(rhs);
@@ -916,22 +911,15 @@ impl<'a> AnalysisWalker<'a> {
     declared: ArgType,
     loc: SourceLoc,
   ) {
-    let bad = match actual {
-      AbstractType::Concrete(t) => {
-        if declared.as_bitflags() & t.as_bitflags() == 0 {
-          Some(*t)
-        } else {
-          None
-        }
-      }
-      AbstractType::Union(types) => types
+    let mismatch = |t: &ArgType| declared.as_bitflags() & t.as_bitflags() == 0;
+    let bad_ty = match actual {
+      AbstractType::Concrete(t) if mismatch(t) => t.as_str().to_owned(),
+      AbstractType::Union(types) if types.iter().all(mismatch) => types
         .iter()
-        .copied()
-        .find(|t| declared.as_bitflags() & t.as_bitflags() == 0),
-      _ => None,
-    };
-    let Some(bad_ty) = bad else {
-      return;
+        .map(|t| t.as_str())
+        .collect::<Vec<_>>()
+        .join(" | "),
+      _ => return,
     };
     let (line, col) = self.ctx.resolve_loc(loc);
     if line == 0 && col == 0 {
@@ -946,7 +934,7 @@ impl<'a> AnalysisWalker<'a> {
       message: format!(
         "return type mismatch: expected `{}` but value has type `{}`",
         declared.as_str(),
-        bad_ty.as_str()
+        bad_ty
       ),
     });
   }

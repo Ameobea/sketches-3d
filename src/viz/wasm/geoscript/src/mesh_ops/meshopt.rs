@@ -35,38 +35,60 @@ extern "C" {
   ) -> Result<Vec<u32>, JsValue>;
 }
 
-/// A failed collapse can create a zero-cost non-manifold edge even at tiny error budgets.
-/// Protect the affected original one-ring before retrying. If the failure is not an edge
-/// incidence problem (for example a pinched vertex), keeping every vertex is the safe last step.
 #[cfg(any(target_arch = "wasm32", test))]
-fn protect_problem_regions(
-  input: &[u32],
-  output: &[u32],
+fn edge_census(
+  tris: &[u32],
   geometric_vertex: &[u32],
-  locks: &mut [u8],
-) {
-  use fxhash::FxHashMap;
-  let mut edges = FxHashMap::<(u32, u32), (u32, i32)>::default();
-  let mut bad = vec![false; locks.len()];
-  for tri in output.chunks_exact(3) {
+) -> fxhash::FxHashMap<(u32, u32), (u32, i32)> {
+  let mut edges = fxhash::FxHashMap::<(u32, u32), (u32, i32)>::default();
+  for tri in tris.chunks_exact(3) {
     let [a, b, c] = [0, 1, 2].map(|i| geometric_vertex[tri[i] as usize]);
-    if a == b || b == c || c == a {
-      for v in [a, b, c] {
-        bad[v as usize] = true;
-      }
-    }
     for (a, b) in [(a, b), (b, c), (c, a)] {
       let entry = edges.entry((a.min(b), a.max(b))).or_default();
       entry.0 += 1;
       entry.1 += if a < b { 1 } else { -1 };
     }
   }
-  for ((a, b), (count, direction)) in edges {
-    if count != 2 || direction != 0 {
+  edges
+}
+
+/// Vertices on degenerate triangles or on edges not shared by exactly two oppositely wound faces;
+/// `open` also accepts single-face boundary edges.
+#[cfg(any(target_arch = "wasm32", test))]
+fn problem_vertices(tris: &[u32], geometric_vertex: &[u32], open: bool) -> Vec<bool> {
+  let mut bad = vec![false; geometric_vertex.len()];
+  for tri in tris.chunks_exact(3) {
+    let [a, b, c] = [0, 1, 2].map(|i| geometric_vertex[tri[i] as usize]);
+    if a == b || b == c || c == a {
+      for v in [a, b, c] {
+        bad[v as usize] = true;
+      }
+    }
+  }
+  for ((a, b), (count, direction)) in edge_census(tris, geometric_vertex) {
+    let ok = match count {
+      1 => open,
+      2 => direction == 0,
+      _ => false,
+    };
+    if !ok {
       bad[a as usize] = true;
       bad[b as usize] = true;
     }
   }
+  bad
+}
+
+/// A failed collapse can create a zero-cost non-manifold edge even at tiny error budgets.
+/// Protect the affected original one-ring before retrying. If the failure is not an edge
+/// incidence problem (for example a pinched vertex), keeping every vertex is the safe last step.
+#[cfg(any(target_arch = "wasm32", test))]
+fn protect_problem_regions(
+  input: &[u32],
+  bad: &[bool],
+  geometric_vertex: &[u32],
+  locks: &mut [u8],
+) {
   let mut changed = false;
   for tri in input.chunks_exact(3) {
     if tri
@@ -246,9 +268,28 @@ fn simplify_impl(
     }
   }
 
+  let no_weld = source.has_flag(mesh::linked_mesh::mesh_flags::NO_WELD);
+  let geometric: Vec<u32> = if no_weld {
+    let mut seen = fxhash::FxHashMap::default();
+    positions
+      .chunks_exact(3)
+      .enumerate()
+      .map(|(i, p)| {
+        let key = [0, 1, 2].map(|j| if p[j] == 0. { 0 } else { p[j].to_bits() });
+        *seen.entry(key).or_insert(i as u32)
+      })
+      .collect()
+  } else {
+    (0..keys.len() as u32).collect()
+  };
+  let open = source.edges.values().any(|edge| edge.faces.len() == 1)
+    && (!no_weld
+      || edge_census(&indices, &geometric)
+        .values()
+        .any(|&(count, _)| count == 1));
+
   let mut last_error = None;
   let mut vertex_locks = vec![0u8; keys.len()];
-  let mut geometric_vertex = None;
   for attempt in 0..4 {
     let budget = tolerance * 0.5f32.powi(attempt);
     let result = meshopt_simplify(
@@ -282,36 +323,30 @@ fn simplify_impl(
       bvh: RefCell::new(None),
       material: mesh.material.clone(),
     };
-    // Validate the much smaller output through the existing solid importer. This catches the
-    // non-manifold results observed in meshoptimizer trials without importing the dense input.
-    // Normal/attribute seams use the same explicit merge vectors as other authored meshes.
-    match out.get_or_create_handle() {
-      Ok(_) => return Ok(out),
-      Err(err) => {
-        last_error = Some(err);
-        let geometric = geometric_vertex.get_or_insert_with(|| {
-          if source.has_flag(mesh::linked_mesh::mesh_flags::NO_WELD) {
-            let mut seen = fxhash::FxHashMap::default();
-            positions
-              .chunks_exact(3)
-              .enumerate()
-              .map(|(i, p)| {
-                let key = [0, 1, 2].map(|j| if p[j] == 0. { 0 } else { p[j].to_bits() });
-                *seen.entry(key).or_insert(i as u32)
-              })
-              .collect::<Vec<_>>()
-          } else {
-            (0..keys.len() as u32).collect()
-          }
-        });
-        protect_problem_regions(&indices, &result, geometric, &mut vertex_locks);
-        if attempt == 2 {
-          vertex_locks.fill(1);
+    // Closed outputs are validated through the solid importer, which also catches pinched
+    // vertices; open ones can't be imported, so only their edge incidence is checked.
+    let bad = if open {
+      let bad = problem_vertices(&result, &geometric, true);
+      if !bad.contains(&true) {
+        return Ok(out);
+      }
+      last_error = Some(ErrorStack::new("simplified mesh has non-manifold edges"));
+      bad
+    } else {
+      match out.get_or_create_handle() {
+        Ok(_) => return Ok(out),
+        Err(err) => {
+          last_error = Some(err);
+          problem_vertices(&result, &geometric, false)
         }
       }
+    };
+    protect_problem_regions(&indices, &bad, &geometric, &mut vertex_locks);
+    if attempt == 2 {
+      vertex_locks.fill(1);
     }
   }
-  if allow_import_cleanup {
+  if allow_import_cleanup && !open {
     // Some older compositions contain degenerate poles/caps that the original importer cleaned
     // before Manifold simplification. Normalize only on the failed path, then still decimate
     // with meshoptimizer; the common well-formed input avoids importing the dense source.
@@ -335,9 +370,11 @@ fn simplify_impl(
     }
     return simplify_impl(&cleaned, tolerance, sharp_angle_degrees, false);
   }
-  Err(last_error.unwrap().wrap(
-    "meshopt could not retain manifold topology; try a smaller tolerance or engine=\"manifold\"",
-  ))
+  Err(last_error.unwrap().wrap(if open {
+    "meshopt could not retain manifold topology; try a smaller tolerance"
+  } else {
+    "meshopt could not retain manifold topology; try a smaller tolerance or engine=\"manifold\""
+  }))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -414,8 +451,29 @@ mod tests {
     let mut output = input.to_vec();
     output.extend_from_slice(&[0, 2, 1]);
     let mut locks = [0; 4];
-    protect_problem_regions(&input, &output, &[0, 1, 2, 3], &mut locks);
+    let bad = problem_vertices(&output, &[0, 1, 2, 3], false);
+    protect_problem_regions(&input, &bad, &[0, 1, 2, 3], &mut locks);
     assert_eq!(locks, [1; 4]);
+  }
+
+  #[test]
+  fn open_grid_passes_boundary_tolerant_validation() {
+    let identity: Vec<u32> = (0..25).collect();
+    let mut grid = Vec::new();
+    for y in 0..4 {
+      for x in 0..4 {
+        let a = y * 5 + x;
+        grid.extend_from_slice(&[a, a + 1, a + 5, a + 1, a + 6, a + 5]);
+      }
+    }
+    assert!(edge_census(&grid, &identity)
+      .values()
+      .any(|&(count, _)| count == 1));
+    assert!(!problem_vertices(&grid, &identity, true).contains(&true));
+    assert!(problem_vertices(&grid, &identity, false).contains(&true));
+    let mut flipped = grid.clone();
+    flipped.swap(0, 1);
+    assert!(problem_vertices(&flipped, &identity, true).contains(&true));
   }
 
   #[test]

@@ -25,5 +25,5 @@
     "src/ammojs/**",
     "src/geodesics/geodesics.js"
   ],
-  "include": ["src", "vite.config.js"]
+  "include": ["src", "e2e", "vite.config.js", "vitest.e2e.config.ts"]
 }

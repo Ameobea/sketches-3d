@@ -188,8 +188,10 @@ pub fn parametric_surface(
   let mut verts: Vec<Vec3> = Vec::with_capacity(u_points * v_points);
   let mut row_infos: Vec<RowInfo> = Vec::with_capacity(u_points);
 
+  // Adaptive u sampling can yield fewer rows than `u_points` on degenerate surfaces.
+  let rows = raw_rows.len();
   for (u_ix, row) in raw_rows.iter().enumerate() {
-    let is_boundary = u_ix == 0 || u_ix == u_points - 1;
+    let is_boundary = u_ix == 0 || u_ix == rows - 1;
 
     let should_collapse = is_boundary && v_closed && vertices_are_collapsed(row);
     let start_ix = verts.len();
@@ -211,8 +213,13 @@ pub fn parametric_surface(
   // so we need to check FKU compatibility per row pair
   let base_use_fku = should_use_fku(fku_stitching, v_points, v_points);
 
-  for i in 0..u_res {
-    let i_next = if u_closed && i == u_res - 1 { 0 } else { i + 1 };
+  let u_segs = if u_closed { rows } else { rows - 1 };
+  for i in 0..u_segs {
+    let i_next = if u_closed && i == u_segs - 1 {
+      0
+    } else {
+      i + 1
+    };
     let row_a = &row_infos[i];
     let row_b = &row_infos[i_next];
 

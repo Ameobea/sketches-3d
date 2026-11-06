@@ -77,7 +77,7 @@ export const processLoadedScene = async (
       map: buildingTexture,
       roughness: 0.4,
       metalness: 0.4,
-      uvTransform: new THREE.Matrix3().scale(0.02829124, 0.02829124),
+      uvTransform: new THREE.Matrix3().makeScale(0.02829124, 0.02829124),
       ambientDistanceAmp: {
         ampFactor: 0.5,
         falloffStartDistance: 0,
@@ -93,7 +93,7 @@ export const processLoadedScene = async (
   );
 
   viz.renderer.shadowMap.enabled = true;
-  viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  viz.renderer.shadowMap.type = THREE.PCFShadowMap;
   viz.renderer.shadowMap.needsUpdate = true;
 
   const lightPos = new THREE.Vector3(-32, 27, -32);
@@ -171,7 +171,7 @@ export const processLoadedScene = async (
       map: goldTextureAlbedo,
       normalMap: goldTextureNormal,
       roughnessMap: goldTextureRoughness,
-      uvTransform: new THREE.Matrix3().scale(0.8982, 0.8982),
+      uvTransform: new THREE.Matrix3().makeScale(0.8982, 0.8982),
       roughness: 0.7,
       metalness: 0.7,
     },
@@ -192,7 +192,7 @@ export const processLoadedScene = async (
       map: goldTextureAlbedo,
       normalMap: goldTextureNormal,
       roughnessMap: goldTextureRoughness,
-      uvTransform: new THREE.Matrix3().scale(40.8982, 40.8982),
+      uvTransform: new THREE.Matrix3().makeScale(40.8982, 40.8982),
       roughness: 0.7,
       metalness: 0.7,
       ambientLightScale: 1.5,
@@ -232,7 +232,7 @@ export const processLoadedScene = async (
       normalMap: pipeTextureNormal,
       roughnessMap: pipeTextureRoughness,
       metalness: 0.9,
-      uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      uvTransform: new THREE.Matrix3().makeScale(9.8982, 9.8982),
       color: new THREE.Color(0xffffff),
       ambientLightScale: 4,
     },
@@ -247,7 +247,7 @@ export const processLoadedScene = async (
       normalMap: pipeTextureNormal,
       roughnessMap: pipeTextureRoughness,
       metalness: 0.9,
-      uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      uvTransform: new THREE.Matrix3().makeScale(9.8982, 9.8982),
     },
     {},
     { enableFog: false }
@@ -260,7 +260,7 @@ export const processLoadedScene = async (
       normalMap: pipeTextureNormal,
       roughnessMap: pipeTextureRoughness,
       metalness: 0.9,
-      uvTransform: new THREE.Matrix3().scale(9.8982, 9.8982),
+      uvTransform: new THREE.Matrix3().makeScale(9.8982, 9.8982),
       color: new THREE.Color(0xffffff),
       ambientLightScale: 2,
     },

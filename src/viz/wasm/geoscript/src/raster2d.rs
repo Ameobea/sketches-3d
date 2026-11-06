@@ -29,11 +29,10 @@ impl EdgeList {
     let mut edges = Vec::new();
     for (pts, closed) in polylines {
       let n = pts.len();
-      if n < 2 || !(*closed || implicit_close) {
+      if n < 3 || !(*closed || implicit_close) {
         continue;
       }
-      let edge_count = if n >= 3 { n } else { n - 1 };
-      for i in 0..edge_count {
+      for i in 0..n {
         let (a, b) = (pts[i], pts[(i + 1) % n]);
         if a.y == b.y {
           continue;

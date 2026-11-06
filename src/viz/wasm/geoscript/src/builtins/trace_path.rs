@@ -31,15 +31,6 @@ pub(crate) fn normalize_guides(guides: &[f32]) -> Vec<f32> {
   out
 }
 
-/// Normalizes a path sampler's critical t-values for use as adaptive sampling guides.
-///
-/// For a single closed subpath, rotates the parameterization so the earliest critical
-/// point aligns to t=0, eliminating the wasted mandatory sample at an arbitrary seam.
-///
-/// Returns `(normalized_guides, rotation_offset)`. When `rotation_offset > 0`, callers
-/// must invoke the underlying sampler at `(t + rotation_offset).rem_euclid(1.0)` to
-/// convert from rotated t-space back to the sampler's original t-space.
-
 /// Normalizes a path's critical t-values for use as adaptive sampling guides.
 ///
 /// For a single closed subpath, rotates the parameterization so the earliest critical
@@ -522,8 +513,13 @@ pub fn discretize_path_impl(
   })?;
   let sample_count = sample_count.max(2) as usize;
 
-  let out = discretize_path(ctx, path, curve_angle_radians, sample_count, None)?;
-  Ok(Value::Path(Rc::new(out.with_fill_rule(path.fill_rule))))
+  Ok(Value::Path(Rc::new(discretize_path(
+    ctx,
+    path,
+    curve_angle_radians,
+    sample_count,
+    None,
+  )?)))
 }
 
 fn parse_svg_path_to_draw_commands(svg_path_str: &str) -> Result<Vec<DrawCommand>, ErrorStack> {

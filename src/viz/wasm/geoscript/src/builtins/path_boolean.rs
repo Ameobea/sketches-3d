@@ -5,7 +5,7 @@ use std::rc::Rc;
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::path_critical_points::{
   collect_vertex_set, collect_vertex_set_multi, detect_critical_vertices, restore_boundary_anchors,
-  CriticalPointConfig, VertexSet,
+  VertexSet,
 };
 #[cfg(target_arch = "wasm32")]
 use crate::builtins::trace_path::{expect_path, sample_path_subpaths, FillRule};
@@ -133,7 +133,8 @@ fn parse_engine(val: &Value, fn_name: &str) -> Result<BooleanEngine, ErrorStack>
   }
 }
 
-#[cfg(target_arch = "wasm32")]
+/// Discriminants are the Clipper2/CGAL op codes.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BooleanOp {
   Union,
@@ -143,7 +144,7 @@ pub enum BooleanOp {
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 struct BooleanResult {
   paths: Vec<Vec<Vec2>>,
   anchors: Vec<Vec<bool>>,
@@ -153,10 +154,9 @@ struct BooleanResult {
 /// vertex (one not in `pre_op_vertices`). All boolean outputs are closed.
 #[cfg(target_arch = "wasm32")]
 fn path_anchors(paths: &[Vec<Vec2>], pre_op_vertices: &VertexSet) -> Vec<Vec<bool>> {
-  let config = CriticalPointConfig::default();
   paths
     .iter()
-    .map(|p| detect_critical_vertices(p, &config, Some(pre_op_vertices)))
+    .map(|p| detect_critical_vertices(p, Some(pre_op_vertices)))
     .collect()
 }
 
@@ -169,10 +169,12 @@ fn run_clipper_boolean(
   fill_rule: u32,
   op: BooleanOp,
 ) -> BooleanResult {
-  if subject_coords.is_empty() || subject_path_lengths.is_empty() {
-    return BooleanResult {
-      paths: Vec::new(),
-      anchors: Vec::new(),
+  if subject_path_lengths.is_empty() {
+    return match op {
+      BooleanOp::Union | BooleanOp::Xor => {
+        run_clipper_self_union(clip_coords, clip_path_lengths, fill_rule)
+      }
+      BooleanOp::Intersect | BooleanOp::Difference => BooleanResult::default(),
     };
   }
   if op == BooleanOp::Union
@@ -182,14 +184,8 @@ fn run_clipper_boolean(
     return run_clipper_self_union(subject_coords, subject_path_lengths, fill_rule);
   }
   let pre_op_vertices = collect_vertex_set_multi(subject_coords, clip_coords);
-  let op_code = match op {
-    BooleanOp::Union => 0,
-    BooleanOp::Intersect => 1,
-    BooleanOp::Difference => 2,
-    BooleanOp::Xor => 3,
-  };
   clipper2_boolean_flat(
-    op_code,
+    op as u32,
     fill_rule,
     subject_coords,
     subject_path_lengths,
@@ -203,11 +199,8 @@ fn run_clipper_boolean(
 /// sweep instead of a chain of pairwise unions.
 #[cfg(target_arch = "wasm32")]
 fn run_clipper_self_union(coords: &[f32], path_lengths: &[u32], fill_rule: u32) -> BooleanResult {
-  if coords.is_empty() || path_lengths.is_empty() {
-    return BooleanResult {
-      paths: Vec::new(),
-      anchors: Vec::new(),
-    };
+  if path_lengths.is_empty() {
+    return BooleanResult::default();
   }
   let pre_op_vertices = collect_vertex_set(coords);
   clipper2_boolean_flat(4, fill_rule, coords, path_lengths, &[], &[]);
@@ -224,24 +217,15 @@ fn read_clipper_output(pre_op_vertices: VertexSet) -> BooleanResult {
   BooleanResult { paths, anchors }
 }
 
+/// Decodes flat `x, y` coords split by per-path point counts; drops paths under 2 points.
 #[cfg(target_arch = "wasm32")]
-fn paths_from_flat(coords: &[f32], lengths: &[u32]) -> Vec<Vec<Vec2>> {
-  let mut paths = Vec::with_capacity(lengths.len());
-  let mut coord_ix = 0usize;
-  for &len in lengths {
-    let mut path = Vec::with_capacity(len as usize);
-    for _ in 0..len {
-      if coord_ix + 1 >= coords.len() {
-        break;
-      }
-      path.push(Vec2::new(coords[coord_ix], coords[coord_ix + 1]));
-      coord_ix += 2;
-    }
-    if path.len() >= 2 {
-      paths.push(path);
-    }
-  }
-  paths
+pub(crate) fn paths_from_flat(coords: &[f32], lengths: &[u32]) -> Vec<Vec<Vec2>> {
+  let mut pts = coords.chunks_exact(2).map(|c| Vec2::new(c[0], c[1]));
+  lengths
+    .iter()
+    .map(|&len| pts.by_ref().take(len as usize).collect::<Vec<_>>())
+    .filter(|p| p.len() >= 2)
+    .collect()
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -266,11 +250,18 @@ fn run_cgal_boolean(
   op: BooleanOp,
   fn_name: &str,
 ) -> Result<BooleanResult, ErrorStack> {
-  if subject_coords.is_empty() || subject_path_lengths.is_empty() {
-    return Ok(BooleanResult {
-      paths: Vec::new(),
-      anchors: Vec::new(),
-    });
+  if subject_path_lengths.is_empty() {
+    return match op {
+      BooleanOp::Union | BooleanOp::Xor if !clip_path_lengths.is_empty() => run_cgal_boolean(
+        clip_coords,
+        clip_path_lengths,
+        clip_coords,
+        clip_path_lengths,
+        BooleanOp::Union,
+        fn_name,
+      ),
+      _ => Ok(BooleanResult::default()),
+    };
   }
 
   let is_self_op = subject_coords == clip_coords && subject_path_lengths == clip_path_lengths;
@@ -280,19 +271,12 @@ fn run_cgal_boolean(
     collect_vertex_set_multi(subject_coords, clip_coords)
   };
 
-  let op_id: u32 = match op {
-    BooleanOp::Union => 0,
-    BooleanOp::Intersect => 1,
-    BooleanOp::Difference => 2,
-    BooleanOp::Xor => 3,
-  };
-
   let ok = cgal_path_boolean_2d(
     subject_coords,
     subject_path_lengths,
     clip_coords,
     clip_path_lengths,
-    op_id,
+    op as u32,
   );
   if !ok {
     let err = cgal_get_last_error().unwrap_or_else(|| "unknown CGAL error".to_owned());
@@ -304,23 +288,7 @@ fn run_cgal_boolean(
   let out_coords = cgal_get_path_boolean_2d_coords();
   let out_lengths = cgal_get_path_boolean_2d_path_lengths();
   cgal_clear_path_boolean_2d_output();
-
-  let mut paths = Vec::with_capacity(out_lengths.len());
-  let mut coord_ix = 0usize;
-  for len in out_lengths {
-    let mut path = Vec::with_capacity(len as usize);
-    for _ in 0..len {
-      if coord_ix + 1 >= out_coords.len() {
-        break;
-      }
-      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
-      coord_ix += 2;
-    }
-    if path.len() >= 2 {
-      paths.push(path);
-    }
-  }
-
+  let paths = paths_from_flat(&out_coords, &out_lengths);
   let anchors = path_anchors(&paths, &pre_op_vertices);
   Ok(BooleanResult { paths, anchors })
 }
@@ -632,7 +600,7 @@ pub fn path_boolean_impl(
   _arg_refs: &[ArgRef],
   _args: &[Value],
   _kwargs: &FxHashMap<Sym, Value>,
-  _op: (),
+  _op: BooleanOp,
   fn_name: &str,
 ) -> Result<Value, ErrorStack> {
   Err(ErrorStack::new(format!(
@@ -640,125 +608,25 @@ pub fn path_boolean_impl(
   )))
 }
 
-// Wrapper functions for each operation
-#[cfg(target_arch = "wasm32")]
-pub fn path_union_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(
-    ctx,
-    def_ix,
-    arg_refs,
-    args,
-    kwargs,
-    BooleanOp::Union,
-    "path_union",
-  )
+macro_rules! boolean_op_impls {
+  ($($fn_name:ident => $op:ident, $name:literal;)*) => {$(
+    pub fn $fn_name(
+      ctx: &EvalCtx,
+      def_ix: usize,
+      arg_refs: &[ArgRef],
+      args: &[Value],
+      kwargs: &FxHashMap<Sym, Value>,
+    ) -> Result<Value, ErrorStack> {
+      path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, BooleanOp::$op, $name)
+    }
+  )*};
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub fn path_union_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, (), "path_union")
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn path_intersect_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(
-    ctx,
-    def_ix,
-    arg_refs,
-    args,
-    kwargs,
-    BooleanOp::Intersect,
-    "path_intersect",
-  )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn path_intersect_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, (), "path_intersect")
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn path_difference_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(
-    ctx,
-    def_ix,
-    arg_refs,
-    args,
-    kwargs,
-    BooleanOp::Difference,
-    "path_difference",
-  )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn path_difference_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, (), "path_difference")
-}
-
-#[cfg(target_arch = "wasm32")]
-pub fn path_xor_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(
-    ctx,
-    def_ix,
-    arg_refs,
-    args,
-    kwargs,
-    BooleanOp::Xor,
-    "path_xor",
-  )
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub fn path_xor_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  path_boolean_impl(ctx, def_ix, arg_refs, args, kwargs, (), "path_xor")
+boolean_op_impls! {
+  path_union_impl => Union, "path_union";
+  path_intersect_impl => Intersect, "path_intersect";
+  path_difference_impl => Difference, "path_difference";
+  path_xor_impl => Xor, "path_xor";
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -61,17 +61,23 @@ pub struct SpineFrame {
   pub binormal: Vec3,
 }
 
+/// Coincident consecutive points have no direction; they borrow the nearest valid tangent.
 fn calculate_tangents(points: &[Vec3]) -> Vec<Vec3> {
-  let mut tangents = Vec::with_capacity(points.len());
-  for i in 0..points.len() {
-    let dir = if i == points.len() - 1 {
-      points[i] - points[i - 1]
-    } else {
-      points[i + 1] - points[i]
-    };
-    tangents.push(dir.normalize());
-  }
-  tangents
+  let n = points.len();
+  let raw: Vec<Option<Vec3>> = (0..n)
+    .map(|i| {
+      let (a, b) = if i == n - 1 { (i - 1, i) } else { (i, i + 1) };
+      (points[b] - points[a]).try_normalize(1e-12)
+    })
+    .collect();
+  let mut last = raw.iter().flatten().next().copied().unwrap_or(Vec3::y());
+  raw
+    .into_iter()
+    .map(|t| {
+      last = t.unwrap_or(last);
+      last
+    })
+    .collect()
 }
 
 pub(crate) fn calculate_spine_frames(

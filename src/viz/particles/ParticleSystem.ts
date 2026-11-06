@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
+import { shadowDepthSource, toggleDefine } from 'src/viz/helpers/lights';
 import type { CustomUniformDef } from 'src/viz/shaders/customShader.types';
 import { acquireHeightField } from './HeightField';
 import { isExposureGate, ParticleMaterial, type ParticlePipelineCtx } from './particleMaterial';
@@ -136,10 +137,11 @@ export class ParticleSystem {
     (u.pSunColor.value as THREE.Color).setScalar(0);
     if (!sun) return;
     (u.pSunColor.value as THREE.Color).copy(sun.color).multiplyScalar(sun.intensity);
-    const map = sun.castShadow ? sun.shadow.map?.texture : null;
-    u.pSunShadowOn.value = map ? 1 : 0;
-    if (map) {
-      u.pSunShadowMap.value = map;
+    const src = sun.castShadow ? shadowDepthSource(this.viz.renderer, sun.shadow) : null;
+    u.pSunShadowOn.value = src ? 1 : 0;
+    if (src) toggleDefine(this.material!, 'SUN_SHADOW_COMPARE', src.compare);
+    u.pSunShadowMap.value = src?.texture ?? null;
+    if (src) {
       const cam = sun.shadow.camera;
       (u.pSunShadowMatrix.value as THREE.Matrix4).copy(
         shadowMatrix.multiplyMatrices(cam.projectionMatrix, cam.matrixWorldInverse)

@@ -98,7 +98,21 @@ impl Subpath {
     self.end
   }
 
+  /// Endpoint reads stay off the shared buffers so they don't freeze them.
+  fn endpoint(&self, length: f32) -> Option<Vec2> {
+    if length <= 0. || self.segments.is_empty() {
+      Some(self.start)
+    } else if length >= self.total_length {
+      Some(self.end)
+    } else {
+      None
+    }
+  }
+
   pub(crate) fn sample_by_length(&self, length: f32) -> Vec2 {
+    if let Some(p) = self.endpoint(length) {
+      return p;
+    }
     let lens = self.cumulative_lengths.as_slice();
     let idx = lens
       .partition_point(|&len| len < length)
@@ -109,6 +123,9 @@ impl Subpath {
   /// `sample_by_length` that tries `*hint` (the previous result) and its neighbors before
   /// binary searching, so runs of nearby lengths locate in O(1).
   pub(crate) fn sample_by_length_hinted(&self, length: f32, hint: &mut usize) -> Vec2 {
+    if let Some(p) = self.endpoint(length) {
+      return p;
+    }
     let lens = self.cumulative_lengths.as_slice();
     let n = lens.len();
     let h = (*hint).min(n - 1);

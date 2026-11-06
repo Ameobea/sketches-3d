@@ -123,15 +123,14 @@ export class GeotoyPersistence {
       this.userData
     );
 
-  saveVersion = (comp: Composition, meta: CompositionMeta, userData = this.userData) =>
+  saveVersion = (comp: Composition, meta: CompositionMeta) =>
     saveNewVersion(
       comp,
       this.currentDoc(),
       this.activeTreeId,
       this.materialDefinitions,
       this.opts.collectTabMeta(),
-      meta,
-      userData
+      meta
     );
 
   setLastRunWasSuccessful = (wasSuccessful: boolean) => setLastRunWasSuccessful(wasSuccessful, this.userData);

@@ -19,7 +19,7 @@ export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) 
       metalness: 0.8,
       roughness: 0.97,
       map: combinedDiffuseNormalTexture,
-      uvTransform: new THREE.Matrix3().scale(0.4, 0.4),
+      uvTransform: new THREE.Matrix3().makeScale(0.4, 0.4),
       mapDisableDistance: null,
       normalScale: 4,
     },
@@ -30,7 +30,6 @@ export const buildMuddyGoldenLoopsMat = async (loader: THREE.ImageBitmapLoader) 
     },
     {
       usePackedDiffuseNormalGBA: true,
-      disabledDirectionalLightIndices: [0],
       useGeneratedUVs: true,
       tileBreaking: { type: 'neyret', patchScale: 2 },
     }

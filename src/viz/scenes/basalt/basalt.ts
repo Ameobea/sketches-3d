@@ -72,6 +72,7 @@ const loadTextures = async () => {
     1,
     THREE.SRGBColorSpace
   );
+  bgTexture.generateMipmaps = false;
   bgTexture.needsUpdate = true;
 
   return { glassDiffuseTex, glassNormalMap, bgTexture, crystalNormalMap };
@@ -213,7 +214,7 @@ export const processLoadedScene = async (
     map: glassDiffuseTex,
     roughnessMap: glassDiffuseTex,
     roughness: 1,
-    uvTransform: new THREE.Matrix3().scale(0.073, 0.073),
+    uvTransform: new THREE.Matrix3().makeScale(0.073, 0.073),
     normalMap: glassNormalMap,
     normalScale: 0.85,
     normalMapType: THREE.TangentSpaceNormalMap,
@@ -250,7 +251,7 @@ return vec4(outColor, 1.);
     {
       ...pillarParams,
       color: 0x271a10,
-      uvTransform: new THREE.Matrix3().scale(0.003, 0.003),
+      uvTransform: new THREE.Matrix3().makeScale(0.003, 0.003),
       iridescence: 0,
     },
     {
@@ -276,7 +277,7 @@ return vec4(outColor, 1.);
       ambientLightScale: 2.4,
       normalMap: crystalNormalMap,
       normalScale: 1.5,
-      uvTransform: new THREE.Matrix3().scale(0.5, 0.5),
+      uvTransform: new THREE.Matrix3().makeScale(0.5, 0.5),
     },
     {
       emissiveShader: crystalEmissiveShader,
@@ -323,7 +324,6 @@ return vec4(outColor, 1.);
     quality: vizConf.graphics.quality,
     useVsm: true,
   });
-  dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;
   dirLight.shadow.camera.far = 460;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { mount } from 'svelte';
+import { mount, unmount } from 'svelte';
 
 import type { Viz } from 'src/viz';
 import type { SceneConfig } from '..';
@@ -64,10 +64,11 @@ export const processLoadedScene = async (
     viz.scene.add(axisHelper);
   }
 
-  mount(GeotoyApp, {
+  const app = mount(GeotoyApp, {
     target: document.getElementById('viz-container')!,
     props: { viz, workerManager, userData, pipelineController },
   });
+  viz.registerDestroyedCb(() => unmount(app));
 
   return {
     locations,

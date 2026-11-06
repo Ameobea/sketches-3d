@@ -22,6 +22,7 @@ import {
 import type { TransformSnapshot } from './TransformHandler';
 import { snapshotTransform, worldToLocalSnapshot } from './TransformHandler';
 import { flattenLeaves, hasAsset } from './levelDefTreeUtils';
+import { applyTransform } from './levelObjectUtils';
 import { round } from './mathUtils';
 
 export type StructuralUndoEntry = {
@@ -168,7 +169,6 @@ export class EditorMutationController {
     const root = isComposition
       ? buildCompositionGroupFromCtx(this.ctx, newDef)
       : buildLeafNode(this.ctx, assetId, newDef);
-    if (!root) return null;
     return this._finalizeSpawnNode(root);
   }
 
@@ -178,7 +178,7 @@ export class EditorMutationController {
     if (!newDef) return null;
 
     const groupObj = new THREE.Group();
-    groupObj.position.fromArray(newDef.position ?? [0, 0, 0]);
+    applyTransform(groupObj, newDef);
 
     // Strip `children` from the runtime def — the hierarchy lives only on `LevelGroup.children`.
     const { children: _omitChildren, ...body } = newDef;
@@ -264,7 +264,7 @@ export class EditorMutationController {
     // Prototypes/baked meshes are keyed by effective (param-variant) asset id.
     const effId = (def: ObjectDef) => this.ctx.effectiveAssetId?.(def) ?? def.asset ?? '';
     if (entry.kind === 'object') {
-      if (!this.ctx.prototypes.has(entry.assetId)) {
+      if (hasAsset(entry.def) && !this.ctx.prototypes.has(entry.assetId)) {
         console.warn(
           `[EditorMutationController] No prototype for asset "${entry.assetId}" — asset may not be loaded yet`
         );
@@ -277,7 +277,7 @@ export class EditorMutationController {
       }
     } else {
       for (const leaf of flattenLeaves([entry.def])) {
-        if (!hasAsset(leaf)) continue; // dash-token marker — no prototype needed
+        if (!hasAsset(leaf)) continue;
         const eid = effId(leaf);
         const known = this.ctx.prototypes.has(eid) || (this.ctx.compositionBaked?.has(eid) ?? false);
         if (!known) {
@@ -321,7 +321,7 @@ export class EditorMutationController {
     const newDef = await this.api.sendPaste(patchedDef, parentId, index);
     if (!newDef) return null;
 
-    let root: LevelSceneNode | null;
+    let root: LevelSceneNode;
     if (entry.kind === 'composition') {
       root = buildCompositionGroupFromCtx(this.ctx, newDef as ObjectDef);
     } else if (entry.kind === 'group') {
@@ -329,7 +329,6 @@ export class EditorMutationController {
     } else {
       root = buildLeafNode(this.ctx, entry.assetId, newDef as ObjectDef);
     }
-    if (!root) return null;
 
     const leaves = collectSubtreeLeaves(root);
     const subtree: RuntimeSubtree = {
@@ -425,7 +424,7 @@ export class EditorMutationController {
     }
 
     const groupObj = new THREE.Group();
-    groupObj.position.fromArray(newDef.position ?? [0, 0, 0]);
+    applyTransform(groupObj, newDef);
 
     for (const sub of detachedSubtrees) {
       groupObj.add(sub.root.object);

@@ -150,6 +150,13 @@ pub struct CompositionVersion {
   pub metadata: sqlx::types::Json<serde_json::Map<String, serde_json::Value>>,
 }
 
+#[derive(FromRow, Serialize)]
+pub struct VersionSummary {
+  pub id: i64,
+  pub created_at: DateTime<Utc>,
+  pub thumbnail_url: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateComposition {
   pub title: String,
@@ -297,7 +304,7 @@ pub async fn create_composition_version(
       })?;
 
   let latest_version = sqlx::query_as::<_, CompositionVersion>(
-    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC LIMIT 1",
+    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY id DESC LIMIT 1",
   )
   .bind(composition_id)
   .fetch_optional(&pool)
@@ -380,7 +387,7 @@ pub async fn fork_composition(
   }
 
   let latest_version = sqlx::query_as::<_, CompositionVersion>(
-    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC LIMIT 1",
+    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY id DESC LIMIT 1",
   )
   .bind(composition_id)
   .fetch_one(&pool)
@@ -535,7 +542,7 @@ pub async fn get_composition_history(
   Path(composition_id): Path<i64>,
   Extension(user_opt): Extension<Option<User>>,
   Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
-) -> Result<Json<Vec<CompositionVersion>>, APIError> {
+) -> Result<Json<Vec<VersionSummary>>, APIError> {
   // this makes sure that the user has access to the composition
   let _composition = get_composition(
     State(pool.clone()),
@@ -546,8 +553,9 @@ pub async fn get_composition_history(
   .await?
   .0;
 
-  let versions = sqlx::query_as::<_, CompositionVersion>(
-    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC",
+  let versions = sqlx::query_as::<_, VersionSummary>(
+    "SELECT id, created_at, thumbnail_url FROM composition_versions WHERE composition_id = ? \
+     ORDER BY id DESC",
   )
   .bind(composition_id)
   .fetch_all(&pool)
@@ -558,38 +566,6 @@ pub async fn get_composition_history(
       format!("Failed to fetch composition versions: {err}"),
     )
   })?;
-
-  Ok(Json(versions))
-}
-
-pub async fn list_composition_versions(
-  State(pool): State<SqlitePool>,
-  Path(composition_id): Path<i64>,
-  Extension(user_opt): Extension<Option<User>>,
-  Query(AdminTokenQuery { admin_token }): Query<AdminTokenQuery>,
-) -> Result<Json<Vec<i64>>, APIError> {
-  // makes sure that the user has access to the composition
-  let _ = get_composition(
-    State(pool.clone()),
-    Path(composition_id),
-    Extension(user_opt),
-    Query(AdminTokenQuery { admin_token }),
-  )
-  .await?;
-
-  let versions = sqlx::query("SELECT id FROM composition_versions WHERE composition_id = ?")
-    .bind(composition_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(|err| {
-      APIError::new(
-        StatusCode::INTERNAL_SERVER_ERROR,
-        format!("Failed to fetch composition versions: {err}"),
-      )
-    })?
-    .into_iter()
-    .map(|row| row.get::<i64, _>("id"))
-    .collect();
 
   Ok(Json(versions))
 }
@@ -615,7 +591,7 @@ pub async fn get_composition_latest(
   .await?;
 
   let version = sqlx::query_as::<_, CompositionVersion>(
-    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY created_at DESC LIMIT 1",
+    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY id DESC LIMIT 1",
   )
   .bind(composition_id)
   .fetch_one(&pool)
@@ -716,7 +692,7 @@ JOIN users u ON c.author_id = u.id
 JOIN (
   SELECT
     *,
-    ROW_NUMBER() OVER(PARTITION BY composition_id ORDER BY created_at DESC) as rn
+    ROW_NUMBER() OVER(PARTITION BY composition_id ORDER BY id DESC) as rn
   FROM composition_versions
 ) cv ON c.id = cv.composition_id AND cv.rn = 1
 {where_clause}
@@ -740,17 +716,15 @@ ORDER BY c.updated_at DESC
     }
   );
 
-  let mut query = sqlx::query_as::<_, PublicCompositionRow>(sqlx::AssertSqlSafe(query_str));
-  if let Some(limit) = limit {
-    query = query.bind(limit);
-  }
-
-  let rows = query.fetch_all(pool).await.map_err(|err| {
-    APIError::new(
-      StatusCode::INTERNAL_SERVER_ERROR,
-      format!("Failed to list compositions: {err}"),
-    )
-  })?;
+  let rows = sqlx::query_as::<_, PublicCompositionRow>(sqlx::AssertSqlSafe(query_str))
+    .fetch_all(pool)
+    .await
+    .map_err(|err| {
+      APIError::new(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        format!("Failed to list compositions: {err}"),
+      )
+    })?;
 
   let ids: Vec<i64> = rows.iter().map(|row| row.comp.id).collect();
   let mut tags_by_id = load_tags(pool, COMPOSITION_TAGS, &ids).await?;

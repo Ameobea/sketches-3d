@@ -9,7 +9,11 @@
     type TabMetadata,
   } from 'src/geoscript/geotoyAPIClient';
   import type { MaterialDefinitions } from 'src/geoscript/materials';
-  import { buildCompositionVersionMetadata, saveNewVersion } from 'src/geotoy/modules/compositionStorage';
+  import {
+    buildCompositionVersionMetadata,
+    clearSavedState,
+    saveNewVersion,
+  } from 'src/geotoy/modules/compositionStorage';
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
   import { untrack } from 'svelte';
@@ -31,7 +35,7 @@
     materials: MaterialDefinitions;
     getCurrentDoc: () => CompositionDoc;
     activeTreeId: string;
-    onSave: () => void;
+    onSave: (comp: Composition, version: CompositionVersion) => void;
     /** Live-captures the active tab's view, then returns every tab's metadata. */
     collectTabMeta: () => Record<string, TabMetadata>;
     userData: GeoscriptPlaygroundUserData | undefined;
@@ -76,19 +80,16 @@
 
     const res = await (async (): Promise<{ type: 'ok'; msg: string } | { type: 'error'; msg: string }> => {
       if (comp) {
-        const res = await saveNewVersion(
-          comp,
-          getCurrentDoc(),
-          activeTreeId,
-          materials,
-          collectTabMeta(),
-          { title, description, isShared, tags },
-          userData
-        );
+        const res = await saveNewVersion(comp, getCurrentDoc(), activeTreeId, materials, collectTabMeta(), {
+          title,
+          description,
+          isShared,
+          tags,
+        });
         if (res.type === 'error') {
           return res;
         }
-        onSave();
+        onSave(res.comp, res.version);
         return { type: 'ok', msg: 'Successfully created new version' };
       } else {
         const compRes = await createNewComposition();
@@ -96,7 +97,9 @@
           return { type: 'error', msg: compRes.msg };
         }
         const comp = compRes.comp;
-        goto(resolve(`geotoy/edit/${comp.id}`));
+        // after navigating: the outgoing editor's teardown re-saves its draft
+        await goto(resolve(`geotoy/edit/${comp.id}`));
+        clearSavedState(userData);
         return { type: 'ok', msg: 'Successfully saved new composition' };
       }
     })();

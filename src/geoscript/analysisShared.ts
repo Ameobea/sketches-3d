@@ -13,10 +13,10 @@ export const getClient = (): Promise<AnalysisClient> => {
 
 // Analysis columns count chars (as Pest does); CM positions are UTF-16 offsets.
 
-/** Convert 1-based line/col from analysis to a CM6 character offset. */
-export const lcToPos = (doc: Text, line: number, col: number): number => {
+/** Convert 1-based line/col from analysis to a CM6 character offset; `null` when off-document. */
+export const lcToPos = (doc: Text, line: number, col: number): number | null => {
   if (line < 1 || line > doc.lines) {
-    return 0;
+    return null;
   }
   const lineObj = doc.line(line);
   return (

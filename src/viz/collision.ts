@@ -1248,6 +1248,11 @@ export class BulletPhysics {
 
   public getPhysicsTime = (): number => this.physicsElapsedTime;
 
+  public setPhysicsTime = (seconds: number) => {
+    this.physicsSubtickCount = Math.round(seconds * this.simulationTickRate);
+    this.localTimeRemainder = 0;
+  };
+
   /**
    * World y of the closest static/default-filter surface below `(x, fromY, z)` within `maxDist`,
    * ignoring the player's own collider; `null` on a miss.  Shares the controller's camera ray

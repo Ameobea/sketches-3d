@@ -8,6 +8,7 @@ import { buildCustomShader } from 'src/viz/shaders/customShader';
 import { fitAutoShadowFrustaFromScene } from 'src/viz/helpers/lights';
 import { configureDefaultPostprocessingPipeline } from 'src/viz/postprocessing/defaultPostprocessing';
 import { CascadedShadowMapHelper } from 'src/viz/shadows/CascadedShadowMapHelper';
+import { mulberry32 } from 'src/viz/util/util';
 
 const USE_CSM = true;
 const SHOW_CSM_DEBUG = true;
@@ -20,14 +21,6 @@ const SHOW_CSM_DEBUG = true;
 const locations = {
   spawn: { pos: new THREE.Vector3(0, 3, 60), rot: new THREE.Vector3(-0.15, Math.PI, 0) },
   overview: { pos: new THREE.Vector3(-180, 90, 220), rot: new THREE.Vector3(-0.35, 2.5, 0) },
-};
-
-const mulberry32 = (seed: number) => () => {
-  seed |= 0;
-  seed = (seed + 0x6d2b79f5) | 0;
-  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 };
 
 export const processLoadedScene = async (

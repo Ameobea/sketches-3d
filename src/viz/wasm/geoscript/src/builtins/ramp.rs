@@ -223,7 +223,7 @@ pub(crate) struct RampCallable {
   baked: Baked,
 }
 
-/// `apply_ease` minus the custom-callable arm; callers check `has_custom_ease` first.
+/// Custom eases only run during the LUT bake; post-bake sampling never reaches them.
 #[inline(always)]
 fn apply_ease_pure(ease: &Ease, t: f32) -> f32 {
   match ease {
@@ -235,12 +235,6 @@ fn apply_ease_pure(ease: &Ease, t: f32) -> f32 {
 }
 
 impl RampCallable {
-  fn has_custom_ease(&self) -> bool {
-    self.spec.eases.iter().any(|e| matches!(e, Ease::Custom(_)))
-  }
-
-  /// `sample` with the interpreter re-entry removed, so a whole-texture apply carries no
-  /// `Result` and no dynamic dispatch per texel.
   #[inline(always)]
   fn sample_pure(&self, x: f32) -> Vec3 {
     let ps = &self.spec.positions;
@@ -270,12 +264,8 @@ impl RampCallable {
     vals[idx - 1].lerp(&vals[idx], apply_ease_pure(&self.spec.eases[idx - 1], t))
   }
 
-  /// Whole-plane apply into `outs` (1 or 3 planes, overwritten). `false` when a custom ease
-  /// needs the interpreter; `outs` are left untouched.
-  pub(crate) fn fill_planes(&self, xs: &[f32], outs: &mut [Vec<f32>]) -> bool {
-    if self.has_custom_ease() {
-      return false;
-    }
+  /// Whole-plane apply into `outs` (1 or 3 planes, overwritten).
+  pub(crate) fn fill_planes(&self, xs: &[f32], outs: &mut [Vec<f32>]) {
     for o in outs.iter_mut() {
       o.clear();
       o.reserve(xs.len());
@@ -291,23 +281,6 @@ impl RampCallable {
         }
       }
       _ => unreachable!("ramp output is 1 or 3 planes"),
-    }
-    true
-  }
-
-  fn sample(&self, x: f32, ctx: &EvalCtx) -> Result<Vec3, ErrorStack> {
-    let (lo, hi) = (self.spec.positions[0], *self.spec.positions.last().unwrap());
-    let u = map_extend(x, lo, hi, self.spec.extend);
-    match &self.baked {
-      // Exact ramps never mix in a non-linear space (`needs_lut` guarantees any non-linear
-      // space here is all-step, which never interpolates), so raw linear values are correct.
-      Baked::Exact => eval_segments(&self.spec, &self.spec.values, u, MixSpace::Linear, ctx),
-      Baked::Lut(lut) => {
-        let f = (u - lo) / (hi - lo) * (LUT_SIZE - 1) as f32;
-        let i = (f as usize).min(LUT_SIZE - 2);
-        let t = (f - i as f32).clamp(0., 1.);
-        Ok(lut[i].lerp(&lut[i + 1], t))
-      }
     }
   }
 }
@@ -350,17 +323,7 @@ impl DynamicCallable for RampCallable {
       let src = &tex.as_planes()[0];
       let n = src.len();
       let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| Vec::with_capacity(n)).collect();
-      if !self.fill_planes(src, &mut planes) {
-        for p in &mut planes {
-          p.resize(n, 0.);
-        }
-        for (i, &v) in src.iter().enumerate() {
-          let c = self.sample(v, ctx)?;
-          for (p, o) in planes.iter_mut().zip([c.x, c.y, c.z]) {
-            p[i] = o;
-          }
-        }
-      }
+      self.fill_planes(src, &mut planes);
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {
         storage: crate::TexStorage::from_plane_vecs(planes),
         channels: out_ch,
@@ -371,7 +334,7 @@ impl DynamicCallable for RampCallable {
     let x = x_val
       .as_float()
       .ok_or_else(|| ErrorStack::new(format!("ramp: `x` must be a number, got {x_val:?}")))?;
-    let v = self.sample(x, ctx)?;
+    let v = self.sample_pure(x);
     Ok(if self.spec.scalar {
       Value::Float(v.x)
     } else {

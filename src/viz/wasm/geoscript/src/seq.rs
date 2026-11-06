@@ -2,7 +2,7 @@ use crate::ValueMap;
 use std::{cell::RefCell, collections::VecDeque, fmt::Debug, iter::Enumerate, rc::Rc};
 
 use mesh::{linked_mesh::Vec3, LinkedMesh};
-use nalgebra::Matrix4;
+use nalgebra::{Matrix3, Matrix4};
 use point_distribute::MeshSurfaceSampler;
 
 use crate::{
@@ -75,11 +75,7 @@ impl Sequence for MapSeq {
   }
 
   fn exact_len(&self) -> Option<usize> {
-    if self.cb.is_side_effectful() {
-      None
-    } else {
-      self.inner.exact_len()
-    }
+    self.inner.exact_len()
   }
 
   fn consume<'a>(
@@ -303,9 +299,8 @@ impl Clone for PointDistributeSeq {
 
 pub(crate) struct PointDistributeIter<'a> {
   ctx: &'a EvalCtx,
-  #[allow(dead_code)]
   mesh: MeshHandle,
-  inverse_transposed_transform: Matrix4<f32>,
+  normal_mat: Matrix3<f32>,
   sampler: MeshSurfaceSampler<'static>,
   cb: Option<Rc<Callable>>,
   world_space: bool,
@@ -331,9 +326,10 @@ impl<'a> PointDistributeIter<'a> {
       )
     })?;
 
+    let linear = mesh.transform.fixed_view::<3, 3>(0, 0).into_owned();
     Ok(Self {
       ctx,
-      inverse_transposed_transform: mesh.transform.try_inverse().unwrap().transpose(),
+      normal_mat: linear.try_inverse().map_or(linear, |inv| inv.transpose()),
       mesh,
       sampler,
       cb,
@@ -351,9 +347,9 @@ impl<'a> Iterator for PointDistributeIter<'a> {
         let mut pos = Vec3::new(pos.x, pos.y, pos.z);
         if self.world_space {
           pos = (self.mesh.transform * pos.push(1.)).xyz();
-          normal = (self.inverse_transposed_transform * normal.push(0.))
-            .xyz()
-            .normalize();
+          normal = (self.normal_mat * normal)
+            .try_normalize(1e-12)
+            .unwrap_or(normal);
         }
         let value = Value::Vec3(Vec3::new(pos.x, pos.y, pos.z));
         if let Some(cb) = &self.cb {

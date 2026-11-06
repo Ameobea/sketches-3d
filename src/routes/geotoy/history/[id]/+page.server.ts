@@ -5,7 +5,7 @@ import {
   getComposition,
   getCompositionHistory,
   type Composition,
-  type CompositionVersion,
+  type VersionSummary,
 } from 'src/geoscript/geotoyAPIClient';
 import type { PageServerLoad } from './$types';
 
@@ -14,7 +14,7 @@ export const load: PageServerLoad = async ({
   params,
   parent,
   cookies,
-}): Promise<{ composition: Composition; versions: CompositionVersion[]; isAuthor: boolean }> => {
+}): Promise<{ composition: Composition; versions: VersionSummary[]; isAuthor: boolean }> => {
   const id = parseInt(params.id, 10);
   if (isNaN(id)) {
     error(400, 'Invalid composition ID');

@@ -783,8 +783,6 @@ pub enum BinOp {
   And,
   Or,
   BitAnd,
-  Range,
-  RangeInclusive,
   Pipeline,
   Map,
   Nullish,
@@ -821,14 +819,14 @@ pub(crate) fn eval_range(
 // it would be great if these could somehow be made const rather than static
 static mut OP_DEF_SHORTHANDS_INITIALIZED: bool = false;
 
-static mut BINOP_DEF_IX_TABLE: [(usize, bool); 19] = [(usize::MAX, false); 19];
+static mut BINOP_DEF_IX_TABLE: [(usize, bool); 17] = [(usize::MAX, false); 17];
 static mut UNOP_DEF_IX_TABLE: [usize; 3] = [usize::MAX; 3];
 
 // Per-(op, lhs type bit, rhs type bit) resolved signature index (+1; 0 = no match), so the
 // hot path skips the per-call overload scan. Resolution is purely type-driven, so this is
 // exact, not a heuristic cache.
 const N_TY: usize = crate::TYPE_FLAG_COUNT;
-static mut BINOP_RESOLVED_DEF_TABLE: [[[u8; N_TY]; N_TY]; 19] = [[[0; N_TY]; N_TY]; 19];
+static mut BINOP_RESOLVED_DEF_TABLE: [[[u8; N_TY]; N_TY]; 17] = [[[0; N_TY]; N_TY]; 17];
 static mut UNOP_RESOLVED_DEF_TABLE: [[u8; N_TY]; 3] = [[0; N_TY]; 3];
 
 pub(crate) fn maybe_init_op_def_shorthands() {
@@ -852,8 +850,6 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       (get_builtin_fn_sig_entry_ix("and").unwrap(), false),
       (get_builtin_fn_sig_entry_ix("or").unwrap(), false),
       (get_builtin_fn_sig_entry_ix("bit_and").unwrap(), false),
-      (0, false),                                              // Range
-      (0, false),                                              // RangeInclusive
       (get_builtin_fn_sig_entry_ix("bit_or").unwrap(), false), // Pipeline
       (get_builtin_fn_sig_entry_ix("map").unwrap(), true),
       (0, false), // Nullish
@@ -865,15 +861,7 @@ pub(crate) fn maybe_init_op_def_shorthands() {
       get_builtin_fn_sig_entry_ix("not").unwrap(),
     ];
 
-    let untabled_ops = [
-      BinOp::Range as usize,
-      BinOp::RangeInclusive as usize,
-      BinOp::Nullish as usize,
-    ];
-    for op_ix in 0..19usize {
-      if untabled_ops.contains(&op_ix) {
-        continue;
-      }
+    for op_ix in 0..BinOp::Nullish as usize {
       let (fn_entry_ix, _) = (addr_of!(BINOP_DEF_IX_TABLE) as *const (usize, bool))
         .add(op_ix)
         .read();
@@ -924,8 +912,6 @@ impl BinOp {
             .map_err(|err| err.wrap("Error invoking callable in pipeline"));
         }
       }
-      BinOp::Range => return eval_range(&lhs, Some(&rhs), false),
-      BinOp::RangeInclusive => return eval_range(&lhs, Some(&rhs), true),
       BinOp::Nullish => return Ok(if matches!(lhs, Value::Nil) { rhs } else { lhs }),
       _ => (),
     }
@@ -957,7 +943,7 @@ impl BinOp {
         }
         // treating as bit-or
         BinOp::Pipeline => bit_or_impl(ctx, def_ix, &lhs, &rhs),
-        BinOp::Range | BinOp::RangeInclusive | BinOp::Nullish => {
+        BinOp::Nullish => {
           unreachable!("previously special-cased")
         }
       }
@@ -1005,7 +991,7 @@ impl BinOp {
       BinOp::And => "and",
       BinOp::Or => "or",
       BinOp::BitAnd => "bit_and",
-      BinOp::Range | BinOp::RangeInclusive | BinOp::Pipeline | BinOp::Nullish => {
+      BinOp::Pipeline | BinOp::Nullish => {
         return None;
       }
       BinOp::Map => "map",
@@ -1170,34 +1156,6 @@ fn parse_node(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
     }
     Rule::func_call => parse_fn_call(ctx, expr),
     Rule::expr => parse_expr(ctx, expr),
-    Rule::range_literal_expr => {
-      let mut inner = expr.into_inner();
-      let start = parse_node(ctx, inner.next().unwrap())?;
-      let end = match inner.next() {
-        Some(end) => Some(Box::new(parse_node(ctx, end)?)),
-        None => None,
-      };
-      Ok(Expr::Range {
-        start: Box::new(start),
-        end,
-        inclusive: false,
-        loc,
-      })
-    }
-    Rule::range_inclusive_literal_expr => {
-      let mut inner = expr.into_inner();
-      let start = parse_node(ctx, inner.next().unwrap())?;
-      let end = match inner.next() {
-        Some(end) => Some(Box::new(parse_node(ctx, end)?)),
-        None => None,
-      };
-      Ok(Expr::Range {
-        start: Box::new(start),
-        end,
-        inclusive: true,
-        loc,
-      })
-    }
     Rule::closure => {
       let end_loc = end_source_loc(ctx, &expr);
       let mut inner = expr.into_inner();
@@ -1473,12 +1431,10 @@ fn parse_double_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
       Rule::unescaped_quote_str_content => {
         acc.push_str(inner.as_str());
       }
-      Rule::escaped_double_quote => {
-        acc.push('"');
-      }
-      Rule::escaped_backslash => {
-        acc.push('\\');
-      }
+      Rule::escaped_double_quote => acc.push('"'),
+      Rule::escaped_backslash => acc.push('\\'),
+      Rule::escaped_newline => acc.push('\n'),
+      Rule::escaped_tab => acc.push('\t'),
       Rule::double_quote_string_inner => {
         acc.push_str(parse_double_quote_string_inner(inner)?.as_str());
       }
@@ -1511,12 +1467,10 @@ fn parse_single_quote_string_inner(pair: Pair<Rule>) -> Result<String, ErrorStac
       Rule::unescaped_apos_str_content => {
         acc.push_str(inner.as_str());
       }
-      Rule::escaped_single_quote => {
-        acc.push('\'');
-      }
-      Rule::escaped_backslash => {
-        acc.push('\\');
-      }
+      Rule::escaped_single_quote => acc.push('\''),
+      Rule::escaped_backslash => acc.push('\\'),
+      Rule::escaped_newline => acc.push('\n'),
+      Rule::escaped_tab => acc.push('\t'),
       Rule::single_quote_string_inner => {
         acc.push_str(parse_single_quote_string_inner(inner)?.as_str());
       }
@@ -1578,7 +1532,6 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
     .map_primary(|primary| -> Result<Expr, ErrorStack> {
       match primary.as_rule() {
         Rule::chained_term => parse_chained_term(ctx, primary),
-        Rule::term => parse_node(ctx, primary),
         _ => unimplemented!("Unexpected primary rule: {:?}", primary.as_rule()),
       }
     })
@@ -1604,6 +1557,15 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         _ => unreachable!("Unexpected prefix operator rule: {:?}", op.as_rule()),
       }
     })
+    .map_postfix(|start, _open_range_op| {
+      let start = start?;
+      Ok(Expr::Range {
+        loc: start.loc(),
+        start: Box::new(start),
+        end: None,
+        inclusive: false,
+      })
+    })
     .map_infix(|lhs, op, rhs| {
       let bin_op = match op.as_rule() {
         Rule::add_op => BinOp::Add,
@@ -1611,8 +1573,15 @@ pub fn parse_expr(ctx: &EvalCtx, expr: Pair<Rule>) -> Result<Expr, ErrorStack> {
         Rule::mul_op => BinOp::Mul,
         Rule::div_op => BinOp::Div,
         Rule::pipeline_op => BinOp::Pipeline,
-        Rule::range_inclusive_op => BinOp::RangeInclusive,
-        Rule::range_op => BinOp::Range,
+        Rule::range_op | Rule::range_inclusive_op => {
+          let start = lhs?;
+          return Ok(Expr::Range {
+            loc: start.loc(),
+            start: Box::new(start),
+            end: Some(Box::new(rhs?)),
+            inclusive: op.as_rule() == Rule::range_inclusive_op,
+          });
+        }
         Rule::gte_op => BinOp::Gte,
         Rule::lte_op => BinOp::Lte,
         Rule::gt_op => BinOp::Gt,
@@ -2005,10 +1974,7 @@ pub(crate) fn parse_top_level_statement(
 pub(crate) enum TrackedValue {
   /// Value is const-available and has already been evaluated
   Const(Value),
-  /// Value is a closure argument and isn't available during const eval.  Type information
-  /// (if known) lives in the enclosing [`ScopeTracker::types`] side-table.
-  Arg,
-  /// Value is a non-const variable, either directly from or derived from an enclosing scope.
+  /// Value isn't available during const eval (closure arg, or derived from a non-const binding).
   /// Type information (if known) lives in the enclosing [`ScopeTracker::types`] side-table.
   Dyn,
 }
@@ -2017,7 +1983,6 @@ impl TrackedValue {
   pub fn as_ref<'a>(&'a self) -> TrackedValueRef<'a> {
     match self {
       TrackedValue::Const(val) => TrackedValueRef::Const(val),
-      TrackedValue::Arg => TrackedValueRef::Arg,
       TrackedValue::Dyn => TrackedValueRef::Dyn,
     }
   }
@@ -2026,7 +1991,6 @@ impl TrackedValue {
 #[derive(Debug)]
 pub(crate) enum TrackedValueRef<'a> {
   Const(&'a Value),
-  Arg,
   Dyn,
 }
 
@@ -2205,143 +2169,7 @@ pub(crate) fn maybe_pre_resolve_builtin_call_signature(
   }
 }
 
-/// This helps differentiate between "true" dyn values (like the output from `randi()`, for example)
-/// and dynamic values that depend only on constants and closure arguments.
-///
-/// This allows closures to be differentiated between those that are completely const and depend on
-/// no non-const external values and those that can be const eval'd but depend on args.
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub(crate) enum DynType {
-  Const,
-  Arg,
-  Dyn,
-}
-
-impl std::ops::BitOr for DynType {
-  type Output = Self;
-
-  fn bitor(self, rhs: Self) -> Self::Output {
-    if self == DynType::Dyn || rhs == DynType::Dyn {
-      DynType::Dyn
-    } else if self == DynType::Arg || rhs == DynType::Arg {
-      DynType::Arg
-    } else {
-      DynType::Const
-    }
-  }
-}
-
-pub(crate) fn get_dyn_type(expr: &Expr, local_scope: &ScopeTracker) -> DynType {
-  match expr {
-    Expr::BinOp { lhs, rhs, .. } => {
-      let lhs_type = get_dyn_type(lhs, local_scope);
-      let rhs_type = get_dyn_type(rhs, local_scope);
-      lhs_type | rhs_type
-    }
-    Expr::PrefixOp { expr, .. } => get_dyn_type(expr, local_scope),
-    Expr::Range { start, end, .. } => {
-      let start_type = get_dyn_type(start, local_scope);
-      if let Some(end) = end.as_ref() {
-        let end_type = get_dyn_type(end, local_scope);
-        start_type | end_type
-      } else {
-        start_type
-      }
-    }
-    Expr::StaticFieldAccess { lhs, .. } => get_dyn_type(lhs, local_scope),
-    Expr::FieldAccess {
-      lhs, field, field2, ..
-    } => {
-      let mut ty = get_dyn_type(lhs, local_scope) | get_dyn_type(field, local_scope);
-      if let Some(f2) = field2 {
-        ty = ty | get_dyn_type(f2, local_scope);
-      }
-      ty
-    }
-    Expr::Call {
-      call: FunctionCall { args, kwargs, .. },
-      ..
-    } => {
-      let mut dyn_type = DynType::Const;
-      for arg in args {
-        dyn_type = dyn_type | get_dyn_type(arg, local_scope);
-      }
-      for kwarg in kwargs.values() {
-        dyn_type = dyn_type | get_dyn_type(kwarg, local_scope);
-      }
-
-      dyn_type
-    }
-    Expr::Closure { params, body, .. } => {
-      let mut dyn_type = DynType::Const;
-      for param in &**params {
-        if let Some(default_val) = &param.default_val {
-          dyn_type = dyn_type | get_dyn_type(default_val, local_scope);
-        } else {
-          dyn_type = dyn_type | DynType::Arg;
-        }
-      }
-      for stmt in &body.0 {
-        for expr in stmt.exprs() {
-          dyn_type = dyn_type | get_dyn_type(expr, local_scope);
-        }
-      }
-      dyn_type
-    }
-    Expr::Ident { name, .. } => match local_scope.vars.get(name) {
-      Some(TrackedValue::Const(_)) => DynType::Const,
-      Some(TrackedValue::Arg) => DynType::Arg,
-      Some(TrackedValue::Dyn) => DynType::Dyn,
-      None => match local_scope.parent {
-        Some(parent) => match parent.get(*name) {
-          Some(TrackedValueRef::Const(_)) => DynType::Const,
-          // closure args from the parent scope aren't part of the pure scope of the current
-          // closure, so we have to treat them as true dyn
-          Some(TrackedValueRef::Arg) => DynType::Dyn,
-          Some(TrackedValueRef::Dyn) => DynType::Dyn,
-          None => DynType::Dyn,
-        },
-        None => DynType::Dyn,
-      },
-    },
-    Expr::ArrayLiteral {
-      elements: elems, ..
-    } => elems.iter().fold(DynType::Const, |acc, elem| {
-      acc | get_dyn_type(&elem.expr, local_scope)
-    }),
-    Expr::MapLiteral { entries, .. } => entries.iter().fold(DynType::Const, |acc, entry| {
-      entry
-        .exprs()
-        .fold(acc, |acc, e| acc | get_dyn_type(e, local_scope))
-    }),
-    Expr::Literal { .. } => DynType::Const,
-    Expr::Conditional {
-      cond,
-      then,
-      else_if_exprs,
-      else_expr,
-      ..
-    } => {
-      let mut dyn_type = get_dyn_type(cond, local_scope);
-      dyn_type = dyn_type | get_dyn_type(then, local_scope);
-      for (cond, inner) in else_if_exprs {
-        dyn_type = dyn_type | get_dyn_type(cond, local_scope);
-        dyn_type = dyn_type | get_dyn_type(inner, local_scope);
-      }
-      if let Some(else_expr) = else_expr {
-        dyn_type = dyn_type | get_dyn_type(else_expr, local_scope);
-      }
-      dyn_type
-    }
-    Expr::Block { statements, .. } => statements.iter().fold(DynType::Const, |acc, stmt| {
-      stmt
-        .exprs()
-        .fold(acc, |acc, expr| acc | get_dyn_type(expr, local_scope))
-    }),
-  }
-}
-
-/// Bind a closure's declared parameters into `scope` as [`TrackedValue::Arg`] entries,
+/// Bind a closure's declared parameters into `scope` as [`TrackedValue::Dyn`] entries,
 /// attaching any declared parameter type as an `AbstractType` side-table entry so that
 /// later type inference inside the closure body sees the parameter's type.
 pub(crate) fn bind_closure_params_into_scope(scope: &mut ScopeTracker, params: &[ClosureArg]) {
@@ -2354,10 +2182,10 @@ pub(crate) fn bind_closure_params_into_scope(scope: &mut ScopeTracker, params: &
       match ty_hint {
         Some(ty) => scope.set_with_type(
           ident,
-          TrackedValue::Arg,
+          TrackedValue::Dyn,
           crate::ty::AbstractType::Concrete(ty),
         ),
-        None => scope.set(ident, TrackedValue::Arg),
+        None => scope.set(ident, TrackedValue::Dyn),
       }
     }
   }
@@ -2366,11 +2194,10 @@ pub(crate) fn bind_closure_params_into_scope(scope: &mut ScopeTracker, params: &
 /// Record the result of a non-const binding (an `Assignment` / `Export` / closure-local whose
 /// RHS did not fold to a literal) into `scope`.
 ///
-/// Classifies the RHS via [`get_dyn_type`] to pick between [`TrackedValue::Arg`] and
-/// [`TrackedValue::Dyn`], and either honors an explicit `type_hint` or runs shared forward
-/// inference to recover the RHS type.  The full [`AbstractType`] produced by inference is
-/// preserved — it is *not* flattened through `.as_single_arg_type()` — so richer variants
-/// (`PartiallyApplied`, `Union`, etc.) stay available to downstream type queries.
+/// Honors an explicit `type_hint` or runs shared forward inference to recover the RHS type.  The
+/// full [`AbstractType`] produced by inference is preserved — it is *not* flattened through
+/// `.as_single_arg_type()` — so richer variants (`PartiallyApplied`, `Union`, etc.) stay available
+/// to downstream type queries.
 pub(crate) fn record_non_const_binding(
   ctx: &EvalCtx,
   scope: &mut ScopeTracker,
@@ -2380,10 +2207,6 @@ pub(crate) fn record_non_const_binding(
 ) {
   use crate::ty::AbstractType;
 
-  let tracked = match get_dyn_type(expr, scope) {
-    DynType::Arg => TrackedValue::Arg,
-    DynType::Const | DynType::Dyn => TrackedValue::Dyn,
-  };
   let ty = match type_hint {
     Some(hint) => AbstractType::Concrete(hint),
     None => {
@@ -2392,9 +2215,9 @@ pub(crate) fn record_non_const_binding(
     }
   };
   if matches!(ty, AbstractType::Unknown) {
-    scope.set(name, tracked);
+    scope.set(name, TrackedValue::Dyn);
   } else {
-    scope.set_with_type(name, tracked, ty);
+    scope.set_with_type(name, TrackedValue::Dyn, ty);
   }
 }
 

@@ -35,6 +35,7 @@ export const geoscriptHighlighting = styleTags({
   '"="': t.definitionOperator,
   '".."': t.punctuation,
   '"..="': t.punctuation,
+  OpenRange: t.punctuation,
   '( )': t.paren,
   '[ ]': t.squareBracket,
   '{ }': t.brace,

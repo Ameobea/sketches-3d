@@ -2,6 +2,9 @@ import * as THREE from 'three';
 
 import { GraphicsQuality } from 'src/viz/conf';
 
+// r182+ PCF (5 Vogel taps × HW bilinear, σ² = R²/4 + 1/6 texel²) matching r181 PCFSoft's σ² ≈ 0.83.
+export const PcfSoftShadowRadius = 1.6;
+
 interface ConfigureShadowMapParams {
   light: THREE.DirectionalLight;
   renderer: THREE.WebGLRenderer;
@@ -12,7 +15,7 @@ interface ConfigureShadowMapParams {
   mapSize?: { low: number; medium: number; high: number };
   /**
    * If true, use VSMShadowMap at medium/high quality (radius 4, blurSamples 16) and fall back
-   * to PCFShadowMap at low quality (radius 2, no blur samples).
+   * to PCFShadowMap at low quality (radius 2.5, no blur samples). Also sets `bias`.
    * Leave false/omitted for scenes that already use PCF — only the map size will be adjusted.
    */
   useVsm?: boolean;
@@ -21,7 +24,7 @@ interface ConfigureShadowMapParams {
 /**
  * Applies quality-scaled shadow map settings to a directional light.
  * Handles map size, renderer shadow type (when useVsm is true), and blur params.
- * Scene-specific values like `bias` should still be set by the caller.
+ * Scene-specific values like `bias` should still be set by the caller (except with `useVsm`).
  */
 export const configureShadowMap = ({
   light,
@@ -42,12 +45,34 @@ export const configureShadowMap = ({
     if (quality > GraphicsQuality.Low) {
       light.shadow.radius = 4;
       light.shadow.blurSamples = 16;
+      // r182+ native-depth VSM self-shadows lit receivers at -0.0001
+      light.shadow.bias = -0.0005;
       renderer.shadowMap.type = THREE.VSMShadowMap;
     } else {
-      light.shadow.radius = 2;
+      // r181's 17-tap PCF at radius 2 (σ² ≈ 1.76 texel²)
+      light.shadow.radius = 2.5;
+      light.shadow.bias = -0.0001;
       renderer.shadowMap.type = THREE.PCFShadowMap;
     }
   }
+};
+
+/**
+ * Light-space depth for hand-rolled shadow lookups. `compare` → bind as `sampler2DShadow` (r182+ PCF
+ * depth textures are compare-mode); otherwise `.r` is depth. VSM reads the blurred mean moment.
+ */
+export const shadowDepthSource = (renderer: THREE.WebGLRenderer, shadow: THREE.LightShadow) => {
+  const map = shadow.map;
+  if (!map?.depthTexture) return null;
+  if (renderer.shadowMap.type === THREE.VSMShadowMap) return { texture: map.texture, compare: false };
+  return { texture: map.depthTexture, compare: map.depthTexture.compareFunction !== null };
+};
+
+export const toggleDefine = (mat: THREE.ShaderMaterial, name: string, on: boolean) => {
+  if (name in mat.defines === on) return;
+  if (on) mat.defines[name] = '';
+  else delete mat.defines[name];
+  mat.needsUpdate = true;
 };
 
 interface DeriveShadowNormalBiasParams {

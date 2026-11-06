@@ -26,6 +26,15 @@ pub(super) fn check(
     let Some((_real_name, fn_def)) = ctx.lookup_builtin(&name_str) else {
       continue;
     };
+    // Variadic builtins mark themselves with an unnamed first arg.
+    if fn_def
+      .signatures
+      .first()
+      .and_then(|s| s.arg_defs.first())
+      .is_some_and(|a| a.name.is_empty())
+    {
+      continue;
+    }
 
     check_arity(ctx, call_info, fn_def, &name_str, diagnostics);
     check_kwarg_names(ctx, call_info, fn_def, &name_str, diagnostics);

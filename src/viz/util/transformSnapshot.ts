@@ -30,14 +30,14 @@ export const applySnapshot = (obj: THREE.Object3D, snap: TransformSnapshot) => {
   obj.scale.fromArray(snap.scale);
 };
 
-/** Snapshots `obj`'s world-space transform; calls `updateMatrixWorld` first. */
+/** Snapshots `obj`'s world-space transform (YXZ Euler, matching level defs); calls `updateMatrixWorld` first. */
 export const snapshotWorldTransform = (obj: THREE.Object3D): TransformSnapshot => {
   obj.updateMatrixWorld(true);
   const pos = new THREE.Vector3();
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   obj.matrixWorld.decompose(pos, quat, scale);
-  const euler = new THREE.Euler().setFromQuaternion(quat);
+  const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
   return {
     position: [pos.x, pos.y, pos.z],
     rotation: [euler.x, euler.y, euler.z],
@@ -51,7 +51,7 @@ export const worldToLocalSnapshot = (world: TransformSnapshot, parent: THREE.Obj
   const worldMatrix = new THREE.Matrix4().compose(
     new THREE.Vector3().fromArray(world.position),
     new THREE.Quaternion().setFromEuler(
-      new THREE.Euler(world.rotation[0], world.rotation[1], world.rotation[2])
+      new THREE.Euler(world.rotation[0], world.rotation[1], world.rotation[2], 'YXZ')
     ),
     new THREE.Vector3().fromArray(world.scale)
   );
@@ -60,7 +60,7 @@ export const worldToLocalSnapshot = (world: TransformSnapshot, parent: THREE.Obj
   const quat = new THREE.Quaternion();
   const scale = new THREE.Vector3();
   localMatrix.decompose(pos, quat, scale);
-  const euler = new THREE.Euler().setFromQuaternion(quat);
+  const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
   return {
     position: [pos.x, pos.y, pos.z],
     rotation: [euler.x, euler.y, euler.z],

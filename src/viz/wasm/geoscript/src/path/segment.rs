@@ -4,7 +4,7 @@ use std::f32::consts::PI;
 use nalgebra::{Matrix3, Vector3};
 
 use crate::dmath;
-use crate::{ErrorStack, Vec2};
+use crate::Vec2;
 
 pub(crate) const CURVE_TABLE_SAMPLES: usize = 32;
 pub(crate) const LENGTH_EPSILON: f32 = 1e-5;
@@ -608,20 +608,18 @@ pub(crate) fn is_uniform_transform(m: &Matrix3<f32>) -> bool {
   (a - d).abs() < eps && (b + c).abs() < eps
 }
 
-pub(crate) fn transform_segment(
-  seg: &PathSegment,
-  m: &Matrix3<f32>,
-) -> Result<PathSegment, ErrorStack> {
+/// Arcs require a uniform `m` (`transform_into` converts them to cubics otherwise).
+fn transform_segment(seg: &PathSegment, m: &Matrix3<f32>) -> PathSegment {
   match seg {
     PathSegment::Line { start, end, .. } => {
       let new_start = apply_transform_to_point(m, *start);
       let new_end = apply_transform_to_point(m, *end);
       let length = (new_end - new_start).norm();
-      Ok(PathSegment::Line {
+      PathSegment::Line {
         start: new_start,
         end: new_end,
         length,
-      })
+      }
     }
     PathSegment::Quadratic {
       start, ctrl, end, ..
@@ -632,12 +630,12 @@ pub(crate) fn transform_segment(
       let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         quadratic_bezier(new_start, new_ctrl, new_end, t)
       });
-      Ok(PathSegment::Quadratic {
+      PathSegment::Quadratic {
         start: new_start,
         ctrl: new_ctrl,
         end: new_end,
         table,
-      })
+      }
     }
     PathSegment::Cubic {
       start,
@@ -653,13 +651,13 @@ pub(crate) fn transform_segment(
       let table = ArcLengthTable::new(CURVE_TABLE_SAMPLES, |t| {
         cubic_bezier(new_start, new_ctrl1, new_ctrl2, new_end, t)
       });
-      Ok(PathSegment::Cubic {
+      PathSegment::Cubic {
         start: new_start,
         ctrl1: new_ctrl1,
         ctrl2: new_ctrl2,
         end: new_end,
         table,
-      })
+      }
     }
     PathSegment::Arc {
       end,
@@ -672,19 +670,7 @@ pub(crate) fn transform_segment(
       theta_delta,
       ..
     } => {
-      if !is_uniform_transform(m) {
-        return Err(ErrorStack::new(
-          "apply_transforms: cannot bake a non-uniform transform (e.g. non-uniform scale or skew) \
-           into a path that contains arc segments. Arc segments can only be exactly preserved \
-           under uniform transforms (translation, rotation, uniform scale). Consider using \
-           `path_scale` with a uniform factor, or convert arcs to cubic beziers first.",
-        ));
-      }
-
-      // Uniform similarity transform: preserves arcs exactly.
-      // Extract the uniform scale and rotation angle from the 2x2 block. For the project's
-      // row-major rotation matrix `[cos, -sin; sin, cos]`, the signed rotation angle comes
-      // from `atan2(m[1,0], m[0,0]) = atan2(sin, cos)`; using `m[0,1]` would yield -angle.
+      // Row-major `[cos, -sin; sin, cos]`: the signed angle is `atan2(m[1,0], m[0,0])`.
       let cos_a = m[(0, 0)];
       let sin_a = m[(1, 0)];
       let scale = (cos_a * cos_a + sin_a * sin_a).sqrt();
@@ -714,7 +700,7 @@ pub(crate) fn transform_segment(
         )
       });
 
-      Ok(PathSegment::Arc {
+      PathSegment::Arc {
         end: new_end,
         center: new_center,
         rx: new_rx,
@@ -724,7 +710,7 @@ pub(crate) fn transform_segment(
         theta_start: *theta_start,
         theta_delta: *theta_delta,
         table,
-      })
+      }
     }
   }
 }
@@ -752,9 +738,18 @@ pub(crate) fn segment_turning_angle(seg: &PathSegment) -> f32 {
       end,
       ..
     } => {
-      let a = angle_between(*ctrl1 - *start, *ctrl2 - *ctrl1);
-      let b = angle_between(*ctrl2 - *ctrl1, *end - *ctrl2);
-      a + b
+      // Coincident controls drop a leg; measuring across it would read as zero turning.
+      let (mut legs, mut n) = ([Vec2::zeros(); 3], 0);
+      for l in [*ctrl1 - *start, *ctrl2 - *ctrl1, *end - *ctrl2] {
+        if l.norm() > LENGTH_EPSILON {
+          legs[n] = l;
+          n += 1;
+        }
+      }
+      legs[..n]
+        .windows(2)
+        .map(|w| angle_between(w[0], w[1]))
+        .sum()
     }
     PathSegment::Arc { theta_delta, .. } => theta_delta.abs(),
   }
@@ -1021,6 +1016,6 @@ impl PathSegment {
       });
       return;
     }
-    out.push(transform_segment(self, m).unwrap());
+    out.push(transform_segment(self, m));
   }
 }

@@ -60,7 +60,7 @@ const initLevel = async (viz: Viz) => {
   }
   //make last of the initial red
   squares[squares.length - 1].material = new THREE.MeshBasicMaterial({ color: 0xff0000 });
-  viz.clock.start();
+  viz.clock.reset().elapsed = 0;
   setInterval(() => {
     const newestSquareIdx = (oldestSquareIdx - 1 + squares.length) % squares.length;
     const total_dif_to_start =
@@ -90,7 +90,7 @@ const initLevel = async (viz: Viz) => {
         console.log('won', extraGeneratedCount, currentConfig.goalLength);
         const target = document.createElement('div');
         document.body.appendChild(target);
-        const infiniteEndProps = { currentConfig, time: viz.clock.oldTime };
+        const infiniteEndProps = { currentConfig, time: viz.clock.getElapsed() * 1000 };
         mount(InfiniteEndSvelte, { target, props: infiniteEndProps });
       }
     }

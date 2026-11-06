@@ -43,6 +43,7 @@ export const renderToTarget = (
   const prevAutoClear = renderer.autoClear;
   const prevCamLayerMask = camera.layers.mask;
   const prevOverride = scene.overrideMaterial;
+  const prevBackground = scene.background;
   const setsClearColor = clearColor !== undefined;
   const prevClearAlpha = renderer.getClearAlpha();
   if (setsClearColor) {
@@ -54,6 +55,8 @@ export const renderToTarget = (
   }
   if (overrideMaterial !== undefined) {
     scene.overrideMaterial = overrideMaterial;
+    // three paints `scene.background` into every render (a forced clear, or a mesh exempt from the override).
+    scene.background = null;
   }
 
   renderer.autoClear = false;
@@ -71,6 +74,7 @@ export const renderToTarget = (
   renderer.autoClear = prevAutoClear;
   camera.layers.mask = prevCamLayerMask;
   scene.overrideMaterial = prevOverride;
+  scene.background = prevBackground;
   if (setsClearColor) {
     renderer.setClearColor(_prevClearColor, prevClearAlpha);
   }

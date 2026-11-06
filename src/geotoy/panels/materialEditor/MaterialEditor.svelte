@@ -11,7 +11,7 @@
   import TextureUploader from './TextureUploader.svelte';
   import ShaderEditor from 'src/viz/materials/ui/ShaderEditor.svelte';
   import { type ShaderSlots, sharedToSlots, slotsToShared } from 'src/viz/materials/ui/shaderSlots';
-  import { makeDraggable, uuidv4 } from './util';
+  import { makeDraggable } from './util';
 
   import MaterialLibrary from './MaterialLibrary.svelte';
   import SaveMaterialForm from './SaveMaterialForm.svelte';
@@ -59,15 +59,15 @@
   );
   let showAdvanced = $state(false);
 
+  const uniqueMaterialName = (base: string) => {
+    let name = base;
+    for (let i = 1; Object.values(materials.materials).some(m => m.name === name); i++) name = `${base}_${i}`;
+    return name;
+  };
+
   const addMaterial = () => {
-    let i = 1;
-    let newName = 'new_material';
-    while (materials.materials[newName]) {
-      newName = `new_material_${i}`;
-      i += 1;
-    }
-    const id = uuidv4();
-    materials.materials[id] = buildDefaultMaterial(newName);
+    const id = crypto.randomUUID();
+    materials.materials[id] = buildDefaultMaterial(uniqueMaterialName('new_material'));
     pickedID = id;
     logGeotoyEvent('materials', 'material_add');
   };
@@ -167,14 +167,9 @@
               return;
             }
 
-            let newName = material.name;
-            let i = 1;
-            while (Object.values(materials.materials).some(m => m.name === newName)) {
-              newName = `${material.name}_${i}`;
-              i += 1;
-            }
-            const id = uuidv4();
-            materials.materials[id] = { ...material.materialDefinition, name: newName };
+            const id = crypto.randomUUID();
+            const name = uniqueMaterialName(material.name);
+            materials.materials[id] = { ...material.materialDefinition, name };
             pickedID = id;
             view = { type: 'properties' };
             logGeotoyEvent('materials', 'library_pick', { name: material.name });

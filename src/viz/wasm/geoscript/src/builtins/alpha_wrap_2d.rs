@@ -81,19 +81,7 @@ fn wrap_output_to_path() -> Result<Value, ErrorStack> {
   let coords = cgal_get_path_boolean_2d_coords();
   let lengths = cgal_get_path_boolean_2d_path_lengths();
   cgal_clear_path_boolean_2d_output();
-
-  let mut paths = Vec::with_capacity(lengths.len());
-  let mut offset = 0;
-  for &len in &lengths {
-    let len = len as usize;
-    paths.push(
-      coords[offset * 2..(offset + len) * 2]
-        .chunks_exact(2)
-        .map(|c| Vec2::new(c[0], c[1]))
-        .collect::<Vec<_>>(),
-    );
-    offset += len;
-  }
+  let paths = crate::builtins::path_boolean::paths_from_flat(&coords, &lengths);
   if paths.is_empty() {
     return Err(ErrorStack::new(
       "`alpha_wrap_2d` produced an empty result.  If `seeds` were given, each seed must lie \

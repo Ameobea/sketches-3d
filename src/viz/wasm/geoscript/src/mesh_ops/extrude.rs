@@ -9,8 +9,8 @@ use mesh::{
 use crate::ErrorStack;
 
 /// Duplicates each vertex in `faces` (offset by the corresponding entry in `offsets`), adds the
-/// duplicated triangles, flips the originals to face the other way, and stitches the two layers
-/// with side walls along boundary edges.
+/// duplicated triangles, and stitches the two layers with side walls along boundary edges. The
+/// layer left behind is flipped so the solid faces outward whichever side the offset points to.
 ///
 /// `offsets` must contain an entry for every vertex referenced by `faces`.
 fn extrude_with_offsets(
@@ -26,6 +26,17 @@ fn extrude_with_offsets(
       }
     }
   }
+
+  let along_normal = faces
+    .iter()
+    .map(|&f| {
+      let vs = mesh.faces[f].vertices;
+      let [p0, p1, p2] = vs.map(|v| mesh.vertices[v].position);
+      let n = (p1 - p0).cross(&(p2 - p0));
+      vs.iter().map(|v| offsets[v].dot(&n)).sum::<f32>()
+    })
+    .sum::<f32>()
+    >= 0.;
 
   let mut new_vtx_key_by_old = FxHashMap::default();
   for &face_key in faces {
@@ -44,15 +55,17 @@ fn extrude_with_offsets(
       new_vtx_keys[i] = new_vtx_key;
     }
 
-    mesh.add_face::<false>(new_vtx_keys, ());
-
-    // flip the winding order of the original faces to create the bottom of the extrusion
-    let old_face = &mut mesh.faces[face_key];
-    old_face.vertices.reverse();
+    if along_normal {
+      mesh.add_face::<false>(new_vtx_keys, ());
+      mesh.faces[face_key].vertices.reverse();
+    } else {
+      new_vtx_keys.reverse();
+      mesh.add_face::<false>(new_vtx_keys, ());
+    }
   }
 
+  // Wall winding follows the (possibly flipped) original faces.
   for &border_edge in &border_edges {
-    // figure out canonical direction for extrusion using faces from the pre-extruded mesh
     let edge = &mesh.edges[border_edge];
     let face0 = &mesh.faces[edge.faces[0]];
     let is_backwards = if face0.vertices[0] == edge.vertices[0] {
@@ -229,4 +242,29 @@ fn test_extrude_along_normals_flat_plane() {
     (max_y - min_y - 1.0).abs() < 1e-4,
     "expected unit thickness between layers, got max={max_y} min={min_y}"
   );
+}
+
+#[test]
+fn extrude_against_normal_faces_outward() {
+  let signed_volume = |m: &LinkedMesh<()>| -> f32 {
+    m.faces
+      .values()
+      .map(|f| {
+        let [a, b, c] = f.vertices.map(|k| m.vertices[k].position);
+        a.dot(&b.cross(&c)) / 6.
+      })
+      .sum()
+  };
+  let quad = || {
+    let verts = &[0., 0., 0., 1., 0., 0., 1., 1., 0., 0., 1., 0.];
+    LinkedMesh::from_raw_indexed(verts, &[0u32, 1, 2, 0, 2, 3], None, None)
+  };
+  for dz in [1., -1.] {
+    let mut m = quad();
+    extrude(&mut m, |_, _| Ok(Vec3::new(0., 0., dz))).unwrap();
+    assert!((signed_volume(&m) - 1.).abs() < 1e-5, "dz={dz}");
+    let mut m = quad();
+    extrude_along_normals(&mut m, |_, _| Ok(dz * 0.5)).unwrap();
+    assert!((signed_volume(&m) - 0.5).abs() < 1e-5, "normals dz={dz}");
+  }
 }

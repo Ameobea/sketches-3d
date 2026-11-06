@@ -54,7 +54,7 @@ export const processLoadedScene = async (
   viz.scene.add(new THREE.AmbientLight(0xffffff, 0.35));
 
   viz.renderer.shadowMap.enabled = true;
-  viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  viz.renderer.shadowMap.type = THREE.PCFShadowMap;
   const sun = new THREE.DirectionalLight(0xffffff, 2.4);
   sun.position.set(10, 14, 8);
   sun.castShadow = true;
@@ -80,7 +80,7 @@ export const processLoadedScene = async (
       color: 0x9b8f7e,
       roughness: 0.85,
       metalness: 0,
-      uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
+      uvTransform: new THREE.Matrix3().makeScale(0.2, 0.2),
       mapDisableDistance: null,
     },
     { pomHeightShader: GROOVES_HEIGHT_SHADER },
@@ -96,7 +96,7 @@ export const processLoadedScene = async (
       color: 0x0a0a16,
       roughness: 0.6,
       metalness: 0,
-      uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
+      uvTransform: new THREE.Matrix3().makeScale(0.2, 0.2),
       mapDisableDistance: null,
     },
     { pomHeightShader: TILE_HEIGHT_SHADER, emissiveShader: SIGIL_EMISSIVE_SHADER },
@@ -120,7 +120,7 @@ export const processLoadedScene = async (
       color: 0x0a0a16,
       roughness: 0.6,
       metalness: 0,
-      uvTransform: new THREE.Matrix3().scale(0.2, 0.2),
+      uvTransform: new THREE.Matrix3().makeScale(0.2, 0.2),
       mapDisableDistance: null,
     },
     { pomHeightShader: TILE_HEIGHT_SHADER, emissiveShader: SIGIL_EMISSIVE_SHADER },

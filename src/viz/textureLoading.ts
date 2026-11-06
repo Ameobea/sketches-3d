@@ -7,6 +7,9 @@ import { getNormalGenWorkers, getTextureCrossfadeWorkers } from './workerPool';
 const defaultMagFilter = () =>
   getDefaultMagFilter() === 'linear' ? THREE.LinearFilter : THREE.NearestFilter;
 
+// three >= r170 builds a mip chain whenever `generateMipmaps` is set, even if `minFilter` never samples it.
+const minFilterUsesMips = (f: THREE.TextureFilter) => f !== THREE.NearestFilter && f !== THREE.LinearFilter;
+
 export interface TextureArgs {
   mapping?: THREE.Mapping | undefined;
   wrapS?: THREE.Wrapping | undefined;
@@ -65,7 +68,7 @@ export const loadTexture = (
           colorSpace
         );
         texture.name = name || url;
-        texture.generateMipmaps = generateMipmaps;
+        texture.generateMipmaps = generateMipmaps && minFilterUsesMips(minFilter);
         texture.needsUpdate = true;
         resolve(texture);
       },
@@ -242,7 +245,7 @@ export const generateNormalMapFromTexture = async (
     type,
     anisotropy
   );
-  normalMapTexture.generateMipmaps = true;
+  normalMapTexture.generateMipmaps = minFilterUsesMips(minFilter);
   normalMapTexture.needsUpdate = true;
   return normalMapTexture;
 };
@@ -307,7 +310,7 @@ export const genCrossfadedTexture = async (
     type,
     anisotropy
   );
-  crossfadedTexture.generateMipmaps = true;
+  crossfadedTexture.generateMipmaps = minFilterUsesMips(minFilter);
   crossfadedTexture.needsUpdate = true;
   return crossfadedTexture;
 };

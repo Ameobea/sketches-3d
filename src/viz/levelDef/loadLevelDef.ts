@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 
 import { dev } from '$app/env';
+import { isCapture } from 'src/viz/capture';
 import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { GeoscriptJob } from 'src/geoscript/geoscriptExecutor';
 import type { Viz } from 'src/viz';
@@ -9,6 +10,7 @@ import {
   LEVEL_PLACEHOLDER_MAT,
   applyTransform,
   assignMaterial,
+  buildMarkerMesh,
   forEachMesh,
   instantiateLevelObject,
   meshesFromRunObjects,
@@ -73,14 +75,6 @@ import { TextureFetchPool } from './texturePool';
 import { generateCsgCode } from './csgCodeGen';
 
 type PhysicsContext = NonNullable<Viz['fpCtx']>;
-
-/**
- * Empty geometry for dash-token marker anchors: the marker mesh draws nothing but stays a valid,
- * `visible` parent so the animated token visual (attached as a child) renders and inherits its
- * transform. A manual bounding sphere avoids a NaN from `computeBoundingSphere` on empty geometry.
- */
-const MARKER_GEOMETRY = new THREE.BufferGeometry();
-MARKER_GEOMETRY.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
 
 /** Splice `item` into `arr` before the first element whose order key exceeds its own (else append). */
 const insertByOrder = <T extends { id: string }>(arr: T[], item: T, orderOf: (x: T) => number): void => {
@@ -411,7 +405,7 @@ const computeUpdatedMeta = (
 };
 
 const postAssetMeta = (sceneName: string, updates: Record<string, GeoscriptAssetMeta>) => {
-  if (!dev || Object.keys(updates).length === 0) {
+  if (!dev || isCapture || Object.keys(updates).length === 0) {
     return;
   }
   fetch(`/level_editor/${sceneName}/asset-metadata`, {
@@ -974,10 +968,7 @@ export const loadLevelDef = (
   // (and the editor) but creates no static mesh/collision. The dash-token subsystem attaches the
   // animated token visual + physics ghost under this anchor, so it follows the marker's transform.
   const placeMarker = (objDef: ObjectDef) => {
-    const marker = new THREE.Mesh(MARKER_GEOMETRY, LEVEL_PLACEHOLDER_MAT);
-    marker.name = objDef.id;
-    applyTransform(marker, objDef);
-    marker.userData = { ...(objDef.userData ?? {}), levelDefId: objDef.id };
+    const marker = buildMarkerMesh(objDef);
     leafParentObject(objDef.id).add(marker);
     const entity = new Entity(viz, objDef.id, marker);
     registerLeafNode({ id: objDef.id, assetId: '', object: marker, def: objDef, generated: false, entity });
@@ -1629,7 +1620,7 @@ export const loadLevelDef = (
           // `convexHull` asset doesn't get demoted back to trimesh after the swap.
           const existing = mutableAssets[assetId];
           if (!existing || existing.type !== 'geoscript') return;
-          mutableAssets[assetId] = { ...existing, code };
+          mutableAssets[assetId] = levelDef.assets[assetId] = { ...existing, code };
           for (const vid of paramVariants.variantsByBase.get(assetId) ?? []) {
             mutableAssets[vid] = paramVariants.synthesize(mutableAssets[assetId], vid);
           }
@@ -1640,6 +1631,17 @@ export const loadLevelDef = (
           for (const id of [...affected]) {
             for (const vid of paramVariants.variantsByBase.get(id) ?? []) affected.add(vid);
           }
+          const isStaleEditorVariant = (eid: string) => {
+            const at = eid.lastIndexOf('@');
+            return at > 0 && !paramVariants.variantIds.has(eid) && affected.has(eid.slice(0, at));
+          };
+          for (const eid of [...assetPrototypes.keys()]) {
+            if (isStaleEditorVariant(eid)) assetPrototypes.delete(eid);
+          }
+          for (const levelObj of allLevelObjects.values()) {
+            if (isStaleEditorVariant(levelObj.assetId)) editor.paramResolver.queueRebuild(levelObj);
+          }
+
           const sortedAffected = topoSortAssets(mutableAssets).filter(
             id =>
               affected.has(id) && (mutableAssets[id].type === 'geoscript' || mutableAssets[id].type === 'csg')

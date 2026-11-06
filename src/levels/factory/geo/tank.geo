@@ -22,15 +22,15 @@ m = capsule(radius=14, height=8, radial_segments=28)
       - cyl(radius=11, radial_segments=28, height=60)
   ) + v3(0, 45, 0))
 
-p = build_path(path {
-  move(-8, 0)
-  cubic_bezier(v2(-7.5, 8.5), v2(-7.5, 15.5), v2(-4, 16))
-  // quadratic_bezier(v2(-2.3, 20), v2(0, 20.2))
-  line(0, 16)
-  line(0,0)
-  close()
-}, reverse=true)
-  | path_scale(3.45, 5)
+p = path()
+  | move(-8, 0)
+  | cubic_bezier(v2(-7.5, 8.5), v2(-7.5, 15.5), v2(-4, 16))
+  // | quadratic_bezier(v2(-2.3, 20), v2(0, 20.2))
+  | line(0, 16)
+  | line(0, 0)
+  | close
+  | reverse
+  | scale(3.45, 5)
 
 blocker = rail_sweep(
   spine_resolution=4,

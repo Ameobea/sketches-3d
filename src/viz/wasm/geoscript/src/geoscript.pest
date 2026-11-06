@@ -4,11 +4,21 @@ COMMENT                      = _{ "//" ~ (!"\n" ~ ANY)* }
 program                      = { SOI ~ top_level_statement* ~ EOI }
 top_level_statement          = _{ import_statement | export_statement | statement }
 statement                    = _{ (return_statement | break_statement | destructure_assignment | assignment | expr) ~ ";"? ~ EOL* }
-return_statement             = { "return" ~ expr? ~ ";"? }
-break_statement              = { "break" ~ expr? ~ ";"? }
-import_statement             = { "import" ~ map_destructure ~ "from" ~ string_literal ~ ";"? ~ EOL* }
-export_statement             = { "export" ~ ident ~ type_hint? ~ "=" ~ expr ~ ";"? ~ EOL* }
+return_statement             = { &kw_return ~ "return" ~ expr? ~ ";"? }
+break_statement              = { &kw_break ~ "break" ~ expr? ~ ";"? }
+import_statement             = { &kw_import ~ "import" ~ map_destructure ~ "from" ~ string_literal ~ ";"? ~ EOL* }
+export_statement             = { &kw_export ~ "export" ~ ident ~ type_hint? ~ "=" ~ expr ~ ";"? ~ EOL* }
 EOL                          = _{ WHITESPACE* ~ ("\n" | "\r\n") }
+
+// Keywords must not be a prefix of a longer identifier (`returned`, `exported`); the
+// lookaheads keep the implicit whitespace of non-atomic rules from separating the two.
+kw_end                       = _{ !(ASCII_ALPHANUMERIC | "_") }
+kw_return                    = @{ "return" ~ kw_end }
+kw_break                     = @{ "break" ~ kw_end }
+kw_import                    = @{ "import" ~ kw_end }
+kw_export                    = @{ "export" ~ kw_end }
+kw_if                        = @{ "if" ~ kw_end }
+kw_else_if                   = @{ "else if" ~ kw_end }
 
 destructure_elem             = _{ ident | array_destructure | map_destructure }
 array_destructure            = { "[" ~ (destructure_elem ~ ("," ~ destructure_elem)*)? ~ ","? ~ "]" }
@@ -19,7 +29,7 @@ destructure_assignment       = { (array_destructure | map_destructure) ~ "=" ~ e
 assignment                   = { ident ~ type_hint? ~ "=" ~ expr }
 type_hint                    = { ":" ~ ident }
 
-expr                         = { prefix_op* ~ chained_term ~ (operator ~ prefix_op* ~ chained_term)* }
+expr                         = { prefix_op* ~ chained_term ~ open_range_op? ~ (operator ~ prefix_op* ~ chained_term ~ open_range_op?)* }
 
 // Tightness of `[` is enforced post-parse in `parse_chained_term` (ast.rs) rather than
 // here — making it a grammar-level constraint would require an atomic rule and break
@@ -29,20 +39,14 @@ chained_postfix              = { field_access | static_field_access }
 
 prefix_op                    = _{ neg_op | pos_op | negate_op }
 parenthized_term             = _{ "(" ~ expr ~ ")" }
-term                         = { map_literal | array_literal | closure | func_call | range_inclusive_literal_expr
-                                 | range_literal_expr | block_expr | if_expression | literal | string_literal | global_ident
-                                 | ident | parenthized_term }
+term                         = { map_literal | array_literal | closure | func_call | block_expr | if_expression | literal
+                                 | string_literal | global_ident | ident | parenthized_term }
 
 static_field_access          = { "." ~ ident }
 field_access                 = { "[" ~ expr ~ ("," ~ expr)* ~ "]" }
 
-// need these to work around ambiguity where a range expression starting with an
-// integer literal looks like a float
-range_literal_expr           = { int ~ ".." ~ term? }
-range_inclusive_literal_expr = { int ~ "..=" ~ term? }
-
-if_expression                = { "if" ~ expr ~ block_expr ~ else_if_expr* ~ else_expr? }
-else_if_expr                 = { "else if" ~ expr ~ block_expr }
+if_expression                = { &kw_if ~ "if" ~ expr ~ block_expr ~ else_if_expr* ~ else_expr? }
+else_if_expr                 = { &kw_else_if ~ "else if" ~ expr ~ block_expr }
 else_expr                    = { "else" ~ block_expr }
 block_expr                   = { "{" ~ statement* ~ "}" }
 
@@ -55,6 +59,7 @@ pos_op                       = { "+" }
 negate_op                    = { "!" }
 
 range_op                     = { ".." }
+open_range_op                = { ".." ~ !("=" | prefix_op* ~ term) }
 range_inclusive_op           = { "..=" }
 pipeline_op                  = { "|" }
 map_op                       = { "->" }
@@ -84,8 +89,8 @@ closure                      = { "|" ~ fn_def_arg_list ~ "|" ~ type_hint? ~ clos
 fn_def_arg                   = { (ident | array_destructure | map_destructure) ~ type_hint? ~ ("=" ~ fn_arg_default_val)? }
 // limiting the things that can be used as an arg default value to prevent the syntax
 // from spiraling out of control and avoiding horrific edge cases like `|x: int = 1 | 1| 1 || 1`
-fn_arg_default_val           = { func_call | literal | array_literal | map_literal | global_ident | ident | parenthized_term | block_expr | if_expression }
-fn_def_arg_list              = { (fn_def_arg* ~ ("," ~ fn_def_arg)*)}
+fn_arg_default_val           = { func_call | literal | array_literal | map_literal | global_ident | if_expression | ident | parenthized_term | block_expr }
+fn_def_arg_list              = { (fn_def_arg ~ ("," ~ fn_def_arg)*)? }
 // Shorthand bodies (`|x| x + 1`) are wrapped in `{`/`}` by `preprocess.rs` before parsing.
 closure_body                 = _{ bracketed_closure_body }
 bracketed_closure_body       = { "{" ~ statement* ~ "}" }
@@ -100,24 +105,26 @@ map_entry                    = _{ map_kv | map_splat }
 map_entry_list               = _{ map_entry ~ ("," ~ map_entry)* }
 map_literal                  = { "{" ~ (map_entry_list ~ ","?)? ~ "}" }
 
-bool_literal                 = { "true" | "false" }
-nil_literal                  = { "nil" }
+bool_literal                 = @{ ("true" | "false") ~ kw_end }
+nil_literal                  = @{ "nil" ~ kw_end }
 literal                      = _{ float | hex_int | int | bool_literal | nil_literal }
 digit_seq                    = _{ ASCII_DIGIT ~ (ASCII_DIGIT | "_" ~ ASCII_DIGIT)* }
 hex_digit_seq                = _{ ASCII_HEX_DIGIT ~ (ASCII_HEX_DIGIT | "_" ~ ASCII_HEX_DIGIT)* }
 int                          = @{ digit_seq }
 hex_int                      = @{ "0x" ~ hex_digit_seq }
-float                        = @{ digit_seq ~ "." ~ digit_seq? }
+float                        = @{ digit_seq ~ "." ~ !"." ~ digit_seq? }
 string_literal               = _{ single_quote_string_literal | double_quote_string_literal }
 single_quote_string_literal  = @{ "'" ~ single_quote_string_inner ~ "'" }
 escaped_single_quote         = @{ "\\'" }
 unescaped_apos_str_content   = { (!("'" | "\\") ~ ANY)* }
 escaped_backslash            = @{ "\\\\" }
-single_quote_string_inner    = ${ unescaped_apos_str_content ~ ((escaped_single_quote | escaped_backslash) ~ single_quote_string_inner)? }
+escaped_newline              = @{ "\\n" }
+escaped_tab                  = @{ "\\t" }
+single_quote_string_inner    = ${ unescaped_apos_str_content ~ ((escaped_single_quote | escaped_backslash | escaped_newline | escaped_tab) ~ single_quote_string_inner)? }
 double_quote_string_literal  = @{ "\"" ~ double_quote_string_inner ~ "\"" }
 escaped_double_quote         = @{ "\\\"" }
 unescaped_quote_str_content  = { (!("\"" | "\\") ~ ANY)* }
-double_quote_string_inner    = ${ unescaped_quote_str_content ~ ((escaped_double_quote | escaped_backslash) ~ double_quote_string_inner)? }
+double_quote_string_inner    = ${ unescaped_quote_str_content ~ ((escaped_double_quote | escaped_backslash | escaped_newline | escaped_tab) ~ double_quote_string_inner)? }
 
 ident                        = @{ (ASCII_ALPHA | "_")+ ~ (ASCII_ALPHANUMERIC | "_")* }
 // `@name` resolves from builtins + default globals only, immune to user bindings.  The

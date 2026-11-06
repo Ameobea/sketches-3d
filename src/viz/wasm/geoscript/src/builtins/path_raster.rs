@@ -364,6 +364,7 @@ ring_hole_nz = rasterize_path(ring_hole, width=16, height=16)
 tri = path() | move(0, 0) | line(1, 0) | line(0, 1)
 tri_cov = rasterize_path(tri, width=16, height=16)
 tri_sd = path_sdf(tri, width=16, height=16)
+sliver_sd = path_sdf(path() | move(0.2, 0.2) | line(0.8, 0.8) | close, width=16, height=16)
 tiny = circle(vec2(0.5, 0.5), 0.03)
 tiny_cov = rasterize_path(tiny, width=256, height=256)
 "#,
@@ -399,6 +400,15 @@ tiny_cov = rasterize_path(tiny, width=256, height=256)
       .cloned()
       .fold(f32::INFINITY, f32::min);
     assert!(sd_min >= 0., "open subpath must be unsigned, got {sd_min}");
+    let sliver_min = get_tex(&ctx, "sliver_sd")
+      .as_interleaved()
+      .iter()
+      .cloned()
+      .fold(f32::INFINITY, f32::min);
+    assert!(
+      sliver_min >= 0.,
+      "a 2-point loop has no interior, got {sliver_min}"
+    );
 
     // Small arcs must survive the arc builder (radius well below the old absolute epsilon).
     let sum: f32 = get_tex(&ctx, "tiny_cov").as_interleaved().iter().sum();

@@ -92,7 +92,6 @@ export const processLoadedScene = async (
     mapSize: { low: 1024, medium: 4096, high: 4096 },
     useVsm: true,
   });
-  dirLight.shadow.bias = -0.0001;
 
   dirLight.shadow.camera.near = 8;
   dirLight.shadow.camera.far = 300;
@@ -265,7 +264,7 @@ export const processLoadedScene = async (
   buildGrayStoneBricksFloorMaterial(
     loader,
     {
-      uvTransform: new THREE.Matrix3().scale(0.148, 0.148),
+      uvTransform: new THREE.Matrix3().makeScale(0.148, 0.148),
       metalness: 0.513,
       mapDisableDistance: null,
       ambientLightScale: 0.3,
@@ -285,7 +284,7 @@ export const processLoadedScene = async (
       map: platformDiffuse,
       roughness: 0.95,
       metalness: 0.5,
-      uvTransform: new THREE.Matrix3().scale(28.2073, 28.2073),
+      uvTransform: new THREE.Matrix3().makeScale(28.2073, 28.2073),
       normalMap: platformNormal,
       normalScale: 1.85,
       normalMapType: THREE.TangentSpaceNormalMap,
@@ -302,7 +301,7 @@ export const processLoadedScene = async (
       map: platformDiffuse,
       roughness: 1,
       metalness: 0.8,
-      uvTransform: new THREE.Matrix3().scale(8.2073, 8.2073),
+      uvTransform: new THREE.Matrix3().makeScale(8.2073, 8.2073),
       normalMap: platformNormal,
       normalScale: 1.05,
       normalMapType: THREE.TangentSpaceNormalMap,
@@ -322,7 +321,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
   const portalFrameMat = buildCustomShader(
     {
       color: 0x080808,
-      uvTransform: new THREE.Matrix3().scale(0.0579509329, 0.0579509329),
+      uvTransform: new THREE.Matrix3().makeScale(0.0579509329, 0.0579509329),
       normalMap: platformNormal,
       normalScale: 0.75,
       normalMapType: THREE.TangentSpaceNormalMap,
@@ -427,7 +426,7 @@ float getCustomRoughness(vec3 pos, vec3 normal, float baseRoughness, float curTi
     {
       color: 0x242424,
       map: platformDiffuse,
-      uvTransform: new THREE.Matrix3().scale(0.24073, 0.24073),
+      uvTransform: new THREE.Matrix3().makeScale(0.24073, 0.24073),
       normalMap: platformNormal,
       normalScale: 0.8,
       metalness: 0.97,

@@ -1,14 +1,11 @@
-p = build_path(
-  path {
-    line(0,1)
-    line(1,1)
-    line(1,0)
-    close()
-  },
-  center=true,
-  reverse=true
-)
-p = path_scale(4, p)
+p = path()
+  | line(0, 1)
+  | line(1, 1)
+  | line(1, 0)
+  | close
+  | translate(-0.5, -0.5)
+  | reverse
+p = scale(4, p)
 
 spine_bevel_exponent = 5
 
@@ -27,13 +24,12 @@ m = rail_sweep(
   | origin_to_geometry
   | remesh_planar_patches(max_angle_deg=2)
 
-p = build_path(path {
-  move(-3.6, 0)
-  line(3.6, 0)
-})
+p = path()
+  | move(-3.6, 0)
+  | line(3.6, 0)
   | offset_path(delta=1.5, arc_tolerance=0.02)
-  | path_scale(1/3)
-  | path_rot(pi/4)
+  | scale(1/3)
+  | rot(pi/4)
 
 s = tessellate_path(p)
   | extrude(up=v3(0, 3, 0))

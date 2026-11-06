@@ -115,3 +115,19 @@ export const instantiateLevelObject = (
 
   return clone;
 };
+
+/**
+ * Empty geometry for dash-token marker anchors: the marker mesh draws nothing but stays a valid,
+ * `visible` parent so the animated token visual (attached as a child) renders and inherits its
+ * transform. A manual bounding sphere avoids a NaN from `computeBoundingSphere` on empty geometry.
+ */
+const MARKER_GEOMETRY = new THREE.BufferGeometry();
+MARKER_GEOMETRY.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 0);
+
+export const buildMarkerMesh = (def: ObjectDef): THREE.Mesh => {
+  const marker = new THREE.Mesh(MARKER_GEOMETRY, LEVEL_PLACEHOLDER_MAT);
+  marker.name = def.id;
+  applyTransform(marker, def);
+  marker.userData = { ...(def.userData ?? {}), levelDefId: def.id };
+  return marker;
+};

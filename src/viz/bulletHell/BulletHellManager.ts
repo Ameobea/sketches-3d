@@ -421,7 +421,7 @@ export class BulletHellManager {
           startCameraFov: (this.viz.camera as THREE.PerspectiveCamera).fov,
           startCameraPos,
           startCameraRot,
-          startTimeSecs: this.viz.clock.getElapsedTime(),
+          startTimeSecs: this.viz.clock.getElapsed(),
         },
         EasingFnType.OutCubic,
         animationDoneCb,

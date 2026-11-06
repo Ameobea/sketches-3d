@@ -1,4 +1,5 @@
-import { EffectComposer, RenderPass } from 'postprocessing';
+import { RenderPass } from 'postprocessing';
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import * as THREE from 'three';
 import { GodraysPass, GodraysUpsampleQuality, type GodraysPassParams } from 'three-good-godrays';
 
@@ -17,7 +18,7 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
     await dungeonWallTextureCombinedDiffuseNormalTextureP;
 
   viz.renderer.shadowMap.enabled = true;
-  viz.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  viz.renderer.shadowMap.type = THREE.PCFShadowMap;
   viz.renderer.shadowMap.autoUpdate = true;
 
   const lightPos = new THREE.Vector3(0, 0, 0);
@@ -102,7 +103,7 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
         metalness: 0.18,
         roughness: 0.92,
         map: dungeonWallTextureCombinedDiffuseNormalTexture,
-        uvTransform: new THREE.Matrix3().scale(0.1, 0.1),
+        uvTransform: new THREE.Matrix3().makeScale(0.1, 0.1),
         mapDisableDistance: null,
         normalScale: 2.2,
         ambientLightScale: 1,
@@ -110,7 +111,6 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
       {},
       {
         usePackedDiffuseNormalGBA: true,
-        disabledDirectionalLightIndices: [0],
         useGeneratedUVs: true,
         tileBreaking: { type: 'neyret', patchScale: 2 },
       }
@@ -121,7 +121,9 @@ export const processLoadedScene = async (viz: Viz, _loadedWorld: THREE.Group): P
   backdrop2.receiveShadow = true;
   viz.scene.add(backdrop2);
 
-  const effectComposer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
+  const effectComposer = new StableDepthEffectComposer(viz.renderer, {
+    frameBufferType: THREE.HalfFloatType,
+  });
   const renderPass = new RenderPass(viz.scene, viz.camera);
   renderPass.renderToScreen = false;
   effectComposer.addPass(renderPass);

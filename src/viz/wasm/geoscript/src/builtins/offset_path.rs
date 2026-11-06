@@ -4,13 +4,15 @@ use fxhash::FxHashMap;
 use std::rc::Rc;
 
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::path_critical_points::{detect_critical_vertices, CriticalPointConfig};
+use crate::builtins::trace_path::expect_path;
+use crate::builtins::trace_path::FillRule;
 #[cfg(target_arch = "wasm32")]
-use crate::builtins::trace_path::{expect_path, FillRule};
+use crate::builtins::{
+  path_boolean::paths_from_flat, path_critical_points::detect_critical_vertices,
+};
 #[cfg(target_arch = "wasm32")]
 use crate::path::Path;
-#[cfg(target_arch = "wasm32")]
-use crate::Vec2;
+use crate::{mesh_ops::rail_sweep::point_in_polygon2d, Vec2};
 use crate::{ArgRef, ErrorStack, EvalCtx, Sym, Value};
 
 #[cfg(target_arch = "wasm32")]
@@ -244,38 +246,59 @@ fn run_clipper_offset(
   let out_coords = clipper2_get_output_coords_f32();
   let out_lengths = clipper2_get_output_path_lengths_flat();
   clipper2_clear_output_flat();
-
-  let mut paths = Vec::with_capacity(out_lengths.len());
-  let mut coord_ix = 0usize;
-  for len in out_lengths {
-    let mut path = Vec::with_capacity(len as usize);
-    for _ in 0..len {
-      if coord_ix + 1 >= out_coords.len() {
-        break;
-      }
-      path.push(Vec2::new(out_coords[coord_ix], out_coords[coord_ix + 1]));
-      coord_ix += 2;
-    }
-    if path.len() >= 2 {
-      paths.push(path);
-    }
-  }
+  let paths = paths_from_flat(&out_coords, &out_lengths);
 
   offset_result_cache::insert(cache_key, &paths);
   Ok(OffsetResult { paths })
 }
 
-/// Computes critical t-values across all output subpaths in **global** t-space (the tracer
-/// walks its subpaths concatenated by arc length). `detect_critical_points` reports per-path
-/// t in each path's own `[0, 1]`; for path `k` with closed-perimeter length `L_k` starting at
-/// cumulative offset `offset_k`, the global value is `(offset_k + t_local * L_k) / total`.
-#[cfg(target_arch = "wasm32")]
+/// Orients closed rings so holes under `rule` wind opposite their outers, the convention Clipper's
+/// offset reads holes from, and drops rings that don't bound the filled region. The first oriented
+/// ring keeps its winding so already-consistent input passes through untouched.
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+pub(crate) fn orient_rings(rings: &mut Vec<Vec<Vec2>>, rule: FillRule) {
+  let sign = |r: &[Vec2]| {
+    let a: f32 = (0..r.len()).map(|i| r[i].perp(&r[(i + 1) % r.len()])).sum();
+    (a > 0.) as i32 - (a < 0.) as i32
+  };
+  let s: Vec<i32> = rings.iter().map(|r| sign(r)).collect();
+  let want: Vec<Option<i32>> = (0..rings.len())
+    .map(|i| {
+      if s[i] == 0 {
+        return Some(0);
+      }
+      let out: i32 = (0..rings.len())
+        .filter(|&j| j != i && point_in_polygon2d(rings[i][0], &rings[j]))
+        .map(|j| s[j])
+        .sum();
+      match (rule.accepts(out + s[i]), rule.accepts(out)) {
+        (true, false) => Some(1),
+        (false, true) => Some(-1),
+        _ => None,
+      }
+    })
+    .collect();
+  let k = s
+    .iter()
+    .zip(&want)
+    .find_map(|(&s, w)| w.map(|w| w * s).filter(|&k| k != 0))
+    .unwrap_or(1);
+  let mut it = s.into_iter().zip(want);
+  rings.retain_mut(|r| {
+    let (s, w) = it.next().unwrap();
+    if w.is_some_and(|w| s * w * k < 0) {
+      r.reverse();
+    }
+    w.is_some()
+  });
+}
+
 /// Per-vertex anchors for closed polyline outputs: detected corners only.
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn polyline_anchors(paths: &[Vec<Vec2>]) -> Vec<Vec<bool>> {
-  let config = CriticalPointConfig::default();
   paths
     .iter()
-    .map(|p| detect_critical_vertices(p, &config, None))
+    .map(|p| detect_critical_vertices(p, None))
     .collect()
 }
 
@@ -289,7 +312,6 @@ pub fn offset_path_impl(
 ) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
-      #[cfg(target_arch = "wasm32")]
       crate::or_async_dep_bit(crate::DEP_BIT_CLIPPER2);
       if !clipper2_get_is_loaded() {
         return Err(ErrorStack::new_uninitialized_module("clipper2"));
@@ -402,12 +424,14 @@ pub fn offset_path_impl(
         Ok(())
       };
 
+      orient_rings(
+        &mut closed_inputs,
+        path.fill_rule.unwrap_or(FillRule::EvenOdd),
+      );
       run_group(&closed_inputs, true)?;
       run_group(&open_inputs, false)?;
 
-      // Clipper2's forked offset now emits deterministic, winding-normalized (outer-CCW/hole-CW)
-      // subpaths, so critical points survive multi-subpath output and no geoscript-side re-sort is
-      // needed. `Positive` fill matches that convention.
+      // The forked offset emits deterministic outer-CCW / hole-CW subpaths, matching `Positive`.
       let anchors = polyline_anchors(&output_paths);
       let polylines = output_paths.into_iter().map(|p| (p, true)).collect();
       return Ok(Value::Path(Rc::new(

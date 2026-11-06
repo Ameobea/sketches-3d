@@ -1,10 +1,10 @@
 import { existsSync, readFileSync } from 'fs';
 import { dirname, join } from 'path';
 
-import { getAssetsDir } from './levelPaths.server';
+import { getAssetsDir, resolveFileRef, resolveInside } from './levelPaths.server';
 import { resolveGeotoyMaterial } from './geotoyMaterials.server';
 import { resolveMaterialExtends } from './materialExtends.server';
-import { resolveGlslPath, SHADER_GLSL_FIELDS } from './shaderFiles.server';
+import { SHADER_GLSL_FIELDS } from './shaderFiles.server';
 import {
   LibraryMaterialFileSchema,
   MaterialDefSchema,
@@ -28,12 +28,12 @@ const isLibraryRef = (ref: string | undefined): ref is string =>
 // its `.glsl` slot files). GLSL `{ file }` refs resolve relative to the JSON's dir.
 const resolveLibraryFilePath = (ref: string): string => {
   const rel = ref.slice('__ASSETS__/'.length);
-  const flat = join(getAssetsDir(), `${rel}.json`);
+  const flat = resolveInside(getAssetsDir(), `${rel}.json`);
   if (existsSync(flat)) {
     return flat;
   }
   const base = rel.slice(rel.lastIndexOf('/') + 1);
-  return join(getAssetsDir(), rel, `${base}.json`);
+  return resolveInside(getAssetsDir(), join(rel, `${base}.json`));
 };
 
 const inlineGlsl = (mat: MaterialDefRaw, libFileDir: string): MaterialDefRaw => {
@@ -43,7 +43,7 @@ const inlineGlsl = (mat: MaterialDefRaw, libFileDir: string): MaterialDefRaw => 
     const val = (shaders as Record<string, unknown>)[field];
     if (val !== null && typeof val === 'object' && val !== undefined && 'file' in val) {
       (shaders as Record<string, unknown>)[field] = readFileSync(
-        resolveGlslPath(libFileDir, (val as { file: string }).file),
+        resolveFileRef(libFileDir, (val as { file: string }).file),
         'utf-8'
       );
     }

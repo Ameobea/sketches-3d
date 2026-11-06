@@ -127,7 +127,7 @@ export class CustomGizmo extends THREE.Object3D {
     domElement.addEventListener('pointercancel', this.onPointerUp);
   }
 
-  dispose() {
+  override dispose() {
     this.domElement.removeEventListener('pointerdown', this.onPointerDown);
     this.domElement.removeEventListener('pointermove', this.onPointerMove);
     this.domElement.removeEventListener('pointerup', this.onPointerUp);
@@ -141,6 +141,7 @@ export class CustomGizmo extends THREE.Object3D {
     this.handles = [];
     this.handleByPicker.clear();
     if (this.parent) this.parent.remove(this);
+    super.dispose();
   }
 
   setCamera(camera: THREE.Camera) {

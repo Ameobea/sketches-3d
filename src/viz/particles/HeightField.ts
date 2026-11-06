@@ -101,14 +101,10 @@ export class HeightField {
         this.hidden.push(o);
       }
     });
-    // three repaints `scene.background` on every render, which would land in the map
-    const background = scene.background;
-    scene.background = null;
     renderToTarget(renderer, this.rt, scene, this.camera, {
       overrideMaterial: DistanceMaterial,
       clearColor: Unoccluded,
     });
-    scene.background = background;
     for (const o of this.hidden) o.visible = true;
     this.hidden.length = 0;
   };

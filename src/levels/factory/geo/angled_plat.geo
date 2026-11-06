@@ -1,19 +1,16 @@
-p = build_path(path {
-  circle(radius=35, center=v2(0))
-})
+p = circle(radius=35, center=v2(0))
 p = path_intersect(
   p,
-  build_path(path {
-    move(-2, -12)
-    line(2, -12)
-    line(2, 12)
-    line(-2, 12)
-    close()
-  }
+  path()
+    | move(-2, -12)
+    | line(2, -12)
+    | line(2, 12)
+    | line(-2, 12)
+    | close
+    | scale(4, 3)
+    | translate(0, -35)
 )
-  | path_scale(4, 3)
-  | path_trans(0, -35))
-  | path_trans(0, 25)
+  | translate(0, 25)
 
 export mesh = p
   | tessellate_path

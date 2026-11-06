@@ -71,7 +71,7 @@ impl<'a> TypeEnv<'a> {
       if let Some(val) = frame.vars.get(&name) {
         return Some(match val {
           TrackedValue::Const(v) => value_type(self.ctx, v),
-          TrackedValue::Arg | TrackedValue::Dyn => frame
+          TrackedValue::Dyn => frame
             .types
             .get(&name)
             .cloned()
@@ -110,7 +110,7 @@ impl<'a> TypeEnv<'a> {
   }
 
   pub fn contains(&self, name: Sym) -> bool {
-    self.frames.iter().any(|f| f.contains_key(&name)) || self.lookup(name).is_some()
+    self.lookup(name).is_some()
   }
 }
 
@@ -418,11 +418,6 @@ fn infer_binop(
   rhs: &Expr,
 ) -> AbstractType {
   match op {
-    BinOp::Range | BinOp::RangeInclusive => {
-      infer_expr(ctx, env, lhs);
-      infer_expr(ctx, env, rhs);
-      return AbstractType::Concrete(ArgType::Sequence);
-    }
     BinOp::Map => {
       let lhs_ty = infer_expr(ctx, env, lhs);
       let rhs_ty = infer_expr(ctx, env, rhs);

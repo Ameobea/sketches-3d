@@ -20,6 +20,7 @@ import { InlineConsole } from './helpers/inlineConsole';
 import { initPlayerKinematicsDebugger } from './helpers/playerKinematicsDebugger/playerKinematicsDebuggerInit.svelte.ts';
 import { initEulerDebugger, initPosDebugger } from './helpers/posDebugger';
 import { initTargetDebugger } from './helpers/targetDebugger';
+import { PcfSoftShadowRadius } from './helpers/lights';
 import { Inventory } from './inventory/Inventory';
 import type { SceneConfig, SceneDef, ViewMode } from './scenes';
 import { buildDefaultSceneConfig, DefaultTopDownCameraFOV } from './sceneDefaults';
@@ -46,6 +47,7 @@ import { GeoscriptExecutor } from 'src/geoscript/geoscriptExecutor';
 import type { LevelDef } from './levelDef/types';
 import { OverlayMSAARenderer } from './gizmos/overlayMSAA';
 import { FrameGovernor, MAX_FRAME_DELTA_SECONDS } from './frameGovernor';
+import { initCapture, isCapture, isRenderMode } from './capture';
 
 // `RectAreaLight`s render with undefined data unless their LTC lookup textures
 // are bound. `init()` recreates them, so it's guarded to run once.
@@ -151,12 +153,25 @@ interface ViewModeInterpolationState {
   endCameraFov: number;
 }
 
+/** `THREE.Timer` with a writable elapsed time, so pause and capture can pin it. */
+class VizClock extends THREE.Timer {
+  elapsed = 0;
+  override update(timestamp?: number) {
+    super.update(timestamp);
+    this.elapsed += this.getDelta();
+    return this;
+  }
+  override getElapsed() {
+    return this.elapsed;
+  }
+}
+
 export class Viz {
   public camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   public renderer!: THREE.WebGLRenderer;
   public stats: VizStats | null = null;
   public sceneName: string;
-  public clock: THREE.Clock = new THREE.Clock();
+  public clock = new VizClock();
   public inventory: Inventory = new Inventory();
   public sfxManager: SoundEngine;
   public scene: THREE.Scene = new THREE.Scene();
@@ -245,7 +260,7 @@ export class Viz {
       : undefined;
   private didManuallyLockPointer = false;
   private pointerLockRequestInFlight = false;
-  private clockStopTime = 0;
+  private pausedElapsed: number | null = null;
   private unsubscribePauseStateChange: Unsubscriber | null = null;
   private lastPauseState: boolean | null = null;
   private customKeyEventMap = new Map<string, (event: KeyboardEvent) => void>();
@@ -320,7 +335,7 @@ export class Viz {
       depth: true,
       logarithmicDepthBuffer: false,
       premultipliedAlpha: false,
-      preserveDrawingBuffer: new URLSearchParams(window.location.search).get('render') === 'true',
+      preserveDrawingBuffer: isRenderMode,
     });
 
     ensureRectAreaLightUniforms();
@@ -346,7 +361,7 @@ export class Viz {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = true;
     // this.renderer.shadowMap.type = THREE.VSMShadowMap;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
   };
 
   /** Gizmo overlay on top of what was just drawn. Routed through an MSAA target so gizmo edges
@@ -410,8 +425,8 @@ export class Viz {
         return;
       }
 
-      const deltaTime = this.clock.getDelta();
-      const curTimeSeconds = this.clock.getElapsedTime();
+      const deltaTime = this.clock.update().getDelta();
+      const curTimeSeconds = this.clock.getElapsed();
 
       if (this.frameGovernor) {
         // Clamped only here: a governed loop can idle for seconds at a time and blow up any
@@ -456,7 +471,7 @@ export class Viz {
     }
     this.loopRunning = true;
     // Skips the idle gap so the resumed frame doesn't see a multi-second delta.
-    this.clock.getDelta();
+    this.clock.update();
     this.animateHandle = requestAnimationFrame(this.animate);
   };
 
@@ -469,11 +484,11 @@ export class Viz {
   };
 
   public captureFreeze = () => {
+    this.captureElapsedSeconds = 0;
     if (this.captureFrozen) {
       return;
     }
     this.captureFrozen = true;
-    this.captureElapsedSeconds = 0;
     this.stopAnimationLoop();
     console.info('[vizCapture] render loop frozen — call vizCapture.frame() to render one frame');
   };
@@ -484,7 +499,7 @@ export class Viz {
       return;
     }
     this.captureElapsedSeconds += deltaTimeSeconds;
-    const curTimeSeconds = this.clock.elapsedTime + this.captureElapsedSeconds;
+    const curTimeSeconds = this.clock.elapsed + this.captureElapsedSeconds;
     this.renderFrame(deltaTimeSeconds, curTimeSeconds);
     this.renderer.getContext().flush();
     console.info('[vizCapture] rendered one frame');
@@ -698,7 +713,7 @@ export class Viz {
     this.startViewModeInterpolation(
       {
         durationSecs: transitionTimeSeconds,
-        startTimeSecs: this.clock.getElapsedTime(),
+        startTimeSecs: this.clock.getElapsed(),
         startCameraPos: this.camera.position.clone(),
         startCameraRot: this.camera.rotation.clone(),
         startCameraFov: (this.camera as THREE.PerspectiveCamera).fov,
@@ -749,8 +764,7 @@ export class Viz {
       return;
     }
 
-    this.clockStopTime = this.clock.getElapsedTime();
-    this.clock.stop();
+    this.pausedElapsed ??= this.clock.elapsed;
   };
 
   public maybeResumeViz = async (forceLock = false) => {
@@ -758,8 +772,10 @@ export class Viz {
       return;
     }
 
-    this.clock.start();
-    this.clock.elapsedTime = this.clockStopTime;
+    if (this.pausedElapsed !== null) {
+      this.clock.reset().elapsed = this.pausedElapsed;
+      this.pausedElapsed = null;
+    }
     this.startAnimationLoop();
 
     if (forceLock) {
@@ -1207,13 +1223,12 @@ export const initViz = (
 
   const viz = new Viz(paused, popUpCalled, sceneDef, providedSceneName);
   (window as any).viz = viz;
+  const settleCapture = isCapture ? initCapture(viz) : (_init: Promise<void>) => {};
   (window as any).THREE = THREE;
 
   container.appendChild(viz.renderer.domElement);
 
-  // set the clock to 0 since there could be some time in between page load and when we
-  // actually start ticking the main loop
-  viz.clock.start();
+  viz.clock.reset();
   setTimeout(() => viz.startAnimationLoop(), 0);
 
   const gltfLoadedCB = async (gltf: { scenes: THREE.Group[] }) => {
@@ -1252,6 +1267,10 @@ export const initViz = (
       ...((await sceneLoader(viz, scene, vizConfig.current, userData)) ?? {}),
     };
     viz.sceneConf = sceneConf;
+    viz.scene.traverse(o => {
+      const s = (o as THREE.Light & { shadow?: THREE.LightShadow }).shadow;
+      if (s?.radius === 1) s.radius = PcfSoftShadowRadius;
+    });
     if (sceneConf.camera) {
       const cam = viz.camera as THREE.PerspectiveCamera;
       cam.near = sceneConf.camera.near ?? cam.near;
@@ -1529,9 +1548,9 @@ export const initViz = (
       loader = loader.setDRACOLoader(dracoLoader);
     }
 
-    loader.load(`${gltfName}.${extension}`, gltfLoadedCB);
+    loader.load(`${gltfName}.${extension}`, gltf => settleCapture(gltfLoadedCB(gltf)));
   } else {
-    gltfLoadedCB({ scenes: [] });
+    settleCapture(gltfLoadedCB({ scenes: [] }));
   }
 
   return {

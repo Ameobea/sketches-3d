@@ -10,23 +10,23 @@ cheese_wheel = rail_sweep(
     base = 1 - pow(abs(t), spine_bevel_exponent)
     delta = 2.5 + 1 * pow(max(base, 0), 1/spine_bevel_exponent)
 
-    p = build_path(path { circle(v2(0), 5) })
+    p = circle(v2(0), 5)
     offset_path(path=p, delta=delta)
   },
   spine_sampling_scheme=[0.001, 0.01, 0.05, 0.1, 0.9, 0.95, 0.99, 0.999]
 )
   | remesh_planar_patches
 
-inner = build_path(path { circle(v2(0), 5) })
-  | path_difference(clip=build_path(path { circle(v2(0), 4) }))
-  | path_difference(clip=build_path(path {
-    move(-0.8, -2)
-    line(0.8, -2)
-    line(0.8, 8)
-    line(-0.8, 8)
-    close()
-  }))
-  | path_scale(1.4)
+inner = circle(v2(0), 5)
+  | path_difference(clip=circle(v2(0), 4))
+  | path_difference(clip=path()
+    | move(-0.8, -2)
+    | line(0.8, -2)
+    | line(0.8, 8)
+    | line(-0.8, 8)
+    | close
+  )
+  | scale(1.4)
 
 inner = inner
   | tessellate_path(curve_angle_degrees=2, sample_count=120)

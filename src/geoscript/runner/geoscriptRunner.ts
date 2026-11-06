@@ -277,16 +277,6 @@ const applyLightProps = (target: THREE.Light, source: THREE.Light): void => {
   if (target instanceof THREE.DirectionalLight && source instanceof THREE.DirectionalLight) {
     target.target.position.copy(source.target.position);
     target.userData.autoShadowFrustum = source.userData.autoShadowFrustum;
-    // shadow.map is allocated lazily and doesn't auto-resize; force re-alloc
-    // when mapSize changes so the new size actually takes effect.
-    if (
-      target.shadow.map &&
-      (target.shadow.mapSize.width !== source.shadow.mapSize.width ||
-        target.shadow.mapSize.height !== source.shadow.mapSize.height)
-    ) {
-      target.shadow.map.dispose();
-      target.shadow.map = null as unknown as THREE.WebGLRenderTarget;
-    }
     target.shadow.mapSize.copy(source.shadow.mapSize);
     target.shadow.radius = source.shadow.radius;
     target.shadow.blurSamples = source.shadow.blurSamples;

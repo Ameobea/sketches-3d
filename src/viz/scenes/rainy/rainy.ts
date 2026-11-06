@@ -2,7 +2,6 @@ import { N8AOPostPass } from 'n8ao';
 import {
   CopyPass,
   DepthOfFieldEffect,
-  EffectComposer,
   EffectPass,
   KernelSize,
   RenderPass,
@@ -11,6 +10,7 @@ import {
   ToneMappingEffect,
   ToneMappingMode,
 } from 'postprocessing';
+import { StableDepthEffectComposer } from 'src/viz/passes/stableDepthComposer';
 import * as THREE from 'three';
 
 import type { Viz } from 'src/viz';
@@ -155,7 +155,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
     {
       name: 'cement_custom',
       map: cementTextureCombinedDiffuseNormal,
-      uvTransform: new THREE.Matrix3().scale(0.05, 0.05),
+      uvTransform: new THREE.Matrix3().makeScale(0.05, 0.05),
     },
     {},
     {
@@ -169,7 +169,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       map: crossfadedCementTexture,
       normalMap: crossfadedCementTextureNormal,
       normalScale: 3,
-      uvTransform: new THREE.Matrix3().scale(0.03, 0.03),
+      uvTransform: new THREE.Matrix3().makeScale(0.03, 0.03),
     },
     {},
     {
@@ -208,7 +208,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       roughnessMap: planterSoil1Roughness,
       normalMap: planterSoil1Normal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(4, 4),
+      uvTransform: new THREE.Matrix3().makeScale(4, 4),
     },
     {},
     { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 1.5 } }
@@ -222,7 +222,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       roughnessMap: planterSoil2Roughness,
       normalMap: planterSoil2Normal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(4, 4),
+      uvTransform: new THREE.Matrix3().makeScale(4, 4),
     },
     {},
     { useGeneratedUVs: true, randomizeUVOffset: true, tileBreaking: { type: 'neyret', patchScale: 3.5 } }
@@ -234,7 +234,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       map: crossfadedCementTexture,
       normalMap: crossfadedCementTextureNormal,
       normalScale: 3,
-      uvTransform: new THREE.Matrix3().scale(0.0324, 0.0324),
+      uvTransform: new THREE.Matrix3().makeScale(0.0324, 0.0324),
     },
     {},
     {
@@ -249,7 +249,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       map: crossfadedCementTexture,
       normalMap: crossfadedCementTextureNormal,
       normalScale: 3,
-      uvTransform: new THREE.Matrix3().scale(0.0576, 0.0576),
+      uvTransform: new THREE.Matrix3().makeScale(0.0576, 0.0576),
       ambientLightScale: 0.5,
     },
     {},
@@ -267,7 +267,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       roughnessMap: particleBoardRoughness,
       normalMap: particleBoardNormal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(0.25, 0.25),
+      uvTransform: new THREE.Matrix3().makeScale(0.25, 0.25),
       ambientLightScale: 0.6,
       color: new THREE.Color(0xbfc3cf),
     },
@@ -286,7 +286,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       roughness: 1,
       // normalMap: leavesNormal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(32, 32),
+      uvTransform: new THREE.Matrix3().makeScale(32, 32),
       ambientLightScale: 0.6,
     },
     {},
@@ -301,7 +301,7 @@ const initScene = async (viz: Viz, loadedWorld: THREE.Group, _vizConfig: VizConf
       roughnessMap: trunkRoughness,
       normalMap: trunkNormal,
       normalScale: 3.5,
-      uvTransform: new THREE.Matrix3().scale(5, 5),
+      uvTransform: new THREE.Matrix3().makeScale(5, 5),
     },
     {},
     { useTriplanarMapping: false }
@@ -433,17 +433,25 @@ export const processLoadedScene = async (
 
   const { backgroundScene, greenhouseShelves } = await initScene(viz, loadedWorld, vizConfig);
 
-  const effectComposer = new EffectComposer(viz.renderer, { frameBufferType: THREE.HalfFloatType });
+  const effectComposer = new StableDepthEffectComposer(viz.renderer, {
+    frameBufferType: THREE.HalfFloatType,
+  });
+  // The glass and foreground passes depth-test against whichever ping-pong buffer is current, so both need the same
+  // depth attachment. Passes sample the composer's stable depth copy, so this forms no feedback loop.
+  {
+    const { inputBuffer, outputBuffer } = effectComposer as any;
+    (effectComposer as any).createDepthTexture();
+    outputBuffer.depthTexture.dispose();
+    outputBuffer.depthTexture = inputBuffer.depthTexture;
+    outputBuffer.dispose();
+  }
   effectComposer.autoRenderToScreen = false;
 
-  const depthPassMaterial = new THREE.MeshDistanceMaterial({
-    referencePosition: viz.camera.position,
-    nearDistance: viz.camera.near,
-    farDistance: viz.camera.far,
-  });
+  const depthPassMaterial = new THREE.MeshDistanceMaterial();
   // hack to work around Three.JS bug.  Should probably be fixed in v159
   (depthPassMaterial as any).isMeshDistanceMaterial = false;
   const backgroundDepthPass = new DepthPass(backgroundScene, viz.camera, depthPassMaterial, true);
+  backgroundDepthPass.renderTarget!.texture.type = THREE.HalfFloatType;
   backgroundDepthPass.clearPass.enabled = true;
   const getDistanceBuffer = () => backgroundDepthPass.renderTarget!;
   effectComposer.addPass(backgroundDepthPass);
@@ -627,22 +635,6 @@ export const processLoadedScene = async (
   viz.setRenderOverride((timeDiffSeconds: number) => {
     // depthPassMaterial.referencePosition?.copy(viz.camera.position);
     effectComposer.render(timeDiffSeconds);
-  });
-
-  const customDepthMaterial = new THREE.MeshDepthMaterial({
-    depthPacking: THREE.RGBADepthPacking,
-  });
-  customDepthMaterial.depthWrite = false;
-  customDepthMaterial.depthTest = false;
-  viz.scene.traverse(obj => {
-    if (obj instanceof THREE.Mesh) {
-      obj.customDepthMaterial = customDepthMaterial;
-    }
-  });
-  loadedWorld.traverse(obj => {
-    if (obj instanceof THREE.Mesh) {
-      obj.customDepthMaterial = customDepthMaterial;
-    }
   });
 
   let playWalkSound: (materialClass: MaterialClass) => void = () => {};

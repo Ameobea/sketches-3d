@@ -1,16 +1,19 @@
 p = trace_svg_path(
-  "M14.18 9.31L8.52 9.31L8.52 24L6.12 24L6.12 9.31L0.46 9.31L0.46 7.2L14.18 7.2Z",
-  center=true
-) | path_scale(1.3, 1)
-p = p | path_union(p | path_trans(offset=v2(0, 9)))
-// p = p | path_union(p | path_rot(angle=-pi) | path_trans(0, -15))
-p = path_difference(p, build_path(path {
-  move(1, 1)
-  line(-1, 1)
-  line(-1, -1)
-  line(1, -1)
-  close()
-}, center=true) | path_scale(8, 8) | path_trans(0, 16))
+  "M14.18 9.31L8.52 9.31L8.52 24L6.12 24L6.12 9.31L0.46 9.31L0.46 7.2L14.18 7.2Z"
+)
+[lo, hi] = path_aabb(p)
+p = translate(-(lo + hi) / 2, p) | scale(1.3, 1)
+p = p | path_union(p | translate(offset=v2(0, 9)))
+// p = p | path_union(p | rot(angle=-pi) | translate(0, -15))
+p = path_difference(p, path()
+  | move(1, 1)
+  | line(-1, 1)
+  | line(-1, -1)
+  | line(1, -1)
+  | close
+  | scale(8, 8)
+  | translate(0, 16)
+)
 
 spine_bevel_exponent = 5
 
