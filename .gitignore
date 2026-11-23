@@ -10,6 +10,7 @@ src/routes/(generated)
 *.blend1
 src/viz/wasmComp/*
 !src/viz/wasmComp/.gitkeep
+!src/viz/wasmComp/manifold
 static/*.bin
 static/*.gltf
 static/*.glb
@@ -20,10 +21,10 @@ static/*.br
 src/ammojs/*
 !src/ammojs/.gitkeep
 !src/ammojs/ammoTypes.ts
+!src/ammojs/ammo.wasm.js
+!src/ammojs/ammo.wasm.wasm
 yarn-error.log
 static/textures
-src/geodesics/geodesics.wasm
-src/geodesics/geodesics.js
 session.json
 src/viz/wasm/build2/*
 !src/viz/wasm/build2/.gitkeep
@@ -31,6 +32,8 @@ src/viz/wasm/clipper2/*
 !src/viz/wasm/clipper2/.gitkeep
 !src/viz/wasm/clipper2/clipper2.ts
 !src/viz/wasm/clipper2/clipper2z.d.ts
+!src/viz/wasm/clipper2/clipper2z.js
+!src/viz/wasm/clipper2/clipper2z.wasm
 rustc-ice-*.txt
 src/viz/wasm/manifold-build/
 .codex

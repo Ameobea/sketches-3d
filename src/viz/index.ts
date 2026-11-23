@@ -166,6 +166,9 @@ class VizClock extends THREE.Timer {
   }
 }
 
+/** Returning `false` means nothing was drawn this frame, which skips the overlay pass too. */
+type RenderOverride = (timeDiffSeconds: number) => void | false;
+
 export class Viz {
   public camera!: THREE.PerspectiveCamera | THREE.OrthographicCamera;
   public renderer!: THREE.WebGLRenderer;
@@ -235,7 +238,7 @@ export class Viz {
     replacementMat: THREE.Material;
     distance: number;
   }[] = [];
-  private renderOverride: ((timeDiffSeconds: number) => void) | null = null;
+  private renderOverride: RenderOverride | null = null;
   public frameGovernor: FrameGovernor | null = null;
   private isBlurred = false;
   /**
@@ -386,12 +389,10 @@ export class Viz {
   };
 
   public presentFrame = (deltaTime: number, curTimeSeconds: number) => {
-    // An override owns the whole frame, overlay included: the headless harness draws nothing
-    // on most frames, and an overlay pass there kept software GL busy for the entire run.
-    if (this.renderOverride) {
-      this.renderOverride(deltaTime);
-    } else {
+    if (!this.renderOverride) {
       this.renderer.render(this.scene, this.camera);
+      this.renderOverlay();
+    } else if (this.renderOverride(deltaTime) !== false) {
       this.renderOverlay();
     }
 
@@ -552,10 +553,7 @@ export class Viz {
     this.popupCalled.set(screen);
   };
 
-  public setRenderOverride = (
-    cb: ((timeDiffSeconds: number) => void) | null,
-    clearPostprocessingController = true
-  ) => {
+  public setRenderOverride = (cb: RenderOverride | null, clearPostprocessingController = true) => {
     this.renderOverride = cb;
     if (clearPostprocessingController) {
       this.postprocessingController = null;

@@ -94,7 +94,7 @@ export const startRenderHarness = ({
   let frameRequested: (() => void) | null = null;
   viz.setRenderOverride(timeDiffSeconds => {
     if (!frameRequested) {
-      return;
+      return false;
     }
     const done = frameRequested;
     frameRequested = null;
@@ -108,7 +108,6 @@ export const startRenderHarness = ({
       }
     });
     pipelineController.renderFrame(timeDiffSeconds);
-    viz.renderOverlay();
     done();
   }, false);
   const renderOneFrame = () => new Promise<void>(resolve => (frameRequested = resolve));

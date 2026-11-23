@@ -1,0 +1,30 @@
+# Runs on the self-hosted runner from server-config/ci; push-only so fork PRs never reach it.
+name: ci
+on: push
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: [self-hosted, dream]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The workspace persists between jobs (node_modules, cargo target), so check out in place
+      # instead of with actions/checkout's clean.
+      - name: checkout
+        run: |
+          git init -q
+          git fetch -q --depth=1 "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+          git checkout -qf FETCH_HEAD
+          git clean -ffdxq -e /node_modules -e target
+      - run: scripts/ci.sh deps
+      - run: scripts/ci.sh wasm
+      - run: scripts/ci.sh unit
+      - run: scripts/ci.sh check
+      - run: scripts/ci.sh e2e
+      - run: scripts/ci.sh rust

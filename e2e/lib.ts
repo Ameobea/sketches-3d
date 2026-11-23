@@ -4,7 +4,7 @@ export const BASE = process.env.E2E_BASE ?? 'http://localhost:4810';
 
 export const launch = () =>
   chromium.launch({
-    executablePath: '/usr/bin/google-chrome-unstable',
+    executablePath: process.env.E2E_CHROME ?? '/usr/bin/google-chrome-unstable',
     args: ['--enable-unsafe-swiftshader', '--use-angle=swiftshader'],
   });
 

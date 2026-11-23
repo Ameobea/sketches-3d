@@ -1,5 +1,6 @@
 // Needs the geoscript backend (VITE_GEOSCRIPT_API_URL in .env.local) and `yarn dev` serving this
-// checkout on :4810 (override with E2E_BASE). Drives /usr/bin/google-chrome-unstable via playwright-core.
+// checkout on :4810 (override with E2E_BASE). Drives /usr/bin/google-chrome-unstable (override with
+// E2E_CHROME) via playwright-core.
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 

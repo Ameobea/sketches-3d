@@ -1,0 +1,15 @@
+{
+  "name": "manifold-3d",
+  "version": "3.5.1-git.7c86359b",
+  "private": true,
+  "type": "module",
+  "main": "manifold.js",
+  "types": "manifold.d.ts",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": { "types": "./manifold.d.ts", "default": "./manifold.js" },
+    "./manifold.wasm": "./manifold.wasm",
+    "./manifold.js": "./manifold.js",
+    "./package.json": "./package.json"
+  }
+}
