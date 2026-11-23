@@ -53,6 +53,9 @@ pub struct TriBvh {
   tris: Vec<[Vec3; 3]>,
   /// input index of each (reordered) triangle
   prim: Vec<u32>,
+  /// Last signed sample `(point, signed distance)`: the field is 1-Lipschitz, so every point
+  /// closer to it than its distance shares its sign without casting parity rays.
+  sign_anchor: std::cell::Cell<(Vec3, f32)>,
 }
 
 /// Children are SoA so the slab test vectorizes across the four lanes. `count > 0` marks a leaf
@@ -238,6 +241,7 @@ impl TriBvh {
         nodes: Vec::new(),
         tris,
         prim: Vec::new(),
+        sign_anchor: Default::default(),
       };
     }
     let mut bin = Vec::with_capacity(prims.len() / 2 + 1);
@@ -248,7 +252,12 @@ impl TriBvh {
 
     let mut nodes = Vec::with_capacity(bin.len() / 2 + 1);
     Self::collapse(&bin, root, &mut nodes);
-    Self { nodes, tris, prim }
+    Self {
+      nodes,
+      tris,
+      prim,
+      sign_anchor: Default::default(),
+    }
   }
 
   /// Turns binary node `ix` into a four-wide node by greedily expanding the largest inner child
@@ -344,6 +353,42 @@ impl TriBvh {
       }
     }
     false
+  }
+
+  /// Number of triangles the ray from `origin` along `dir` crosses within `(0, max_t)`; odd
+  /// parity means `origin` is inside a closed surface.
+  pub fn hit_count(&self, origin: &Vec3, dir: &Vec3, max_t: f32) -> u32 {
+    if self.nodes.is_empty() {
+      return 0;
+    }
+    let o = [
+      f32x4::splat(origin.x),
+      f32x4::splat(origin.y),
+      f32x4::splat(origin.z),
+    ];
+    let inv = inv_dir(dir);
+    let mut n = 0;
+    let mut stack: SmallVec<[u32; 64]> = SmallVec::new();
+    stack.push(0);
+    while let Some(ix) = stack.pop() {
+      let node = &self.nodes[ix as usize];
+      let hits = slab4(node, &o, &inv, max_t);
+      for k in 0..4 {
+        if hits & (1 << k) == 0 {
+          continue;
+        }
+        if node.count[k] > 0 {
+          let (start, count) = (node.child[k] as usize, node.count[k] as usize);
+          n += self.tris[start..start + count]
+            .iter()
+            .filter(|t| ray_hits_triangle(origin, dir, t, max_t))
+            .count() as u32;
+        } else if node.child[k] != u32::MAX {
+          stack.push(node.child[k]);
+        }
+      }
+    }
+    n
   }
 
   /// Packet form of `any_hit` for up to 64 rays sharing `origin`: returns the subset of `active`
@@ -461,12 +506,55 @@ impl TriBvh {
 
   /// Closest surface point to `p`: `(input triangle index, barycentric coords, squared distance)`.
   pub fn closest_point(&self, p: &Vec3) -> Option<(u32, [f32; 3], f32)> {
+    self.closest_point_within(p, f32::INFINITY)
+  }
+
+  /// Distance from `p` to the surface, clamped to `max_dist` and negated inside a closed mesh
+  /// when `signed`. `None` for an empty mesh. Sign is crossing parity along three fixed
+  /// directions, majority vote: one ray can graze an edge or vertex and miscount.
+  pub fn signed_distance(&self, p: &Vec3, max_dist: f32, signed: bool) -> Option<f32> {
     if self.nodes.is_empty() {
       return None;
     }
+    let d = self
+      .closest_point_within(p, max_dist * max_dist)
+      .map_or(max_dist, |(_, _, d2)| d2.sqrt());
+    if !signed {
+      return Some(d);
+    }
+    let (ap, ad) = self.sign_anchor.get();
+    let anchored = (p - ap).norm() < ad.abs() * 0.999;
+    let inside = if anchored {
+      ad < 0.
+    } else {
+      const DIRS: [[f32; 3]; 3] = [
+        [0.5773, 0.5774, 0.5775],
+        [-0.3, 0.9, 0.2],
+        [0.7, -0.2, -0.6],
+      ];
+      let odd = |k: usize| self.hit_count(p, &DIRS[k].into(), f32::INFINITY) % 2 == 1;
+      let (a, b) = (odd(0), odd(1));
+      if a == b {
+        a
+      } else {
+        odd(2)
+      }
+    };
+    let sd = if inside { -d } else { d };
+    if !anchored || d > ad.abs() {
+      self.sign_anchor.set((*p, sd));
+    }
+    Some(sd)
+  }
+
+  /// `closest_point` restricted to squared distances below `max_sq`.
+  pub fn closest_point_within(&self, p: &Vec3, max_sq: f32) -> Option<(u32, [f32; 3], f32)> {
+    if self.nodes.is_empty() {
+      return None;
+    }
+    let mut best = (0u32, [1., 0., 0.], max_sq);
     let o = [f32x4::splat(p.x), f32x4::splat(p.y), f32x4::splat(p.z)];
     let zero = f32x4::splat(0.);
-    let mut best = (0u32, [1., 0., 0.], f32::INFINITY);
     let mut stack: SmallVec<[(u32, f32); 64]> = SmallVec::new();
     stack.push((0, 0.));
     while let Some((ix, bound)) = stack.pop() {
@@ -505,7 +593,7 @@ impl TriBvh {
         }
       }
     }
-    (best.2 < f32::INFINITY).then_some(best)
+    (best.2 < max_sq).then_some(best)
   }
 
   /// Visits every triangle pair whose bounds overlap (padded by `eps`), descending both trees
@@ -802,6 +890,23 @@ mod tests {
         brute,
         "packet {o:?} {d:?}"
       );
+    }
+  }
+
+  #[test]
+  fn anchored_sign_matches_fresh_queries() {
+    let bvh = TriBvh::build(unit_box());
+    let mut rnd = rng(11);
+    let mut p = Vec3::new(-1.5, 0.1, 0.2);
+    for _ in 0..4000 {
+      p += Vec3::new(rnd() - 0.5, rnd() - 0.5, rnd() - 0.5) * 0.08;
+      p = p.map(|v| v.clamp(-1.6, 1.6));
+      let fresh = TriBvh::build(unit_box())
+        .signed_distance(&p, f32::INFINITY, true)
+        .unwrap();
+      assert_eq!(bvh.signed_distance(&p, f32::INFINITY, true), Some(fresh));
+      let near = bvh.signed_distance(&p, 0.25, true).unwrap();
+      assert_eq!(near, fresh.clamp(-0.25, 0.25));
     }
   }
 

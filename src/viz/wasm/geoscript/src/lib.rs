@@ -60,6 +60,8 @@ use crate::{
 #[cfg(target_arch = "wasm32")]
 pub mod aligned_alloc;
 pub mod ast;
+pub mod tex_mem;
+pub use tex_mem::Plane;
 pub mod autodiff;
 pub mod builtins;
 pub mod call_binding;
@@ -533,6 +535,9 @@ fn builtin_reads_ctx_settings(name: &str) -> bool {
       | "simplify_path"
       | "alpha_wrap_2d"
       | "warp"
+      | "displace"
+      | "emboss"
+      | "split_by_field"
       | "map"
       | "extrude"
       | "extrude_along_normals"
@@ -985,6 +990,7 @@ impl TextureUsage {
 }
 
 pub struct MipLevel {
+  pub(crate) _charge: tex_mem::Charge,
   pub planes: Vec<Vec<f32>>,
   pub width: usize,
   pub height: usize,
@@ -1028,12 +1034,12 @@ pub struct TexStorage {
 #[derive(Clone)]
 pub(crate) enum TexKind {
   /// Each plane has len = width * height.
-  Planes(Vec<Rc<Vec<f32>>>),
+  Planes(Vec<Rc<Plane>>),
   View(TexView),
 }
 
 impl TexStorage {
-  pub(crate) fn planes(planes: Vec<Rc<Vec<f32>>>) -> Self {
+  pub(crate) fn planes(planes: Vec<Rc<Plane>>) -> Self {
     TexStorage {
       id: next_tex_storage_id(),
       kind: TexKind::Planes(planes),
@@ -1042,6 +1048,15 @@ impl TexStorage {
   }
 
   pub(crate) fn from_plane_vecs(planes: Vec<Vec<f32>>) -> Self {
+    Self::planes(
+      planes
+        .into_iter()
+        .map(|p| Rc::new(Plane::adopt(p)))
+        .collect(),
+    )
+  }
+
+  pub(crate) fn from_owned(planes: Vec<Plane>) -> Self {
     Self::planes(planes.into_iter().map(Rc::new).collect())
   }
 
@@ -1064,7 +1079,7 @@ impl TexStorage {
 /// the plane list.
 #[derive(Clone)]
 pub struct TexView {
-  pub(crate) planes: Vec<Rc<Vec<f32>>>,
+  pub(crate) planes: Vec<Rc<Plane>>,
   /// Plane element index of view texel (0,0).
   pub(crate) origin: isize,
   /// Elements per +1 view x; negative = horizontal flip.
@@ -1102,7 +1117,7 @@ impl TextureHandle {
   }
 
   /// Fast path: the plane list when storage is canonical (non-view).
-  pub fn planes(&self) -> Option<&[Rc<Vec<f32>>]> {
+  pub fn planes(&self) -> Option<&[Rc<Plane>]> {
     match &self.storage.kind {
       TexKind::Planes(p) => Some(p),
       TexKind::View(_) => None,
@@ -1111,7 +1126,7 @@ impl TextureHandle {
 
   /// The materialize choke point: no-op clones for planar storage, per-plane strided copy
   /// for views.
-  pub fn as_planes(&self) -> Vec<Rc<Vec<f32>>> {
+  pub fn as_planes(&self) -> Vec<Rc<Plane>> {
     match &self.storage.kind {
       TexKind::Planes(p) => p.clone(),
       TexKind::View(v) => (0..self.channels)
@@ -1148,10 +1163,23 @@ impl TextureHandle {
               }
             }
           }
-          Rc::new(out)
+          Rc::new(Plane::adopt(out))
         })
         .collect(),
     }
+  }
+
+  /// Mutable working copies of every plane, for ops that edit a texture in place.
+  pub(crate) fn try_copy_planes(&self) -> Result<Vec<Vec<f32>>, ErrorStack> {
+    self
+      .as_planes()
+      .iter()
+      .map(|p| {
+        let mut v = tex_mem::try_reserve(p.len())?;
+        v.extend_from_slice(p);
+        Ok(v)
+      })
+      .collect()
   }
 
   /// Row-major interleaved copy; the JS/GPU boundary format, never used internally.
@@ -1233,7 +1261,7 @@ impl TextureHandle {
   /// O(1) channel select/permute/duplicate: a plane-list permutation, zero-copy in both
   /// storage kinds. `sel` entries are validated against `self.channels` by the caller.
   pub(crate) fn swizzle_view(&self, sel: &[u8]) -> TextureHandle {
-    let pick = |planes: &[Rc<Vec<f32>>]| -> Vec<Rc<Vec<f32>>> {
+    let pick = |planes: &[Rc<Plane>]| -> Vec<Rc<Plane>> {
       sel
         .iter()
         .map(|&s| Rc::clone(&planes[s as usize]))
@@ -1512,6 +1540,12 @@ pub struct ConstEvalCache {
   max_bytes: usize,
 }
 
+impl tex_mem::Evict for RefCell<ConstEvalCache> {
+  fn evict_one(&self) -> bool {
+    self.try_borrow_mut().is_ok_and(|mut c| c.evict_lru())
+  }
+}
+
 impl Default for ConstEvalCache {
   fn default() -> Self {
     Self {
@@ -1589,6 +1623,16 @@ impl ConstEvalCache {
       let ids = entry.retained_ids;
       self.release(&ids);
     }
+  }
+
+  fn evict_lru(&mut self) -> bool {
+    while let Some((key, stamp)) = self.access_queue.pop_front() {
+      if self.entries.get(&key).map(|e| e.last_access) == Some(stamp) {
+        self.evict(key);
+        return true;
+      }
+    }
+    false
   }
 
   /// Both paths push a stamp, and a run that only hits never inserts — so pruning has to
@@ -2132,7 +2176,11 @@ pub(crate) fn get_args(
 
   let mut valid_partial = false;
   let mut arg_refs: SmallVec<[ArgRef; 6]> = SmallVec::new();
-  let allow_excess = args.len() > max_positional_capacity(defs, kwargs.keys().copied());
+  let allow_excess = if kwargs.is_empty() {
+    !args.is_empty() && defs.iter().all(|def| def.arg_defs.len() < args.len())
+  } else {
+    args.len() > max_positional_capacity(defs, kwargs.keys().copied())
+  };
   for (def_ix, def) in defs.iter().enumerate() {
     arg_refs.clear();
     let Some(binding) = bind_signature(
@@ -2823,7 +2871,7 @@ pub struct EvalCtx {
   /// Default `curve_angle_degrees` for discretizing continuous path features when the kwarg is
   /// omitted.
   pub default_curve_angle_degrees: RefCell<f32>,
-  pub const_eval_cache: RefCell<ConstEvalCache>,
+  pub const_eval_cache: Rc<RefCell<ConstEvalCache>>,
   /// `get_default_globals` as interned symbols, for type lookups that miss every scope.
   pub(crate) default_global_types: std::cell::OnceCell<Vec<(Sym, ArgType)>>,
   scratch_args: Box<RefCell<ArrayVec<Vec<Value>, 64>>>,
@@ -2913,6 +2961,9 @@ pub struct EvalCtx {
   pub fold_settings_deferred_unsafe: Cell<bool>,
   /// Texel-closure vectorizer state: plan cache, kill/verify switches, per-body diagnostics.
   pub tex_vectorize: crate::tex_vectorize::VectorizeState,
+  /// UV rasterizations shared by the `bake_*` builtins, keyed by mesh identity + dims; the held
+  /// `Rc` keeps the keyed mesh alive so its address can't be recycled.
+  pub(crate) uv_rasters: Rc<builtins::bake::AtlasCaches>,
 }
 
 unsafe impl Send for EvalCtx {}
@@ -2922,7 +2973,7 @@ impl Default for EvalCtx {
   fn default() -> Self {
     let interned_symbols = SymbolInterner::default();
     let globals = Scope::default_globals(&interned_symbols);
-    EvalCtx {
+    let ctx = EvalCtx {
       globals,
       interned_symbols,
       rendered_meshes: RenderedMeshes::default(),
@@ -2938,7 +2989,7 @@ impl Default for EvalCtx {
       default_material: RefCell::new(None),
       sharp_angle_threshold_degrees: RefCell::new(45.8366),
       default_curve_angle_degrees: RefCell::new(1.0),
-      const_eval_cache: RefCell::new(ConstEvalCache::default()),
+      const_eval_cache: Default::default(),
       default_global_types: std::cell::OnceCell::new(),
       scratch_args: Box::new(RefCell::new(ArrayVec::new())),
       scratch_kwargs: Box::new(RefCell::new(ArrayVec::new())),
@@ -2970,7 +3021,19 @@ impl Default for EvalCtx {
       fold_rng_unknown: Cell::new(false),
       fold_settings_deferred_unsafe: Cell::new(false),
       tex_vectorize: crate::tex_vectorize::VectorizeState::default(),
+      uv_rasters: Default::default(),
+    };
+    // Oldest values go first under memory pressure: previous runs' cached results, then
+    // rebuildable per-run scratch.
+    let caches: [Rc<dyn tex_mem::Evict>; 3] = [
+      ctx.const_eval_cache.clone(),
+      ctx.tex_vectorize.uv_planes.clone(),
+      ctx.uv_rasters.clone(),
+    ];
+    for (priority, cache) in caches.iter().enumerate() {
+      tex_mem::register_cache(priority as u8, Rc::downgrade(cache));
     }
+    ctx
   }
 }
 
@@ -3497,11 +3560,29 @@ impl EvalCtx {
     self.eval_statements(statements, &frame)
   }
 
+  /// Buffers charged to the texture memory ledger from here on are attributed to `statement`.
+  pub(crate) fn mark_tex_origin(&self, statement: &TopLevelStatement) {
+    let expr = match statement {
+      TopLevelStatement::Statement(
+        Statement::Expr(e)
+        | Statement::Assignment { expr: e, .. }
+        | Statement::DestructureAssignment { rhs: e, .. },
+      )
+      | TopLevelStatement::Export { expr: e, .. } => e,
+      _ => return,
+    };
+    tex_mem::set_origin(
+      self.current_module.borrow().as_deref(),
+      self.resolve_loc(expr.loc()).0,
+    );
+  }
+
   fn eval_top_level_statement(
     &self,
     statement: &TopLevelStatement,
     frame: &FrameEnv,
   ) -> Result<Value, ErrorStack> {
+    self.mark_tex_origin(statement);
     match statement {
       TopLevelStatement::Statement(stmt) => self.eval_statement_env(stmt, frame),
       TopLevelStatement::Export {
@@ -4366,6 +4447,10 @@ impl EvalCtx {
 
   pub fn reset_ambient_settings(&self) {
     self.set_ambient_settings((45.8366, 1.0));
+  }
+
+  pub fn clear_atlas_cache(&self) {
+    self.uv_rasters.borrow_mut().clear();
   }
 
   /// Drops every per-run output buffer (prints, rendered outputs) and the replayed-module set.

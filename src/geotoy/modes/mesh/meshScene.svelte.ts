@@ -496,11 +496,14 @@ export class MeshScene implements Mode {
     return selectedId && selectedId !== GLOBALS_SELECTION_ID && tree.nodes[selectedId] ? selectedId : null;
   }
 
-  /** Null when the live camera doesn't describe this tab yet — mid-restore (`setView` is
-   *  async, so the pose still belongs to the previous tab) or pre-orbit-controls (`getView`
-   *  would pair a live position with a default target). The caller keeps what it had. */
+  /** Null when the live camera doesn't describe this tab yet — before the boot restore (a
+   *  capture then would overwrite the saved view with the engine's default pose), mid-restore
+   *  (`setView` is async, so the pose still belongs to the previous tab) or pre-orbit-controls
+   *  (`getView` would pair a live position with a default target). The caller keeps what it had. */
   buildViewState = (): MeshTabView | null =>
-    this.restoresInFlight > 0 || !this.deps.viz.orbitControls ? null : getView(this.deps.viz);
+    !this.lastView || this.restoresInFlight > 0 || !this.deps.viz.orbitControls
+      ? null
+      : getView(this.deps.viz);
 
   restoreViewState = (view: TabView | null) => void this.setView((view as MeshTabView | null) ?? DefaultView);
 

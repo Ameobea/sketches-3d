@@ -11,7 +11,7 @@ use super::texture::{
   blur_tex, premultiplied_planes, resolve_tex_range, texture_map_chan, texture_zip,
   unpremultiply_planes, MAX_TEXTURE_DIM,
 };
-use crate::{ArgRef, ErrorStack, Sym, TexStorage, TextureHandle, TextureWrap, Value};
+use crate::{ArgRef, ErrorStack, Plane, Sym, TexStorage, TextureHandle, TextureWrap, Value};
 
 #[derive(Clone, Copy, PartialEq)]
 enum ResizeFilter {
@@ -131,7 +131,7 @@ fn resize_pass(
   out_len: usize,
   horizontal: bool,
   filter: ResizeFilter,
-) -> Vec<Vec<f32>> {
+) -> Result<Vec<Vec<f32>>, ErrorStack> {
   let (in_len, other) = if horizontal { (sw, sh) } else { (sh, sw) };
   let (ow, oh) = if horizontal {
     (out_len, other)
@@ -153,7 +153,7 @@ fn resize_pass(
   planes
     .iter()
     .map(|px| {
-      let mut out = vec![0f32; ow * oh];
+      let mut out = crate::tex_mem::try_vec(ow * oh, 0f32)?;
       for y in 0..oh {
         for x in 0..ow {
           let (pos, fixed) = if horizontal { (x, y) } else { (y, x) };
@@ -165,7 +165,7 @@ fn resize_pass(
           }
         }
       }
-      out
+      Ok(out)
     })
     .collect()
 }
@@ -187,9 +187,9 @@ pub(crate) fn resize_impl(
   let (w, h) = (width as usize, height as usize);
   let ch = tex.channels;
 
-  let src = premultiplied_planes(tex);
-  let mid = resize_pass(&src, tex.width, tex.height, tex.wrap, w, true, filter);
-  let mut out = resize_pass(&mid, w, tex.height, tex.wrap, h, false, filter);
+  let src = premultiplied_planes(tex)?;
+  let mid = resize_pass(&src, tex.width, tex.height, tex.wrap, w, true, filter)?;
+  let mut out = resize_pass(&mid, w, tex.height, tex.wrap, h, false, filter)?;
   if ch == 4 {
     unpremultiply_planes(&mut out);
   }
@@ -380,7 +380,7 @@ pub(crate) fn sharpen_impl(
   if sigma <= 0. || amt == 0. {
     return Ok(tex_val.clone());
   }
-  let blurred = blur_tex(sigma, tex);
+  let blurred = blur_tex(sigma, tex)?;
   texture_zip(tex, &blurred, "sharpen", |x, b| x + (x - b) * amt)
 }
 
@@ -434,9 +434,7 @@ pub(crate) fn texture_normalize_impl(
     lo[c] = a;
     scale[c] = 1. / (b - a).max(1e-8);
   }
-  Ok(texture_map_chan(t, |x, c| {
-    ((x - lo[c]) * scale[c]).clamp(0., 1.)
-  }))
+  texture_map_chan(t, |x, c| ((x - lo[c]) * scale[c]).clamp(0., 1.))
 }
 
 pub(crate) fn texture_standardize_impl(
@@ -452,7 +450,7 @@ pub(crate) fn texture_standardize_impl(
     mean[c] = s.mean;
     inv[c] = if s.std > 1e-12 { 1. / s.std } else { 0. };
   }
-  Ok(texture_map_chan(t, |x, c| (x - mean[c]) * inv[c]))
+  texture_map_chan(t, |x, c| (x - mean[c]) * inv[c])
 }
 
 pub(crate) fn texture_equalize_impl(
@@ -462,7 +460,7 @@ pub(crate) fn texture_equalize_impl(
 ) -> Result<Value, ErrorStack> {
   let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
   let stats = t.stats();
-  Ok(texture_map_chan(t, |x, c| stats.channels[c].cdf(x)))
+  texture_map_chan(t, |x, c| stats.channels[c].cdf(x))
 }
 
 enum ChannelSrc<'a> {
@@ -516,11 +514,11 @@ pub(crate) fn concat_channels_impl(
 
   // The SoA payoff: texture sources contribute their planes by Rc clone — zero copy.
   let (w, h) = (t0.width, t0.height);
-  let mut planes: Vec<Rc<Vec<f32>>> = Vec::with_capacity(total_ch);
+  let mut planes: Vec<Rc<Plane>> = Vec::with_capacity(total_ch);
   for src in &srcs {
     match src {
       ChannelSrc::Tex(t) => planes.extend(t.as_planes()),
-      ChannelSrc::Const(v) => planes.push(Rc::new(vec![*v; w * h])),
+      ChannelSrc::Const(v) => planes.push(Rc::new(Plane::filled(w * h, *v)?)),
     }
   }
 
@@ -604,9 +602,9 @@ pub fn image_levels_control_value(v: &Value) -> Option<Vec<f32>> {
 
 /// `out = out_lo + (out_hi − out_lo) · clamp((x − in_lo) / (in_hi − in_lo), 0, 1)^(1/gamma)`
 /// applied to color channels; alpha is preserved on 4-channel textures.
-pub(crate) fn apply_levels(t: &Rc<TextureHandle>, p: LevelsParams) -> Value {
+pub(crate) fn apply_levels(t: &Rc<TextureHandle>, p: LevelsParams) -> Result<Value, ErrorStack> {
   if p.as_array() == IDENTITY_LEVELS.as_array() {
-    return Value::Texture(Rc::clone(t));
+    return Ok(Value::Texture(Rc::clone(t)));
   }
   let inv_gamma = 1. / p.gamma.max(1e-4);
   let in_range = (p.in_hi - p.in_lo).abs().max(1e-8) * (p.in_hi - p.in_lo).signum();
@@ -638,7 +636,7 @@ pub(crate) fn texture_levels_impl(
     gamma: f(4),
   };
   let tex = arg_refs[5].resolve(args, kwargs).as_texture().unwrap();
-  Ok(apply_levels(tex, p))
+  apply_levels(tex, p)
 }
 
 pub(crate) fn input_image_levels_impl(
@@ -715,7 +713,7 @@ pub(crate) fn input_image_levels_impl(
       }
       Some(())
     },
-    || Ok(apply_levels(tex, params)),
+    || apply_levels(tex, params),
   )
 }
 

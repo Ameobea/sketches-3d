@@ -269,7 +269,10 @@ pub(crate) fn path_uv_impl(
   let hits = field.nearest_at_centers();
   let segs = field.segments();
   let seg_lens: Vec<f32> = segs.iter().map(Segment::len).collect();
-  let (mut t, mut n) = (Vec::with_capacity(w * h), Vec::with_capacity(w * h));
+  let (mut t, mut n) = (
+    crate::tex_mem::try_reserve(w * h)?,
+    crate::tex_mem::try_reserve(w * h)?,
+  );
   for (ix, hit) in hits.iter().enumerate() {
     let seg = &segs[hit.seg as usize];
     let sp = seg.subpath as usize;

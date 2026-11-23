@@ -1,9 +1,8 @@
 //! Marching-triangles cut of a mesh along the `threshold` contour of a per-vertex scalar field:
 //! straddling edges are split where the linearly interpolated field crosses, so no triangle
-//! ends up on both sides, then faces are partitioned into the inside (< threshold) and outside
-//! meshes. Crossings within `SNAP` of an endpoint move that vertex onto the contour instead of
-//! leaving a sliver behind, except on border and seam vertices, whose coincident twin on the
-//! other side of the seam would be left behind.
+//! ends up on both sides. Crossings within `SNAP` of an endpoint move that vertex onto the contour
+//! instead of leaving a sliver behind, except on border and seam vertices, whose coincident twin on
+//! the other side of the seam would be left behind.
 
 use fxhash::FxHashMap;
 use mesh::{
@@ -13,11 +12,8 @@ use mesh::{
 
 const SNAP: f32 = 0.02;
 
-pub fn split_by_values(
-  mut out: LinkedMesh<()>,
-  vals: &mut FxHashMap<VertexKey, f32>,
-  thr: f32,
-) -> (LinkedMesh<()>, LinkedMesh<()>) {
+/// Afterwards every face is wholly inside (some vertex `< thr`, none above) or outside.
+pub fn cut_contour(out: &mut LinkedMesh<()>, vals: &mut FxHashMap<VertexKey, f32>, thr: f32) {
   // Strict on both sides: a vertex sitting exactly on the contour never straddles, which is
   // also what makes the loop below terminate (every split or snap lands a vertex there).
   let crossing = |vals: &FxHashMap<VertexKey, f32>, v0: VertexKey, v1: VertexKey| {
@@ -80,15 +76,4 @@ pub fn split_by_values(
       vals.insert(vm, thr);
     }
   }
-  let mut parts = out.extract_face_partitions(2, |fk| {
-    let inside = out.faces[fk].vertices.iter().any(|k| vals[k] < thr);
-    if inside {
-      0
-    } else {
-      1
-    }
-  });
-  let outside = parts.pop().unwrap();
-  let inside = parts.pop().unwrap();
-  (inside, outside)
 }

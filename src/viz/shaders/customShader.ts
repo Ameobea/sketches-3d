@@ -35,6 +35,7 @@ import type {
   CustomShaderProps,
   CustomShaderShaders,
   CustomShaderOptions,
+  VertexAttrType,
 } from './customShader.types';
 import { buildHeightAlphaEarlyOut, buildHeightAlphaFragment } from './heightAlpha';
 import { getTextureMeanColor } from './meanTextureColor';
@@ -878,6 +879,7 @@ export const buildCustomShaderArgs = (
     useWorldSpaceUVs,
     useTriplanarMapping,
     vertexAttrs = {},
+    stackIndexAttr,
     pom,
     noOcclusion,
     vertexLighting = false,
@@ -893,6 +895,19 @@ export const buildCustomShaderArgs = (
   // A stack `pomHeightMap` is sampled by POM's own `sampleStackLod0`, never through the triplanar
   // entry points, so it must not pull in their `sampler2DArray` copies.
   const triplanarStacks = stackMap || stackNormalMap || stackRoughnessMap;
+  // Index source precedence: snippet > vertex attribute > uniform.
+  const activeStackIndexAttr = hasStacks && !stackIndexShader ? stackIndexAttr : undefined;
+  if (
+    activeStackIndexAttr &&
+    vertexAttrs[activeStackIndexAttr] &&
+    vertexAttrs[activeStackIndexAttr] !== 'float'
+  ) {
+    throw new Error(`stackIndexAttr \`${activeStackIndexAttr}\` must be a float vertex attribute`);
+  }
+  const allVertexAttrs: Record<string, VertexAttrType> =
+    activeStackIndexAttr && !vertexAttrs[activeStackIndexAttr]
+      ? { ...vertexAttrs, [activeStackIndexAttr]: 'float' }
+      : vertexAttrs;
 
   // Only LINEAR-magnified slots need the snap; the triplanar functions are shared across slots, so
   // they go by any-of.
@@ -1012,7 +1027,7 @@ export const buildCustomShaderArgs = (
     }
   }
   uniforms.diffuse = { value: typeof color === 'number' ? new THREE.Color(color) : color };
-  if (hasStacks && !stackIndexShader) {
+  if (hasStacks && !stackIndexShader && !activeStackIndexAttr) {
     uniforms.stackIndex = { value: stackIndex };
   }
   uniforms.mapTransform = { value: new THREE.Matrix3().identity() };
@@ -1550,7 +1565,7 @@ export const buildCustomShaderArgs = (
       .join('\n');
   };
 
-  const vertexAttrEntries = Object.entries(vertexAttrs);
+  const vertexAttrEntries = Object.entries(allVertexAttrs);
   const vertexAttrDecls = vertexAttrEntries
     .map(([n, t]) => `attribute ${t} ${n};\nvarying ${t} v_${n};`)
     .join('\n');
@@ -1975,7 +1990,7 @@ ${useNoise2 ? noise2Shaders : ''}
 // Helpers emitted before user shaders so user shaders can call them.
 ${hasStacks ? STACK_HELPERS_GLSL : ''}
 ${sharp ? buildSharpSamplerGlsl(sharpAnisotropy) + (hasStacks ? SHARP_STACK_SAMPLER_GLSL : '') : ''}
-${hasStacks && !stackIndexShader ? 'uniform float stackIndex;' : ''}
+${hasStacks && !stackIndexShader && !activeStackIndexAttr ? 'uniform float stackIndex;' : ''}
 ${
   tileBreaking?.type === 'neyret'
     ? tileBreakingNeyretFragment.replace(
@@ -2167,7 +2182,9 @@ void main() {
       ? `_stackT = clamp(${
           activeStackIndexShader
             ? 'getStackIndex(vWorldPos, vObjectNormal, vMapUv, curTimeSeconds, ctx)'
-            : 'stackIndex'
+            : activeStackIndexAttr
+              ? `v_${activeStackIndexAttr}`
+              : 'stackIndex'
         }, 0., 1.);`
       : ''
   }

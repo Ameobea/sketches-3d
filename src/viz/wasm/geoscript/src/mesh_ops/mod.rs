@@ -2,7 +2,9 @@ pub mod adaptive_sampler;
 #[cfg(test)]
 mod attr_tests;
 pub mod bake_ao;
+pub mod bake_texture;
 pub mod compute_uvs;
+pub mod displace;
 pub mod extrude;
 pub mod extrude_path;
 pub mod extrude_pipe;
@@ -17,7 +19,10 @@ mod profile_creases;
 #[cfg(test)]
 mod query_tests;
 pub mod rail_sweep;
+pub mod refine;
 pub mod slivers;
+pub mod split_field;
 pub mod stitch_contours;
+pub mod surface_chart;
 pub mod tessellate_polygon;
 pub mod voxels;

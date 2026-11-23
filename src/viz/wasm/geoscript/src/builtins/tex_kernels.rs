@@ -5,11 +5,11 @@
 
 use crate::{
   noise::{fbm_2d, fbm_2d_tileable},
-  ErrorStack, TextureWrap, Vec2,
+  ErrorStack, Plane, TextureWrap, Vec2,
 };
 
-pub(crate) fn map_new(a: &[f32], f: impl Fn(f32) -> f32) -> Vec<f32> {
-  a.iter().map(|&x| f(x)).collect()
+pub(crate) fn map_new(a: &[f32], f: impl Fn(f32) -> f32) -> Result<Plane, ErrorStack> {
+  Plane::collect(a.len(), a.iter().map(|&x| f(x)))
 }
 
 pub(crate) fn map_in(a: &mut [f32], f: impl Fn(f32) -> f32) {
@@ -18,9 +18,13 @@ pub(crate) fn map_in(a: &mut [f32], f: impl Fn(f32) -> f32) {
   }
 }
 
-pub(crate) fn zip_new(a: &[f32], b: &[f32], f: impl Fn(f32, f32) -> f32) -> Vec<f32> {
+pub(crate) fn zip_new(
+  a: &[f32],
+  b: &[f32],
+  f: impl Fn(f32, f32) -> f32,
+) -> Result<Plane, ErrorStack> {
   debug_assert_eq!(a.len(), b.len());
-  a.iter().zip(b).map(|(&x, &y)| f(x, y)).collect()
+  Plane::collect(a.len(), a.iter().zip(b).map(|(&x, &y)| f(x, y)))
 }
 
 pub(crate) fn zip_in_a(a: &mut [f32], b: &[f32], f: impl Fn(f32, f32) -> f32) {
@@ -71,10 +75,10 @@ pub(crate) fn zip3_new(
   b: &[f32],
   c: &[f32],
   f: impl Fn(f32, f32, f32) -> f32,
-) -> Vec<f32> {
+) -> Result<Plane, ErrorStack> {
   let n = a.len().min(b.len()).min(c.len());
   let (a, b, c) = (&a[..n], &b[..n], &c[..n]);
-  (0..n).map(|i| f(a[i], b[i], c[i])).collect()
+  Plane::collect(n, (0..n).map(|i| f(a[i], b[i], c[i])))
 }
 
 pub(crate) fn mul_acc(acc: &mut [f32], a: &[f32], b: &[f32]) {

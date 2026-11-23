@@ -245,6 +245,10 @@ export const ShaderOptionsJsonSchema = z.object({
       z.enum(['float', 'vec2', 'vec3', 'vec4'])
     )
     .optional(),
+  /** Float per-vertex attribute (exported via `render(attrs=[...])`) used as the stack
+   *  interpolation index, clamped to [0,1]. Ignored when `shaders.stackIndexShader` is set;
+   *  overrides `props.stackIndex`. Declared as a vertex attr automatically. */
+  stackIndexAttr: z.string().optional(),
   useGeneratedUVs: z.boolean().optional(),
   useWorldSpaceUVs: z.boolean().optional(),
   tileBreaking: z.object({ type: z.literal('neyret'), patchScale: z.number().optional() }).optional(),

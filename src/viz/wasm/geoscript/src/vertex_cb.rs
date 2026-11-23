@@ -132,6 +132,34 @@ impl<'a> VertexCb<'a> {
     }
   }
 
+  /// Whether the bag reads anything that only exists at a vertex (`ix` or an attribute).
+  pub fn reads_vertex_data(&self) -> bool {
+    self.plan.as_ref().is_some_and(|p| {
+      p.bag
+        .iter()
+        .any(|(_, s)| matches!(s, Source::Ix | Source::Attr(_)))
+    })
+  }
+
+  /// Invoke at an arbitrary surface point; requires `!reads_vertex_data()`.
+  pub fn invoke_fixed(&self, ctx: &EvalCtx, fixed: &[Value]) -> Result<Value, ErrorStack> {
+    let Some(plan) = &self.plan else {
+      return ctx.invoke_callable(self.callable, fixed, EMPTY_KWARGS);
+    };
+    let Callable::Closure(closure) = &**self.callable else {
+      unreachable!()
+    };
+    let prefilled = plan
+      .bag
+      .iter()
+      .map(|(slot, src)| match src {
+        Source::Fixed(i) => (*slot, fixed[*i].clone()),
+        _ => unreachable!("bag reads vertex data"),
+      })
+      .collect();
+    ctx.invoke_closure_prefilled(self.callable, closure, &fixed[..plan.n_fixed], prefilled)
+  }
+
   /// `fixed` must hold every fixed param's value; bag attrs are read from `attrs_from` at `key`.
   pub fn invoke(
     &self,

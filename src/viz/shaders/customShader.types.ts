@@ -351,6 +351,9 @@ export interface CustomShaderOptions {
   useTriplanarMapping?: boolean | Partial<TriplanarMappingParams>;
   /** Custom per-vertex attributes, declared in the vertex stage and forwarded as `v_<name>`. */
   vertexAttrs?: Record<string, VertexAttrType>;
+  /** Float vertex attribute read as the stack interpolation index (clamped to [0,1]) when no
+   *  `stackIndexShader` is set; takes precedence over the `stackIndex` prop. */
+  stackIndexAttr?: string;
   /**
    * Enables procedural Parallax Occlusion Mapping.  The fragment shader
    * raymarches a height field and shades the displaced hit point, giving the

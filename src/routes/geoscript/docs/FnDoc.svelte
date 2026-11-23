@@ -1,5 +1,6 @@
 <script lang="ts">
   import Example from './Example.svelte';
+  import { richText } from 'src/geoscript/builtinDocs';
   import type { BuiltinFnDef } from './types';
 
   export let name: string;
@@ -46,7 +47,7 @@
         {/each}
       </div>
       {#if sig.description}
-        <div class="sig-description">{sig.description}</div>
+        <div class="sig-description" use:richText={sig.description}></div>
       {/if}
       {#if sig.arg_defs.length > 0}
         <div class="args-list">
@@ -63,7 +64,7 @@
                         {arg.default_value.Optional[0]}
                       </span>
                     {/if}
-                    {#if arg.description}<span class="arg-desc">- {arg.description}</span>{/if}
+                    {#if arg.description}<div class="arg-desc" use:richText={arg.description}></div>{/if}
                   {:else}
                     <span class="arg-name">...</span>
                   {/if}
@@ -176,8 +177,38 @@
     margin-bottom: 8px;
     color: #b8b8d0;
     font-size: 15.4px;
+    word-break: break-word;
+  }
+
+  .sig-description :global(.md-p),
+  .arg-desc :global(.md-p) {
+    margin: 0 0 8px;
+  }
+
+  .sig-description :global(.md-list),
+  .arg-desc :global(.md-list) {
+    margin: 4px 0 8px;
+    padding-left: 22px;
+  }
+
+  .sig-description :global(.md-list li),
+  .arg-desc :global(.md-list li) {
+    margin-top: 3px;
+  }
+
+  .sig-description :global(.md-pre),
+  .arg-desc :global(.md-pre) {
+    margin: 4px 0 8px;
+    padding: 8px 10px;
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
     white-space: pre-wrap;
-    word-break: break-all;
+    font-size: 14px;
+  }
+
+  .sig-description :global(code),
+  .arg-desc :global(code) {
+    color: #e8d5a3;
   }
 
   .args-list {
@@ -199,6 +230,7 @@
   .arg-desc {
     color: #bbbbbb;
     font-size: 15.4px;
+    margin: 2px 0 6px 12px;
   }
 
   .arg-default::before {

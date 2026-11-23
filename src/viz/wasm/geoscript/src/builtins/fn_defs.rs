@@ -8971,6 +8971,33 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
         description: "Linearly interpolates between two textures with a per-texel factor from texture `t` (1-channel broadcasts on any operand)",
         return_type: &[ArgType::Texture],
       },
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "t",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "a",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4, ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "b",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Vec2, ArgType::Vec3, ArgType::Vec4, ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+        ],
+        description: "Texture lerp with constants mixed in: each operand is a texture (matching dims; 1-channel broadcasts) or a constant (a vecN sets N channels, a number broadcasts) — `lerp(mask, 0.85, 0.6)` maps a mask to a roughness range, `lerp(mask, albedo, vec3(0.2, 0.36, 0.12))` tints toward a color, `lerp(0.3, tex, vec3(1.))` fades toward white.",
+        return_type: &[ArgType::Texture],
+      },
     ],
   },
   "ramp" => FnDef {
@@ -9382,8 +9409,29 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Required,
             description: ""
           },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Position tolerance (world units) for adaptive tessellation.  `fn` is also evaluated at edge midpoints, quarter points and face centroids; wherever a warped probe lands further than this from where the flat triangle would put it, the face is bisected first.  Requires a `pos`/`normal`-only callback."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal.  This is the floor on feature size: a step or crease in the field is chased down to triangles this small."
+          },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this (world units) are always split first.  Probes only see the field at edge midpoints, quarter points and centroids, so set this to about the field's feature size on coarse meshes."
+          },
         ],
-        description: "Applies a warp function to each vertex of the mesh, returning a new mesh with each vertex transformed by `fn`.",
+        description: "Applies a warp function to each vertex of the mesh, returning a new mesh with each vertex transformed by `fn`.  With `refine`, faces are subdivided wherever the warp bends them, so a coarse mesh can take a detailed warp.",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -11218,7 +11266,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("auto".to_owned())),
-            description: "UV generation method.  \"auto\", \"unwrap\", \"disk\", and \"sphere\" produce a minimal-distortion conformal unwrap via the BFF module.  \"planar\" projects onto the mesh's dominant plane natively.  \"cylindrical\" wraps U around the auto-detected axis exactly once (seamless 0/1, meridian seam split); V is scaled by the tube circumference so texels stay square (isotropic), and cap faces get a planar disk projection at the tube's density.  It works best on tube-dominant meshes (length > diameter) where the axis is unambiguous and mostly straight.  \"tube\" generalizes it to bent/deformed closed tube-like meshes (elbows, arches, trim, pipes) via harmonic fields: U wraps the cross-section once, V runs along the tube arc-length-uniformly, and crease-bounded end caps become planar islands (see `options`).  Requires closed genus-0.  \"strip\" is a solver-free topological trim-strip unwrap: the mesh is split into smooth patches at sharp edges, and each patch that is a quad/tri strip (dual graph a path or ring) is mapped STRAIGHT in UV space — U = arc length along the strip's rails, V constant per rail — so a horizontally-patterned texture flows smoothly along a curved strip.  Ring strips are cut and rounded to an integer repeat count; non-strip patches fall back to planar islands (see `options`).  Best for hard-edged extrusions/profiles (square/polygonal pipes, frames, trim).  \"toroidal\" (closed genus-1) is reserved and not yet implemented.",
+            description: "UV generation method.\n\n- `\"auto\"` / `\"unwrap\"` / `\"disk\"` / `\"sphere\"` — minimal-distortion conformal unwrap (BFF). `pre_split` (see `options`) cuts creases into island boundaries first.\n- `\"planar\"` — native projection onto the mesh's dominant plane.\n- `\"cylindrical\"` — U wraps the auto-detected axis exactly once (seamless 0/1, meridian seam split); V is scaled by the circumference so texels stay square; cap faces get a planar disk at the tube's density. Best on tube-dominant meshes with a clear, mostly straight axis.\n- `\"tube\"` — the bent/deformed generalization (elbows, arches, pipes) via harmonic fields: U wraps the cross-section, V runs along the arc length uniformly, crease-bounded end caps become planar islands. Requires closed genus-0.\n- `\"strip\"` — solver-free trim-strip unwrap: the mesh is split into smooth patches at sharp edges and each quad/tri strip is mapped STRAIGHT (U = arc length along the rails, V constant per rail), so a patterned texture flows along a curved strip. Ring strips are cut and rounded to an integer repeat count; other patches fall back to planar islands. Best for hard-edged extrusions, frames, trim.\n- `\"toroidal\"` — reserved, not implemented.",
           },
           ArgDef {
             name: "scale",
@@ -11246,7 +11294,7 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             interned_name: Sym(0),
             valid_types: argtype_flags!(ArgType::Map, ArgType::Nil),
             default_value: DefaultValue::Optional(|| Value::Nil),
-            description: "Map of options specific to the chosen `type`.  For \"auto\"/\"unwrap\"/\"disk\"/\"sphere\": `{ up: '+y', fallback: '-z', axis: '+v', pre_split: true }` — when `up` is given, each UV island is rotated so texture axis `axis` ('+v' = texture up, or '+u'/'-v'/'-u') follows that local-space direction on every face, with faces whose normal is within 15° of `up` using `fallback` instead; omit `up` to let islands rotate freely for tighter packing.  `pre_split` (default true) splits sharp edges topologically (per the sharp-angle threshold) before the conformal solve, so creases become boundaries the unwrap can cut islands along — usually what you want for hard-surface meshes; set false to unwrap the welded smooth surface instead (note \"sphere\" mapping needs closed topology, so on a creased mesh it only engages with `pre_split: false`).  For \"cylindrical\": `{ normalize_v: bool }` — when true, V is stretched to span 0..1 across the mesh's axial extent instead of being circumference-scaled for square texels.  For \"tube\": `{ caps: 'auto'|'none', cap_angle: degrees, cap_max_span: float, cap_alignment: float, normalize_v: bool, seam_straightness: float, detwist: bool }` — `caps` toggles end-cap island detection; `cap_angle` is the crease angle bounding a cap patch (defaults to the mesh sharp-edge threshold); `cap_max_span` is the max fraction of tube length a cap may span (default 0.15); `cap_alignment` is the min alignment between cap normal and local tube direction, 0..1 (default 0.6); `normalize_v` makes V span 0..1 over the tube length instead of isotropic scaling; `seam_straightness` (default 8) penalizes the internal seam cut for traveling around the tube instead of along it, preventing the texture from twisting along the spine (0 = plain shortest-path seam); `detwist` (default true) cancels any residual rotational drift of U along the spine by referencing a rotation-minimizing frame.  For \"strip\": `{ strip_angle: degrees, layout: 'stack'|'overlap'|'fill', u_mode: 'uniform'|'rail', fallback: 'planar'|'error' }` — `strip_angle` is the crease angle that splits the mesh into patches (defaults to the mesh sharp-edge threshold); `layout` places islands in V: 'stack' (default) stacks them at integer V offsets, 'overlap' gives every island the same V band starting at 0, 'fill' stretches each island's V to span 0..1 with U scaled to keep texels square; `u_mode` 'uniform' (default) gives both rails a shared U so quads map to true rectangles (a ring band's inner rail stretches instead of shearing), 'rail' keeps each rail's own arc length (exact per-rail texel density, shears when rail lengths differ); `fallback` controls non-strip patches: 'planar' (default) maps them as planar islands, 'error' fails so unexpected topology is surfaced.",
+            description: "Options map for the chosen `type`.\n\n**auto / unwrap / disk / sphere** — `{ up: '+y', fallback: '-z', axis: '+v', pre_split: true }`\n- `up` — rotate every island so texture axis `axis` (`'+v'` = texture up; or `'+u'`, `'-v'`, `'-u'`) follows this local-space direction on each face; faces within 15° of `up` use `fallback` instead. Omit it to let islands rotate freely for tighter packing.\n- `pre_split` (default true) — split sharp edges topologically before the conformal solve so creases become island boundaries, usually what a hard-surface mesh wants. `false` unwraps the welded smooth surface (`\"sphere\"` needs closed topology, so on a creased mesh it only engages with `pre_split: false`).\n\n**cylindrical** — `{ normalize_v: bool }`\n- `normalize_v` — stretch V to 0..1 over the axial extent instead of circumference-scaling for square texels.\n\n**tube** — `{ caps, cap_angle, cap_max_span, cap_alignment, normalize_v, seam_straightness, detwist }`\n- `caps` — `'auto'` (default) detects end-cap islands; `'none'` disables.\n- `cap_angle` — crease angle (degrees) bounding a cap patch; defaults to the sharp-edge threshold.\n- `cap_max_span` — max fraction of the tube length a cap may span (default 0.15).\n- `cap_alignment` — min alignment between cap normal and local tube direction, 0..1 (default 0.6).\n- `normalize_v` — V spans 0..1 over the tube length instead of isotropic scaling.\n- `seam_straightness` (default 8) — penalizes the internal seam for travelling around the tube instead of along it, so the texture doesn't twist along the spine (0 = plain shortest path).\n- `detwist` (default true) — cancels residual rotational drift of U along the spine against a rotation-minimizing frame.\n\n**strip** — `{ strip_angle, layout, u_mode, fallback }`\n- `strip_angle` — crease angle (degrees) splitting the mesh into patches; defaults to the sharp-edge threshold.\n- `layout` — island placement in V: `'stack'` (default) at integer V offsets; `'overlap'` every island in the same 0-based band; `'fill'` each island stretched to V 0..1 with U scaled to keep texels square.\n- `u_mode` — `'uniform'` (default) shares U between both rails so quads map to true rectangles (a ring band's inner rail stretches instead of shearing); `'rail'` keeps each rail's own arc length (exact per-rail density, shears when rail lengths differ).\n- `fallback` — non-strip patches: `'planar'` (default) maps them as planar islands; `'error'` fails so unexpected topology surfaces.",
           },
           ArgDef {
             name: "name",
@@ -13320,6 +13368,27 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Nil),
             description: "How the attribute responds to transforms baked into the mesh: `\"none\"` (default; colors, weights, uvs) or `\"direction\"` (a unit direction lying in the surface: rotated with the mesh, negated when it is mirrored, and renormalized wherever vertices are blended)."
           },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Tolerance for adaptive tessellation (callable values only).\n\n- The callback is also evaluated at each face's edge midpoints and centroid (plus quarter points on edges whose ends differ by more than this); where that differs from the corners' linear interpolation by more than `refine` (max over components), the face is bisected longest-edge-first and the new vertices take the probed values.\n- Puts resolution exactly where the field bends — a sharp mask edge crossing a big triangle becomes a crisp line of small ones — while flat regions stay untouched. Existing attributes are interpolated at the splits; the surface is unchanged.\n- Requires a callback of `pos` / `normal` only (no `ix` or attribute bag), since probes land between vertices. For hard edges consider `split_by_field` instead."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal."
+          },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this (world units) are always split, even where the field looks flat.  Probes only see the field at edge midpoints and centroids, so a feature smaller than the surrounding triangles can be missed entirely; set this to about the feature's size on coarse meshes.  `nil` = no forced splitting."
+          },
         ],
         description: "Returns a copy of `mesh` with per-vertex attribute `name` set, replacing any existing attribute of that name.  Attributes ride along through warps, transforms, seam splits, `extrude`, `join`/`+`, CSG booleans (interpolated at the cut, operand attribute sets unioned), `simplify`, and `split_by_plane`; are resampled by nearest point through re-tessellating ops (see `transfer_attrs`); are interpolated when vertices are split; can be read inside per-vertex callbacks via the attribute bag; and are exported to the GPU as vertex attributes (well-known names always, custom names via `render(attrs=)`).",
         return_type: &[ArgType::Mesh],
@@ -13565,9 +13634,713 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Bool(true)),
             description: "Split the mesh along sharp edges and recompute shading normals first, exactly like `compute_normals` with the runtime sharp-angle threshold, so each side of a crease bakes with its own normal and holds its own AO (and `smooth_attr` can't bleed across it).  Off, a crease vertex gets one value blended over both sides.  Leaves the mesh open along creases like the exported mesh already is, so bake last; already-split meshes are unaffected."
           },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this (world units) are always split, even where the field looks flat.  Probes only see the field at edge midpoints and centroids, so a feature smaller than the surrounding triangles can be missed entirely; set this to about the feature's size on coarse meshes.  `nil` = no forced splitting."
+          },
+          ArgDef {
+            name: "intensity",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Exponent on the result, `ao^intensity`: above 1 deepens partially occluded areas toward black while fully open surfaces stay exactly 1 (a flat bias or `lerp(ao, lo, 1.)` also darkens open areas); below 1 softens, 0 disables.  Equivalent to requiring `intensity` independent rays to all escape."
+          },
         ],
         description: "Bakes ambient occlusion per vertex into a scalar attribute: the fraction of cosine-weighted hemisphere rays from each vertex (around its smooth normal) that escape `mesh` and `occluders`; 1 = open, 0 = buried.  Sampling is deterministic, so re-evaluation is stable.  Resolution is the mesh's own: a large triangle gets a linear ramp between its corners, so either `tessellate` first where occlusion detail matters or pass `refine` to split edges only where the ramp is wrong, and `smooth_attr` the result to soften noise (typically `smooth_attr(\"ao\", iterations=2, weights=\"cotan\")`).  Read it in shaders via the material's `vertexAttrs`, or write it into `color`, which every material multiplies in by default.",
         return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "sdf" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to measure against, in world space (its transform applies).  Closed meshes get a sign; for open ones use `signed=false`."
+          },
+          ArgDef {
+            name: "pos",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Query point.  Note that per-vertex callbacks (`set_attr`, `warp`) receive positions in their own mesh's local space, so build a mesh at the origin (or `apply_transforms` it) before masking it against a world-placed mesh."
+          },
+          ArgDef {
+            name: "signed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Negate the distance for points inside (crossing parity along three rays, majority vote).  `false` returns the plain distance to the surface, which is also what open meshes need."
+          },
+        ],
+        description: "Signed distance from `pos` to the surface of `mesh`: negative inside, positive outside, zero on the surface.  Turns any mesh into a spatial field, so regions of another mesh can be selected by modeling them — `set_attr(\"t\", |p| 1 - smoothstep(0, 0.3, sdf(band, p)))` is 1 inside `band`, fading to 0 over 0.3 units outside it; combine fields with `min` (union) / `max` (intersection) / `-sdf` (complement), and pair with `set_attr(refine=)` so a hard edge crossing a big triangle still resolves.  Each call is one BVH closest-point query plus (when signed) three ray casts.",
+        return_type: &[ArgType::Float],
+      },
+    ],
+  },
+  "bake_texture" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "fn",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable),
+            default_value: DefaultValue::Required,
+            description: "`|pos: vec3, normal: vec3, uv: vec2, x_ix: int, y_ix: int|: num | vec2 | vec3 | vec4`, evaluated once per texel with the surface point the texel maps to (`pos` and `normal` interpolated across the covering triangle; `uv` is the texel center).  Trailing params may be omitted; `|pos, uv|` also works (`uv` is recognized by name).  The return type sets the channel count.  The body is auto-vectorized like a `texture_zip` body whenever it stays inside the supported set; mesh queries such as `sdf` fall back to the per-texel interpreter."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` attribute laid out as an atlas in [0,1]² (`compute_uvs` with type \"auto\"/\"unwrap\"/\"planar\"/\"cylinder\"/\"tube\" — a `strip` layout with `layout: 'stack'` runs past 1 and is clipped).  Texels no triangle covers are background (zero) beyond the `dilate` ring."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Texels of edge padding around every UV island: each ring copies the nearest covered texel's surface point before the callback runs, so bilinear filtering and mips at island borders never pull in background.  Use ~4 for a 512-1024 atlas, more if mips go deep."
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, `pos`/`normal` are in world space (the mesh's transform applied); default local space, matching `set_attr`/`warp` callbacks."
+          },
+        ],
+        description: "Bakes a 3D field into a texture over the mesh's UV atlas: for every texel, the covering triangle's interpolated position and normal are passed to `fn`.\n\n- Texture synthesis with mesh-space feedback: a pattern evaluated from `pos` behaves like triplanar projection but is baked once; `sdf` masks, height, curvature, or baked attributes (`bake_attr` + `texture_zip`) can drive the look.\n- The result is a plain texture (clamp wrap, background 0): publish it with `render_texture` and assign it to a material that samples mesh UVs (`useTriplanarMapping: false`).\n- Unique per mesh, so budget resolution per asset. For masks prefer `bake_sdf`, for tiling textures `bake_triplanar`, for AO `bake_ao_texture`.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "bake_attr" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Required,
+            description: "Per-vertex attribute to rasterize (`ao` from `bake_ao`, `color`, any `set_attr` name); the texture's channel count is the attribute's arity."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` atlas, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Edge padding in texels, as for `bake_texture`."
+          },
+        ],
+        description: "Rasterizes a per-vertex attribute over the mesh's UV atlas, linearly interpolated across each triangle (direction attributes renormalized) — the companion to `bake_texture` for feeding vertex data (baked AO, painted weights) into texture synthesis: `[mesh | bake_texture(1024, 1024, |p| ...), mesh | bake_attr(1024, 1024, \"ao\")] | texture_zip(|c, ao| c * ao)`.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "split_by_field" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "field",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Scalar field to cut by: a callable `|pos: vec3, normal: vec3|: num` (same conventions as `set_attr`), or a closed mesh, which stands for `sdf(mesh, pos)` so the cut lands exactly on its surface."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "threshold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Contour value to cut at.  Vertices with `field < threshold` are inside; 0 is the surface of an `sdf` field."
+          },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Tolerance (in field units — world units for an `sdf`) for adaptive refinement of the faces the contour crosses before cutting, so a curved boundary is followed by a polyline of that accuracy instead of one chord per original triangle.  Only straddling faces are refined; the rest of the mesh is untouched.  Requires a `pos`/`normal`-only callback."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal."
+          },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this are always split first, so a region smaller than the surrounding triangles can't be missed by the probes."
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, surface points are taken in world space (the mesh's transform applied); default local space, matching `set_attr`/`warp` callbacks."
+          },
+        ],
+        description: "Cuts a mesh along the `threshold` contour of a scalar field and returns `[inside, outside]` — `split_by_plane` for any field.\n\n- Edges the contour crosses are split where the linearly interpolated field crosses it; crossings within 2% of an endpoint snap that vertex onto the contour instead of leaving a sliver. No triangle ends up on both sides.\n- Pass a mask mesh as the field to carve out exactly the region it encloses, then give each piece its own material or a constant `set_attr`: no transition band, no ghosting, far fewer triangles than refining a step function.\n- Attributes (UVs included) ride through the cut; both pieces keep the input's transform.\n- Soft, organic fields still belong with `set_attr(refine=)`.",
+        return_type: &[ArgType::Sequence],
+      },
+    ],
+  },
+  "displace" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Height field: a callable `|pos: vec3, normal: vec3|: num` giving the distance to move each surface point along its offset direction (negative cuts in), or a number for a uniform offset.  `normal` is that direction, normalized.  Without `refine` the callback may also take an attribute bag (`|pos, normal, {uv}|`)."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Height tolerance (world units) for adaptive tessellation.  The field is also evaluated at edge midpoints, quarter points and face centroids; wherever that differs from the corners' linear interpolation by more than this, the face is bisected (longest edge first, seam twins together) before anything moves.  Triangles land only where the height field bends, so the output's distance from the ideal displaced surface is about `refine`.  Then, as in `embed_path`, every edge crossing a crease of the height (a kink or step from `abs`/`min`/`max`/`clamp`/`floor`/a conditional in the callback's top level) is split exactly on it, so creases come out as crisp mesh edges, marked sharp.  Requires a `pos`/`normal`-only callback."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal.  This is the floor on feature size: a step or crease in the field is chased down to triangles this small."
+          },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this (world units) are always split first.  Probes only see the field at edge midpoints, quarter points and centroids, so set this to about the field's feature size on coarse meshes."
+          },
+          ArgDef {
+            name: "split_seams",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "As `embed_path`'s `split_seams`: when true, authors shading normals from the height field itself (the base surface's normal tilted by the field's slope), so shading doesn't depend on how the faces are triangulated; this removes the streaks sliver-heavy input (CSG output) shows.  That needs a normal per side at creases, so vertices are duplicated along the base mesh's sharp edges and the height's creases and the result is NO LONGER 2-manifold (NO_WELD); intended for final render meshes.  Default false: connectivity is unchanged, the height's creases are marked as sharp edges, and shading is left to the render path's auto-smooth.  Requires a `pos`/`normal`-only callback."
+          },
+        ],
+        description: "Moves the surface along its normals by a height field — displacement mapping baked into geometry, with the field given as code over 3D position rather than as a texture.\n\n- Offset directions are mitered: at a crease the direction is the one that moves every adjoining face out by exactly `height`, so a constant height is a true offset (a box stays a box with sharp corners) and fields carry across sharp edges without tearing.\n- Vertices that coincide (split UV seams, `split_seams` creases) are treated as one surface point and move together, so closed meshes stay closed.\n- With `refine`, tessellation adapts to the field; without it the mesh's own vertices are all the resolution there is (`tessellate` first, or use `refine`).\n- A height field can't make overhangs, and where the height exceeds the radius of a concave feature the surface passes through itself.  Steps in the field become slopes one `min_edge` wide; use `emboss` for hard-edged raised or cut regions.\n- Connectivity is preserved: closed 2-manifold in, closed 2-manifold out (unless `split_seams`).\n- Attributes ride along (interpolated at splits); UVs are not re-relaxed, so steep displaced slopes stretch a UV-mapped texture.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "emboss" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "field",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Mesh, ArgType::Path),
+            default_value: DefaultValue::Required,
+            description: "Region to raise, as in `split_by_field`: a callable `|pos: vec3, normal: vec3|: num` or a closed mask mesh standing for its `sdf`, or a filled 2D path read in the surface coordinates of the `chart` attribute (signed distance to its outline).  The region is where `field < threshold`."
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Callable, ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "How far the region moves along its normals; negative cuts a recess.  A callable `|pos: vec3, normal: vec3, dist: num|: num` (attribute bag allowed after those) varies it over the region.  `dist` is the field's value at the point minus `threshold`: for a mask mesh or a path, minus the distance in from the region's edge, so `|p, n, d| 0.2 * smoothstep(0, 0.3, -d)` domes the middle and leaves the edge attached; where it returns 0 on the boundary the region stays attached there, giving a ramp instead of a wall."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "threshold",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(0.)),
+            description: "Contour value bounding the region."
+          },
+          ArgDef {
+            name: "refine",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Tolerance for adaptive tessellation, as `embed_path`'s `tolerance`.  The faces the region's boundary crosses are refined until the boundary is followed to this accuracy (field units), and with a callable `height` the region is refined until the height is matched to it (world units), then every edge crossing a crease of the height (a kink or step from `abs`/`min`/`max`/`clamp`/`floor`/a conditional) is split exactly on it, so creases come out as crisp mesh edges.  Requires `pos`/`normal`(/`dist`)-only callbacks."
+          },
+          ArgDef {
+            name: "min_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges shorter than this (world units) are never split; defaults to 1% of the mesh's bounding diagonal.  This is the floor on feature size: a step or crease in the field is chased down to triangles this small."
+          },
+          ArgDef {
+            name: "max_edge",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "With `refine`, edges longer than this (world units) are always split first.  Probes only see the field at edge midpoints, quarter points and centroids, so set this to about the field's feature size on coarse meshes."
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, the field sees world-space points (the mesh's transform applied)."
+          },
+          ArgDef {
+            name: "tag",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Name of a scalar vertex attribute to write: 1 on the moved region, 0 on the rest.  Walls run 0 at the base to 1 at the top; in the mask-solid form they are 1 throughout and only the base contour sits at 0.5.  Use it to give the region its own look: `split_by_field(|p, n, {tag}| 0.5 - tag)` for a separate material, or `stackIndexAttr` on a texture stack."
+          },
+          ArgDef {
+            name: "chart",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("chart".to_owned())),
+            description: "Vec2 vertex attribute a path `field` is read in: `surface_chart`'s by default, or any other 2D parameterization such as `\"uv\"`."
+          },
+        ],
+        description: "Raises (or, with a negative height, sinks) the part of a surface selected by a field and joins it back to the rest with walls — panels, inlays, grooves, engraved or stamped shapes.\n\n- The mesh is cut exactly along the field's contour as in `split_by_field`, the selected faces move along mitered normals (a region wrapping a sharp edge stays flat on both faces), and each boundary edge gets a wall quad.  A closed input stays closed and 2-manifold; regions that only touch at a point rise separately.\n- Unlike a stepped `displace` field the walls are exact and cost two triangles per boundary edge regardless of height.\n- **Mask solid on a solid** (closed manifold `field` mesh, closed manifold `mesh`, default `threshold`): the region is the part of the surface inside the mask, bounded by the exact intersection curve, with no `refine` needed.  Only that patch is moved; it is joined on with booleans, so the rest of the mesh keeps its triangulation and raised regions that run into each other merge.  `refine`/`min_edge`/`max_edge` then only apply to a callable height.\n- **2D path**: `mesh | surface_chart(origin) | emboss(path, height, refine=…)` stamps a path drawn in flat coordinates around `origin`.  The region is whatever part of the surface maps inside the path, so it can't self-overlap; its shape distorts with the curvature between it and `origin`.\n- Chain calls for multi-level detail; each call sees the previous result's surface.\n- Wall vertices copy the attributes of the boundary they rose from, so UV-mapped textures smear down walls (triplanar materials are unaffected).",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "surface_chart" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "origin",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Required,
+            description: "Point (local space) that maps to (0, 0); the nearest vertex's surface is used."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "up",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Vec3),
+            default_value: DefaultValue::Optional(|| Value::Vec3(Vec3::new(0., 1., 0.))),
+            description: "Direction whose projection onto the surface at `origin` becomes +y; +x is to its right seen from outside."
+          },
+          ArgDef {
+            name: "name",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::String),
+            default_value: DefaultValue::Optional(|| Value::String("chart".to_owned())),
+            description: "Vec2 vertex attribute to write."
+          },
+        ],
+        description: "Gives every vertex flat 2D coordinates measured along the surface from `origin`, as if the surface around it were unrolled onto a plane: distance from (0, 0) is roughly the walking distance from `origin`, direction is the heading you'd set out in.\n\n- A local alternative to UV unwrapping: no seams or islands to manage, exact on flat and developable regions, and increasingly distorted the more curvature lies between a point and `origin`.  Good for stamps and decals a few feature-sizes across; not a global parameterization (far sides of a closed shape get folded, overlapping coordinates).\n- Coordinates are in the mesh's own units, so a path drawn 1 unit wide lands 1 unit wide near `origin`.\n- Vertices not connected to `origin` get a far-away coordinate.\n- Use with `emboss(path, …)`, or read it in any attribute-bag callback: `|p, n, {chart}|`.",
+        return_type: &[ArgType::Mesh],
+      },
+    ],
+  },
+  "bake_sdf" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "mask",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh to measure distance to (world space; closed for a sign)."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` atlas to bake over, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "max_dist",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Distances are clamped to ±`max_dist`, and texels provably farther than that are filled without a query — keep it near the widest falloff you'll derive from the result."
+          },
+          ArgDef {
+            name: "signed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(true)),
+            description: "Negative inside `mask`, as `sdf`; `false` for open masks."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Texels of edge padding around every UV island, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, surface points are taken in world space (the mesh's transform applied); default local space, matching `set_attr`/`warp` callbacks."
+          },
+        ],
+        description: "Signed distance to `mask` at every texel of the mesh's UV atlas, as a 1-channel texture clamped to ±`max_dist`.\n\n- The fast way to get a mask map: follow with `smoothstep` / `texture_invert` instead of calling `sdf` inside a `bake_texture` closure (which can't vectorize).\n- Exploits the field being 1-Lipschitz: blocks of texels far from the surface are filled without a query, blocks off the surface take the centre's sign, so cost scales with the contour length rather than the atlas area.\n- Distances upsample cleanly, so bake at half resolution and `resize` up.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "bake_triplanar" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Tiling texture to project (its own wrap mode applies; mips are built for minified footprints)."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` atlas to bake over, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "scale",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Texture repeats per world unit — the same meaning as a triplanar material's `uvScale`."
+          },
+          ArgDef {
+            name: "sharpness",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(4.)),
+            description: "Exponent on the per-axis normal weights; higher = narrower blend bands between the three projections."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Texels of edge padding around every UV island, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "transformed",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "When true, surface points are taken in world space (the mesh's transform applied); default local space, matching `set_attr`/`warp` callbacks."
+          },
+        ],
+        description: "Bakes a tiling texture onto the mesh's UV atlas with the same triplanar projection the runtime triplanar material uses (in local space unless `transformed` is set, where the material defaults to world space) — but once, into a unique texture the material then reads with plain mesh UVs (`useTriplanarMapping: false`).\n\n- Per texel: taps on the yz / zx / xy planes through the surface point at `pos * scale`, blended by the normal raised to `sharpness`; the mip level follows each face's texel footprint.\n- Patterns stay seamless and world-aligned on any unwrap, and the result composes with `texture_zip` / `composite` / masks like any other texture.\n- Author the tiling texture in texture mode; this is just how it meets the mesh.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "bake_decal" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "stamp",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "Texture to project: 1, 3, or 4 channels; a 4th channel is used as alpha."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` atlas to bake over, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "transform",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mat4, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Placement of the stamp in WORLD space: maps its centred unit square in the local XY plane (normal +Z) to the scene, e.g. `mat4() | trans(3, 0.3, -2) | rot(-pi / 2, 0, 0.3) | scale(4)` lays a 4-unit stamp on a floor at (3, -2).  Composes with gizmos.  `nil` = identity."
+          },
+          ArgDef {
+            name: "depth",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Only surfaces within this distance of the stamp plane along its normal receive it; `nil` = unlimited."
+          },
+          ArgDef {
+            name: "two_sided",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Bool),
+            default_value: DefaultValue::Optional(|| Value::Bool(false)),
+            description: "Also project onto surfaces facing away from the stamp normal."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Texels of edge padding around every UV island, as for `bake_texture`."
+          },
+        ],
+        description: "Projects a stamp texture onto the mesh's UV atlas through a world-space transform, returning a texture with an alpha channel (coverage × the stamp's own alpha) ready for `composite(decal, base)`.\n\n- Places an emblem, sign, or wear mark at a spot on a surface, independent of the base texture and of any mask fields.\n- Texels outside the stamp's footprint, beyond `depth`, or on back-facing surfaces stay transparent.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "bake_ao_texture" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "width",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "height",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Required,
+            description: ""
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "Mesh with a `uv` atlas to bake over, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "samples",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(32)),
+            description: "Rays per texel.  Estimator noise falls as ~0.34/samples^0.75 (RMS 0.025 at 32, 0.009 at 128); for a smooth map prefer fewer samples at a lower resolution plus `blur`/`resize`, since AO is low-frequency."
+          },
+          ArgDef {
+            name: "max_dist",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Ignore hits farther than this (world units) for local occlusion; `nil` = unlimited.  A finite value also lets texels with nothing above their tangent plane skip their rays entirely."
+          },
+          ArgDef {
+            name: "occluders",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Sequence, ArgType::Mesh, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Other meshes that block rays in addition to `mesh` itself (world space)."
+          },
+          ArgDef {
+            name: "bias",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Nil),
+            description: "Ray-origin offset along the normal to avoid self-hits; defaults to 1e-4 of the mesh's bounding diagonal."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Texels of edge padding around every UV island, as for `bake_texture`."
+          },
+          ArgDef {
+            name: "intensity",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Optional(|| Value::Float(1.)),
+            description: "Exponent on the result, `ao^intensity`: above 1 deepens partially occluded areas toward black while fully open surfaces stay exactly 1 (a flat bias or `lerp(ao, lo, 1.)` also darkens open areas); below 1 softens, 0 disables.  Equivalent to requiring `intensity` independent rays to all escape."
+          },
+        ],
+        description: "Ambient occlusion baked per TEXEL of the mesh's UV atlas, as a 1-channel texture (1 = open, 0 = buried): the same cosine-weighted hemisphere rays as `bake_ao`, cast from every texel's interpolated position and normal, so crevices narrower than a triangle resolve — which rasterizing a per-vertex `bake_ao` with `bake_attr` never can.\n\nSampling is adaptive and unbiased:\n- texels with nothing above their tangent plane cast no rays;\n- a strided probe of max(8, samples/4) rays runs everywhere else;\n- the remaining rays are spent only where the probe's 3×3 neighbourhood is neither all-open nor all-buried, and every ray counts toward the estimate;\n- per-texel rotations follow a low-discrepancy sequence, so the residual noise is high-frequency.\n\nFinish with `blur_atlas(2, mesh)` (seam-safe) and bake at a quarter of the albedo's resolution, then `resize` up — the field is smooth.",
+        return_type: &[ArgType::Texture],
+      },
+    ],
+  },
+  "blur_atlas" => FnDef {
+    module: "mesh",
+    examples: &[],
+    signatures: &[
+      FnSignature {
+        arg_defs: &[
+          ArgDef {
+            name: "radius",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric),
+            default_value: DefaultValue::Required,
+            description: "Blur radius in texels of the atlas; the Gaussian's width is this many texels of surface distance, so it stays consistent across islands of different texel density."
+          },
+          ArgDef {
+            name: "mesh",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Mesh),
+            default_value: DefaultValue::Required,
+            description: "The mesh whose `uv` atlas the texture was baked over (dims must match the texture)."
+          },
+          ArgDef {
+            name: "texture",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Texture),
+            default_value: DefaultValue::Required,
+            description: "A texture baked over that atlas (`bake_ao_texture`, `bake_sdf`, any `bake_*`)."
+          },
+          ArgDef {
+            name: "dilate",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Int),
+            default_value: DefaultValue::Optional(|| Value::Int(4)),
+            description: "Edge padding used when the texture was baked, as for `bake_texture`."
+          },
+        ],
+        description: "Blurs an atlas texture along the SURFACE instead of across the image.\n\n- Each texel averages its window weighted by a Gaussian of 3D distance (from the baked position buffer) and by normal agreement, so texels on the far side of a UV seam (adjacent in the atlas, distant on the mesh), across a crease, or in the background contribute nothing.\n- The denoiser for `bake_ao_texture` (`ao | blur_atlas(2, mesh)`), and a seam-safe smoothing for any baked map.\n- Cost is texels × (2·radius+1)².",
+        return_type: &[ArgType::Texture],
       },
     ],
   },

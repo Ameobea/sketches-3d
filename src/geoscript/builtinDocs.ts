@@ -22,7 +22,7 @@ const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls: string, text?: s
 };
 
 /** Inline `code` spans and **bold** runs; newlines become line breaks. */
-export const renderRichText = (text: string): DocumentFragment => {
+const renderInline = (text: string): DocumentFragment => {
   const frag = document.createDocumentFragment();
   let last = 0;
   for (const m of text.matchAll(/`([^`]+)`|\*\*([^*]+)\*\*|\n/g)) {
@@ -42,6 +42,93 @@ export const renderRichText = (text: string): DocumentFragment => {
     frag.append(text.slice(last));
   }
   return frag;
+};
+
+const LIST_ITEM = /^(\s*)(?:[-*]|\d+\.)\s+(.*)$/;
+
+/** Lines that all look like list items become nested `ul`/`ol` by indentation. */
+const renderList = (lines: string[]): HTMLElement => {
+  const root = el(/^\s*\d+\./.test(lines[0]) ? 'ol' : 'ul', 'md-list');
+  const stack: { indent: number; list: HTMLElement }[] = [{ indent: -1, list: root }];
+  for (const line of lines) {
+    const m = LIST_ITEM.exec(line)!;
+    const indent = m[1].length;
+    while (stack.length > 1 && indent <= stack[stack.length - 1].indent) {
+      stack.pop();
+    }
+    const top = stack[stack.length - 1];
+    if (indent > top.indent && top.list.lastElementChild && indent > 0 && top.indent >= 0) {
+      const sub = el(/^\s*\d+\./.test(line) ? 'ol' : 'ul', 'md-list');
+      top.list.lastElementChild.append(sub);
+      stack.push({ indent, list: sub });
+    } else if (stack.length === 1) {
+      top.indent = indent;
+    }
+    const li = el('li', '');
+    li.append(renderInline(m[2]));
+    stack[stack.length - 1].list.append(li);
+  }
+  return root;
+};
+
+/**
+ * Markdown subset for builtin docs: paragraphs split by blank lines, `- ` / `1. ` lists (nested by
+ * indentation), ``` fenced code, and the inline forms above. Text without any block syntax renders
+ * inline so it can sit after a dash on a param line.
+ */
+export const renderRichText = (text: string): DocumentFragment => {
+  const frag = document.createDocumentFragment();
+  if (!/\n\s*\n|^\s*(?:[-*]|\d+\.)\s|```/m.test(text)) {
+    frag.append(renderInline(text));
+    return frag;
+  }
+  const blocks = text.split(/\n[ \t]*\n/);
+  for (const block of blocks) {
+    const lines = block.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length === 0) {
+      continue;
+    }
+    if (lines[0].trim().startsWith('```')) {
+      const body = lines.slice(1, lines[lines.length - 1].trim().startsWith('```') ? -1 : undefined);
+      const pre = el('pre', 'md-pre');
+      pre.append(el('code', '', body.join('\n')));
+      frag.append(pre);
+      continue;
+    }
+    // A block may mix a lead line with the bullets under it: emit runs of each kind in order.
+    let run: string[] = [];
+    let runIsList = false;
+    const flush = () => {
+      if (run.length === 0) {
+        return;
+      }
+      if (runIsList) {
+        frag.append(renderList(run));
+      } else {
+        const p = el('p', 'md-p');
+        p.append(renderInline(run.join('\n')));
+        frag.append(p);
+      }
+      run = [];
+    };
+    for (const line of lines) {
+      const isItem = LIST_ITEM.test(line);
+      if (run.length > 0 && isItem !== runIsList) {
+        flush();
+      }
+      runIsList = isItem;
+      run.push(line);
+    }
+    flush();
+  }
+  return frag;
+};
+
+/** Svelte action: `use:richText={text}`. */
+export const richText = (node: HTMLElement, text: string) => {
+  const set = (t: string) => node.replaceChildren(renderRichText(t));
+  set(text);
+  return { update: set };
 };
 
 const renderParamHead = (p: ParamDocs, withDefault: boolean): Node[] => {

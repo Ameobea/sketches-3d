@@ -71,8 +71,10 @@ use crate::{
 use crate::{vertex_cb::VertexCb, ManifoldHandle, MeshHandle, Sequence, Sym, EMPTY_KWARGS};
 
 pub(crate) mod alpha_wrap_2d;
+pub(crate) mod bake;
 pub(crate) mod blit;
 pub(crate) mod catmull_rom;
+pub(crate) mod displace;
 pub(crate) mod fillet_path;
 #[cfg(target_arch = "wasm32")]
 pub(crate) mod flat_memo;
@@ -319,17 +321,11 @@ pub(crate) fn add_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
     // texture + num / num + texture
     13 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        lhs.into_texture().unwrap(),
-        move |x| x + s,
-      ))
+      texture::texture_map_unary_owned(lhs.into_texture().unwrap(), move |x| x + s)
     }
     14 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        rhs.into_texture().unwrap(),
-        move |x| x + s,
-      ))
+      texture::texture_map_unary_owned(rhs.into_texture().unwrap(), move |x| x + s)
     }
     // texture + vecN / vecN + texture
     15 | 17 | 19 => {
@@ -468,17 +464,11 @@ pub(crate) fn sub_impl(
     // texture - num / num - texture
     12 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        lhs.into_texture().unwrap(),
-        move |x| x - s,
-      ))
+      texture::texture_map_unary_owned(lhs.into_texture().unwrap(), move |x| x - s)
     }
     13 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        rhs.into_texture().unwrap(),
-        move |x| s - x,
-      ))
+      texture::texture_map_unary_owned(rhs.into_texture().unwrap(), move |x| s - x)
     }
     // texture - vecN / vecN - texture
     14 | 16 | 18 => {
@@ -589,12 +579,12 @@ pub(crate) fn mul_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
     // texture * num
     16 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_scale_owned(lhs.into_texture().unwrap(), s))
+      texture::texture_scale_owned(lhs.into_texture().unwrap(), s)
     }
     // num * texture
     17 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_scale_owned(rhs.into_texture().unwrap(), s))
+      texture::texture_scale_owned(rhs.into_texture().unwrap(), s)
     }
     // texture * texture
     18 => texture::texture_zip_owned(
@@ -684,17 +674,11 @@ pub(crate) fn div_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
     // texture / num / num / texture
     10 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        lhs.into_texture().unwrap(),
-        move |x| x / s,
-      ))
+      texture::texture_map_unary_owned(lhs.into_texture().unwrap(), move |x| x / s)
     }
     11 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        rhs.into_texture().unwrap(),
-        move |x| s / x,
-      ))
+      texture::texture_map_unary_owned(rhs.into_texture().unwrap(), move |x| s / x)
     }
     // texture / vecN / vecN / texture
     12 | 14 | 16 => {
@@ -731,17 +715,11 @@ pub(crate) fn mod_impl(def_ix: usize, lhs: Value, rhs: Value) -> Result<Value, E
     ),
     3 => {
       let s = rhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        lhs.into_texture().unwrap(),
-        move |x| x % s,
-      ))
+      texture::texture_map_unary_owned(lhs.into_texture().unwrap(), move |x| x % s)
     }
     4 => {
       let s = lhs.as_float().unwrap();
-      Ok(texture::texture_map_unary_owned(
-        rhs.into_texture().unwrap(),
-        move |x| s % x,
-      ))
+      texture::texture_map_unary_owned(rhs.into_texture().unwrap(), move |x| s % x)
     }
     _ => unimplemented!(),
   }
@@ -923,11 +901,16 @@ pub(crate) fn map_impl(
       })))
     }
     // map(fn, mesh), alias for warp
-    1 => warp_impl(
+    1 => displace::warp_impl(
       ctx,
-      0,
-      &[ArgRef::Positional(0), ArgRef::Positional(1)],
-      &[fn_value.clone(), seq.clone()],
+      &[
+        ArgRef::Positional(0),
+        ArgRef::Positional(1),
+        ArgRef::Positional(2),
+        ArgRef::Positional(2),
+        ArgRef::Positional(2),
+      ],
+      &[fn_value.clone(), seq.clone(), Value::Nil],
       EMPTY_KWARGS,
     ),
     // map(fn, texture): per-pixel map
@@ -974,64 +957,6 @@ fn fold_while_impl(
   }
 }
 
-pub(crate) fn warp_impl(
-  ctx: &EvalCtx,
-  def_ix: usize,
-  arg_refs: &[ArgRef],
-  args: &[Value],
-  kwargs: &FxHashMap<Sym, Value>,
-) -> Result<Value, ErrorStack> {
-  match def_ix {
-    0 => {
-      let warp_fn = arg_refs[0].resolve(args, kwargs).as_callable().unwrap();
-      let mesh = arg_refs[1].resolve(args, kwargs).as_mesh().unwrap();
-      let cb = VertexCb::new(ctx, "warp", warp_fn, &["pos", "normal"], &mesh.mesh)?;
-
-      let mut new_mesh = (*mesh.mesh).clone();
-      if cb.reads_fixed(1)
-        && new_mesh
-          .vertices
-          .keys()
-          .next()
-          .is_some_and(|k| new_mesh.displacement_normal(k).is_none())
-      {
-        new_mesh.compute_vertex_displacement_normals();
-      }
-
-      let vtx_keys: Vec<_> = new_mesh.vertices.keys().collect();
-      for vtx_key in vtx_keys {
-        let position = new_mesh.vertices[vtx_key].position;
-        let normal = new_mesh.displacement_normal(vtx_key).unwrap_or_default();
-        let warped_pos = cb
-          .invoke(
-            ctx,
-            &[Value::Vec3(position), Value::Vec3(normal)],
-            &mesh.mesh,
-            vtx_key,
-          )
-          .map_err(|err| err.wrap("error calling warp cb"))?;
-        let warped_pos = warped_pos.as_vec3().ok_or_else(|| {
-          ErrorStack::new(format!(
-            "warp callback must return Vec3, got: {warped_pos:?}",
-          ))
-        })?;
-        new_mesh.vertices[vtx_key].position = *warped_pos;
-      }
-      crate::mesh_ops::mesh_ops::refresh_stale_normals(&mesh.mesh, &mut new_mesh, ctx);
-
-      Ok(Value::Mesh(Rc::new(MeshHandle {
-        mesh: Rc::new(new_mesh),
-        transform: mesh.transform,
-        manifold_handle: Rc::new(ManifoldHandle::new_empty()),
-        aabb: RefCell::new(None),
-        bvh: RefCell::new(None),
-        material: mesh.material.clone(),
-      })))
-    }
-    _ => unimplemented!(),
-  }
-}
-
 pub(crate) fn neg_impl(def_ix: usize, val: Value) -> Result<Value, ErrorStack> {
   match def_ix {
     0 => {
@@ -1064,10 +989,7 @@ pub(crate) fn neg_impl(def_ix: usize, val: Value) -> Result<Value, ErrorStack> {
       let value = val.as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(-*value)))
     }
-    6 => Ok(texture::texture_map_unary_owned(
-      val.into_texture().unwrap(),
-      |x| -x,
-    )),
+    6 => texture::texture_map_unary_owned(val.into_texture().unwrap(), |x| -x),
     _ => unimplemented!(),
   }
 }
@@ -5575,9 +5497,7 @@ fn normalize_impl(
       let v = arg_refs[0].resolve(args, kwargs).as_vec2().unwrap();
       Ok(Value::Vec2(v.normalize()))
     }
-    2 => Ok(texture::texture_normalize_vec(
-      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
-    )),
+    2 => texture::texture_normalize_vec(arg_refs[0].resolve(args, kwargs).as_texture().unwrap()),
     3 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(v.normalize())))
@@ -5700,9 +5620,7 @@ fn len_impl(
       let m = arg_refs[0].resolve(args, kwargs).as_mesh().unwrap();
       Ok(Value::Int(m.mesh.vertices.len() as i64))
     }
-    5 => Ok(texture::texture_len(
-      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
-    )),
+    5 => texture::texture_len(arg_refs[0].resolve(args, kwargs).as_texture().unwrap()),
     6 => {
       let v = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
       Ok(Value::Float(v.magnitude()))
@@ -7038,16 +6956,10 @@ fn lerp_impl(
       let b = arg_refs[2].resolve(args, kwargs).as_vec4().unwrap();
       Ok(Value::Vec4(Rc::new(a.lerp(b, t))))
     }
-    4 => {
-      let t = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
-      let a = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      let b = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
-      texture::texture_zip(a, b, "lerp", move |x, y| x + (y - x) * t)
-    }
-    5 => texture::texture_lerp(
-      arg_refs[0].resolve(args, kwargs).as_texture().unwrap(),
-      arg_refs[1].resolve(args, kwargs).as_texture().unwrap(),
-      arg_refs[2].resolve(args, kwargs).as_texture().unwrap(),
+    4..=6 => texture::texture_lerp(
+      arg_refs[0].resolve(args, kwargs),
+      arg_refs[1].resolve(args, kwargs),
+      arg_refs[2].resolve(args, kwargs),
     ),
     _ => unimplemented!(),
   }
@@ -7071,10 +6983,10 @@ fn smoothstep_impl(
       let edge0 = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let edge1 = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let t = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| {
+      texture::texture_map_unary(t, |x| {
         let t = ((x - edge0) / (edge1 - edge0)).clamp(0., 1.);
         t * t * (3. - 2. * t)
-      }))
+      })
     }
     _ => unimplemented!(),
   }
@@ -7187,7 +7099,7 @@ fn round_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.round()))
+      texture::texture_map_unary(t, |x| x.round())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7222,7 +7134,7 @@ fn floor_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.floor()))
+      texture::texture_map_unary(t, |x| x.floor())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7257,7 +7169,7 @@ fn ceil_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.ceil()))
+      texture::texture_map_unary(t, |x| x.ceil())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7292,7 +7204,7 @@ fn fract_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.fract()))
+      texture::texture_map_unary(t, |x| x.fract())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7327,7 +7239,7 @@ fn trunc_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.trunc()))
+      texture::texture_map_unary(t, |x| x.trunc())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7369,9 +7281,7 @@ fn pow_impl(
     3 => {
       let base = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let exponent = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(base, |x| {
-        dmath::powf(x, exponent)
-      }))
+      texture::texture_map_unary(base, |x| dmath::powf(x, exponent))
     }
     4 => {
       let base = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7410,7 +7320,7 @@ fn exp_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::exp))
+      texture::texture_map_unary(t, dmath::exp)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7478,7 +7388,7 @@ fn log2_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::log2))
+      texture::texture_map_unary(t, dmath::log2)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7546,7 +7456,7 @@ fn tan_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::tan))
+      texture::texture_map_unary(t, dmath::tan)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7584,7 +7494,7 @@ fn cos_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::cos))
+      texture::texture_map_unary(t, dmath::cos)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7622,7 +7532,7 @@ fn sin_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::sin))
+      texture::texture_map_unary(t, dmath::sin)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7750,7 +7660,7 @@ fn acos_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::acos))
+      texture::texture_map_unary(t, dmath::acos)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7788,7 +7698,7 @@ fn asin_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::asin))
+      texture::texture_map_unary(t, dmath::asin)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7826,7 +7736,7 @@ fn atan_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::atan))
+      texture::texture_map_unary(t, dmath::atan)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -7861,12 +7771,12 @@ fn atan2_impl(
     3 => {
       let y = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(y, move |v| dmath::atan2(v, x)))
+      texture::texture_map_unary(y, move |v| dmath::atan2(v, x))
     }
     4 => {
       let y = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let x = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(x, move |v| dmath::atan2(y, v)))
+      texture::texture_map_unary(x, move |v| dmath::atan2(y, v))
     }
     _ => unimplemented!(),
   }
@@ -9855,7 +9765,7 @@ fn abs_impl(
     Value::Vec2(v) => Value::Vec2(v.abs()),
     Value::Vec3(v) => Value::Vec3(v.abs()),
     Value::Vec4(v) => Value::Vec4(Rc::new(v.abs())),
-    Value::Texture(t) => texture::texture_map_unary(t, |x| x.abs()),
+    Value::Texture(t) => texture::texture_map_unary(t, |x| x.abs())?,
     other => {
       return Err(ErrorStack::new(format!(
         "`abs` expects a number, vector, or texture; found: {:?}",
@@ -9921,7 +9831,7 @@ fn sqrt_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, |x| x.sqrt()))
+      texture::texture_map_unary(t, |x| x.sqrt())
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -9959,7 +9869,7 @@ fn sigmoid_impl(
     }
     3 => {
       let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(t, dmath::sigmoid))
+      texture::texture_map_unary(t, dmath::sigmoid)
     }
     4 => {
       let value = arg_refs[0].resolve(args, kwargs).as_vec4().unwrap();
@@ -10014,13 +9924,13 @@ fn max_impl(
       // texture, num
       let a = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let b = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(a, |x| x.max(b)))
+      texture::texture_map_unary(a, |x| x.max(b))
     }
     6 => {
       // num, texture
       let a = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let b = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(b, |x| x.max(a)))
+      texture::texture_map_unary(b, |x| x.max(a))
     }
     7 => {
       // vec4, vec4
@@ -10077,13 +9987,13 @@ fn min_impl(
       // texture, num
       let a = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
       let b = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
-      Ok(texture::texture_map_unary(a, |x| x.min(b)))
+      texture::texture_map_unary(a, |x| x.min(b))
     }
     6 => {
       // num, texture
       let a = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let b = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(b, |x| x.min(a)))
+      texture::texture_map_unary(b, |x| x.min(a))
     }
     7 => {
       // vec4, vec4
@@ -10142,7 +10052,7 @@ fn clamp_impl(
       let min = arg_refs[0].resolve(args, kwargs).as_float().unwrap();
       let max = arg_refs[1].resolve(args, kwargs).as_float().unwrap();
       let value = arg_refs[2].resolve(args, kwargs).as_texture().unwrap();
-      Ok(texture::texture_map_unary(value, |x| clampf(x, min, max)))
+      texture::texture_map_unary(value, |x| clampf(x, min, max))
     }
     5 => {
       // float, float, vec4
@@ -10780,7 +10690,7 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "texture_invert" => builtin_fn!(texture_invert, |_def_ix, arg_refs: &[ArgRef], args: &[Value], kwargs, _ctx| {
     let t = arg_refs[0].resolve(args, kwargs).as_texture().unwrap();
-    Ok(texture::texture_map_unary(t, |x| 1. - x))
+    texture::texture_map_unary(t, |x| 1. - x)
   }),
   "texture_normalize" => builtin_fn!(texture_normalize, |_def_ix, arg_refs, args, kwargs, ctx| {
     img_ops::texture_normalize_impl(ctx, arg_refs, args, kwargs)
@@ -10933,8 +10843,17 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "grad" => builtin_fn!(grad, |def_ix, arg_refs, args, kwargs, ctx| {
     grad_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "warp" => builtin_fn!(warp, |def_ix, arg_refs, args, kwargs, ctx| {
-    warp_impl(ctx, def_ix, arg_refs, args, kwargs)
+  "warp" => builtin_fn!(warp, |_def_ix, arg_refs, args, kwargs, ctx| {
+    displace::warp_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "displace" => builtin_fn!(displace, |_def_ix, arg_refs, args, kwargs, ctx| {
+    displace::displace_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "emboss" => builtin_fn!(emboss, |_def_ix, arg_refs, args, kwargs, ctx| {
+    displace::emboss_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "surface_chart" => builtin_fn!(surface_chart, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    displace::surface_chart_impl(arg_refs, args, kwargs)
   }),
   "set_attr" => builtin_fn!(set_attr, |_def_ix, arg_refs, args, kwargs, ctx| {
     vertex_attrs::set_attr_impl(ctx, arg_refs, args, kwargs)
@@ -10959,6 +10878,33 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   }),
   "bake_ao" => builtin_fn!(bake_ao, |_def_ix, arg_refs, args, kwargs, ctx| {
     vertex_attrs::bake_ao_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "sdf" => builtin_fn!(sdf, |_def_ix, arg_refs, args, kwargs, _ctx| {
+    vertex_attrs::sdf_impl(arg_refs, args, kwargs)
+  }),
+  "split_by_field" => builtin_fn!(split_by_field, |_def_ix, arg_refs, args, kwargs, ctx| {
+    vertex_attrs::split_by_field_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_texture" => builtin_fn!(bake_texture, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_texture_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_attr" => builtin_fn!(bake_attr, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_attr_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_sdf" => builtin_fn!(bake_sdf, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_sdf_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_triplanar" => builtin_fn!(bake_triplanar, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_triplanar_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_decal" => builtin_fn!(bake_decal, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_decal_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "bake_ao_texture" => builtin_fn!(bake_ao_texture, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::bake_ao_texture_impl(ctx, arg_refs, args, kwargs)
+  }),
+  "blur_atlas" => builtin_fn!(blur_atlas, |_def_ix, arg_refs, args, kwargs, ctx| {
+    bake::blur_atlas_impl(ctx, arg_refs, args, kwargs)
   }),
   "tessellate" => builtin_fn!(tessellate, |def_ix, arg_refs, args, kwargs, _ctx| {
     tessellate_impl(def_ix, arg_refs, args, kwargs)

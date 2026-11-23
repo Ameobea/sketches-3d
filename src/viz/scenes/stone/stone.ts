@@ -1,5 +1,4 @@
 import { goto } from '$app/navigation';
-import { EffectPass, KernelSize, SelectiveBloomEffect } from 'postprocessing';
 import * as THREE from 'three';
 
 import { logDreamEvent } from 'src/analytics';
@@ -18,6 +17,7 @@ import { smoothstepScale } from 'src/viz/util/util';
 import { getTerrainGenWorker } from 'src/viz/workerPool';
 import type { SceneConfig, SceneLocations } from '..';
 import { getRuneGenerator } from './runeGen/runeGen';
+import BeamVertexShader from './shaders/beam.vert?raw';
 import MonolithLightBeamColorShader from './shaders/monolithLightBeam/color.frag?raw';
 import TotemBeamColorShader from './shaders/totemBeam/color.frag?raw';
 import { MetricsAPI } from 'src/api/client';
@@ -346,8 +346,16 @@ export const processLoadedScene = async (
   monolithDoor.material = monolithMaterial;
 
   // monolith door lights
-  const doorLightOffMat = buildCustomShader({ color: new THREE.Color(0xee1111) });
-  const doorLightOnMat = buildCustomShader({ color: new THREE.Color(0x11ee11) });
+  const doorLightOffMat = buildCustomShader(
+    { color: new THREE.Color(0xee1111) },
+    {},
+    { disableToneMapping: true }
+  );
+  const doorLightOnMat = buildCustomShader(
+    { color: new THREE.Color(0x11ee11) },
+    {},
+    { disableToneMapping: true }
+  );
   const doorLights = ([1, 2, 3, 4] as const).map(i => {
     const light = loadedWorld.getObjectByName(`monolith_door_light_${i}`) as THREE.Mesh;
     light.material = doorLightOffMat;
@@ -357,9 +365,11 @@ export const processLoadedScene = async (
   // monolith light beams
   const monolithLightBeamMat = buildCustomBasicShader(
     { color: new THREE.Color(0x11ee11) },
-    { colorShader: MonolithLightBeamColorShader }
+    { colorShader: MonolithLightBeamColorShader, vertexShader: BeamVertexShader }
   );
   monolithLightBeamMat.transparent = true;
+  monolithLightBeamMat.depthWrite = false;
+  monolithLightBeamMat.userData.emissiveBypass = true;
   const monolithLightBeams = [1, 2, 3, 4, 5].map(i => {
     const beam = loadedWorld.getObjectByName(`monolith_light_beam_${i}`) as THREE.Mesh;
     beam.material = monolithLightBeamMat;
@@ -403,9 +413,12 @@ export const processLoadedScene = async (
       uvTransform: new THREE.Matrix3().makeScale(0.5, 0.5),
       ambientLightScale: 4,
       // ambientDistanceAmp: { ampFactor: -0.8, exponent: 1, falloffStartDistance: 50, falloffEndDistance: 150 },
+      emissive: 0xd8888a,
+      emissiveMap: totemAlbedo,
+      emissiveIntensity: 0.6,
     },
     {},
-    { useTriplanarMapping: true }
+    { useTriplanarMapping: true, inlineEmissiveBypass: true }
   );
 
   const addTotemLight = (pos: [number, number, number]) => {
@@ -446,9 +459,11 @@ export const processLoadedScene = async (
   const TotemBeamHeight = 500;
   const totemBeamMat = buildCustomBasicShader(
     { color: new THREE.Color(0xd1041b) },
-    { colorShader: TotemBeamColorShader }
+    { colorShader: TotemBeamColorShader, vertexShader: BeamVertexShader }
   );
   totemBeamMat.transparent = true;
+  totemBeamMat.depthWrite = false;
+  totemBeamMat.userData.emissiveBypass = true;
   const totemBeams = totems.map(totem => {
     const totemBeam = (monolithLightBeams[0] as THREE.Mesh).clone();
     totemBeam.material = totemBeamMat;
@@ -490,9 +505,12 @@ export const processLoadedScene = async (
       iridescence: 0.3,
       color: new THREE.Color(0xee1111),
       ambientLightScale: 30,
+      emissive: 0xee1111,
+      emissiveMap: gemTexture,
+      emissiveIntensity: 0.6,
     },
     {},
-    {}
+    { inlineEmissiveBypass: true }
   );
   const exitPortal = new THREE.Mesh(exitPortalGeom, exitPortalMat);
   exitPortal.visible = false;
@@ -649,22 +667,10 @@ export const processLoadedScene = async (
       });
       composer.addPass(volumetricPass);
       viz.registerBeforeRenderCb(curTimeSeconds => volumetricPass.setCurTimeSeconds(curTimeSeconds));
-
-      const selectiveBloomEffect = new SelectiveBloomEffect(viz.scene, viz.camera, {
-        intensity: 4,
-        // blendFunction: BlendFunction.LINEAR_DODGE,
-        luminanceThreshold: 0,
-        kernelSize: KernelSize.LARGE,
-        radius: 0.4,
-        luminanceSmoothing: 0,
-        mipmapBlur: true,
-      } as any);
-      selectiveBloomEffect.inverted = false;
-      selectiveBloomEffect.ignoreBackground = true;
-      selectiveBloomEffect.selection.set([...monolithLightBeams, ...totems, ...doorLights, exitPortal]);
-      composer.addPass(new EffectPass(viz.camera, selectiveBloomEffect));
     },
     toneMapping: { mode: 'aces', exposure: 0.5 },
+    emissiveBypass: true,
+    emissiveBloom: { intensity: 2, radius: 0.5 },
   });
 
   return {

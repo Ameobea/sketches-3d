@@ -922,7 +922,7 @@ impl DedupGrid {
 /// each other.  Vertices sitting on a crease carry `g ≈ ±ε` bisection residue, so a plain
 /// `ga·gb < 0` test fires on edges *along* the crease and bisection then inserts junk points
 /// (root-finding on noise).  The relative floor rejects those while keeping genuine crossings.
-fn clear_straddle(ga: f32, gb: f32) -> bool {
+pub(crate) fn clear_straddle(ga: f32, gb: f32) -> bool {
   ga * gb < 0. && ga.abs().min(gb.abs()) > 1e-3 * ga.abs().max(gb.abs())
 }
 

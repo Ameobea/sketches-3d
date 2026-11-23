@@ -32,7 +32,7 @@ const LOBE_Q_MAX: f32 = 40.;
 /// Polynomial replacements for the libm calls the spectrum builder makes per bin. Errors
 /// are ~1e-5, which lands far below the fingerprint's own resolution; libm's `expf`/`logf`
 /// were a third of the builtin's wasm runtime.
-mod fm {
+pub(crate) mod fm {
   /// `2^x`; ~3e-6 relative. `x` must stay inside ±120 so the exponent injection is valid.
   #[inline(always)]
   pub fn exp2(x: f32) -> f32 {
@@ -751,7 +751,7 @@ pub(crate) fn spectral_noise_impl(
     })
     .collect();
   let mut z = vec![[0f32; 2]; half];
-  let mut pixels = vec![0f32; w * h];
+  let mut pixels = crate::tex_mem::try_vec(w * h, 0f32)?;
   for (y, out) in pixels.chunks_exact_mut(w).enumerate() {
     c2r_row(
       &rows[y * hw..(y + 1) * hw],
@@ -770,7 +770,7 @@ pub(crate) fn spectral_noise_impl(
   }
 
   Ok(Value::Texture(Rc::new(TextureHandle {
-    storage: crate::TexStorage::planes(vec![Rc::new(pixels)]),
+    storage: crate::TexStorage::from_plane_vecs(vec![pixels]),
     width: w,
     height: h,
     channels: 1,

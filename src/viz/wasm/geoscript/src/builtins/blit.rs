@@ -11,7 +11,8 @@ use std::rc::Rc;
 use fxhash::FxHashMap;
 
 use crate::{
-  ArgRef, ErrorStack, EvalCtx, MipLevel, Sym, TextureHandle, TextureWrap, Value, EMPTY_KWARGS,
+  ArgRef, ErrorStack, EvalCtx, MipLevel, Plane, Sym, TextureHandle, TextureWrap, Value,
+  EMPTY_KWARGS,
 };
 
 #[derive(Clone, Copy, PartialEq)]
@@ -142,7 +143,7 @@ fn channel_layout(stamp_ch: usize, base_ch: usize) -> Result<(usize, bool), Erro
 
 /// Mip levels 1.. via successive box-halving. 4-channel textures are averaged
 /// premultiplied so RGB doesn't bleed through transparent texels.
-fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
+pub(crate) fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
   let src_id = tex.storage_id();
   if let Some(chain) = tex.mips.0.borrow().as_ref() {
     if chain.src == src_id {
@@ -193,6 +194,7 @@ fn get_or_build_mips(tex: &TextureHandle) -> Rc<Vec<MipLevel>> {
       }
     }
     levels.push(MipLevel {
+      _charge: crate::tex_mem::Charge::new("mip level", ch * nw * nh * size_of::<f32>()),
       planes,
       width: nw,
       height: nh,
@@ -397,7 +399,7 @@ fn blit_aligned(
   bh: usize,
   bch: usize,
   bwrap: TextureWrap,
-  stamp_planes: &[Rc<Vec<f32>>],
+  stamp_planes: &[Rc<Plane>],
   sw: usize,
   sh: usize,
   sch: usize,
@@ -696,7 +698,7 @@ pub(crate) fn blit_impl(
   let base = arg_refs[1].resolve(args, kwargs).as_texture().unwrap();
   let (blend, filter) = resolve_blend_and_filter(arg_refs, args, kwargs, 2)?;
 
-  let mut planes: Vec<Vec<f32>> = base.as_planes().iter().map(|p| p.to_vec()).collect();
+  let mut planes = base.try_copy_planes()?;
   blit_into(
     &mut planes,
     base.width,
@@ -732,7 +734,7 @@ pub(crate) fn composite_impl(
     )));
   }
   let (val_ch, has_alpha) = channel_layout(top.channels, bottom.channels)?;
-  let mut planes: Vec<Vec<f32>> = bottom.as_planes().iter().map(|p| p.to_vec()).collect();
+  let mut planes = bottom.try_copy_planes()?;
   blit_aligned(
     &mut planes,
     bottom.width,
@@ -773,7 +775,7 @@ pub(crate) fn scatter_impl(
     .unwrap();
   let (blend, filter) = resolve_blend_and_filter(arg_refs, args, kwargs, blend_ix)?;
   let (bw, bh, bch, bwrap) = (base.width, base.height, base.channels, base.wrap);
-  let mut planes: Vec<Vec<f32>> = base.as_planes().iter().map(|p| p.to_vec()).collect();
+  let mut planes = base.try_copy_planes()?;
 
   let mut blit_stamp = |val: &Value, ix: usize| -> Result<(), ErrorStack> {
     let stamp = val.as_texture().ok_or_else(|| {
@@ -1113,7 +1115,7 @@ mod cache_and_alpha_tests {
     assert!(Rc::ptr_eq(&a, &get_or_build_mips(&placed)));
 
     let repixeled = TextureHandle {
-      storage: crate::TexStorage::planes(vec![Rc::new(vec![0.5; 8 * 8])]),
+      storage: crate::TexStorage::from_plane_vecs(vec![vec![0.5; 8 * 8]]),
       ..(*t).clone()
     };
     assert!(!Rc::ptr_eq(&a, &get_or_build_mips(&repixeled)));

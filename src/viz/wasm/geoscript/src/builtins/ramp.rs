@@ -322,7 +322,9 @@ impl DynamicCallable for RampCallable {
       let out_ch = if self.spec.scalar { 1 } else { 3 };
       let src = &tex.as_planes()[0];
       let n = src.len();
-      let mut planes: Vec<Vec<f32>> = (0..out_ch).map(|_| Vec::with_capacity(n)).collect();
+      let mut planes: Vec<Vec<f32>> = (0..out_ch)
+        .map(|_| crate::tex_mem::try_reserve(n))
+        .collect::<Result<_, _>>()?;
       self.fill_planes(src, &mut planes);
       return Ok(Value::Texture(std::rc::Rc::new(crate::TextureHandle {
         storage: crate::TexStorage::from_plane_vecs(planes),
@@ -683,7 +685,7 @@ pub fn remap_impl(
   };
   match &x_val {
     Value::Vec3(v) => Ok(Value::Vec3(v.map(map1))),
-    Value::Texture(t) => Ok(super::texture::texture_map_unary(t, map1)),
+    Value::Texture(t) => super::texture::texture_map_unary(t, map1),
     v => Ok(Value::Float(map1(v.as_float().ok_or_else(|| {
       ErrorStack::new(format!("remap: `x` must be a number or vec3, got {v:?}"))
     })?))),

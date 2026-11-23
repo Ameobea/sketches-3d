@@ -8,7 +8,7 @@ use mesh::{
   LinkedMesh,
 };
 
-use crate::{Callable, TexKind, Value};
+use crate::{Callable, Plane, TexKind, Value};
 
 /// The distinct heap allocations a value keeps alive, as `(address, bytes)` pairs — a set
 /// rather than a total because texture ops freely share plane buffers and cached values wrap
@@ -63,7 +63,7 @@ impl Walk {
           TexKind::Planes(planes) => planes,
           TexKind::View(view) => &view.planes,
         };
-        let spine = size_of::<crate::TextureHandle>() + planes.len() * size_of::<Rc<Vec<f32>>>();
+        let spine = size_of::<crate::TextureHandle>() + planes.len() * size_of::<Rc<Plane>>();
         if !self.charge(Rc::as_ptr(tex) as usize, spine) {
           return;
         }

@@ -2753,6 +2753,7 @@ fn optimize_top_level_statement<'a>(
   stmt: &mut TopLevelStatement,
   allow_rng_const_eval: bool,
 ) -> Result<(), ErrorStack> {
+  ctx.mark_tex_origin(stmt);
   match stmt {
     TopLevelStatement::Statement(inner) => {
       optimize_statement(ctx, local_scope, inner, allow_rng_const_eval)

@@ -2,8 +2,10 @@ use std::rc::Rc;
 
 use fxhash::FxHashMap;
 use mesh::{
-  linked_mesh::{mesh_flags, Arity, Channel, FlipXform, Interp, SpatialXform, Vec3, VertexKey},
-  slotmap_utils::vkey,
+  linked_mesh::{
+    mesh_flags, Arity, Channel, EdgeKey, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey,
+  },
+  slotmap_utils::{fkey_ix, vkey},
   LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::Matrix3;
@@ -396,6 +398,34 @@ pub fn manifold_output_to_mesh(
     }
     mesh.vertex_channels.insert(spec.name.clone(), ch);
   }
+  // An edge between faces of different operands lies on an intersection curve: a real crease
+  // however shallowly the surfaces meet. Left to the auto-smooth threshold, the shallow stretches
+  // of such a curve blend, and the borrowed normals smear along whatever long faces touch it.
+  const MIN_CUT_CREASE: f32 = 0.05;
+  let mut orig_of_face = vec![u32::MAX; indices.len() / 3];
+  for run in &out.runs {
+    orig_of_face[run.start / 3..run.end / 3].fill(run.original_id);
+  }
+  let face_orig = |f: FaceKey| orig_of_face[fkey_ix(&f) as usize - 1];
+  let cuts: Vec<EdgeKey> = mesh
+    .edges
+    .iter()
+    .filter(|(_, e)| {
+      let [f0, f1] = e.faces[..] else {
+        return false;
+      };
+      face_orig(f0) != face_orig(f1)
+        && mesh.faces[f0]
+          .normal(&mesh.vertices)
+          .angle(&mesh.faces[f1].normal(&mesh.vertices))
+          > MIN_CUT_CREASE
+    })
+    .map(|(k, _)| k)
+    .collect();
+  for e in cuts {
+    mesh.edges[e].sharp = true;
+  }
+
   if kept_seam {
     mesh.flags |= mesh_flags::NO_WELD;
   }
@@ -403,7 +433,7 @@ pub fn manifold_output_to_mesh(
 }
 
 #[cfg(target_arch = "wasm32")]
-fn apply_mesh_boolean_op(
+pub(crate) fn apply_mesh_boolean_op(
   a: &MeshHandle,
   b: &MeshHandle,
   op: MeshBooleanOp,

@@ -412,7 +412,40 @@ pub fn split_mesh_by_plane(
   plane_normal: Vec3,
   plane_offset: f32,
 ) -> Result<(MeshHandle, MeshHandle), ErrorStack> {
+  use mesh::linked_mesh::{mesh_flags, Arity, Channel, FlipXform, Interp, SpatialXform};
+
   use crate::ManifoldHandle;
+
+  // Authored shading normals ride through the split as a direction lane; Manifold interpolates
+  // them onto the vertices it creates along the cut.
+  const NORMALS: &str = "__normal";
+  let authored =
+    !mesh.mesh.vertices.is_empty() && mesh.mesh.shading_normals.len() == mesh.mesh.vertices.len();
+  let carrier;
+  let mesh = if authored {
+    let mut m = (*mesh.mesh).clone();
+    let mut ch = Channel::new(
+      Arity::Vec3,
+      Interp::LerpNormalize,
+      FlipXform::Identity,
+      SpatialXform::Direction,
+    );
+    for (k, n) in m.shading_normals.iter() {
+      ch.set(k, [n.x, n.y, n.z, 0.]);
+    }
+    m.vertex_channels.insert(NORMALS.to_owned(), ch);
+    carrier = MeshHandle {
+      mesh: Rc::new(m),
+      transform: mesh.transform,
+      manifold_handle: Rc::new(ManifoldHandle::new_empty()),
+      aabb: Default::default(),
+      bvh: Default::default(),
+      material: mesh.material.clone(),
+    };
+    &carrier
+  } else {
+    mesh
+  };
 
   let handle = mesh.get_or_create_handle()?;
   let layout = mesh.manifold_handle.layout();
@@ -428,12 +461,39 @@ pub fn split_mesh_by_plane(
   let half = |ix: usize| {
     let encoded = get_split_output(ix);
     let out = crate::mesh_ops::mesh_boolean::decode_manifold_output(&encoded);
+    // With normals to keep, the cap stays unwelded from the surface it cuts: its vertices need
+    // the cap's own.
+    let mut m = crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(&out, &layout, authored);
+    let mut manifold_handle = ManifoldHandle::with_layout(out.handle, layout.clone());
+    if let Some(ch) = m.vertex_channels.remove(NORMALS) {
+      // that handle's layout carries the normals lane, which this mesh no longer has
+      manifold_handle = ManifoldHandle::new_empty();
+      let mut cap: Vec<_> = Vec::new();
+      for k in m.vertices.keys() {
+        let [x, y, z, _] = ch.get(k).unwrap_or_default();
+        match Vec3::new(x, y, z).try_normalize(0.5) {
+          Some(n) => {
+            m.shading_normals.insert(k, n);
+          }
+          None => cap.push(k),
+        }
+      }
+      for k in cap {
+        let n: Vec3 = m.vertices[k]
+          .edges
+          .iter()
+          .flat_map(|&e| m.edges[e].faces.iter())
+          .map(|&f| m.faces[f].normal(&m.vertices))
+          .sum();
+        m.shading_normals
+          .insert(k, n.try_normalize(1e-12).unwrap_or_else(Vec3::y));
+      }
+      m.flags |= mesh_flags::NO_WELD;
+    }
     MeshHandle {
-      mesh: Rc::new(crate::mesh_ops::mesh_boolean::manifold_output_to_mesh(
-        &out, &layout, false,
-      )),
+      mesh: Rc::new(m),
       transform: Mat4::identity(),
-      manifold_handle: Rc::new(ManifoldHandle::with_layout(out.handle, layout.clone())),
+      manifold_handle: Rc::new(manifold_handle),
       aabb: Default::default(),
       bvh: Default::default(),
       material: mesh.material.clone(),

@@ -138,7 +138,9 @@ pub(crate) fn load_image_impl(
     let u = if srgb { srgb_channel_to_linear(u) } else { u };
     u * scale + offset
   };
-  let mut planes: Vec<Vec<f32>> = (0..channels).map(|_| Vec::with_capacity(w * h)).collect();
+  let mut planes: Vec<Vec<f32>> = (0..channels)
+    .map(|_| crate::tex_mem::try_reserve(w * h))
+    .collect::<Result<_, _>>()?;
   for px in rgba.chunks_exact(4) {
     for c in 0..channels.min(3) {
       planes[c].push(conv(px[c]));

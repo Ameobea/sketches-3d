@@ -26,7 +26,7 @@ use crate::{
   get_args, noise_batch,
   seq::EagerSeq,
   seq_as_eager, ArgRef, ArgType, Callable, Closure, ErrorStack, EvalCtx, FrameEnv, GetArgsOutput,
-  SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
+  Plane, SourceLoc, Sym, TexStorage, TextureHandle, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
 const MIN_TEXELS: usize = 64;
@@ -63,7 +63,7 @@ pub struct VectorizeState {
   plan_order: RefCell<VecDeque<PlanKey>>,
   /// Shared per-(w,h) uv planes: `u = (x+0.5)/w`, `v = (y+0.5)/h` — every generator and
   /// uv-referencing map body at one size reads the same two read-only planes.
-  uv_planes: RefCell<VecDeque<((u32, u32), [Rc<Vec<f32>>; 2])>>,
+  pub(crate) uv_planes: Rc<UvPlanes>,
   pub no_vectorize: Cell<bool>,
   pub verify: Cell<bool>,
   /// Render each vectorized body's plan listing with per-step timings into its report.
@@ -101,6 +101,16 @@ fn now_ms() -> f64 {
   }
 }
 
+pub(crate) type UvPlanes = RefCell<VecDeque<((u32, u32), [Rc<Plane>; 2])>>;
+
+impl crate::tex_mem::Evict for UvPlanes {
+  fn evict_one(&self) -> bool {
+    self
+      .try_borrow_mut()
+      .is_ok_and(|mut c| c.pop_front().is_some())
+  }
+}
+
 impl VectorizeState {
   /// Per-run teardown for a long-lived host ctx. `plans` deliberately survives: closures
   /// replayed from the module-exports cache keep their `ResolvedBody` Rc, so their plans hit
@@ -121,7 +131,7 @@ impl Default for VectorizeState {
     VectorizeState {
       plans: RefCell::new(FxHashMap::default()),
       plan_order: RefCell::new(VecDeque::new()),
-      uv_planes: RefCell::new(VecDeque::new()),
+      uv_planes: Default::default(),
       no_vectorize: Cell::new(env_on("GEOSCRIPT_NO_VECTORIZE")),
       verify: Cell::new(env_on("GEOSCRIPT_VECTORIZE_VERIFY")),
       profile: Cell::new(false),
@@ -680,7 +690,7 @@ const MAX_CACHED_UV_SIZES: usize = 4;
 /// newest entry is always kept even when it alone blows the budget.
 const UV_PLANE_BYTE_BUDGET: usize = 256 << 20;
 
-fn uv_planes_for(ctx: &EvalCtx, w: usize, h: usize) -> [Rc<Vec<f32>>; 2] {
+fn uv_planes_for(ctx: &EvalCtx, w: usize, h: usize) -> [Rc<Plane>; 2] {
   let key = (w as u32, h as u32);
   if let Some((_, p)) = ctx
     .tex_vectorize
@@ -700,9 +710,9 @@ fn uv_planes_for(ctx: &EvalCtx, w: usize, h: usize) -> [Rc<Vec<f32>>; 2] {
       v.push(vy);
     }
   }
-  let planes = [Rc::new(u), Rc::new(v)];
+  let planes = [Rc::new(Plane::adopt(u)), Rc::new(Plane::adopt(v))];
   let mut cache = ctx.tex_vectorize.uv_planes.borrow_mut();
-  let bytes = |c: &VecDeque<((u32, u32), [Rc<Vec<f32>>; 2])>| {
+  let bytes = |c: &VecDeque<((u32, u32), [Rc<Plane>; 2])>| {
     c.iter().map(|(_, p)| p[0].len() * 8).sum::<usize>()
   };
   while !cache.is_empty()
@@ -1835,6 +1845,7 @@ impl<'a> Compiler<'a> {
       "sigmoid",
       "abs",
       "pow",
+      "mod",
       "atan2",
       "min",
       "max",
@@ -1979,6 +1990,15 @@ impl<'a> Compiler<'a> {
           chans.push(self.push_op(OpKind::Pow, b, e, Src::Const(0.)));
         }
         Ok(VV::num(chans))
+      }
+      ("mod", 1) => {
+        let (a, b) = (arg(self, 0), arg(self, 1));
+        let (a, b) = (self.chan(&a, 0), self.chan(&b, 0));
+        Ok(VV::num(
+          [self.push_op(OpKind::Mod, a, b, Src::Const(0.))]
+            .into_iter()
+            .collect(),
+        ))
       }
       ("atan2", 0) => {
         let y = arg(self, 0);
@@ -3785,8 +3805,8 @@ struct Exec<'a> {
   regs: Vec<Option<Vec<f32>>>,
   pool: Vec<Vec<f32>>,
   uni: &'a UniRun,
-  input: &'a [Rc<Vec<f32>>],
-  uv: Option<&'a [Rc<Vec<f32>>; 2]>,
+  input: &'a [Rc<Plane>],
+  uv: Option<&'a [Rc<Plane>; 2]>,
 }
 
 impl<'a> Exec<'a> {
@@ -3845,7 +3865,7 @@ fn write_map(buf: &mut Vec<f32>, a: &[f32], f: impl Fn(f32) -> f32) {
   if buf.len() == a.len() {
     kern::map_out(buf, a, f);
   } else {
-    *buf = kern::map_new(a, f);
+    *buf = a.iter().map(|&x| f(x)).collect();
   }
 }
 
@@ -3853,7 +3873,7 @@ fn write_zip(buf: &mut Vec<f32>, a: &[f32], b: &[f32], f: impl Fn(f32, f32) -> f
   if buf.len() == a.len() {
     kern::zip_out(buf, a, b, f);
   } else {
-    *buf = kern::zip_new(a, b, f);
+    *buf = a.iter().zip(b).map(|(&x, &y)| f(x, y)).collect();
   }
 }
 
@@ -3867,7 +3887,7 @@ fn write_zip3(
   if buf.len() == a.len() {
     kern::zip3_out(buf, a, b, c, f);
   } else {
-    *buf = kern::zip3_new(a, b, c, f);
+    *buf = (0..a.len()).map(|i| f(a[i], b[i], c[i])).collect();
   }
 }
 
@@ -3955,11 +3975,11 @@ fn exec(
   ctx: &EvalCtx,
   plan: &Plan,
   uni: &UniRun,
-  input: &[Rc<Vec<f32>>],
-  uv: Option<&[Rc<Vec<f32>>; 2]>,
+  input: &[Rc<Plane>],
+  uv: Option<&[Rc<Plane>; 2]>,
   n: usize,
   mut step_ms: Option<&mut Vec<f64>>,
-) -> Result<Vec<Rc<Vec<f32>>>, ErrorStack> {
+) -> Result<Vec<Rc<Plane>>, ErrorStack> {
   let mut ex = Exec {
     regs: vec![None; plan.n_regs as usize],
     pool: Vec::new(),
@@ -4206,22 +4226,22 @@ fn exec(
     PlanOut::Chans(chans) => chans.clone(),
     PlanOut::Uniform(_) => unreachable!("uniform output handled by the caller"),
   };
-  let mut taken: FxHashMap<u16, Rc<Vec<f32>>> = FxHashMap::default();
-  Ok(
-    out_srcs
-      .iter()
-      .map(|s| match s {
+  let mut taken: FxHashMap<u16, Rc<Plane>> = FxHashMap::default();
+  out_srcs
+    .iter()
+    .map(|s| {
+      Ok(match s {
         Src::Reg(r) => taken
           .entry(*r)
-          .or_insert_with(|| Rc::new(ex.regs[*r as usize].take().unwrap()))
+          .or_insert_with(|| Rc::new(Plane::adopt(ex.regs[*r as usize].take().unwrap())))
           .clone(),
         Src::In(c) => Rc::clone(&input[*c as usize]),
         Src::Uv(c) => Rc::clone(&uv.unwrap()[*c as usize]),
-        Src::Uni(uix, c) => Rc::new(vec![uni.chans[*uix as usize][*c as usize]; n]),
-        Src::Const(k) => Rc::new(vec![*k; n]),
+        Src::Uni(uix, c) => Rc::new(Plane::filled(n, uni.chans[*uix as usize][*c as usize])?),
+        Src::Const(k) => Rc::new(Plane::filled(n, *k)?),
       })
-      .collect(),
-  )
+    })
+    .collect()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4883,21 +4903,20 @@ fn plan_output_planes(
   ctx: &EvalCtx,
   plan: &Plan,
   uni: &UniRun,
-  input: &[Rc<Vec<f32>>],
-  uv: Option<&[Rc<Vec<f32>>; 2]>,
+  input: &[Rc<Plane>],
+  uv: Option<&[Rc<Plane>; 2]>,
   n: usize,
   step_ms: Option<&mut Vec<f64>>,
-) -> Result<Option<Vec<Rc<Vec<f32>>>>, ErrorStack> {
+) -> Result<Option<Vec<Rc<Plane>>>, ErrorStack> {
   match &plan.out {
     PlanOut::Uniform(uix) => {
       let Some((chans, ar)) = value_chans(&uni.vals[*uix as usize]) else {
         return Ok(None);
       };
-      Ok(Some(
-        (0..ar as usize)
-          .map(|c| Rc::new(vec![chans[c]; n]))
-          .collect(),
-      ))
+      (0..ar as usize)
+        .map(|c| Plane::filled(n, chans[c]).map(Rc::new))
+        .collect::<Result<_, _>>()
+        .map(Some)
     }
     PlanOut::Chans(_) => exec(ctx, plan, uni, input, uv, n, step_ms).map(Some),
   }
@@ -5092,7 +5111,7 @@ fn try_vectorized(
     abort("uniform shape changed");
     return None;
   };
-  let input: Vec<Rc<Vec<f32>>> = match target {
+  let input: Vec<Rc<Plane>> = match target {
     VecTarget::Zip { texs } => texs.iter().flat_map(|t| t.as_planes()).collect(),
     VecTarget::Gen { .. } => Vec::new(),
   };
@@ -5493,6 +5512,16 @@ mod tests {
       .values()
       .cloned()
       .collect()
+  }
+
+  #[test]
+  fn mod_builtin_vectorizes_bit_identical() {
+    let src = r#"
+texture(16, 16, |uv| mod(floor(uv.y * 8.) - 3., 2.) * 0.5 + mod(uv.x, 0.3)) | render_texture(name="o")
+"#;
+    let (vec_ctx, scalar_ctx) = eval_both(src);
+    assert_identical_outputs(&vec_ctx, &scalar_ctx);
+    assert!(reports(&vec_ctx).iter().all(|r| r.vectorized));
   }
 
   #[test]

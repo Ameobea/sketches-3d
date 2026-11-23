@@ -121,6 +121,7 @@ const resolveShaderOptions = (optionsJson: ShaderOptionsJson): CustomShaderOptio
     'useOrenNayarDiffuse',
     'pom',
     'vertexAttrs',
+    'stackIndexAttr',
   ]);
 
   if (optionsJson.useTriplanarMapping !== undefined)

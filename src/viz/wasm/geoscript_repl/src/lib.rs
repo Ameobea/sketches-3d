@@ -1,3 +1,5 @@
+#![feature(alloc_error_hook)]
+
 use std::rc::Rc;
 
 use fxhash::FxHashMap;
@@ -44,6 +46,11 @@ fn maybe_init() {
     "would like to keep this 16 bytes"
   );
   console_error_panic_hook::set_once();
+  // Allocation failure aborts without a message by default; route it through the panic hook
+  // with the texture ledger, for the allocations that don't go through `tex_mem`.
+  std::alloc::set_alloc_error_hook(|layout| {
+    panic!("{}", geoscript::tex_mem::report(layout.size()))
+  });
   wasm_logger::init(wasm_logger::Config::new(log::Level::Info));
 }
 
@@ -451,6 +458,8 @@ pub fn geoscript_repl_reset(ctx: *mut GeoscriptReplCtx) {
   ctx.geo_ctx.clear_tab_ambient_scopes();
 
   ctx.geo_ctx.tex_vectorize.reset_per_run();
+  ctx.geo_ctx.clear_atlas_cache();
+  geoscript::tex_mem::begin_run();
 
   ctx.geo_ctx.reset_rng_to_default();
   #[cfg(target_arch = "wasm32")]

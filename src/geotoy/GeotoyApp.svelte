@@ -798,11 +798,24 @@
         // re-evaluated here unless that tab ejected it (then it renders its own lights).
         if (!tabById.get(preview.target.tabId)!.preludeEjected) modulePreludes = { [previewModule]: 'mesh' };
       }
+      // A run-set tab importing the active tab back (a texture tab baking over meshes this tab
+      // exports) needs this tab's root to be a module, which the entry program is not. The
+      // root then runs as one, after the tabs that feed it, and the entry only imports.
+      const rootModule = qualifyModuleName(ROOT_NODE_NAME, tabId);
+      const rootAsModule = runSet.slice(1).some(id => referencedTabIds(treeFor(id)).has(tabId));
+      if (rootAsModule) {
+        modules[rootModule] = compiled.rootSource;
+        if (!tabs.active.preludeEjected)
+          modulePreludes = { ...modulePreludes, [rootModule]: tabs.active.kind };
+      }
       const sideEffectImports = [
         ...renderDeps.map(id => qualifyModuleName(ROOT_NODE_NAME, id)),
         ...(preview ? [qualifyModuleName(PREVIEW_MODULE_NAME, tabId)] : []),
+        ...(rootAsModule ? [rootModule] : []),
       ];
-      const code = sideEffectImports.map(m => `import { } from "${m}"\n`).join('') + compiled.rootSource;
+      const code =
+        sideEffectImports.map(m => `import { } from "${m}"\n`).join('') +
+        (rootAsModule ? '' : compiled.rootSource);
 
       const textureParams: TextureParamsEntry[] = [];
       for (const id of runSet) {
@@ -827,14 +840,14 @@
         modules,
         modulePreludes,
         tabAmbients,
-        preludeKind: tabs.active.preludeEjected ? undefined : tabs.active.kind,
+        preludeKind: tabs.active.preludeEjected || rootAsModule ? undefined : tabs.active.kind,
         materials: matsByName,
         materialOverride: meshScene.materialOverride,
         renderMode: userData?.renderMode ?? false,
         gizmoValues,
         textureParams,
         moduleNameToNodeId,
-        rootModuleName: qualifyModuleName(ROOT_NODE_NAME, tabId),
+        rootModuleName: rootAsModule ? qualifyModuleName('_entry', tabId) : rootModule,
         vectorize: vectorizeFlags,
         tree,
         tabId,

@@ -388,6 +388,11 @@
                     ]
                   }
                 },
+                "stackIndexAttr": {
+                  "description": "Float per-vertex attribute (exported via `render(attrs=[...])`) used as the stack\ninterpolation index, clamped to [0,1]. Ignored when `shaders.stackIndexShader` is set;\noverrides `props.stackIndex`. Declared as a vertex attr automatically.",
+                  "markdownDescription": "Float per-vertex attribute (exported via `render(attrs=[...])`) used as the stack\ninterpolation index, clamped to [0,1]. Ignored when `shaders.stackIndexShader` is set;\noverrides `props.stackIndex`. Declared as a vertex attr automatically.",
+                  "type": "string"
+                },
                 "useGeneratedUVs": {
                   "type": "boolean"
                 },

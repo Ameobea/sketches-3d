@@ -5,7 +5,7 @@ use fxhash::FxHashMap;
 
 use super::tex_kernels as kern;
 use crate::{
-  ArgRef, Callable, ErrorStack, EvalCtx, Mat4, RenderedTexture, Sym, TexKind, TexStorage,
+  ArgRef, Callable, ErrorStack, EvalCtx, Mat4, Plane, RenderedTexture, Sym, TexKind, TexStorage,
   TextureHandle, TextureUsage, TextureWrap, Value, Vec2, Vec3, Vec4, EMPTY_KWARGS,
 };
 
@@ -65,14 +65,8 @@ pub(crate) fn texture_zip(
   let (pa, pb) = (a.as_planes(), b.as_planes());
   let out_ch = a.channels.max(b.channels);
   let planes = (0..out_ch)
-    .map(|c| {
-      Rc::new(kern::zip_new(
-        &pa[c.min(pa.len() - 1)],
-        &pb[c.min(pb.len() - 1)],
-        &f,
-      ))
-    })
-    .collect();
+    .map(|c| kern::zip_new(&pa[c.min(pa.len() - 1)], &pb[c.min(pb.len() - 1)], &f).map(Rc::new))
+    .collect::<Result<_, _>>()?;
   // Wrap/transform/filters follow the N-channel operand: under 1ch⊗Nch broadcast the
   // 1-channel side is a mask, and its placement is not the result's.
   let meta = if a.channels == out_ch { a } else { b };
@@ -89,7 +83,7 @@ pub(crate) fn texture_zip(
 /// the handle escapes.
 fn try_take_dense(
   t: Rc<TextureHandle>,
-) -> Result<(TextureHandle, Vec<Rc<Vec<f32>>>), Rc<TextureHandle>> {
+) -> Result<(TextureHandle, Vec<Rc<Plane>>), Rc<TextureHandle>> {
   match Rc::try_unwrap(t) {
     Ok(mut h) if h.is_dense() => {
       // Fresh placeholder id, not just emptied planes: a caller that forgets to re-stamp
@@ -125,11 +119,11 @@ pub(crate) fn texture_zip_owned(
         .map(|(pa, pb)| match Rc::try_unwrap(pa) {
           Ok(mut v) => {
             kern::zip_in_a(&mut v, pb, &f);
-            Rc::new(v)
+            Ok(Rc::new(v))
           }
-          Err(pa) => Rc::new(kern::zip_new(&pa, pb, &f)),
+          Err(pa) => kern::zip_new(&pa, pb, &f).map(Rc::new),
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
       h.storage = TexStorage::planes(planes);
       h.mips = Default::default();
       Ok(Value::Texture(Rc::new(h)))
@@ -143,11 +137,11 @@ pub(crate) fn texture_zip_owned(
           .map(|(pa, pb)| match Rc::try_unwrap(pb) {
             Ok(mut v) => {
               kern::zip_in_b(pa, &mut v, &f);
-              Rc::new(v)
+              Ok(Rc::new(v))
             }
-            Err(pb) => Rc::new(kern::zip_new(pa, &pb, &f)),
+            Err(pb) => kern::zip_new(pa, &pb, &f).map(Rc::new),
           })
-          .collect();
+          .collect::<Result<_, _>>()?;
         Ok(Value::Texture(Rc::new(TextureHandle {
           storage: TexStorage::planes(planes),
           mips: Default::default(),
@@ -160,21 +154,27 @@ pub(crate) fn texture_zip_owned(
 }
 
 /// Elementwise map with the channel index available; one contiguous pass per plane.
-pub(crate) fn texture_map_chan(t: &TextureHandle, f: impl Fn(f32, usize) -> f32) -> Value {
+pub(crate) fn texture_map_chan(
+  t: &TextureHandle,
+  f: impl Fn(f32, usize) -> f32,
+) -> Result<Value, ErrorStack> {
   let planes = t
     .as_planes()
     .iter()
     .enumerate()
-    .map(|(c, p)| Rc::new(kern::map_new(p, |x| f(x, c))))
-    .collect();
-  Value::Texture(Rc::new(TextureHandle {
+    .map(|(c, p)| kern::map_new(p, |x| f(x, c)).map(Rc::new))
+    .collect::<Result<_, _>>()?;
+  Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     mips: Default::default(),
     ..t.clone()
-  }))
+  })))
 }
 
-pub(crate) fn texture_map_chan_owned(t: Rc<TextureHandle>, f: impl Fn(f32, usize) -> f32) -> Value {
+pub(crate) fn texture_map_chan_owned(
+  t: Rc<TextureHandle>,
+  f: impl Fn(f32, usize) -> f32,
+) -> Result<Value, ErrorStack> {
   let (mut h, planes) = match try_take_dense(t) {
     Ok(x) => x,
     Err(t) => return texture_map_chan(&t, f),
@@ -185,25 +185,31 @@ pub(crate) fn texture_map_chan_owned(t: Rc<TextureHandle>, f: impl Fn(f32, usize
     .map(|(c, p)| match Rc::try_unwrap(p) {
       Ok(mut v) => {
         kern::map_in(&mut v, |x| f(x, c));
-        Rc::new(v)
+        Ok(Rc::new(v))
       }
-      Err(p) => Rc::new(kern::map_new(&p, |x| f(x, c))),
+      Err(p) => kern::map_new(&p, |x| f(x, c)).map(Rc::new),
     })
-    .collect();
+    .collect::<Result<_, _>>()?;
   h.storage = TexStorage::planes(planes);
   h.mips = Default::default();
-  Value::Texture(Rc::new(h))
+  Ok(Value::Texture(Rc::new(h)))
 }
 
-pub(crate) fn texture_map_unary(t: &TextureHandle, f: impl Fn(f32) -> f32) -> Value {
+pub(crate) fn texture_map_unary(
+  t: &TextureHandle,
+  f: impl Fn(f32) -> f32,
+) -> Result<Value, ErrorStack> {
   texture_map_chan(t, |x, _| f(x))
 }
 
-pub(crate) fn texture_map_unary_owned(t: Rc<TextureHandle>, f: impl Fn(f32) -> f32) -> Value {
+pub(crate) fn texture_map_unary_owned(
+  t: Rc<TextureHandle>,
+  f: impl Fn(f32) -> f32,
+) -> Result<Value, ErrorStack> {
   texture_map_chan_owned(t, |x, _| f(x))
 }
 
-pub(crate) fn texture_scale_owned(t: Rc<TextureHandle>, s: f32) -> Value {
+pub(crate) fn texture_scale_owned(t: Rc<TextureHandle>, s: f32) -> Result<Value, ErrorStack> {
   texture_map_unary_owned(t, |x| x * s)
 }
 
@@ -223,12 +229,12 @@ pub(crate) fn texture_zip_vec(
       t.channels
     )));
   }
-  Ok(texture_map_chan(t, |x, c| f(x, v[c])))
+  texture_map_chan(t, |x, c| f(x, v[c]))
 }
 
-fn onech_from(t: &TextureHandle, plane: Vec<f32>) -> Value {
+fn onech_from(t: &TextureHandle, plane: Plane) -> Value {
   Value::Texture(Rc::new(TextureHandle {
-    storage: TexStorage::from_plane_vecs(vec![plane]),
+    storage: TexStorage::from_owned(vec![plane]),
     channels: 1,
     mips: Default::default(),
     ..t.clone()
@@ -249,7 +255,7 @@ fn same_shape_check(a: &TextureHandle, b: &TextureHandle, op: &str) -> Result<()
 pub(crate) fn texture_dot(a: &TextureHandle, b: &TextureHandle) -> Result<Value, ErrorStack> {
   same_shape_check(a, b, "`dot` of two textures")?;
   let (pa, pb) = (a.as_planes(), b.as_planes());
-  let mut acc = kern::zip_new(&pa[0], &pb[0], |x, y| x * y);
+  let mut acc = kern::zip_new(&pa[0], &pb[0], |x, y| x * y)?;
   for c in 1..a.channels {
     kern::mul_acc(&mut acc, &pa[c], &pb[c]);
   }
@@ -257,40 +263,40 @@ pub(crate) fn texture_dot(a: &TextureHandle, b: &TextureHandle) -> Result<Value,
 }
 
 /// Per-texel vector length across channels -> 1ch.
-pub(crate) fn texture_len(t: &TextureHandle) -> Value {
+pub(crate) fn texture_len(t: &TextureHandle) -> Result<Value, ErrorStack> {
   let p = t.as_planes();
-  let mut acc = kern::map_new(&p[0], |x| x * x);
+  let mut acc = kern::map_new(&p[0], |x| x * x)?;
   for c in 1..t.channels {
     kern::mul_acc(&mut acc, &p[c], &p[c]);
   }
   kern::map_in(&mut acc, f32::sqrt);
-  onech_from(t, acc)
+  Ok(onech_from(t, acc))
 }
 
 /// Per-texel vector normalize across channels.
-pub(crate) fn texture_normalize_vec(t: &TextureHandle) -> Value {
+pub(crate) fn texture_normalize_vec(t: &TextureHandle) -> Result<Value, ErrorStack> {
   let p = t.as_planes();
-  let mut len = kern::map_new(&p[0], |x| x * x);
+  let mut len = kern::map_new(&p[0], |x| x * x)?;
   for c in 1..t.channels {
     kern::mul_acc(&mut len, &p[c], &p[c]);
   }
   kern::map_in(&mut len, f32::sqrt);
   let planes = p
     .iter()
-    .map(|pc| Rc::new(kern::zip_new(pc, &len, |x, l| x / l)))
-    .collect();
-  Value::Texture(Rc::new(TextureHandle {
+    .map(|pc| kern::zip_new(pc, &len, |x, l| x / l).map(Rc::new))
+    .collect::<Result<_, _>>()?;
+  Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     mips: Default::default(),
     ..t.clone()
-  }))
+  })))
 }
 
 /// Per-texel euclidean distance across channels -> 1ch.
 pub(crate) fn texture_distance(a: &TextureHandle, b: &TextureHandle) -> Result<Value, ErrorStack> {
   same_shape_check(a, b, "`distance` of two textures")?;
   let (pa, pb) = (a.as_planes(), b.as_planes());
-  let mut acc = kern::zip_new(&pa[0], &pb[0], |x, y| (x - y) * (x - y));
+  let mut acc = kern::zip_new(&pa[0], &pb[0], |x, y| (x - y) * (x - y))?;
   for c in 1..a.channels {
     kern::diff_sq_acc(&mut acc, &pa[c], &pb[c]);
   }
@@ -298,38 +304,114 @@ pub(crate) fn texture_distance(a: &TextureHandle, b: &TextureHandle) -> Result<V
   Ok(onech_from(a, acc))
 }
 
-/// 3-way elementwise lerp; any operand may be 1ch (broadcast), dims must match.
-pub(crate) fn texture_lerp(
-  t: &TextureHandle,
-  a: &TextureHandle,
-  b: &TextureHandle,
-) -> Result<Value, ErrorStack> {
-  let out_ch = t.channels.max(a.channels).max(b.channels);
-  let shape_ok = |x: &TextureHandle| {
-    (x.width, x.height) == (a.width, a.height) && (x.channels == out_ch || x.channels == 1)
-  };
-  if !shape_ok(t) || !shape_ok(a) || !shape_ok(b) {
-    return Err(ErrorStack::new(format!(
-      "`lerp` of textures requires matching dims and matching channels (or 1-channel broadcast); \
-       found t={}x{}x{}ch, a={}x{}x{}ch, b={}x{}x{}ch",
-      t.width, t.height, t.channels, a.width, a.height, a.channels, b.width, b.height, b.channels
-    )));
+/// Operand of a texture `lerp`: a texture, or a constant broadcast across every texel.
+enum LerpSrc<'a> {
+  Tex(&'a TextureHandle),
+  Const([f32; 4], usize),
+}
+
+fn lerp_src(v: &Value) -> Result<LerpSrc<'_>, ErrorStack> {
+  match v {
+    Value::Texture(t) => Ok(LerpSrc::Tex(t)),
+    v => pixel_from_value(v)
+      .map(|(px, n)| LerpSrc::Const(px, n))
+      .ok_or_else(|| {
+        ErrorStack::new(format!(
+          "`lerp` operands must be textures, numbers, or vectors; got {v:?}"
+        ))
+      }),
   }
-  let (pt, pa, pb) = (t.as_planes(), a.as_planes(), b.as_planes());
-  let planes = (0..out_ch)
-    .map(|c| {
-      Rc::new(kern::zip3_new(
-        &pa[c.min(pa.len() - 1)],
-        &pb[c.min(pb.len() - 1)],
-        &pt[c.min(pt.len() - 1)],
-        |x, y, t| x + (y - x) * t,
-      ))
+}
+
+/// `lerp(t, a, b)` where each operand is a texture (matching dims; 1-channel broadcasts) or a
+/// constant (a vecN sets N channels, a number broadcasts). Metadata follows the first texture
+/// carrying the full channel count.
+pub(crate) fn texture_lerp(t: &Value, a: &Value, b: &Value) -> Result<Value, ErrorStack> {
+  let ops = [lerp_src(t)?, lerp_src(a)?, lerp_src(b)?];
+  let ch_of = |o: &LerpSrc| match o {
+    LerpSrc::Tex(t) => t.channels,
+    LerpSrc::Const(_, n) => *n,
+  };
+  let out_ch = ops.iter().map(ch_of).max().unwrap();
+  let texs: Vec<&TextureHandle> = ops
+    .iter()
+    .filter_map(|o| match o {
+      LerpSrc::Tex(t) => Some(*t),
+      _ => None,
     })
     .collect();
-  let meta = [a, b, t]
-    .into_iter()
+  let Some(&first) = texs.first() else {
+    let lane = |o: &LerpSrc, c: usize| match o {
+      LerpSrc::Const(px, n) => px[c.min(n - 1)],
+      _ => unreachable!(),
+    };
+    let px: [f32; 4] = std::array::from_fn(|c| {
+      let (t, a, b) = (lane(&ops[0], c), lane(&ops[1], c), lane(&ops[2], c));
+      a + (b - a) * t
+    });
+    return Ok(channels_value(px, out_ch));
+  };
+  let ok = ops.iter().all(|o| {
+    let c = ch_of(o);
+    (c == out_ch || c == 1)
+      && match o {
+        LerpSrc::Tex(x) => (x.width, x.height) == (first.width, first.height),
+        _ => true,
+      }
+  });
+  if !ok {
+    let desc = |o: &LerpSrc| match o {
+      LerpSrc::Tex(t) => format!("{}x{}x{}ch", t.width, t.height, t.channels),
+      LerpSrc::Const(_, n) => format!("constant x{n}"),
+    };
+    return Err(ErrorStack::new(format!(
+      "`lerp` of textures requires matching dims and matching channels (or 1-channel / scalar \
+       broadcast); found t={}, a={}, b={}",
+      desc(&ops[0]),
+      desc(&ops[1]),
+      desc(&ops[2])
+    )));
+  }
+  enum Rd<'a> {
+    P(&'a [f32]),
+    C(f32),
+  }
+  let plane_sets: [Option<Vec<Rc<Plane>>>; 3] = ops.each_ref().map(|o| match o {
+    LerpSrc::Tex(t) => Some(t.as_planes()),
+    _ => None,
+  });
+  let rd = |k: usize, c: usize| match (&ops[k], &plane_sets[k]) {
+    (LerpSrc::Const(px, n), _) => Rd::C(px[c.min(n - 1)]),
+    (_, Some(p)) => Rd::P(&p[c.min(p.len() - 1)]),
+    _ => unreachable!(),
+  };
+  let n = first.width * first.height;
+  let planes = (0..out_ch)
+    .map(|c| match (rd(0, c), rd(1, c), rd(2, c)) {
+      (Rd::P(t), Rd::P(a), Rd::P(b)) => {
+        kern::zip3_new(a, b, t, |x, y, t| x + (y - x) * t).map(Rc::new)
+      }
+      (rt, ra, rb) => {
+        let get = |r: &Rd, i: usize| match r {
+          Rd::P(p) => p[i],
+          Rd::C(v) => *v,
+        };
+        Plane::collect(
+          n,
+          (0..n).map(|i| {
+            let (x, y, t) = (get(&ra, i), get(&rb, i), get(&rt, i));
+            x + (y - x) * t
+          }),
+        )
+        .map(Rc::new)
+      }
+    })
+    .collect::<Result<_, _>>()?;
+  let meta = texs
+    .iter()
+    .copied()
     .find(|x| x.channels == out_ch)
-    .unwrap();
+    .unwrap_or(first);
   Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::planes(planes),
     channels: out_ch,
@@ -372,14 +454,14 @@ pub(crate) fn texture_construct(name: &str, comps: &[&Value]) -> Result<Value, E
     .iter()
     .map(|v| match v {
       Value::Texture(t) => Ok(t.as_planes()[0].clone()),
-      v => Ok(Rc::new(vec![
-        v.as_float().ok_or_else(|| {
+      v => {
+        let k = v.as_float().ok_or_else(|| {
           ErrorStack::new(format!(
             "components of `{name}` must be numeric or 1-channel textures, found: {v:?}"
           ))
         })?;
-        n
-      ])),
+        Plane::filled(n, k).map(Rc::new)
+      }
     })
     .collect::<Result<_, ErrorStack>>()?;
   Ok(Value::Texture(Rc::new(TextureHandle {
@@ -416,7 +498,7 @@ pub(crate) fn texture_zip_vec_owned(
   if t.channels != v.len() {
     return texture_zip_vec(&t, v, op, f);
   }
-  Ok(texture_map_chan_owned(t, |x, c| f(x, v[c])))
+  texture_map_chan_owned(t, |x, c| f(x, v[c]))
 }
 
 fn channels_value(vals: [f32; 4], channels: usize) -> Value {
@@ -483,15 +565,15 @@ pub(crate) fn roll_impl(
     .as_planes()
     .iter()
     .map(|p| {
-      let mut out = Vec::with_capacity(w * h);
+      let mut out = crate::tex_mem::try_reserve(w * h)?;
       for y in 0..h {
         let src = &p[((y + h - dy) % h) * w..][..w];
         out.extend_from_slice(&src[w - dx..]);
         out.extend_from_slice(&src[..w - dx]);
       }
-      out
+      Ok(out)
     })
-    .collect();
+    .collect::<Result<_, ErrorStack>>()?;
   Ok(Value::Texture(Rc::new(TextureHandle {
     storage: TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
@@ -773,7 +855,9 @@ fn texture_generate_scalar(
       })?;
       if channels == 0 {
         channels = n;
-        planes = (0..n).map(|_| Vec::with_capacity(w * h)).collect();
+        planes = (0..n)
+          .map(|_| crate::tex_mem::try_reserve(w * h))
+          .collect::<Result<_, _>>()?;
       } else if n != channels {
         return Err(ErrorStack::new(
           "`generator` callable in `texture` returned a mix of float/vec2/vec3/vec4 values",
@@ -854,7 +938,9 @@ fn map_texture_scalar(
       })?;
       if out_ch == 0 {
         out_ch = n;
-        planes = (0..n).map(|_| Vec::with_capacity(w * h)).collect();
+        planes = (0..n)
+          .map(|_| crate::tex_mem::try_reserve(w * h))
+          .collect::<Result<_, _>>()?;
       } else if n != out_ch {
         return Err(ErrorStack::new(
           "callable passed to `map` over texture returned a mix of float/vec2/vec3/vec4 values",
@@ -909,16 +995,26 @@ pub(crate) fn texture_zip_impl(
   }
 
   let texs: Vec<&TextureHandle> = texs.iter().map(|t| &**t).collect();
-  if let Some(res) = crate::tex_vectorize::try_vectorized_zip(ctx, cb, &texs) {
+  zip_textures(ctx, cb, &texs)
+}
+
+/// `texture_zip` over already-resolved same-size inputs: vectorized when the body allows, else
+/// the per-texel interpreter.
+pub(crate) fn zip_textures(
+  ctx: &EvalCtx,
+  cb: &Rc<Callable>,
+  texs: &[&TextureHandle],
+) -> Result<Value, ErrorStack> {
+  if let Some(res) = crate::tex_vectorize::try_vectorized_zip(ctx, cb, texs) {
     if !ctx.tex_vectorize.verify.get() {
       return res;
     }
     let vec_val = res?;
-    let scalar_val = zip_texture_scalar(ctx, cb, &texs)?;
+    let scalar_val = zip_texture_scalar(ctx, cb, texs)?;
     crate::tex_vectorize::assert_bit_identical(&vec_val, &scalar_val)?;
     return Ok(vec_val);
   }
-  zip_texture_scalar(ctx, cb, &texs)
+  zip_texture_scalar(ctx, cb, texs)
 }
 
 /// Also the differential oracle for the vectorized path, so it must stay a faithful
@@ -929,7 +1025,7 @@ fn zip_texture_scalar(
   texs: &[&TextureHandle],
 ) -> Result<Value, ErrorStack> {
   let (w, h) = (texs[0].width, texs[0].height);
-  let srcs: Vec<(Vec<Rc<Vec<f32>>>, usize)> =
+  let srcs: Vec<(Vec<Rc<Plane>>, usize)> =
     texs.iter().map(|t| (t.as_planes(), t.channels)).collect();
   let n = texs.len();
   let mut cb_args = vec![Value::Nil; n + 3];
@@ -962,7 +1058,9 @@ fn zip_texture_scalar(
       })?;
       if out_ch == 0 {
         out_ch = out_n;
-        planes = (0..out_n).map(|_| Vec::with_capacity(w * h)).collect();
+        planes = (0..out_n)
+          .map(|_| crate::tex_mem::try_reserve(w * h))
+          .collect::<Result<_, _>>()?;
       } else if out_n != out_ch {
         return Err(ErrorStack::new(
           "callable passed to `texture_zip` returned a mix of float/vec2/vec3/vec4 values",
@@ -994,7 +1092,7 @@ pub(crate) fn blur_impl(
   if sigma <= 0. {
     return Ok(tex_val.clone());
   }
-  Ok(Value::Texture(Rc::new(blur_tex(sigma, tex))))
+  Ok(Value::Texture(Rc::new(blur_tex(sigma, tex)?)))
 }
 
 /// Materialize preserving handle identity: a dense handle is shared, not re-wrapped, so
@@ -1009,8 +1107,8 @@ pub(crate) fn dense_rc(t: &Rc<TextureHandle>) -> Rc<TextureHandle> {
 
 /// Owned plane copies with RGBA premultiplied so transparent texels' RGB doesn't bleed
 /// into visible ones under filtering; a plain copy below 4 channels.
-pub(crate) fn premultiplied_planes(tex: &TextureHandle) -> Vec<Vec<f32>> {
-  let mut planes: Vec<Vec<f32>> = tex.as_planes().iter().map(|p| p.to_vec()).collect();
+pub(crate) fn premultiplied_planes(tex: &TextureHandle) -> Result<Vec<Vec<f32>>, ErrorStack> {
+  let mut planes = tex.try_copy_planes()?;
   if tex.channels == 4 {
     let (rgb, a) = planes.split_at_mut(3);
     for p in rgb {
@@ -1019,7 +1117,7 @@ pub(crate) fn premultiplied_planes(tex: &TextureHandle) -> Vec<Vec<f32>> {
       }
     }
   }
-  planes
+  Ok(planes)
 }
 
 pub(crate) fn unpremultiply_planes(planes: &mut [Vec<f32>]) {
@@ -1035,7 +1133,7 @@ pub(crate) fn unpremultiply_planes(planes: &mut [Vec<f32>]) {
 }
 
 /// Separable gaussian; caller guarantees `sigma > 0`.
-pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
+pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> Result<TextureHandle, ErrorStack> {
   let (w, h, ch) = (tex.width, tex.height, tex.channels);
   let wrap = tex.wrap;
   let half = ((sigma * 3.).ceil() as i64).max(1);
@@ -1051,7 +1149,7 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
   // Taps run tap-major (one weight across a whole run) rather than pixel-major so the
   // inner loop is a flat stride-1 accumulate. Each output still accumulates its taps in
   // ascending `i`, so results are bit-identical to the pixel-major form.
-  let pass = |src: &[f32], dx: i64, dy: i64| -> Vec<f32> {
+  let pass = |src: &[f32], dx: i64, dy: i64| -> Result<Vec<f32>, ErrorStack> {
     let horiz = dx == 1;
     let tap = |x: i64, y: i64| src[wrap.coord(y, h) * w + wrap.coord(x, w)];
     let edge = |out: &mut [f32], x: i64, y: i64| {
@@ -1062,7 +1160,7 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
       out[y as usize * w + x as usize] = acc;
     };
 
-    let mut out = vec![0f32; w * h];
+    let mut out = crate::tex_mem::try_vec(w * h, 0f32)?;
     // Interior = positions whose full kernel is in bounds; empty when the axis is shorter
     // than the kernel, which then leaves every position on the wrapped path.
     let interior = |n: usize| {
@@ -1108,22 +1206,22 @@ pub(crate) fn blur_tex(sigma: f32, tex: &TextureHandle) -> TextureHandle {
         }
       }
     }
-    out
+    Ok(out)
   };
 
-  let mut planes = premultiplied_planes(tex);
+  let mut planes = premultiplied_planes(tex)?;
   for p in &mut planes {
-    let mid = pass(p, 1, 0);
-    *p = pass(&mid, 0, 1);
+    let mid = pass(p, 1, 0)?;
+    *p = pass(&mid, 0, 1)?;
   }
   if ch == 4 {
     unpremultiply_planes(&mut planes);
   }
-  TextureHandle {
+  Ok(TextureHandle {
     storage: TexStorage::from_plane_vecs(planes),
     mips: Default::default(),
     ..tex.clone()
-  }
+  })
 }
 
 pub(crate) fn height_to_normal_impl(
@@ -1154,7 +1252,7 @@ pub(crate) fn height_to_normal_impl(
   let tex = tex.dense_clone();
   let (w, h) = (tex.width, tex.height);
   let src: &[f32] = &tex.planes().expect("dense_clone yields planar storage")[0];
-  let mut planes: Vec<Vec<f32>> = (0..3).map(|_| vec![0f32; w * h]).collect();
+  let mut planes: Vec<Vec<f32>> = crate::tex_mem::try_planes(3, w * h)?;
   let put = |o: usize, n: [f32; 3], planes: &mut [Vec<f32>]| {
     for (p, v) in planes.iter_mut().zip(n) {
       p[o] = v;
@@ -1322,7 +1420,7 @@ mod tests {
     // uniquely-owned temporary: buffer reused, identity fresh
     let t = test_tex(4, 4, 2);
     let (ptr, old_id) = (t.planes().unwrap()[0].as_ptr(), t.storage_id());
-    let out = texture_map_unary_owned(t, |x| x + 1.);
+    let out = texture_map_unary_owned(t, |x| x + 1.).unwrap();
     assert_eq!(plane_ptr(&out, 0), ptr);
     assert_ne!(out.as_texture().unwrap().storage_id(), old_id);
     assert_eq!(out.as_texture().unwrap().as_planes()[1][3], 8.);
@@ -1330,7 +1428,7 @@ mod tests {
     // shared handle: untouched, new buffers
     let t = test_tex(4, 4, 1);
     let keep = Rc::clone(&t);
-    let out = texture_map_unary_owned(t, |x| x + 1.);
+    let out = texture_map_unary_owned(t, |x| x + 1.).unwrap();
     assert_ne!(plane_ptr(&out, 0), keep.planes().unwrap()[0].as_ptr());
     assert_eq!(keep.as_planes()[0][1], 1.);
 
@@ -1689,5 +1787,54 @@ lerp(mask, mask, stamp) | render_texture(name="c")
       assert_eq!(rt.texture.channels, 3, "{}", rt.name);
       assert_eq!(rt.texture.wrap, TextureWrap::Clamp, "{}", rt.name);
     }
+  }
+
+  #[test]
+  fn lerp_broadcasts_constants_against_textures() {
+    let src = r#"
+m = texture(4, 4, |uv| uv.x)
+a = lerp(m, 0.2, 0.8)
+b = lerp(m, texture(4, 4, |uv| vec3(1., 0., 0.)), vec3(0., 0., 1.))
+c = lerp(0.25, texture(4, 4, |uv| vec3(0.)), vec3(1., 2., 3.))
+d = mix(m, vec3(1., 0., 0.), vec3(0., 1., 0.))
+"#;
+    let ctx = parse_and_eval_program(src).unwrap();
+    let tex = |n: &str| ctx.get_global(n).unwrap().as_texture().unwrap().clone();
+    let px = |t: &TextureHandle, x: usize, y: usize| {
+      let p = t.as_planes();
+      (0..t.channels)
+        .map(|c| p[c][y * t.width + x])
+        .collect::<Vec<_>>()
+    };
+    let close = |got: &[f32], want: &[f32]| got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-5);
+    let (a, b, c, d) = (tex("a"), tex("b"), tex("c"), tex("d"));
+    assert_eq!(
+      (a.channels, b.channels, c.channels, d.channels),
+      (1, 3, 3, 3)
+    );
+    assert!(
+      close(&px(&a, 3, 0), &[0.2 + 0.6 * 0.875]),
+      "{:?}",
+      px(&a, 3, 0)
+    );
+    assert!(
+      close(&px(&b, 3, 0), &[0.125, 0., 0.875]),
+      "{:?}",
+      px(&b, 3, 0)
+    );
+    assert!(
+      close(&px(&c, 1, 1), &[0.25, 0.5, 0.75]),
+      "{:?}",
+      px(&c, 1, 1)
+    );
+    assert!(
+      close(&px(&d, 3, 0), &[0.125, 0.875, 0.]),
+      "{:?}",
+      px(&d, 3, 0)
+    );
+    assert!(
+      parse_and_eval_program("lerp(texture(2, 2, |uv| v2(uv.x, uv.y)), vec3(0.), vec3(1.))")
+        .is_err()
+    );
   }
 }

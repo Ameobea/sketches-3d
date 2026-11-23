@@ -2857,7 +2857,7 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
       .get(edge_id_to_split[0])
       .copied()
       .zip(self.shading_normals.get(edge_id_to_split[1]).copied())
-      .map(|(n0, n1)| n0.lerp(&n1, split_pos).normalize());
+      .map(|(n0, n1)| n0.lerp(&n1, split_pos).try_normalize(1e-6).unwrap_or(n0));
 
     let displacement_normal = match displacement_normal_method {
       DisplacementNormalMethod::Interpolate => {
@@ -4095,8 +4095,8 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
   }
 
   /// Builds `num_partitions` independent sub-meshes; face `fk` is placed into mesh
-  /// `partition_of(fk)`.  Shared-vertex connectivity, per-vertex normals, and all passive vertex
-  /// channels are preserved within each partition.
+  /// `partition_of(fk)`.  Shared-vertex connectivity, per-vertex normals, sharp-edge marks, flags
+  /// and all passive vertex channels are preserved within each partition.
   pub fn extract_face_partitions(
     &self,
     num_partitions: usize,
@@ -4141,6 +4141,19 @@ impl<FaceData: Default> LinkedMesh<FaceData> {
         })
       });
       out.add_face::<true>(new_verts, data);
+      for i in 0..3 {
+        let ends = |vs: [VertexKey; 3]| [vs[i], vs[(i + 1) % 3]];
+        if self
+          .get_edge_key(ends(verts))
+          .is_some_and(|e| self.edges[e].sharp)
+        {
+          let e = out.get_edge_key(ends(new_verts)).unwrap();
+          out.edges[e].sharp = true;
+        }
+      }
+    }
+    for out in &mut outs {
+      out.flags = self.flags;
     }
 
     outs

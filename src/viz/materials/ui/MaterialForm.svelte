@@ -176,19 +176,33 @@
         </FormField>
       {:else}
         <FormField
-          label="stack index"
-          help="Interpolation index across the assigned stack's slices: 0 = first slice, 1 = last. For per-fragment control (e.g. world-space noise), define the `stackIndex` slot in the shader editor — it overrides this slider."
+          label="stack index attr"
+          help="Name of a float per-vertex attribute (set with `set_attr` and exported via `render(attrs=[...])`) to use as the per-vertex interpolation index, clamped to [0,1]. Empty = the slider below."
         >
           <input
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={cs.props.stackIndex ?? 0}
-            oninput={e => (cs.props.stackIndex = (e.target as HTMLInputElement).valueAsNumber)}
+            type="text"
+            placeholder="none"
+            value={cs.options.stackIndexAttr ?? ''}
+            onchange={e =>
+              (cs.options.stackIndexAttr = (e.target as HTMLInputElement).value.trim() || undefined)}
           />
-          <span>{(cs.props.stackIndex ?? 0).toFixed(2)}</span>
         </FormField>
+        {#if !cs.options.stackIndexAttr}
+          <FormField
+            label="stack index"
+            help="Interpolation index across the assigned stack's slices: 0 = first slice, 1 = last. For per-fragment control (e.g. world-space noise), define the `stackIndex` slot in the shader editor — it overrides this slider."
+          >
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={cs.props.stackIndex ?? 0}
+              oninput={e => (cs.props.stackIndex = (e.target as HTMLInputElement).valueAsNumber)}
+            />
+            <span>{(cs.props.stackIndex ?? 0).toFixed(2)}</span>
+          </FormField>
+        {/if}
       {/if}
     {/if}
     {#if cs.props.map}
