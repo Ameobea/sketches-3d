@@ -474,6 +474,19 @@ fine = floor | set_attr("t", field, refine=0.05, min_edge=0.25, max_edge=4)
 }
 
 #[test]
+fn refine_survives_zero_width_boundary_face() {
+  let ctx = parse_and_eval_program(
+    r#"
+sliver = mesh([v3(0, 0, 0), v3(2, 0, 0), v3(2, 0, 0)], [0, 1, 2])
+fine = sliver | set_attr("t", |p| p.x * p.x, refine=0.01, min_edge=0.2, max_edge=0.5)
+"#,
+  )
+  .unwrap();
+  let fine = ctx.get_global("fine").unwrap();
+  assert!(fine.as_mesh().unwrap().mesh.faces.len() > 4);
+}
+
+#[test]
 fn set_attr_refine_rejects_vertex_only_inputs() {
   assert!(err_of(r#"box(2) | set_attr("t", |p, n, {ix}| ix, refine=0.1)"#).contains("refine"));
   assert!(err_of(r#"box(2) | set_attr("t", 0..8, refine=0.1)"#).contains("callable"));

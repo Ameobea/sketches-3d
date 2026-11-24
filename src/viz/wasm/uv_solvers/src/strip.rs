@@ -8,11 +8,15 @@
 
 use fxhash::{FxHashMap, FxHashSet};
 use mesh::{
-  linked_mesh::{EdgeKey, FaceKey, Vec3, VertexKey},
+  linked_mesh::{
+    Arity, Channel, EdgeKey, FaceKey, FlipXform, Interp, SpatialXform, Vec3, VertexKey,
+  },
   LinkedMesh,
 };
 
 use crate::{orthonormal_basis, FlatUvMesh};
+
+const SRC: &str = "\0src";
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Layout {
@@ -474,6 +478,19 @@ pub fn strip_uvs(
   // Sharp-split first: afterwards faces across sharp edges share no vertices, so smooth patches
   // are exactly the components of the interior-edge adjacency graph and per-patch UVs can't
   // collide at former corner vertices.  Shading normals come along for free.
+  // Vertex clones inherit channels, so tagging each vertex with its index tracks provenance
+  // through every split below.  Two 16-bit lanes keep the index exact in f32.
+  let mut src_ch = Channel::new(
+    Arity::Vec2,
+    Interp::Lerp,
+    FlipXform::Identity,
+    SpatialXform::Identity,
+  );
+  for (i, k) in m.vertices.keys().enumerate() {
+    src_ch.set(k, [(i & 0xffff) as f32, (i >> 16) as f32, 0., 0.]);
+  }
+  m.vertex_channels.insert(SRC.to_owned(), src_ch);
+
   m.mark_edge_sharpness(opts.strip_angle_rad.unwrap_or(sharp_threshold_rad));
   m.separate_vertices_and_compute_normals();
 
@@ -556,7 +573,10 @@ pub fn strip_uvs(
   let mut verts = Vec::with_capacity(keys.len() * 3);
   let mut uvs = Vec::with_capacity(keys.len() * 2);
   let mut tangents = Vec::with_capacity(keys.len() * 4);
+  let mut src = Vec::with_capacity(keys.len());
   for &k in &keys {
+    let [lo, hi, ..] = m.vertex_channels[SRC].get(k).unwrap();
+    src.push(lo as u32 | (hi as u32) << 16);
     let p = m.vertices[k].position;
     verts.extend_from_slice(&[p.x, p.y, p.z]);
     uvs.extend_from_slice(&final_uv.get(&k).copied().unwrap_or([0., 0.]));
@@ -577,5 +597,6 @@ pub fn strip_uvs(
     indices,
     uvs,
     tangents,
+    src,
   })
 }

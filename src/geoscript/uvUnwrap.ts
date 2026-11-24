@@ -28,6 +28,7 @@ let lastVerts: Float32Array = new Float32Array(0);
 let lastIndices: Uint32Array = new Uint32Array(0);
 let lastUvs: Float32Array = new Float32Array(0);
 let lastTangents: Float32Array = new Float32Array(0);
+let lastSrc: Uint32Array = new Uint32Array(0);
 
 /**
  * Runs a BFF UV unwrap on the given indexed mesh, stashing the (re-indexed) output for retrieval via
@@ -115,6 +116,7 @@ export const unwrap_uvs = (
     lastVerts = take(output.verts, from_vec_f32);
     lastIndices = take(output.indices, from_vec_u32);
     lastTangents = take(output.tangents, from_vec_f32);
+    lastSrc = take(output.srcIndices, from_vec_u32);
     return '';
   } catch (err) {
     return err instanceof Error ? err.message : String(err);
@@ -129,3 +131,4 @@ export const uv_unwrap_get_verts = (): Float32Array => lastVerts;
 export const uv_unwrap_get_indices = (): Uint32Array => lastIndices;
 export const uv_unwrap_get_uvs = (): Float32Array => lastUvs;
 export const uv_unwrap_get_tangents = (): Float32Array => lastTangents;
+export const uv_unwrap_get_src = (): Uint32Array => lastSrc;

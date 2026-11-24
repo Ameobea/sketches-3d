@@ -2595,7 +2595,7 @@ var wasmImports = {
   /** @export */ j: __embind_register_class,
   /** @export */ m: __embind_register_class_constructor,
   /** @export */ c: __embind_register_class_function,
-  /** @export */ f: __embind_register_class_property,
+  /** @export */ e: __embind_register_class_property,
   /** @export */ E: __embind_register_emval,
   /** @export */ l: __embind_register_float,
   /** @export */ D: __embind_register_function,
@@ -2624,7 +2624,7 @@ var wasmImports = {
   /** @export */ q: invoke_iijiiiii,
   /** @export */ p: invoke_iijjiiiii,
   /** @export */ h: invoke_vi,
-  /** @export */ e: invoke_vii,
+  /** @export */ f: invoke_vii,
   /** @export */ k: invoke_viiij,
   /** @export */ H: _proc_exit
 };

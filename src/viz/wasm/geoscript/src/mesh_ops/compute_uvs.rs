@@ -13,7 +13,7 @@ use mesh::{
   csg::Plane,
   linked_mesh::{mesh_flags, Vec3},
   slotmap_utils::vkey,
-  LinkedMesh,
+  LinkedMesh, OwnedIndexedMesh,
 };
 use nalgebra::Matrix3;
 #[cfg(target_arch = "wasm32")]
@@ -42,6 +42,7 @@ extern "C" {
   fn uv_unwrap_get_indices() -> Vec<u32>;
   fn uv_unwrap_get_uvs() -> Vec<f32>;
   fn uv_unwrap_get_tangents() -> Vec<f32>;
+  fn uv_unwrap_get_src() -> Vec<u32>;
   pub fn get_uv_unwrap_loaded() -> bool;
 }
 
@@ -80,6 +81,7 @@ extern "C" {
   fn uv_solvers_get_indices() -> Vec<u32>;
   fn uv_solvers_get_uvs() -> Vec<f32>;
   fn uv_solvers_get_tangents() -> Vec<f32>;
+  fn uv_solvers_get_src() -> Vec<u32>;
   pub fn uv_solvers_get_is_loaded() -> bool;
 }
 
@@ -479,12 +481,9 @@ fn bff_uvs(
   } else {
     mesh.mesh.to_raw_indexed(false, false, false)
   };
-  let in_indices =
-    unsafe { std::slice::from_raw_parts(raw.indices.as_ptr() as *const u32, raw.indices.len()) };
-
   let err = unwrap_uvs(
     &raw.vertices,
-    in_indices,
+    &indices_u32(&raw),
     n_cones,
     flatten_to_disk,
     map_to_sphere,
@@ -498,32 +497,86 @@ fn bff_uvs(
     )));
   }
 
+  let solved = Solved {
+    verts: uv_unwrap_get_verts(),
+    indices: uv_unwrap_get_indices(),
+    uvs: uv_unwrap_get_uvs(),
+    tangents: uv_unwrap_get_tangents(),
+    src: uv_unwrap_get_src(),
+  };
   Ok(rebuild_split_mesh(
     mesh,
-    &uv_unwrap_get_verts(),
-    &uv_unwrap_get_indices(),
-    &uv_unwrap_get_uvs(),
-    &uv_unwrap_get_tangents(),
+    &raw,
+    &solved,
     scale,
     sharp_threshold_rad,
   ))
 }
 
+fn indices_u32(raw: &OwnedIndexedMesh) -> Vec<u32> {
+  raw.indices.iter().map(|&i| i as u32).collect()
+}
+
+/// A solver's flat output.  Solvers only ever cut and duplicate, so `src` names the vertex of the
+/// solver's input that each output vertex is a copy of.
+struct Solved {
+  verts: Vec<f32>,
+  indices: Vec<u32>,
+  uvs: Vec<f32>,
+  tangents: Vec<f32>,
+  src: Vec<u32>,
+}
+
+#[cfg(target_arch = "wasm32")]
+fn uv_solvers_output() -> Solved {
+  Solved {
+    verts: uv_solvers_get_verts(),
+    indices: uv_solvers_get_indices(),
+    uvs: uv_solvers_get_uvs(),
+    tangents: uv_solvers_get_tangents(),
+    src: uv_solvers_get_src(),
+  }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<uv_solvers::FlatUvMesh> for Solved {
+  fn from(flat: uv_solvers::FlatUvMesh) -> Self {
+    Solved {
+      verts: flat.verts,
+      indices: flat.indices,
+      uvs: flat.uvs,
+      tangents: flat.tangents,
+      src: flat.src,
+    }
+  }
+}
+
 /// Rebuilds a solver's flat output into a `MeshHandle`: recomputes shading normals with sharp-edge
 /// splitting (same as the render pipeline's finalize) but WITHOUT the merge-by-distance that would
-/// weld the solver's coincident UV-seam duplicates.  `separate_vertices_and_compute_normals`
-/// clones the uv/tangent channels onto split verts.
+/// weld the solver's coincident UV-seam duplicates.  `raw` is what the solver was given; its other
+/// attributes are copied across through `Solved::src`, and
+/// `separate_vertices_and_compute_normals` then clones every channel onto split verts.
 fn rebuild_split_mesh(
   src: &MeshHandle,
-  verts: &[f32],
-  indices: &[u32],
-  uvs: &[f32],
-  tangents: &[f32],
+  raw: &OwnedIndexedMesh,
+  solved: &Solved,
   uv_scale: f32,
   sharp_threshold_rad: f32,
 ) -> MeshHandle {
-  let mut out = LinkedMesh::from_raw_indexed(verts, indices, None, None);
-  attach_uv_tangent(&mut out, uvs, Some(tangents), uv_scale);
+  let mut out = LinkedMesh::from_raw_indexed(&solved.verts, &solved.indices, None, None);
+  for attr in &raw.attrs {
+    if attr.name == attrs::UV || attr.name == attrs::TANGENT {
+      continue;
+    }
+    let mut ch = src.mesh.vertex_channels[&attr.name].empty_like();
+    for (i, &from) in solved.src.iter().enumerate() {
+      let mut v = [0.; 4];
+      v[..attr.arity].copy_from_slice(&attr.data[from as usize * attr.arity..][..attr.arity]);
+      ch.set(vkey(i as u32 + 1, 1), v);
+    }
+    out.vertex_channels.insert(attr.name.clone(), ch);
+  }
+  attach_uv_tangent(&mut out, &solved.uvs, Some(&solved.tangents), uv_scale);
   out.mark_edge_sharpness(sharp_threshold_rad);
   out.separate_vertices_and_compute_normals();
   out.flags |= mesh_flags::NO_WELD;
@@ -694,16 +747,15 @@ fn tube_uvs(
   options: Option<&ValueMap>,
 ) -> Result<MeshHandle, ErrorStack> {
   let opts = parse_tube_options(options)?;
+  let raw = mesh.mesh.to_raw_indexed(false, false, false);
+  let in_indices = indices_u32(&raw);
 
   #[cfg(target_arch = "wasm32")]
-  {
+  let solved = {
     verify_uv_solvers_loaded()?;
-    let raw = mesh.mesh.to_raw_indexed(false, false, false);
-    let in_indices =
-      unsafe { std::slice::from_raw_parts(raw.indices.as_ptr() as *const u32, raw.indices.len()) };
     let err = uv_solvers_tube(
       &raw.vertices,
-      in_indices,
+      &in_indices,
       scale,
       sharp_threshold_rad,
       opts.caps,
@@ -717,43 +769,33 @@ fn tube_uvs(
     if !err.is_empty() {
       return Err(ErrorStack::new(err));
     }
-    Ok(rebuild_split_mesh(
-      mesh,
-      &uv_solvers_get_verts(),
-      &uv_solvers_get_indices(),
-      &uv_solvers_get_uvs(),
-      &uv_solvers_get_tangents(),
-      1.,
-      sharp_threshold_rad,
-    ))
-  }
+    uv_solvers_output()
+  };
   #[cfg(not(target_arch = "wasm32"))]
-  {
-    let flat = uv_solvers::tube_uvs(
-      (*mesh.mesh).clone(),
-      scale,
-      sharp_threshold_rad,
-      &uv_solvers::TubeOptions {
-        caps: opts.caps,
-        cap_angle_rad: opts.cap_angle_rad,
-        cap_max_span: opts.cap_max_span,
-        cap_alignment: opts.cap_alignment,
-        normalize_v: opts.normalize_v,
-        seam_straightness: opts.seam_straightness,
-        detwist: opts.detwist,
-      },
-    )
-    .map_err(ErrorStack::new)?;
-    Ok(rebuild_split_mesh(
-      mesh,
-      &flat.verts,
-      &flat.indices,
-      &flat.uvs,
-      &flat.tangents,
-      1.,
-      sharp_threshold_rad,
-    ))
-  }
+  let solved: Solved = uv_solvers::tube_uvs(
+    LinkedMesh::from_raw_indexed(&raw.vertices, &in_indices, None, None),
+    scale,
+    sharp_threshold_rad,
+    &uv_solvers::TubeOptions {
+      caps: opts.caps,
+      cap_angle_rad: opts.cap_angle_rad,
+      cap_max_span: opts.cap_max_span,
+      cap_alignment: opts.cap_alignment,
+      normalize_v: opts.normalize_v,
+      seam_straightness: opts.seam_straightness,
+      detwist: opts.detwist,
+    },
+  )
+  .map_err(ErrorStack::new)?
+  .into();
+
+  Ok(rebuild_split_mesh(
+    mesh,
+    &raw,
+    &solved,
+    1.,
+    sharp_threshold_rad,
+  ))
 }
 
 fn strip_uvs(
@@ -764,16 +806,15 @@ fn strip_uvs(
 ) -> Result<MeshHandle, ErrorStack> {
   let opts = parse_strip_options(options)?;
   let split_angle = opts.strip_angle_rad.unwrap_or(sharp_threshold_rad);
+  let raw = mesh.mesh.to_raw_indexed(false, false, false);
+  let in_indices = indices_u32(&raw);
 
   #[cfg(target_arch = "wasm32")]
-  {
+  let solved = {
     verify_uv_solvers_loaded()?;
-    let raw = mesh.mesh.to_raw_indexed(false, false, false);
-    let in_indices =
-      unsafe { std::slice::from_raw_parts(raw.indices.as_ptr() as *const u32, raw.indices.len()) };
     let err = uv_solvers_strip(
       &raw.vertices,
-      in_indices,
+      &in_indices,
       scale,
       sharp_threshold_rad,
       opts.strip_angle_rad.unwrap_or(f32::NAN),
@@ -784,40 +825,24 @@ fn strip_uvs(
     if !err.is_empty() {
       return Err(ErrorStack::new(err));
     }
-    Ok(rebuild_split_mesh(
-      mesh,
-      &uv_solvers_get_verts(),
-      &uv_solvers_get_indices(),
-      &uv_solvers_get_uvs(),
-      &uv_solvers_get_tangents(),
-      1.,
-      split_angle,
-    ))
-  }
+    uv_solvers_output()
+  };
   #[cfg(not(target_arch = "wasm32"))]
-  {
-    let flat = uv_solvers::strip_uvs(
-      (*mesh.mesh).clone(),
-      scale,
-      sharp_threshold_rad,
-      &uv_solvers::StripOptions {
-        strip_angle_rad: opts.strip_angle_rad,
-        layout: uv_solvers::Layout::from_u8(opts.layout),
-        u_mode: uv_solvers::UMode::from_u8(opts.u_mode),
-        planar_fallback: opts.planar_fallback,
-      },
-    )
-    .map_err(ErrorStack::new)?;
-    Ok(rebuild_split_mesh(
-      mesh,
-      &flat.verts,
-      &flat.indices,
-      &flat.uvs,
-      &flat.tangents,
-      1.,
-      split_angle,
-    ))
-  }
+  let solved: Solved = uv_solvers::strip_uvs(
+    LinkedMesh::from_raw_indexed(&raw.vertices, &in_indices, None, None),
+    scale,
+    sharp_threshold_rad,
+    &uv_solvers::StripOptions {
+      strip_angle_rad: opts.strip_angle_rad,
+      layout: uv_solvers::Layout::from_u8(opts.layout),
+      u_mode: uv_solvers::UMode::from_u8(opts.u_mode),
+      planar_fallback: opts.planar_fallback,
+    },
+  )
+  .map_err(ErrorStack::new)?
+  .into();
+
+  Ok(rebuild_split_mesh(mesh, &raw, &solved, 1., split_angle))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -1076,13 +1101,11 @@ fn cylindrical_uvs(
   }
 
   let mut verts = raw.vertices.clone();
-  let mut indices: Vec<u32> = raw.indices.iter().map(|&i| i as u32).collect();
-  let push_vert = |verts: &mut Vec<f32>, o: usize| {
-    verts.extend_from_slice(&[
-      raw.vertices[3 * o],
-      raw.vertices[3 * o + 1],
-      raw.vertices[3 * o + 2],
-    ]);
+  let mut indices = indices_u32(&raw);
+  let mut src: Vec<u32> = (0..n_verts as u32).collect();
+  let mut push_vert = |verts: &mut Vec<f32>, o: usize| {
+    verts.extend_from_slice(&raw.vertices[3 * o..3 * o + 3]);
+    src.push(o as u32);
   };
 
   // Tube meridian seam split: wrapping tube tris get their low-U corners cloned at U+1.
@@ -1148,30 +1171,20 @@ fn cylindrical_uvs(
     }
   }
 
-  let mut out = LinkedMesh::from_raw_indexed(&verts, &indices, None, None);
-  let mut uv_ch = uv_channel();
-  let mut tan_ch = tangent_channel();
-  for i in 0..(verts.len() / 3) {
-    let key = vkey(i as u32 + 1, 1);
-    uv_ch.set(key, [us[i] * scale, vs[i] * scale, 0., 0.]);
-    tan_ch.set(key, tangents[i]);
-  }
-  out.vertex_channels.insert(attrs::UV.to_owned(), uv_ch);
-  out
-    .vertex_channels
-    .insert(attrs::TANGENT.to_owned(), tan_ch);
-  out.mark_edge_sharpness(sharp_threshold_rad);
-  out.separate_vertices_and_compute_normals();
-  out.flags |= mesh_flags::NO_WELD;
-
-  Ok(MeshHandle {
-    mesh: Rc::new(out),
-    transform: mesh.transform,
-    manifold_handle: Rc::new(ManifoldHandle::new(0)),
-    aabb: RefCell::new(None),
-    bvh: RefCell::new(None),
-    material: mesh.material.clone(),
-  })
+  let solved = Solved {
+    verts,
+    indices,
+    uvs: us.iter().zip(&vs).flat_map(|(&u, &v)| [u, v]).collect(),
+    tangents: tangents.into_iter().flatten().collect(),
+    src,
+  };
+  Ok(rebuild_split_mesh(
+    mesh,
+    &raw,
+    &solved,
+    scale,
+    sharp_threshold_rad,
+  ))
 }
 
 // The BFF-backed types (auto/unwrap/disk/sphere) only run under wasm, so these E2E tests cover the
@@ -1357,6 +1370,24 @@ mod tests {
       max_v > 0.9,
       "normalize_v should stretch V toward 1, got max_v {max_v}"
     );
+  }
+
+  #[test]
+  fn seam_cutting_types_carry_other_attrs() {
+    for ty in ["cylindrical", "tube", "strip"] {
+      let ctx = crate::parse_and_eval_program(format!(
+        "cylinder(1, 4, 24) | set_attr('t', |p| p.x + 10 * p.y + 100 * p.z) | \
+         compute_uvs(type='{ty}') | render"
+      ))
+      .unwrap();
+      let mesh = &ctx.rendered_meshes.borrow()[0].mesh.mesh;
+      let t = &mesh.vertex_channels["t"];
+      assert!(mesh.vertex_channels.contains_key("uv"), "{ty}");
+      for (k, v) in mesh.vertices.iter() {
+        let p = v.position;
+        assert_eq!(t.get(k).unwrap()[0], p.x + 10. * p.y + 100. * p.z, "{ty}");
+      }
+    }
   }
 
   #[test]

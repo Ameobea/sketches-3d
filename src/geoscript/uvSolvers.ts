@@ -81,3 +81,4 @@ export const uv_solvers_get_verts = (): Float32Array => UVSolversWasm.getSync().
 export const uv_solvers_get_indices = (): Uint32Array => UVSolversWasm.getSync().uv_solvers_get_indices();
 export const uv_solvers_get_uvs = (): Float32Array => UVSolversWasm.getSync().uv_solvers_get_uvs();
 export const uv_solvers_get_tangents = (): Float32Array => UVSolversWasm.getSync().uv_solvers_get_tangents();
+export const uv_solvers_get_src = (): Uint32Array => UVSolversWasm.getSync().uv_solvers_get_src();

@@ -307,8 +307,10 @@ pub fn refine_region(
         continue;
       }
       let mut shared_mid = None;
-      for &e in &g {
-        let [v0, v1] = out.edges[e].vertices;
+      // A zero-width face holds two of the twins at once, and splitting one re-keys the other.
+      let twins: SmallVec<[[VertexKey; 2]; 2]> = g.iter().map(|&e| out.edges[e].vertices).collect();
+      for [v0, v1] in twins {
+        let e = out.get_edge_key([v0, v1]).unwrap();
         let [a, b] = ends(out, e);
         let m = match mid.get(&pair(v0, v1)) {
           Some(m) => *m,

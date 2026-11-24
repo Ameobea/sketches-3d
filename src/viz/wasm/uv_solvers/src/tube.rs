@@ -726,6 +726,7 @@ pub fn tube_uvs(
     .iter()
     .flat_map(|t| t.iter().map(|&i| i as u32))
     .collect();
+  let mut src: Vec<u32> = weld.iter().map(|&i| i as u32).collect();
   let v_scale = if opts.normalize_v {
     1.
   } else {
@@ -829,6 +830,7 @@ pub fn tube_uvs(
             us.push(uv[0]);
             vs.push(uv[1]);
             tangents.push(tan);
+            src.push(weld[o] as u32);
             new_i
           });
         } else {
@@ -849,5 +851,6 @@ pub fn tube_uvs(
     indices,
     uvs,
     tangents: tangents.into_iter().flatten().collect(),
+    src,
   })
 }

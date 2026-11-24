@@ -16,6 +16,8 @@ pub struct FlatUvMesh {
   pub uvs: Vec<f32>,
   /// Interleaved per-vertex [x, y, z, w].
   pub tangents: Vec<f32>,
+  /// Per vertex, the position in the input mesh's vertex iteration order of the vertex it copies.
+  pub src: Vec<u32>,
 }
 
 pub(crate) fn orthonormal_basis(normal: Vec3) -> (Vec3, Vec3) {
@@ -131,5 +133,10 @@ mod wasm {
   #[wasm_bindgen]
   pub fn uv_solvers_get_tangents() -> Vec<f32> {
     take_out(|o| std::mem::take(&mut o.tangents))
+  }
+
+  #[wasm_bindgen]
+  pub fn uv_solvers_get_src() -> Vec<u32> {
+    take_out(|o| std::mem::take(&mut o.src))
   }
 }
