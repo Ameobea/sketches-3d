@@ -17,7 +17,6 @@
   import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
   import { resolve } from '$app/paths';
   import { untrack } from 'svelte';
-  import ForkCompositionButton from './ForkCompositionButton.svelte';
   import TagsInput from './TagsInput.svelte';
   import { logGeotoyEvent } from 'src/analytics';
 
@@ -29,7 +28,6 @@
     onSave,
     collectTabMeta,
     userData,
-    onForked,
   }: {
     comp: Composition | undefined | null;
     materials: MaterialDefinitions;
@@ -39,13 +37,14 @@
     /** Live-captures the active tab's view, then returns every tab's metadata. */
     collectTabMeta: () => Record<string, TabMetadata>;
     userData: GeoscriptPlaygroundUserData | undefined;
-    onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
   } = $props();
 
   let title = $state(untrack(() => comp?.title || ''));
   let description = $state(untrack(() => comp?.description || ''));
   let isShared = $state(untrack(() => comp?.is_shared || false));
   let tags = $state<string[]>(untrack(() => [...(comp?.tags ?? [])]));
+
+  export const getMeta = () => ({ title, description, tags: $state.snapshot(tags) });
 
   let status = $state<
     { type: 'ok'; msg: string; seq: number } | { type: 'error'; msg: string } | { type: 'loading' } | null
@@ -147,9 +146,6 @@
         </div>
       {/if}
     </div>
-    {#if comp && onForked}
-      <ForkCompositionButton {comp} {onForked} />
-    {/if}
     <button onclick={handleSave} disabled={status?.type === 'loading'}>
       {#if status?.type === 'loading'}
         saving...

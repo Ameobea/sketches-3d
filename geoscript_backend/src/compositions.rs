@@ -183,6 +183,15 @@ impl<'a> From<&'a CompositionVersion> for CreateCompositionVersion {
   }
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ForkComposition {
+  pub title: Option<String>,
+  pub description: Option<String>,
+  pub tags: Option<Vec<String>>,
+  pub tree: Option<sqlx::types::Json<CompositionDoc>>,
+  pub metadata: Option<sqlx::types::Json<serde_json::Map<String, serde_json::Value>>>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct UpdateCompositionPatch {
   pub title: Option<String>,
@@ -360,7 +369,16 @@ pub async fn fork_composition(
   State(pool): State<SqlitePool>,
   Extension(user): Extension<User>,
   Path(composition_id): Path<i64>,
+  payload: Option<Json<ForkComposition>>,
 ) -> Result<Json<CompositionAndVersion>, APIError> {
+  let ForkComposition {
+    title,
+    description,
+    tags,
+    tree,
+    metadata,
+  } = payload.map(|Json(payload)| payload).unwrap_or_default();
+
   let original_composition = sqlx::query_as::<_, Composition>(
     "SELECT c.*, u.username as author_username FROM compositions c JOIN users u ON c.author_id = \
      u.id WHERE c.id = ?",
@@ -386,18 +404,25 @@ pub async fn fork_composition(
     ));
   }
 
-  let latest_version = sqlx::query_as::<_, CompositionVersion>(
-    "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY id DESC LIMIT 1",
-  )
-  .bind(composition_id)
-  .fetch_one(&pool)
-  .await
-  .map_err(|err| {
-    APIError::new(
-      StatusCode::NOT_FOUND,
-      format!("No versions found for composition: {err}"),
+  let version = match (tree, metadata) {
+    (Some(tree), Some(metadata)) => {
+      tree.validate()?;
+      CreateCompositionVersion { tree, metadata }
+    },
+    _ => (&sqlx::query_as::<_, CompositionVersion>(
+      "SELECT * FROM composition_versions WHERE composition_id = ? ORDER BY id DESC LIMIT 1",
     )
-  })?;
+    .bind(composition_id)
+    .fetch_one(&pool)
+    .await
+    .map_err(|err| {
+      APIError::new(
+        StatusCode::NOT_FOUND,
+        format!("No versions found for composition: {err}"),
+      )
+    })?)
+      .into(),
+  };
 
   let mut tx = begin_write(&pool).await.map_err(|err| {
     APIError::new(
@@ -411,8 +436,8 @@ pub async fn fork_composition(
      RETURNING id",
   )
   .bind(user.id)
-  .bind(format!("{} (fork)", original_composition.title))
-  .bind(&original_composition.description)
+  .bind(title.unwrap_or_else(|| format!("{} (fork)", original_composition.title)))
+  .bind(description.unwrap_or(original_composition.description))
   .bind(original_composition.id)
   .fetch_one(&mut *tx)
   .await
@@ -435,8 +460,8 @@ pub async fn fork_composition(
      id",
   )
   .bind(forked_composition_id)
-  .bind(&latest_version.tree)
-  .bind(&latest_version.metadata)
+  .bind(&version.tree)
+  .bind(&version.metadata)
   .fetch_one(&mut *tx)
   .await
   .map_err(|err| {
@@ -467,14 +492,12 @@ pub async fn fork_composition(
     )
   })?;
 
-  let original_tags = load_tags_one(&mut *tx, COMPOSITION_TAGS, composition_id).await?;
-  forked_composition.tags = set_tags(
-    &mut tx,
-    COMPOSITION_TAGS,
-    forked_composition_id,
-    &original_tags,
-  )
-  .await?;
+  let tags = match tags {
+    Some(tags) => tags,
+    None => load_tags_one(&mut *tx, COMPOSITION_TAGS, composition_id).await?,
+  };
+  forked_composition.tags =
+    set_tags(&mut tx, COMPOSITION_TAGS, forked_composition_id, &tags).await?;
 
   tx.commit().await.map_err(|err| {
     APIError::new(
@@ -490,10 +513,10 @@ pub async fn fork_composition(
     version: CompositionVersion {
       id: version_id,
       composition_id: forked_composition_id,
-      tree: latest_version.tree,
+      tree: version.tree,
       created_at: Utc::now(),
       thumbnail_url: None,
-      metadata: latest_version.metadata,
+      metadata: version.metadata,
     },
   }))
 }

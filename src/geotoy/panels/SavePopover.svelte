@@ -1,7 +1,7 @@
 <script lang="ts">
   import { resolve } from '$app/paths';
   import type { Snippet } from 'svelte';
-  import type { Composition, CompositionVersion } from 'src/geoscript/geotoyAPIClient';
+  import type { Composition, CompositionVersion, ForkComposition } from 'src/geoscript/geotoyAPIClient';
   import { dismissOnEscape } from './dismissOn';
   import ForkCompositionButton from './ForkCompositionButton.svelte';
   import ReadOnlyCompositionDetails from './ReadOnlyCompositionDetails.svelte';
@@ -11,6 +11,7 @@
     isOwner,
     loggedIn,
     onClose,
+    getForkData,
     onForked,
     form,
   }: {
@@ -18,6 +19,7 @@
     isOwner: boolean;
     loggedIn: boolean;
     onClose: () => void;
+    getForkData: () => ForkComposition;
     onForked?: (comp: Composition, version: CompositionVersion) => Promise<void>;
     /** The version form; only rendered for the composition's owner. */
     form: Snippet;
@@ -51,7 +53,7 @@
   {#if comp}
     <div class="links">
       {#if onForked && loggedIn}
-        <ForkCompositionButton {comp} {onForked} variant="link" />
+        <ForkCompositionButton {comp} {getForkData} {onForked} variant="link" />
       {/if}
       <a class="link" href={resolve(`geotoy/history/${comp.id}`)} target="_blank" rel="noreferrer">history</a>
     </div>

@@ -1,19 +1,18 @@
 import {
-  type Composition,
   type CompositionDoc,
+  type CreateCompositionVersion,
   type TabMetadata,
   type TreeEntry,
 } from 'src/geoscript/geotoyAPIClient';
 import type { MaterialDefinitions } from 'src/geoscript/materials';
 import type { GeoscriptPlaygroundUserData } from 'src/viz/scenes/geoscriptPlayground/geoscriptPlayground.svelte';
 import {
+  buildCompositionVersionMetadata,
   clearSavedState,
   getServerState,
   loadState,
-  saveNewVersion,
   saveState,
   setLastRunWasSuccessful,
-  type CompositionMeta,
   type PlaygroundState,
 } from 'src/geotoy/modules/compositionStorage';
 import { tabShapeKey } from 'src/geotoy/modules/tabs.svelte';
@@ -123,15 +122,14 @@ export class GeotoyPersistence {
       this.userData
     );
 
-  saveVersion = (comp: Composition, meta: CompositionMeta) =>
-    saveNewVersion(
-      comp,
-      this.currentDoc(),
+  currentVersion = (): CreateCompositionVersion => ({
+    tree: this.currentDoc(),
+    metadata: buildCompositionVersionMetadata(
       this.activeTreeId,
       this.materialDefinitions,
-      this.opts.collectTabMeta(),
-      meta
-    );
+      this.opts.collectTabMeta()
+    ),
+  });
 
   setLastRunWasSuccessful = (wasSuccessful: boolean) => setLastRunWasSuccessful(wasSuccessful, this.userData);
 

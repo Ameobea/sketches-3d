@@ -29,6 +29,7 @@
     ROOT_NODE_NAME,
     type Composition,
     type CompositionVersion,
+    type ForkComposition,
     type Transform3,
     type TreeDef,
     type TreeKind,
@@ -272,13 +273,18 @@
       me: userData.me,
       renderMode: userData.renderMode,
     };
-    const res = await persistence.saveVersion(newComp, {
-      title: newComp.title,
-      description: newComp.description,
-      isShared: newComp.is_shared,
-      tags: newComp.tags,
-    });
-    if (res.type === 'ok') adoptSavedVersion(res.comp, res.version);
+    adoptSavedVersion(newComp, newVersion);
+  };
+
+  let saveControls = $state<SaveControls>();
+  const getForkData = (): ForkComposition => {
+    const meta = saveControls?.getMeta();
+    return {
+      ...meta,
+      // an untouched title falls back to the server's "<title> (fork)"
+      title: meta?.title === userData?.initialComposition?.comp.title ? undefined : meta?.title,
+      ...persistence.currentVersion(),
+    };
   };
 
   let size = $state(storedPanelSize(untrack(() => layoutOrientation)));
@@ -1431,6 +1437,7 @@
 
 {#snippet saveForm()}
   <SaveControls
+    bind:this={saveControls}
     comp={userData?.initialComposition?.comp}
     getCurrentDoc={persistence.currentDoc}
     activeTreeId={persistence.activeTreeId}
@@ -1658,6 +1665,7 @@
           (!userData.initialComposition || userData.me.id === userData.initialComposition.comp.author_id)}
         loggedIn={!!userData?.me}
         onClose={() => (savePopoverOpen = false)}
+        {getForkData}
         onForked={handleForkedComposition}
         form={saveForm}
       />

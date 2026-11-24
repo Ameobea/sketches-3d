@@ -641,11 +641,20 @@ export const createCompositionVersion = (
     body: JSON.stringify(data),
   });
 
+/** Omitted fields are inherited from the original composition and its latest version. */
+export interface ForkComposition extends Partial<CreateCompositionVersion> {
+  title?: string;
+  description?: string;
+  tags?: string[];
+}
+
 export const forkComposition = (
-  id: number
+  id: number,
+  data: ForkComposition = {}
 ): Promise<{ composition: Composition; version: CompositionVersion }> =>
   apiFetch<{ composition: Composition; version: CompositionVersion }>(`/compositions/${id}/fork`, {
     method: 'POST',
+    body: JSON.stringify(data),
   });
 
 export const getCompositionLatest = (

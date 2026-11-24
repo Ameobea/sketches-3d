@@ -70,7 +70,7 @@ test('save round-trip keeps metadata, post-save drafts, and clear-local-changes 
   expect(await getCode(page)).toBe('box(2) | render // v3');
 });
 
-test('fork with local edits persists the edits as a private "(fork)" comp', async () => {
+test('fork with local edits persists the edits as a single-version private "(fork)" comp', async () => {
   await api(page, `/compositions/${compId}`, {
     method: 'PATCH',
     data: { field_mask: ['is_shared'], patch: { is_shared: true } },
@@ -89,12 +89,31 @@ test('fork with local edits persists the edits as a private "(fork)" comp', asyn
   const p = await newPage(fresh);
   await openEditor(p, `/geotoy/edit/${forkId}`);
   expect(await getCode(p)).toBe('box(5) | render // forked edit');
+  expect(await api(p, `/compositions/${forkId}/history`)).toHaveLength(1);
   expect(await api(p, `/compositions/${forkId}`)).toMatchObject({
     title: `${(await server()).title} (fork)`,
     is_shared: false,
   });
   await api(p, `/compositions/${forkId}`, { method: 'DELETE' });
   await fresh.close();
+});
+
+test('owner fork takes the title/description from the save form', async () => {
+  await page.click('button.save');
+  await page.fill('#title-input', 'forked title');
+  await page.fill('#description-input', 'forked desc');
+  await page.locator('.popover button', { hasText: /fork/ }).click();
+  await page.waitForURL(u => /edit\/\d+/.test(u.pathname) && !u.pathname.endsWith(`/${compId}`));
+  const forkId = +page.url().match(/edit\/(\d+)/)![1];
+  expect(await api(page, `/compositions/${forkId}`)).toMatchObject({
+    title: 'forked title',
+    description: 'forked desc',
+    forked_from_id: compId,
+  });
+  expect(await api(page, `/compositions/${forkId}/history`)).toHaveLength(1);
+  expect(await server()).toMatchObject({ title: 'renamed', description: '' });
+  await api(page, `/compositions/${forkId}`, { method: 'DELETE' });
+  await openEditor(page, `/geotoy/edit/${compId}`);
 });
 
 test('leaving the editor tears it down; shadow-light reruns keep GPU textures flat', async () => {

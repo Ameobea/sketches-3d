@@ -1,16 +1,23 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { forkComposition, type Composition, type CompositionVersion } from 'src/geoscript/geotoyAPIClient';
+  import {
+    forkComposition,
+    type Composition,
+    type CompositionVersion,
+    type ForkComposition,
+  } from 'src/geoscript/geotoyAPIClient';
   import { showToast } from 'src/viz/util/GlobalToastState.svelte';
   import { logGeotoyEvent } from 'src/analytics';
 
   let {
     comp,
+    getForkData,
     onForked,
     variant = 'button',
   }: {
     comp: Composition;
+    getForkData: () => ForkComposition;
     onForked: (comp: Composition, version: CompositionVersion) => Promise<void>;
     /** `link` is the 11px demoted form used inside the save popover. */
     variant?: 'button' | 'link';
@@ -23,7 +30,7 @@
       return;
     }
     isForking = true;
-    forkComposition(comp.id)
+    forkComposition(comp.id, getForkData())
       .then(({ composition: newComp, version: newVersion }) => {
         logGeotoyEvent('composition', 'fork', { comp_id: comp.id });
         showToast({ status: 'success', message: 'Successfully forked composition' });
