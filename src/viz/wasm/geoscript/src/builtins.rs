@@ -2345,11 +2345,19 @@ fn simplify_impl(
           )))
         }
       };
+      let attr_tolerance = arg_refs[3].resolve(args, kwargs).as_float();
+      if attr_tolerance.is_some_and(|tol| !(tol > 0.)) {
+        return Err(ErrorStack::new(
+          "Invalid `attr_tolerance` for `simplify`; must be greater than zero, or nil to ignore \
+           attributes",
+        ));
+      }
       let out_mesh_handle = simplify_mesh(
         mesh,
         tolerance,
         engine,
         ctx.read_sharp_angle_threshold_degrees(),
+        attr_tolerance,
       )
       .map_err(|err| err.wrap("Error in `simplify` function"))?;
       Ok(Value::Mesh(Rc::new(out_mesh_handle)))
@@ -4982,6 +4990,7 @@ fn compute_normals_impl(
 }
 
 fn remesh_planar_patches_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -5008,8 +5017,22 @@ fn remesh_planar_patches_impl(
       };
 
       let least_squares = arg_refs[3].resolve(args, kwargs).as_bool().unwrap();
-      let out = remesh_planar_patches(mesh, max_angle_deg, max_offset, least_squares)
-        .map_err(|err| err.wrap("Error in `remesh_planar_patches` function"))?;
+      let attr_tolerance = arg_refs[4].resolve(args, kwargs).as_float();
+      if attr_tolerance.is_some_and(|tol| !(tol > 0.)) {
+        return Err(ErrorStack::new(
+          "Invalid `attr_tolerance` for `remesh_planar_patches`; must be greater than zero, or \
+           nil to only preserve attribute seams",
+        ));
+      }
+      let out = remesh_planar_patches(
+        mesh,
+        max_angle_deg,
+        max_offset,
+        least_squares,
+        attr_tolerance,
+        ctx.read_sharp_angle_threshold_degrees(),
+      )
+      .map_err(|err| err.wrap("Error in `remesh_planar_patches` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
     }
     _ => unimplemented!(),
@@ -5017,6 +5040,7 @@ fn remesh_planar_patches_impl(
 }
 
 fn isotropic_remesh_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -5045,6 +5069,7 @@ fn isotropic_remesh_impl(
         protect_borders,
         protect_sharp_edges,
         sharp_angle_threshold_degrees,
+        ctx.read_sharp_angle_threshold_degrees(),
       )
       .map_err(|err| err.wrap("Error in `isotropic_remesh` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
@@ -5054,6 +5079,7 @@ fn isotropic_remesh_impl(
 }
 
 fn delaunay_remesh_impl(
+  ctx: &EvalCtx,
   def_ix: usize,
   arg_refs: &[ArgRef],
   args: &[Value],
@@ -5073,6 +5099,7 @@ fn delaunay_remesh_impl(
         facet_distance,
         protect_sharp_edges,
         sharp_angle_threshold_degrees,
+        ctx.read_sharp_angle_threshold_degrees(),
       )
       .map_err(|err| err.wrap("Error in `delaunay_remesh` function"))?;
       Ok(Value::Mesh(Rc::new(out)))
@@ -11117,14 +11144,14 @@ pub(crate) static BUILTIN_FN_IMPLS: phf::Map<
   "compute_normals" => builtin_fn!(compute_normals, |def_ix, arg_refs, args, kwargs, ctx| {
     compute_normals_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, _ctx| {
-    remesh_planar_patches_impl(def_ix, arg_refs, args, kwargs)
+  "remesh_planar_patches" => builtin_fn!(remesh_planar_patches, |def_ix, arg_refs, args, kwargs, ctx| {
+    remesh_planar_patches_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "isotropic_remesh" => builtin_fn!(isotropic_remesh, |def_ix, arg_refs, args, kwargs, _ctx| {
-    isotropic_remesh_impl(def_ix, arg_refs, args, kwargs)
+  "isotropic_remesh" => builtin_fn!(isotropic_remesh, |def_ix, arg_refs, args, kwargs, ctx| {
+    isotropic_remesh_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
-  "delaunay_remesh" => builtin_fn!(delaunay_remesh, |def_ix, arg_refs, args, kwargs, _ctx| {
-    delaunay_remesh_impl(def_ix, arg_refs, args, kwargs)
+  "delaunay_remesh" => builtin_fn!(delaunay_remesh, |def_ix, arg_refs, args, kwargs, ctx| {
+    delaunay_remesh_impl(ctx, def_ix, arg_refs, args, kwargs)
   }),
   "sample_voxels" => builtin_fn!(sample_voxels, |def_ix, arg_refs, args, kwargs, ctx| {
     sample_voxels_impl(ctx, def_ix, arg_refs, args, kwargs)

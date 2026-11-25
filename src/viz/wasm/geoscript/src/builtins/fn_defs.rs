@@ -11464,8 +11464,15 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::Bool(false)),
             description: "When false (default), each planar region is measured against the plane of its seed face (largest faces first), so every face in a region is within `max_angle_deg`/`max_offset` of one real input face.  When true, the region's plane is refit by least squares as it grows, which merges gently curved areas into fewer, larger facets that cut through the surface rather than lying on it."
           },
+          ArgDef {
+            name: "attr_tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Float(0.05)),
+            description: "Flat regions are only merged where every vertex attribute varies linearly across them, to within this fraction of the attribute's value range across the mesh (`uv` is instead held to `max_offset` of texture sliding).  Smaller values keep more triangles where colors or masks vary.  `nil` skips the check: attributes are then resampled at the surviving vertices and detail inside flat regions is lost.  UV seams and other attribute discontinuities are preserved either way."
+          },
         ],
-        description: "Remeshes a mesh by identifying planar regions and simplifying them into a simpler set of triangles.  This is useful for optimizing meshes produced by a variety of other built-in methods that tend to produce a lot of small triangles in flat areas.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/latest/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
+        description: "Remeshes a mesh by identifying planar regions and simplifying them into a simpler set of triangles.  This is useful for optimizing meshes produced by a variety of other built-in methods that tend to produce a lot of small triangles in flat areas.  Vertex attributes are carried over, with seams kept as split vertices.\n\nSee the docs for the underlying CGAL function for more details: https://doc.cgal.org/latest/Polygon_mesh_processing/index.html - Section 2.1.2 Remeshing",
         return_type: &[ArgType::Mesh],
       },
     ],
@@ -11876,6 +11883,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             default_value: DefaultValue::Optional(|| Value::String("meshopt".to_owned())),
             description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates output topology and may reduce less to preserve it; open meshes (terrain, grids) are supported. Manifold uses the existing solid-library simplifier and requires a closed mesh. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
           },
+          ArgDef {
+            name: "attr_tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Float(0.05)),
+            description: "How much a vertex attribute may deviate, as a fraction of that attribute's value range across the mesh, for the same cost as `tolerance` of positional error. Smaller values keep more vertices where colors, masks, or other attributes vary. `uv` is instead held to `tolerance` of texture sliding along the surface. `nil` ignores attributes when choosing what to collapse; they are kept on the surviving vertices either way. Meshopt engine only."
+          },
         ],
         description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Closed inputs yield Manifold-importable output; open inputs are only checked for manifold edges (each edge shared by at most two consistently wound faces). Self-intersection freedom is not guaranteed.",
         return_type: &[ArgType::Mesh],
@@ -11902,6 +11916,13 @@ pub(crate) static mut FN_SIGNATURE_DEFS: phf::Map<&'static str, FnDef> = phf::ph
             valid_types: argtype_flags!(ArgType::String),
             default_value: DefaultValue::Optional(|| Value::String("meshopt".to_owned())),
             description: "Simplification engine: \"meshopt\" (default) or \"manifold\". Meshopt keeps original vertex positions and attributes, preserves authored and smooth source normals, and favors regular triangles. It validates manifold output and may reduce less to preserve topology. Manifold uses the existing solid-library simplifier. Use `compute_normals` afterward to deliberately recompute shading from the reduced mesh."
+          },
+          ArgDef {
+            name: "attr_tolerance",
+            interned_name: Sym(0),
+            valid_types: argtype_flags!(ArgType::Numeric, ArgType::Nil),
+            default_value: DefaultValue::Optional(|| Value::Float(0.05)),
+            description: "How much a vertex attribute may deviate, as a fraction of that attribute's value range across the mesh, for the same cost as `tolerance` of positional error. Smaller values keep more vertices where colors, masks, or other attributes vary. `uv` is instead held to `tolerance` of texture sliding along the surface. `nil` ignores attributes when choosing what to collapse; they are kept on the surviving vertices either way. Meshopt engine only."
           },
         ],
         description: "Reduces mesh complexity within an error budget. Meshopt is the default; engine=\"manifold\" selects the original implementation. Both preserve materials and vertex attributes. Output is checked for manifold topology; self-intersection freedom is not guaranteed by this check.",

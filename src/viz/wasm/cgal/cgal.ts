@@ -37,7 +37,7 @@ let LastBuildPolymeshError: string | null = null;
 
 export const cgal_get_last_error = (): string | null => LastBuildPolymeshError;
 
-const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
+const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array, featureEdges?: Uint32Array) => {
   if (!CGALWasm.isSome()) {
     throw new Error('CGALWasm not initialized');
   }
@@ -77,6 +77,11 @@ const buildCGALPolymesh = (verts: Float32Array, indices: Uint32Array) => {
       throw new Error(err);
     } else {
       LastBuildPolymeshError = null;
+    }
+    if (featureEdges?.length) {
+      const vec_features = vec_uint32(featureEdges);
+      mesh.set_feature_edges(vec_features);
+      vec_features.delete();
     }
     return mesh;
   } catch(err) {
@@ -239,6 +244,7 @@ export const cgal_sqrt_smooth_mesh = smoothMesh('sqrt_smooth', 'sqrt3 smoothing'
 export const cgal_remesh_planar_patches = (
   verts: Float32Array,
   indices: Uint32Array,
+  featureEdges: Uint32Array,
   maxAngleDegrees: number,
   maxOffset: number,
   leastSquares: boolean
@@ -247,7 +253,7 @@ export const cgal_remesh_planar_patches = (
     throw new Error('CGALWasm not initialized');
   }
 
-  const mesh = buildCGALPolymesh(verts, indices);
+  const mesh = buildCGALPolymesh(verts, indices, featureEdges);
   if (!mesh) {
     return;
   }
@@ -264,6 +270,7 @@ export const cgal_remesh_planar_patches = (
 export const cgal_remesh_isotropic = (
   verts: Float32Array,
   indices: Uint32Array,
+  featureEdges: Uint32Array,
   targetEdgeLength: number,
   iterations: number,
   protectBorders: boolean,
@@ -274,7 +281,7 @@ export const cgal_remesh_isotropic = (
     throw new Error('CGALWasm not initialized');
   }
 
-  const mesh = buildCGALPolymesh(verts, indices);
+  const mesh = buildCGALPolymesh(verts, indices, featureEdges);
   if (!mesh) {
     return;
   }

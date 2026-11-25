@@ -162,8 +162,9 @@ pub(crate) fn simplify(
   mesh: &MeshHandle,
   tolerance: f32,
   sharp_angle_degrees: f32,
+  attr_tolerance: Option<f32>,
 ) -> Result<MeshHandle, ErrorStack> {
-  simplify_impl(mesh, tolerance, sharp_angle_degrees, true)
+  simplify_impl(mesh, tolerance, sharp_angle_degrees, attr_tolerance, true)
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -206,6 +207,7 @@ fn simplify_impl(
   mesh: &MeshHandle,
   tolerance: f32,
   sharp_angle_degrees: f32,
+  attr_tolerance: Option<f32>,
   allow_import_cleanup: bool,
 ) -> Result<MeshHandle, ErrorStack> {
   use mesh::slotmap_utils::vkey_ix;
@@ -247,23 +249,31 @@ fn simplify_impl(
     .flat_map(|face| face.vertices.map(|key| index_of[vkey_ix(&key) as usize]))
     .collect();
 
-  // Keep the distance budget geometric instead of mixing in an angular normal penalty. Normals
-  // are retained by vertex identity independently. Passive channels guide the cost where space
-  // allows, and every channel is retained even beyond meshoptimizer's 32 weighted lanes.
-  let mut channels: Vec<_> = source.vertex_channels.iter().collect();
-  channels.sort_unstable_by_key(|(name, _)| *name);
+  // Attribute lanes are weighted so that each channel's budget costs as much as `tolerance` of
+  // positional error (meshopt measures both against positions normalized by the bbox extent).
+  // Every channel is retained by vertex identity whether or not it is weighted.
+  let (mut lo, mut hi) = ([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]);
+  for p in positions.chunks_exact(3) {
+    for i in 0..3 {
+      lo[i] = lo[i].min(p[i]);
+      hi[i] = hi[i].max(p[i]);
+    }
+  }
+  let extent = (0..3).map(|i| hi[i] - lo[i]).fold(0., f32::max);
   let mut weights = Vec::new();
   let mut weighted = Vec::new();
-  for (name, channel) in channels {
-    let lanes = channel.store.arity();
+  for (channel, lanes, budget) in attr_tolerance
+    .map(|tol| super::mesh_ops::attr_budgets(source, tol, tolerance))
+    .unwrap_or_default()
+  {
     if weights.len() + lanes <= 32 {
-      weights.extend(std::iter::repeat_n(1., lanes));
-      weighted.push((name, channel, lanes));
+      weights.extend(std::iter::repeat_n(tolerance / (extent * budget), lanes));
+      weighted.push((channel, lanes));
     }
   }
   let mut attributes = Vec::with_capacity(keys.len() * weights.len());
   for &key in &keys {
-    for (_, channel, lanes) in &weighted {
+    for (channel, lanes) in &weighted {
       attributes.extend_from_slice(&channel.get(key).unwrap_or_default()[..*lanes]);
     }
   }
@@ -368,7 +378,13 @@ fn simplify_impl(
     if cleaned.mesh.faces.is_empty() {
       return Ok(cleaned);
     }
-    return simplify_impl(&cleaned, tolerance, sharp_angle_degrees, false);
+    return simplify_impl(
+      &cleaned,
+      tolerance,
+      sharp_angle_degrees,
+      attr_tolerance,
+      false,
+    );
   }
   Err(last_error.unwrap().wrap(if open {
     "meshopt could not retain manifold topology; try a smaller tolerance"
@@ -382,6 +398,7 @@ pub(crate) fn simplify(
   mesh: &MeshHandle,
   _tolerance: f32,
   _sharp_angle_degrees: f32,
+  _attr_tolerance: Option<f32>,
 ) -> Result<MeshHandle, ErrorStack> {
   // Like the pre-existing native Manifold path, native evaluation is a geometry no-op.
   Ok(mesh.clone(false, false, false))

@@ -181,6 +181,7 @@ extern "C" {
   pub fn cgal_remesh_planar_patches(
     mesh_verts: &[f32],
     mesh_indices: &[u32],
+    feature_edges: &[u32],
     max_angle_deg: f32,
     max_offset: f32,
     least_squares: bool,
@@ -188,6 +189,7 @@ extern "C" {
   pub fn cgal_remesh_isotropic(
     mesh_verts: &[f32],
     mesh_indices: &[u32],
+    feature_edges: &[u32],
     target_edge_length: f32,
     iterations: u32,
     protect_borders: bool,
@@ -220,6 +222,51 @@ pub fn trace_geodesic_path(
 #[cfg(not(target_arch = "wasm32"))]
 pub fn get_geodesic_error() -> String {
   String::new()
+}
+
+/// Per-channel deviation treated as equivalent to a positional error of `dist_tol`: `attr_tol` ×
+/// the channel's value range, except `uv`, which is held to `dist_tol` of texture sliding via the
+/// mesh's mean UV density. Constant and direction channels are omitted.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn attr_budgets<'a>(
+  mesh: &'a LinkedMesh<()>,
+  attr_tol: f32,
+  dist_tol: f32,
+) -> Vec<(&'a Channel<VertexKey>, usize, f32)> {
+  let mut names: Vec<_> = mesh.vertex_channels.keys().collect();
+  names.sort_unstable();
+  let mut out = Vec::new();
+  for name in names {
+    let ch = &mesh.vertex_channels[name];
+    if ch.spatial == mesh::linked_mesh::SpatialXform::Direction {
+      continue;
+    }
+    let lanes = ch.store.arity();
+    let budget = if name == mesh::attrs::UV {
+      let (mut uv_area, mut area) = (0., 0.);
+      for face in mesh.faces.values() {
+        let [Some(a), Some(b), Some(c)] = face.vertices.map(|v| ch.get(v)) else {
+          continue;
+        };
+        uv_area += ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])).abs();
+        area += face.area(&mesh.vertices) * 2.;
+      }
+      dist_tol * (uv_area / area).sqrt()
+    } else {
+      let (mut lo, mut hi) = ([f32::INFINITY; 4], [f32::NEG_INFINITY; 4]);
+      for v in mesh.vertices.keys().filter_map(|v| ch.get(v)) {
+        for i in 0..lanes {
+          lo[i] = lo[i].min(v[i]);
+          hi[i] = hi[i].max(v[i]);
+        }
+      }
+      attr_tol * (0..lanes).map(|i| hi[i] - lo[i]).fold(0., f32::max)
+    };
+    if budget > 0. && budget.is_finite() {
+      out.push((ch, lanes, budget));
+    }
+  }
+  out
 }
 
 /// Samples `src`'s passive channels onto `dst` by nearest point: each `dst` vertex takes the
@@ -309,6 +356,26 @@ fn cgal_result(src: &MeshHandle) -> Result<MeshHandle, ErrorStack> {
   )
 }
 
+/// Samples `src`'s attributes back onto remesher output `out` per face corner.
+#[cfg(target_arch = "wasm32")]
+fn with_corner_attrs(
+  src: &MeshHandle,
+  mut out: MeshHandle,
+  sharp_angle_degrees: f32,
+) -> Result<MeshHandle, ErrorStack> {
+  if !src.mesh.vertex_channels.is_empty() {
+    let raw = Rc::try_unwrap(out.mesh).ok().unwrap();
+    out.mesh = Rc::new(super::attr_remesh::transfer_corner_attrs(
+      src,
+      raw,
+      &out.transform,
+      sharp_angle_degrees.to_radians(),
+    ));
+    out.manifold_handle = Rc::new(crate::ManifoldHandle::new_empty());
+  }
+  Ok(out)
+}
+
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn verify_cgal_loaded() -> Result<(), ErrorStack> {
   crate::or_async_dep_bit(crate::DEP_BIT_CGAL);
@@ -330,6 +397,7 @@ pub fn simplify_mesh(
   tolerance: f32,
   engine: SimplifyEngine,
   sharp_angle_degrees: f32,
+  attr_tolerance: Option<f32>,
 ) -> Result<MeshHandle, ErrorStack> {
   if !tolerance.is_finite() || tolerance <= 0. {
     return Err(ErrorStack::new(
@@ -340,7 +408,9 @@ pub fn simplify_mesh(
     return Ok(mesh.clone(false, false, false));
   }
   match engine {
-    SimplifyEngine::Meshopt => super::meshopt::simplify(mesh, tolerance, sharp_angle_degrees),
+    SimplifyEngine::Meshopt => {
+      super::meshopt::simplify(mesh, tolerance, sharp_angle_degrees, attr_tolerance)
+    }
     SimplifyEngine::Manifold => simplify_manifold(mesh, tolerance),
   }
 }
@@ -646,11 +716,25 @@ pub fn remesh_planar_patches(
   max_angle_deg: f32,
   max_offset: f32,
   least_squares: bool,
+  attr_tolerance: Option<f32>,
+  sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-  let (verts, indices) = cgal_input(&mesh.mesh);
-  cgal_remesh_planar_patches(&verts, &indices, max_angle_deg, max_offset, least_squares);
-  cgal_result(mesh)
+  let input =
+    super::attr_remesh::remesh_input(&mesh.mesh, attr_tolerance.map(|tol| (tol, max_offset)));
+  cgal_remesh_planar_patches(
+    &input.verts,
+    &input.indices,
+    &input.features,
+    max_angle_deg,
+    max_offset,
+    least_squares,
+  );
+  with_corner_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+    sharp_angle_degrees,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -659,6 +743,8 @@ pub fn remesh_planar_patches(
   _max_angle_deg: f32,
   _max_offset: f32,
   _least_squares: bool,
+  _attr_tolerance: Option<f32>,
+  _sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Planar patch remeshing is not supported outside of wasm",
@@ -673,19 +759,25 @@ pub fn isotropic_remesh(
   protect_borders: bool,
   auto_sharp_edges: bool,
   sharp_angle_threshold_degrees: f32,
+  shading_sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
-  let (verts, indices) = cgal_input(&mesh.mesh);
+  let input = super::attr_remesh::remesh_input(&mesh.mesh, None);
   cgal_remesh_isotropic(
-    &verts,
-    &indices,
+    &input.verts,
+    &input.indices,
+    &input.features,
     target_edge_length,
     max_iterations,
     protect_borders,
     auto_sharp_edges,
     sharp_angle_threshold_degrees,
   );
-  cgal_result(mesh)
+  with_corner_attrs(
+    mesh,
+    read_cgal_output_mesh(mesh.transform, mesh.material.clone())?,
+    shading_sharp_angle_degrees,
+  )
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -696,6 +788,7 @@ pub fn isotropic_remesh(
   _protect_borders: bool,
   _auto_sharp_edges: bool,
   _sharp_angle_threshold_degrees: f32,
+  _shading_sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Isotropic remeshing is not supported outside of wasm",
@@ -709,6 +802,7 @@ pub fn delaunay_remesh(
   facet_distance: f32,
   auto_sharp_edges: bool,
   sharp_angle_threshold_degrees: f32,
+  shading_sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   verify_cgal_loaded()?;
   let (verts, indices) = cgal_input(&mesh.mesh);
@@ -723,7 +817,7 @@ pub fn delaunay_remesh(
   let mut out = read_cgal_output_mesh(mesh.transform, mesh.material.clone())?;
   // Delaunay remeshing sometimes flips components (only manifold ones can be re-oriented).
   Rc::make_mut(&mut out.mesh).orient_connected_components_outward();
-  with_transferred_attrs(mesh, out)
+  with_corner_attrs(mesh, out, shading_sharp_angle_degrees)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -733,6 +827,7 @@ pub fn delaunay_remesh(
   _facet_distance: f32,
   _auto_sharp_edges: bool,
   _sharp_angle_threshold_degrees: f32,
+  _shading_sharp_angle_degrees: f32,
 ) -> Result<MeshHandle, ErrorStack> {
   Err(ErrorStack::new(
     "Delaunay remeshing is not supported outside of wasm",

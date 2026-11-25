@@ -1,4 +1,6 @@
 pub mod adaptive_sampler;
+#[cfg(any(target_arch = "wasm32", test))]
+mod attr_remesh;
 #[cfg(test)]
 mod attr_tests;
 pub mod bake_ao;
