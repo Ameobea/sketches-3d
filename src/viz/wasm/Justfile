@@ -8,7 +8,6 @@ copy-files:
   cp -r ./build/* ../wasmComp
   cp ./build2/*.wasm ../wasmComp
   cp ./build2/flight_recorder.wasm ../wasmComp
-  cp -r ./geodesics/build/bin/* ../../../src/geodesics/
 
 bindgen profile="release":
   wasm-bindgen ./target/wasm32-unknown-unknown/{{profile}}/bridge2.wasm --target web --remove-producers-section --out-dir ./build
@@ -38,7 +37,6 @@ opt:
   ./optimize-wasm.sh ./build/cave_bg.wasm
   ./optimize-wasm.sh ./build2/terrain.wasm
   ./optimize-wasm.sh ./build/stone_bg.wasm
-  ./optimize-wasm.sh ./geodesics/build/bin/geodesics.wasm
   ./optimize-wasm.sh ./build/tessellation_sandbox_bg.wasm
   ./optimize-wasm.sh ./build/basalt_bg.wasm
   ./optimize-wasm.sh ./build/csg_sandbox_bg.wasm
@@ -62,10 +60,15 @@ clean:
   rm -rf build2/*
   cd ./geodesics && just clean
 
+# The output is vendored, so it only rebuilds when its inputs change; rebuilding identical sources
+# on another host just churns the committed blob. Delete the stamp to force a rebuild.
 build-geodesics:
   #!/bin/bash
-
   set -e
+
+  out=../../../src/geodesics
+  stamp=$({ git submodule status geodesics/deps/geometry-central | grep -oE '[0-9a-f]{40}'; cat geodesics/CMakeLists.txt geodesics/Justfile geodesics/src/* optimize-wasm.sh; } | sha256sum | cut -d' ' -f1)
+  [[ $(cat $out/build.stamp 2>/dev/null) == "$stamp" ]] && exit 0
 
   cd ./geodesics
   if [ ! -f ./deps/geometry-central/README.md ]; then
@@ -81,7 +84,10 @@ build-geodesics:
   fi
 
   cd ..
-  cp -r ./geodesics/build/bin/* ../../../src/geodesics/
+  # wasm-opt isn't idempotent, so it runs on a copy and the link output stays raw.
+  cp -r ./geodesics/build/bin/* $out/
+  WASM_OPT_MODE=prod ./optimize-wasm.sh $out/geodesics.wasm
+  echo "$stamp" > $out/build.stamp
 
 # No wasm-opt and no geodesics rebuild: CI only needs loadable, current blobs, fast.
 ci-build:
