@@ -46,6 +46,9 @@ export interface GizmoTarget {
 
   /** `preview`: per-frame during drag, no undo. `commit`: drag end, target should snapshot/persist. */
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void;
+
+  /** Forces translate mode while true, regardless of the requested mode. */
+  translateOnly?(): boolean;
 }
 
 /**

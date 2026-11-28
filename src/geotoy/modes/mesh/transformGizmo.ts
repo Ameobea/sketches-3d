@@ -116,15 +116,16 @@ export class TransformGizmo {
     if (ref && ref.kind === 'handle') {
       const resolve = this.handleContextResolver;
       // Handles are valid on any node incl. `_root` (only instance targeting excludes root).
-      if (!resolve || !tree.nodes[ref.nodeId]) {
+      const ctx = resolve && tree.nodes[ref.nodeId] ? resolve(ref.nodeId, ref.name) : null;
+      if (!resolve || !ctx) {
         this.detach();
         return;
       }
+      this.gizmo.setAxisMask(ctx.axes ?? [true, true, true]);
       // The target reads its context per-frame via `resolve`, so origin/mode/transform stay
       // fresh without rebuilding — restoring the equal-ref dedupe the instance path has.
       if (gizmoTargetRefsEqual(this.attachedRef, ref)) return;
       this.attachedRef = ref;
-      this.gizmo.setAxisMask(resolve(ref.nodeId, ref.name)?.axes ?? [true, true, true]);
       this.gizmo.setTarget(
         new HandleTarget(ref.nodeId, ref.name, () => resolve(ref.nodeId, ref.name), this.getTree, {
           onChange: (_phase, nodeId, handleId, value) =>

@@ -314,9 +314,11 @@ export class HandleTarget implements GizmoTarget {
   }
 
   private localTransform(out: Transform3, ctx: HandleContext): Transform3 {
-    const stored = this.callbacks.getStoredValue
+    const raw = this.callbacks.getStoredValue
       ? this.callbacks.getStoredValue()
       : this.getTree()?.nodes[this.nodeId]?.handles?.[this.handleId];
+    // A value stored under the other kind outlives a `gizmo` <-> `gizmo_transform` swap of the same id.
+    const stored = raw?.kind === ctx.kind ? raw : undefined;
     if (ctx.kind === 'transform') {
       const src = (stored?.value as ApiTransform3 | undefined) ??
         ctx.transform ?? { pos: [...ctx.origin], rot: [0, 0, 0], scale: [1, 1, 1] };
@@ -350,6 +352,10 @@ export class HandleTarget implements GizmoTarget {
 
   getEulerOrder(): THREE.EulerOrder {
     return 'YXZ';
+  }
+
+  translateOnly(): boolean {
+    return this.getContext()?.kind === 'vec3';
   }
 
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void {

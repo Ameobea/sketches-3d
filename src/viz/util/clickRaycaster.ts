@@ -19,10 +19,13 @@ export const installClickRaycaster = (opts: ClickRaycasterOpts): (() => void) =>
   const downPos = new THREE.Vector2();
   const ndc = new THREE.Vector2();
   let pointerMoved = false;
+  let claimed = false;
 
   const onPointerDown = (e: PointerEvent) => {
     downPos.set(e.clientX, e.clientY);
     pointerMoved = false;
+    // An earlier-registered listener (gizmo handle grab) claims the gesture via preventDefault.
+    claimed = e.defaultPrevented;
   };
 
   const onPointerMove = (e: PointerEvent) => {
@@ -33,7 +36,7 @@ export const installClickRaycaster = (opts: ClickRaycasterOpts): (() => void) =>
   };
 
   const onPointerUp = (e: PointerEvent) => {
-    if (pointerMoved || e.button !== 0) return;
+    if (pointerMoved || claimed || e.button !== 0) return;
     if (opts.shouldIgnore?.()) return;
 
     const rect = opts.canvas.getBoundingClientRect();

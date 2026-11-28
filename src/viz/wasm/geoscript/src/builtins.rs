@@ -6424,11 +6424,21 @@ fn gizmo_nd_impl(
   let value = match injected_gizmo_value(ctx, &module, &handle_id) {
     Some(Value::Vec3(v)) => v,
     _ => {
-      if absolute {
-        origin
-      } else {
-        Vec3::zeros()
+      let mut v = if absolute { origin } else { Vec3::zeros() };
+      let default = arg_refs[3].resolve(args, kwargs);
+      let axes = axis_indices(&mask);
+      match default {
+        Value::Vec2(d) => {
+          v[axes[0]] = d.x;
+          v[axes[1]] = d.y;
+        }
+        _ => {
+          if let Some(d) = default.as_float() {
+            v[axes[0]] = d;
+          }
+        }
       }
+      v
     }
   };
 

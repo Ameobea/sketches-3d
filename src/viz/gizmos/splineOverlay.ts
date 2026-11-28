@@ -73,6 +73,10 @@ class SplinePointTarget implements GizmoTarget {
     return 'YXZ';
   }
 
+  translateOnly(): boolean {
+    return true;
+  }
+
   applyLocalTransform(t: Readonly<Transform3>, phase: 'preview' | 'commit'): void {
     this.overlay.moveSelectedPoint([t.pos[0], t.pos[1], t.pos[2]], phase);
   }

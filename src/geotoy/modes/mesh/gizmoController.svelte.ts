@@ -105,6 +105,7 @@ export class GizmoController {
     }
     if (node.handles) {
       for (const [id, v] of Object.entries(node.handles)) {
+        if ((map.get(id)?.kind ?? v.kind) !== v.kind) continue;
         map.set(id, storedReadout(v, axesByHandle.get(id) ?? [true, true, true]));
       }
     }
@@ -337,24 +338,23 @@ export class GizmoController {
           },
         }
       );
-      // Resolve a handle's origin/kind/mode from the last run's channel + stored value.
+      // Null until a run reports the handle: its kind/origin/axes are unknown before then, and
+      // a handle whose call was deleted shouldn't keep a live gizmo.
       g.setHandleContextResolver((nodeId, handleId) => {
         const node = deps.getTreeState().state.tree.nodes[nodeId];
-        if (!node) return null;
-        const reported = deps
-          .getLastGizmos()
-          ?.find(gz => this.gizmoNodeId(gz) === node.id && gz.handleId === handleId);
-        const stored = node.handles?.[handleId];
-        const kind = reported?.kind ?? stored?.kind ?? 'vec3';
+        const gz =
+          node &&
+          deps.getLastGizmos()?.find(gz => this.gizmoNodeId(gz) === node.id && gz.handleId === handleId);
+        if (!gz) return null;
         return {
-          kind,
-          mode: reported ? (reported.absolute ? 'absolute' : 'delta') : (stored?.mode ?? 'delta'),
-          origin: reported?.origin ?? [0, 0, 0],
+          kind: gz.kind,
+          mode: gz.absolute ? 'absolute' : 'delta',
+          origin: gz.origin,
           transform:
-            kind === 'transform' && reported?.value.length === 16
-              ? decomposeTransform3(new THREE.Matrix4().fromArray(reported.value))
+            gz.kind === 'transform' && gz.value.length === 16
+              ? decomposeTransform3(new THREE.Matrix4().fromArray(gz.value))
               : undefined,
-          axes: reported?.axes ?? [true, true, true],
+          axes: gz.axes,
         };
       });
       const tickGizmo = () => g.update();

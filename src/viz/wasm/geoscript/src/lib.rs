@@ -9352,10 +9352,12 @@ fn test_gizmo_unset_returns_default() {
   let ctx = EvalCtx::default();
   ctx.module_sources.borrow_mut().insert(
     "node".to_string(),
-    "export p = gizmo(\"x\", default=vec3(4, 5, 6))".to_string(),
+    "export p = gizmo(\"x\", default=vec3(4, 5, 6))\nexport q = gizmo2d(\"y\", default=vec2(2, \
+     3))\nexport r = gizmo1d(\"z\", default=7)"
+      .to_string(),
   );
   parse_and_eval_program_with_ctx(
-    "import { p } from \"node\"\nresult = p".to_string(),
+    "import { p, q, r } from \"node\"\nresult = p\nresult2 = vec3(q.x, q.y, r)".to_string(),
     &ctx,
     false,
   )
@@ -9363,6 +9365,10 @@ fn test_gizmo_unset_returns_default() {
   assert_eq!(
     ctx.get_global("result").unwrap().as_vec3().unwrap(),
     &Vec3::new(4., 5., 6.)
+  );
+  assert_eq!(
+    ctx.get_global("result2").unwrap().as_vec3().unwrap(),
+    &Vec3::new(2., 3., 7.)
   );
 }
 

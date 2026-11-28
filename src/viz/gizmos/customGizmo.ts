@@ -76,6 +76,7 @@ export class CustomGizmo extends THREE.Object3D {
 
   private target: GizmoTarget | null = null;
   private mode: GizmoMode = 'translate';
+  private requestedMode: GizmoMode = 'translate';
   private space: GizmoSpace = 'local';
   /** Restricts which translate handles are shown/pickable (for `gizmo2d`/`gizmo1d`). */
   private axisMask: [boolean, boolean, boolean] = [true, true, true];
@@ -168,10 +169,16 @@ export class CustomGizmo extends THREE.Object3D {
   }
 
   getMode(): GizmoMode {
-    return this.mode;
+    return this.requestedMode;
   }
   setMode(mode: GizmoMode) {
-    if (this.mode === mode) return;
+    this.requestedMode = mode;
+    this.syncMode();
+  }
+
+  private syncMode() {
+    const mode = this.target?.translateOnly?.() ? 'translate' : this.requestedMode;
+    if (this.mode === mode || this.dragState) return;
     this.mode = mode;
     this.applyModeVisibility();
     this.rebuildActivePickers();
@@ -192,6 +199,7 @@ export class CustomGizmo extends THREE.Object3D {
   /** Call once per frame, before the overlay scene is rendered. */
   update() {
     if (!this.target) return;
+    this.syncMode();
 
     // Safe to re-track mid-drag: drag math is anchored to `dragState.worldOrigin`
     // captured at pointerdown, so deltas stay correct regardless of where we draw.
