@@ -45,10 +45,11 @@ if (present.length === 0) {
   process.exit(0);
 }
 
-const hasWorkspaceTable = dir => /^\[workspace\]/m.test(readFileSync(join(dir, 'Cargo.toml'), 'utf8'));
+const cargoToml = dir => readFileSync(join(dir, 'Cargo.toml'), 'utf8');
+const hasWorkspaceTable = dir => /^\[workspace\]/m.test(cargoToml(dir));
 
-// nearest enclosing Cargo.toml, climbing past member crates up to their workspace root
-function rustRoot(file) {
+// nearest enclosing Cargo.toml, plus its workspace root found by climbing past member crates
+function rustCrate(file) {
   const candidates = [];
   for (let dir = dirname(join(repoRoot, file)); dir.startsWith(repoRoot); dir = dirname(dir)) {
     if (existsSync(join(dir, 'Cargo.toml'))) {
@@ -62,7 +63,7 @@ function rustRoot(file) {
   for (let i = 1; i < candidates.length && !hasWorkspaceTable(root); i++) {
     root = candidates[i];
   }
-  return root;
+  return { dir: candidates[0], root };
 }
 
 const dirtyBefore = new Set(zsplit(git(['diff', '--name-only', '-z'])));
@@ -70,24 +71,27 @@ const before = new Map(present.map(file => [file, hash(file)]));
 
 // oxfmt filters the list itself by extension and by its own ignore rules
 const oxfmt = join(repoRoot, 'node_modules', 'oxfmt', 'bin', 'oxfmt');
-if (existsSync(oxfmt)) {
-  run(process.execPath, [oxfmt, '--no-error-on-unmatched-pattern', ...present]);
-} else {
+const oxfmtFiles = present.filter(file => !file.endsWith('.rs'));
+if (!existsSync(oxfmt)) {
   warn('node_modules/oxfmt is missing — skipped JS/TS formatting (run `yarn install`)');
+} else if (oxfmtFiles.length > 0) {
+  run(process.execPath, [oxfmt, '--no-error-on-unmatched-pattern', ...oxfmtFiles]);
 }
 
-const rustRoots = [
-  ...new Set(
-    staged
-      .filter(file => file.endsWith('.rs'))
-      .map(rustRoot)
-      .filter(Boolean)
-  ),
-];
+const rustByRoot = new Map();
+for (const file of present.filter(file => file.endsWith('.rs'))) {
+  const { dir, root } = rustCrate(file);
+  if (!root) {
+    continue;
+  }
+  const edition = /^edition\s*=\s*"(\d+)"/m.exec(cargoToml(dir))?.[1];
+  const byEdition = rustByRoot.get(root) ?? rustByRoot.set(root, new Map()).get(root);
+  byEdition.set(edition, [...(byEdition.get(edition) ?? []), file]);
+}
 
 // `cargo fmt` formats whole crates, so track the untracked .rs files it may touch too
 const untrackedRust = new Map();
-for (const root of rustRoots) {
+for (const root of rustByRoot.keys()) {
   const others = zsplit(
     git(['ls-files', '--others', '--exclude-standard', '-z', '--', relative(repoRoot, root)])
   );
@@ -98,8 +102,17 @@ for (const root of rustRoots) {
   }
 }
 
-for (const root of rustRoots) {
-  if (!run('cargo', ['fmt', '--all'], root)) {
+// `cargo fmt --all` reformats the whole workspace (seconds), so it's only the fallback for files
+// rustfmt can't take standalone: `include!`d fragments, inherited editions.
+const rustfmtStaged = byEdition =>
+  [...byEdition].every(
+    ([edition, files]) =>
+      edition &&
+      spawnSync('rustfmt', ['--edition', edition, '--config', 'skip_children=true', ...files]).status === 0
+  );
+
+for (const [root, byEdition] of rustByRoot) {
+  if (!rustfmtStaged(byEdition) && !run('cargo', ['fmt', '--all'], root)) {
     warn(`cargo is not installed — skipped Rust formatting in ${relative(repoRoot, root)}`);
   }
 }
